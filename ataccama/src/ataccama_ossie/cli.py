@@ -41,21 +41,12 @@ import sys
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 from ataccama_ossie.ataccama_to_ossie import ataccama_to_ossie
 from ataccama_ossie.client import AtaccamaClient
 
 REQUIRED_VARS = ("ATACCAMA_BASE_URL", "ATACCAMA_TOKEN_URL", "ATACCAMA_CLIENT_ID", "ATACCAMA_CLIENT_SECRET")
-
-
-def _load_env_file(path: Path) -> None:
-    """Load simple KEY=VALUE lines into os.environ (does not overwrite existing vars)."""
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip())
 
 
 def _tenant_from_urn(urn: str) -> str | None:
@@ -104,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.env_file:
-        _load_env_file(Path(args.env_file))
+        load_dotenv(args.env_file, override=True)
 
     urns = _collect_urns(args)
     if not urns:
