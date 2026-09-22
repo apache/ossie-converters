@@ -30,6 +30,7 @@ Mapping summary (see README for the full table and known limitations):
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
@@ -39,6 +40,28 @@ VENDOR = "ATACCAMA"
 
 # Ataccama semantic data types that represent points in time.
 TIME_DATA_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIME"}
+
+# A source segment safe to leave unquoted. This is the intersection of what the engines
+# accept, not any one engine's full grammar: a letter or underscore first (Snowflake,
+# PostgreSQL, Oracle, SQL Server and BigQuery all reject a leading digit), then letters,
+# digits and underscores. `$` is legal unquoted in Snowflake and Oracle but not in
+# Databricks or BigQuery, so it is left out -- quoting a segment that did not need it
+# only costs case sensitivity on that one segment.
+_BARE_SOURCE_PART = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Words every engine reserves, which need quoting even though their characters are fine.
+# Deliberately short: each engine reserves far more, but a catalog item named `JOIN` or
+# `ORDER` is the realistic case, and over-quoting a non-reserved word costs case
+# sensitivity.
+_RESERVED_SOURCE_PARTS = frozenset(
+    """
+    all alter and any as between by case cast check column create cross current default
+    delete distinct drop else end exists false for from full grant group having in inner
+    insert intersect into is join left like natural not null on or order outer primary
+    references revoke right select set some table then to true union unique update using
+    values when where with
+    """.split()  # noqa: SIM905
+)
 
 
 # --- helpers -------------------------------------------------------------
@@ -100,6 +123,24 @@ def _sql_identifier(name: str) -> str:
     return f'"{escaped}"'
 
 
+def _quote_source_part(part: str) -> str:
+    """Quote a source segment unless it is already a bare SQL identifier.
+
+    Segments are joined with ``.`` to form a dotted source, so anything a SQL parser
+    would not read as one unquoted identifier has to be quoted: a dot would add levels
+    (``orders.csv``), a dash would read as subtraction (``TX_2022-07``), a space or
+    newline would end the identifier.
+
+    Only segments that read as a plain unquoted identifier are left bare, since consumers
+    case-fold unquoted identifiers but preserve quoted ones -- quoting everything would
+    make the common case case-sensitive and stop it matching the physical table.
+    """
+    if _BARE_SOURCE_PART.fullmatch(part) and part.lower() not in _RESERVED_SOURCE_PARTS:
+        return part
+    escaped = part.replace('"', '""')
+    return f'"{escaped}"'
+
+
 def build_source(item: CatalogItem) -> str:
     """Best-effort physical source reference.
 
@@ -110,7 +151,7 @@ def build_source(item: CatalogItem) -> str:
     """
     parts = [loc.name for loc in reversed(item.locations) if loc.name]
     parts.append(item.name)
-    return ".".join(parts) if parts else item.name
+    return ".".join(_quote_source_part(part) for part in parts)
 
 
 def _terms_ai_context(term_urns: list[str], terms: dict[str, Term]) -> dict[str, Any] | None:

@@ -341,6 +341,47 @@ def test_build_source_uses_reversed_locations_then_name() -> None:
     assert build_source(item) == "Workspaces.sales.customers"
 
 
+def test_build_source_quotes_segments_containing_dots() -> None:
+    item = CatalogItem(
+        urn="urn:ata:t:catalog:catalog-item:1",
+        name="orders.csv",
+        locations=[CatalogLocation(name="sales.2024"), CatalogLocation(name="s3")],
+    )
+    assert build_source(item) == 's3."sales.2024"."orders.csv"'
+
+
+def test_build_source_escapes_embedded_quotes() -> None:
+    item = CatalogItem(
+        urn="urn:ata:t:catalog:catalog-item:1",
+        name='odd"name',
+        locations=[CatalogLocation(name="sales")],
+    )
+    assert build_source(item) == 'sales."odd""name"'
+
+
+@pytest.mark.parametrize(
+    "segment,expected",
+    [
+        ("customers", "customers"),  # a bare identifier stays bare, so it keeps case-folding
+        ("CONTENT_ENV", "CONTENT_ENV"),
+        ("_private", "_private"),
+        ("dollar$v", '"dollar$v"'),  # legal unquoted in Snowflake, but not in Databricks
+        ("ORDER", '"ORDER"'),  # a reserved word needs quoting despite its characters
+        ("select", '"select"'),
+        ("TX_2022-07", '"TX_2022-07"'),  # a dash would otherwise read as subtraction
+        ("2022_SALES", '"2022_SALES"'),  # an identifier may not start with a digit
+        ("US SEC_FAILS TO DELIVER", '"US SEC_FAILS TO DELIVER"'),
+        ("orders.csv", '"orders.csv"'),  # a dot would otherwise add a level
+        ("new\nline", '"new\nline"'),
+        ("semi;colon", '"semi;colon"'),
+        ("Ünïcode", '"Ünïcode"'),
+    ],
+)
+def test_source_segments_are_quoted_unless_bare_identifiers(segment: str, expected: str) -> None:
+    item = CatalogItem(urn="urn:ata:t:catalog:catalog-item:1", name=segment)
+    assert build_source(item) == expected
+
+
 @pytest.mark.parametrize(
     "passed,failed,threshold,expected",
     [
