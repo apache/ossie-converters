@@ -109,6 +109,7 @@ Tests run fully offline against a recorded catalog fixture
 | `CatalogAttribute.description` / `comment` | `field.description` |
 | attribute `Term`s | `field.ai_context` |
 | `primaryKey` / `primaryKeyColumn` (Metadata Entities API) | `dataset.primary_key`, `dataset.unique_keys` |
+| unique `index` / `indexColumn` (Metadata Entities API) | `dataset.unique_keys` |
 | `foreignKey` / `foreignKeyColumn` (Metadata Entities API) | `relationships` (`from`/`to` + `from_columns`/`to_columns`) |
 | DQ `overallQuality` + `dimensionResults` + findings + monitor threshold | dataset `custom_extensions` (`vendor_name: ATACCAMA`) → `data.dq` (`passed`, `failed`, `pass_rate_pct`, `threshold_pct`, `below_threshold`, `active_findings`, `dimensions[]`, `results_link`) |
 | DQ per-attribute `overallQuality` | field `custom_extensions` (`vendor_name: ATACCAMA`) → `data.dq` (`passed`, `failed`, `pass_rate_pct`) |
@@ -154,12 +155,18 @@ and require DQ (so not usable with `--no-dq`).
 
 ## Relationships & keys
 
-Primary/foreign keys are read via the Generic Metadata Entities API (`primaryKey`,
+Keys and indexes are read via the Generic Metadata Entities API (`primaryKey`, `index`,
 `foreignKey`, and their column children) and fetched by default; pass `--no-relationships`
 to skip them.
 
-- **Primary key** → `dataset.primary_key` (the key's columns, order preserved) and
-  `dataset.unique_keys` (every key's column set). Composite keys are supported.
+- **Primary key** → `dataset.primary_key` (the key's columns, order preserved). Composite
+  keys are supported. It is not restated in `dataset.unique_keys`: a primary key is a
+  unique constraint by definition, and Snowflake rejects a semantic view that declares the
+  same columns as both.
+- **Unique indexes** → `dataset.unique_keys`, sorted by index name, excluding the index
+  that backs the primary key. Only the columns the index marks unique are taken, so
+  included (covering) columns stay out of the key. Keys are compared as column *sets*,
+  since uniqueness does not depend on column order.
 - **Foreign keys** → `relationships` (`from`/`to` datasets with paired
   `from_columns`/`to_columns`).
 

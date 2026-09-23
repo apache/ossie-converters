@@ -257,3 +257,57 @@ def test_contradictory_primary_keys_keep_the_first_and_warn() -> None:
 
     with pytest.warns(UserWarning, match=r"item-1 reports 2 primary keys \(PK_A, PK_B\); using 'PK_A'"):
         assert client.get_primary_key("item-1") == {"name": "PK_A", "columns": ["id"]}
+
+
+# --- unique indexes ---
+
+
+def test_unique_index_columns_are_ordered() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("ix-1", name="UX_TENANT_EMAIL", unique=True)),
+            _page(
+                _entity("c-2", name="email", unique=True, order=2),
+                _entity("c-1", name="tenant_id", unique=True, order=1),
+            ),
+        ]
+    )
+
+    assert client.get_unique_indexes("item-1") == [{"name": "UX_TENANT_EMAIL", "columns": ["tenant_id", "email"]}]
+
+
+def test_included_columns_are_left_out_of_the_key() -> None:
+    # A unique index may also carry covering columns, which it does not enforce
+    # uniqueness on; taking them would widen the key beyond the real constraint.
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("ix-1", name="UX_EMAIL", unique=True)),
+            _page(
+                _entity("c-1", name="email", unique=True, order=1),
+                _entity("c-2", name="display_name", unique=False, order=2),
+            ),
+        ]
+    )
+
+    assert client.get_unique_indexes("item-1") == [{"name": "UX_EMAIL", "columns": ["email"]}]
+
+
+def test_non_unique_indexes_are_skipped_without_fetching_columns() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _page(_entity("ix-1", name="IX_CREATED", unique=False))])
+
+    assert client.get_unique_indexes("item-1") == []
+
+
+def test_unique_indexes_are_sorted_by_name() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("ix-2", name="UX_B", unique=True), _entity("ix-1", name="UX_A", unique=True)),
+            _page(_entity("c-1", name="b", unique=True, order=1)),
+            _page(_entity("c-2", name="a", unique=True, order=1)),
+        ]
+    )
+
+    assert [i["name"] for i in client.get_unique_indexes("item-1")] == ["UX_A", "UX_B"]

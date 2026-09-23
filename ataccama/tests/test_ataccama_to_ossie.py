@@ -225,24 +225,71 @@ def test_dataset_dq_warning_triggers() -> None:
 # --- keys & relationships ---
 
 
-def _keyed_bundle(name, primary_key=None, foreign_keys=None):
+def _keyed_bundle(name, primary_key=None, unique_indexes=None, foreign_keys=None):
     return CatalogItemBundle(
         item=CatalogItem(urn=f"urn:ata:t:catalog:catalog-item:{name}", name=name),
         primary_key=primary_key,
+        unique_indexes=unique_indexes or [],
         foreign_keys=foreign_keys or [],
     )
 
 
-def test_primary_key_and_unique_keys() -> None:
+def test_primary_key_is_not_restated_as_a_unique_key() -> None:
     b = _keyed_bundle("line_items", primary_key={"name": "pk", "columns": ["order_id", "line_no"]})
     ds = ataccama_to_ossie([b]).datasets[0]
     assert ds.primary_key == ["order_id", "line_no"]  # composite, order preserved
-    assert ds.unique_keys == [["order_id", "line_no"]]
+    # a primary key is unique by definition, so unique_keys carries only other keys
+    assert ds.unique_keys is None
 
 
 def test_no_keys_when_item_has_no_primary_key() -> None:
     ds = ataccama_to_ossie([_keyed_bundle("events")]).datasets[0]
     assert ds.primary_key is None and ds.unique_keys is None
+
+
+def test_unique_indexes_become_unique_keys() -> None:
+    b = _keyed_bundle(
+        "users",
+        primary_key={"name": "pk", "columns": ["id"]},
+        unique_indexes=[{"name": "ux_email", "columns": ["email"]}],
+    )
+    ds = ataccama_to_ossie([b]).datasets[0]
+    assert ds.primary_key == ["id"]
+    assert ds.unique_keys == [["email"]]
+
+
+def test_unique_index_backing_the_primary_key_is_dropped() -> None:
+    b = _keyed_bundle(
+        "users",
+        primary_key={"name": "pk", "columns": ["id"]},
+        unique_indexes=[{"name": "ux_pk", "columns": ["id"]}],
+    )
+    assert ataccama_to_ossie([b]).datasets[0].unique_keys is None
+
+
+def test_reordered_unique_index_is_still_the_primary_key() -> None:
+    b = _keyed_bundle(
+        "line_items",
+        primary_key={"name": "pk", "columns": ["order_id", "line_no"]},
+        unique_indexes=[{"name": "ux_pk", "columns": ["line_no", "order_id"]}],
+    )
+    # uniqueness does not depend on column order, so this index is the primary key
+    assert ataccama_to_ossie([b]).datasets[0].unique_keys is None
+
+
+def test_duplicate_unique_indexes_are_collapsed() -> None:
+    b = _keyed_bundle(
+        "users",
+        unique_indexes=[{"name": "ux_a", "columns": ["email"]}, {"name": "ux_b", "columns": ["email"]}],
+    )
+    assert ataccama_to_ossie([b]).datasets[0].unique_keys == [["email"]]
+
+
+def test_unique_index_without_a_primary_key() -> None:
+    b = _keyed_bundle("sessions", unique_indexes=[{"name": "ux_token", "columns": ["token"]}])
+    ds = ataccama_to_ossie([b]).datasets[0]
+    assert ds.primary_key is None
+    assert ds.unique_keys == [["token"]]
 
 
 def test_relationship_emitted_when_target_in_set() -> None:

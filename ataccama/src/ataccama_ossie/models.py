@@ -162,6 +162,8 @@ class CatalogItemBundle:
     dq_threshold_pct: float | None = None
     # The primary key, or None if the item has none: {"name": str, "columns": [ordered column names]}.
     primary_key: dict[str, Any] | None = None
+    # Unique indexes: [{"name": str, "columns": [ordered column names]}].
+    unique_indexes: list[dict[str, Any]] = field(default_factory=list)
     # Foreign keys: [{"name", "columns": [local cols], "referenced_table", "referenced_columns"}].
     foreign_keys: list[dict[str, Any]] = field(default_factory=list)
 
@@ -174,6 +176,7 @@ class CatalogItemBundle:
             dq_results=d.get("dq_results"),
             dq_threshold_pct=d.get("dq_threshold_pct"),
             primary_key=d.get("primary_key"),
+            unique_indexes=list(d.get("unique_indexes", [])),
             foreign_keys=list(d.get("foreign_keys", [])),
         )
 
@@ -186,6 +189,7 @@ class CatalogItemBundle:
             "dq_results": self.dq_results,
             "dq_threshold_pct": self.dq_threshold_pct,
             "primary_key": self.primary_key,
+            "unique_indexes": self.unique_indexes,
             "foreign_keys": self.foreign_keys,
         }
 
