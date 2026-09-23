@@ -212,3 +212,48 @@ def test_token_is_refreshed_between_retries(sleeps: list[float]) -> None:
     session: FakeSession = client._session  # type: ignore[assignment]
     authorizations = [r["headers"]["Authorization"] for r in session.requests if r["method"] == "GET"]
     assert authorizations == ["Bearer token-1", "Bearer token-2"]
+
+
+# --- primary keys ---
+
+
+def _entity(urn: str, **properties: Any) -> dict[str, Any]:
+    return {"urn": urn, "properties": properties}
+
+
+def _page(*entities: dict[str, Any]) -> FakeResponse:
+    return FakeResponse(200, {"data": list(entities)})
+
+
+def test_primary_key_columns_are_ordered() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("pk-1", name="PK_ORDERS")),
+            _page(_entity("c-2", name="line_no", order=2), _entity("c-1", name="order_id", order=1)),
+        ]
+    )
+
+    assert client.get_primary_key("item-1") == {"name": "PK_ORDERS", "columns": ["order_id", "line_no"]}
+
+
+def test_item_without_a_primary_key_reports_none() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _page()])
+
+    assert client.get_primary_key("item-1") is None
+
+
+def test_contradictory_primary_keys_keep_the_first_and_warn() -> None:
+    # A table has at most one primary key, so more than one means the catalog metadata
+    # contradicts itself -- the caller is told rather than left with a silent choice.
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("pk-1", name="PK_A"), _entity("pk-2", name="PK_B")),
+            _page(_entity("c-1", name="id", order=1)),
+            _page(_entity("c-2", name="alt_id", order=1)),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"item-1 reports 2 primary keys \(PK_A, PK_B\); using 'PK_A'"):
+        assert client.get_primary_key("item-1") == {"name": "PK_A", "columns": ["id"]}
