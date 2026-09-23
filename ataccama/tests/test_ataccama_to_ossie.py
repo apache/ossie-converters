@@ -25,12 +25,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
+from ossie import OssieDataset, OssieDialect, OssieDialectExpression, OssieDocument, OssieField
 
 from ataccama_ossie.ataccama_to_ossie import (
-    OSSIE_VERSION,
     _dataset_dq,
     _dataset_dq_warning,
     _quality_summary,
@@ -52,69 +53,77 @@ def bundles() -> list[CatalogItemBundle]:
 
 
 @pytest.fixture
-def document(bundles: list[CatalogItemBundle]) -> dict:
+def document(bundles: list[CatalogItemBundle]) -> OssieDocument:
     return ataccama_to_ossie(bundles, model_name="test_model", tenant="example-tenant")
 
 
-def _dataset(document: dict, name: str) -> dict:
-    return next(d for d in document["datasets"] if d["name"] == name)
+def _dataset(document: OssieDocument, name: str) -> OssieDataset:
+    return next(d for d in document.datasets if d.name == name)
 
 
-def _field(dataset: dict, name: str) -> dict:
-    return next(f for f in dataset["fields"] if f["name"] == name)
+def _field(dataset: OssieDataset, name: str) -> OssieField:
+    return next(f for f in dataset.fields or [] if f.name == name)
 
 
-def _ext(obj: dict) -> dict:
-    return json.loads(obj["custom_extensions"][0]["data"])
+def _ext(obj: OssieDataset | OssieField | OssieDocument) -> dict[str, Any]:
+    return json.loads((obj.custom_extensions or [])[0].data)
+
+
+def _schema_errors(document: OssieDocument) -> list[str]:
+    schema = json.loads(SCHEMA.read_text())
+    payload = json.loads(document.to_ossie_json())
+    return [e.message for e in Draft202012Validator(schema).iter_errors(payload)]
+
+
+def _instructions(obj: OssieDataset | OssieField) -> str:
+    return (obj.ai_context.instructions if obj.ai_context else None) or ""
 
 
 # --- structure & core mapping ---
 
 
-def test_document_is_schema_valid(document: dict) -> None:
-    schema = json.loads(SCHEMA.read_text())
-    errors = list(Draft202012Validator(schema).iter_errors(document))
-    assert not errors, [e.message for e in errors]
-    assert document["version"] == OSSIE_VERSION
+def test_document_is_schema_valid(document: OssieDocument) -> None:
+    assert not _schema_errors(document)
 
 
-def test_model_structure(document: dict) -> None:
-    model = document
-    assert model["name"] == "test_model"
-    assert {d["name"] for d in model["datasets"]} == {"BANK_TRANSACTIONS", "aggregation"}
+def test_model_structure(document: OssieDocument) -> None:
+    assert document.name == "test_model"
+    assert {d.name for d in document.datasets} == {"BANK_TRANSACTIONS", "aggregation"}
 
 
-def test_attribute_becomes_quoted_ansi_field(document: dict) -> None:
+def test_attribute_becomes_quoted_ansi_field(document: OssieDocument) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
-    assert len(ds["fields"]) == 13
+    assert len(ds.fields) == 13
     field = _field(ds, "TRANSACTION_ID")
-    assert field["expression"]["dialects"] == [{"dialect": "ANSI_SQL", "expression": '"TRANSACTION_ID"'}]
+    assert field.expression.dialects == [
+        OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression='"TRANSACTION_ID"')
+    ]
     assert _ext(field)["data_type"] == "STRING"
 
 
-def test_date_columns_are_time_dimensions(document: dict) -> None:
+def test_date_columns_are_time_dimensions(document: OssieDocument) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
-    assert _field(ds, "BIRTH_DATE")["dimension"] == {"is_time": True}
-    assert _field(ds, "TRANSACTION_DATE")["dimension"] == {"is_time": True}
-    assert "dimension" not in _field(ds, "ACCOUNT_BALANCE")
+    assert _field(ds, "BIRTH_DATE").dimension.is_time is True
+    assert _field(ds, "TRANSACTION_DATE").dimension.is_time is True
+    assert _field(ds, "ACCOUNT_BALANCE").dimension is None
 
 
-def test_source_from_locations_and_limitation(document: dict) -> None:
+def test_source_from_locations_and_limitation(document: OssieDocument) -> None:
     # DB-backed item: reversed locations + name form a qualified path
-    assert _dataset(document, "BANK_TRANSACTIONS")["source"] == "DEMO_ENV.CLOUD_DEMO.BANK_TRANSACTIONS"
+    assert _dataset(document, "BANK_TRANSACTIONS").source == "DEMO_ENV.CLOUD_DEMO.BANK_TRANSACTIONS"
     # derived item with no locations: source degrades to the bare name
-    assert _dataset(document, "aggregation")["source"] == "aggregation"
+    assert _dataset(document, "aggregation").source == "aggregation"
 
 
-def test_terms_become_ai_context(document: dict) -> None:
+def test_terms_become_ai_context(document: OssieDocument) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
-    assert set(ds["ai_context"]["synonyms"]) >= {"Personal Data", "Finance"}
+    assert set(ds.ai_context.synonyms) >= {"Personal Data", "Finance"}
     email = _field(ds, "EMAIL")
-    assert email["ai_context"]["synonyms"] == ["E-mail"]
-    assert "email" in email["ai_context"]["instructions"].lower()
+    assert email.ai_context.synonyms == ("E-mail",)
+    assert "email" in email.ai_context.instructions.lower()
 
 
-def test_governance_metadata_preserved(document: dict) -> None:
+def test_governance_metadata_preserved(document: OssieDocument) -> None:
     ext = _ext(_dataset(document, "BANK_TRANSACTIONS"))
     assert ext["catalog_item_urn"].startswith("urn:ata:")
     assert "connection_urn" in ext and "stewardship_group_urn" in ext
@@ -123,7 +132,7 @@ def test_governance_metadata_preserved(document: dict) -> None:
 # --- data quality enrichment ---
 
 
-def test_dataset_dq_overall_and_dimensions(document: dict) -> None:
+def test_dataset_dq_overall_and_dimensions(document: OssieDocument) -> None:
     dq = _ext(_dataset(document, "BANK_TRANSACTIONS"))["dq"]
     assert dq["passed"] == 1784 and dq["failed"] == 472
     assert dq["pass_rate_pct"] == 79.1
@@ -137,26 +146,26 @@ def test_dataset_dq_overall_and_dimensions(document: dict) -> None:
     assert dq["active_findings"] == 0
 
 
-def test_dataset_dq_threshold(document: dict) -> None:
+def test_dataset_dq_threshold(document: OssieDocument) -> None:
     # BANK_TRANSACTIONS has a configured overall bar of 75%; 79.1% is above it.
     dq = _ext(_dataset(document, "BANK_TRANSACTIONS"))["dq"]
     assert dq["threshold_pct"] == 75
     assert dq["below_threshold"] is False
 
 
-def test_no_threshold_when_monitor_has_none(document: dict) -> None:
+def test_no_threshold_when_monitor_has_none(document: OssieDocument) -> None:
     # aggregation's monitor has no overall threshold configured.
     dq = _ext(_dataset(document, "aggregation"))["dq"]
     assert "threshold_pct" not in dq and "below_threshold" not in dq
 
 
-def test_field_level_dq(document: dict) -> None:
+def test_field_level_dq(document: OssieDocument) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
     dq = _ext(_field(ds, "TRANSACTION_ID"))["dq"]
     assert dq == {"passed": 2251, "failed": 5, "pass_rate_pct": 99.8}
 
 
-def test_zero_pass_rate_case(document: dict) -> None:
+def test_zero_pass_rate_case(document: OssieDocument) -> None:
     dq = _ext(_dataset(document, "aggregation"))["dq"]
     assert dq["passed"] == 0 and dq["failed"] == 4
     assert dq["pass_rate_pct"] == 0.0
@@ -165,20 +174,19 @@ def test_zero_pass_rate_case(document: dict) -> None:
 def test_no_dq_keys_when_dq_absent(bundles: list[CatalogItemBundle]) -> None:
     b = bundles[0]
     b.dq_results = None  # simulate --no-dq / item without a monitor
-    ds = ataccama_to_ossie([b])["datasets"][0]
+    ds = ataccama_to_ossie([b]).datasets[0]
     assert "dq" not in _ext(ds)
-    assert all("dq" not in _ext(f) for f in ds["fields"])
+    assert all("dq" not in _ext(f) for f in ds.fields)
 
 
 # --- opt-in DQ AI warnings ---
 
 
-def test_ai_warnings_off_by_default(document: dict) -> None:
+def test_ai_warnings_off_by_default(document: OssieDocument) -> None:
     # Default conversion must not inject warnings into ai_context.
     ds = _dataset(document, "BANK_TRANSACTIONS")
-    assert "Data-quality warning" not in (ds.get("ai_context", {}).get("instructions") or "")
-    email = _field(ds, "EMAIL")
-    assert "Data-quality warning" not in email["ai_context"]["instructions"]
+    assert "Data-quality warning" not in _instructions(ds)
+    assert "Data-quality warning" not in _instructions(_field(ds, "EMAIL"))
 
 
 def test_ai_warning_appended_when_below_ataccama_threshold() -> None:
@@ -188,8 +196,8 @@ def test_ai_warning_appended_when_below_ataccama_threshold() -> None:
         dq_results={"overallQuality": {"passedCount": 50, "failedCount": 50}, "overallDqFindings": []},
         dq_threshold_pct=75,
     )
-    ds = ataccama_to_ossie([bundle], dq_ai_warnings=True)["datasets"][0]
-    instr = ds["ai_context"]["instructions"]
+    ds = ataccama_to_ossie([bundle], dq_ai_warnings=True).datasets[0]
+    instr = _instructions(ds)
     assert "Data-quality warning" in instr and "configured 75% quality threshold" in instr
 
 
@@ -197,10 +205,8 @@ def test_no_ai_warning_without_ataccama_signal(bundles: list[CatalogItemBundle])
     # BANK_TRANSACTIONS is above its 75% bar with no active findings; aggregation has no
     # threshold configured. Neither should be flagged — Ataccama is the source of truth.
     doc = ataccama_to_ossie(bundles, dq_ai_warnings=True)
-    bank = _dataset(doc, "BANK_TRANSACTIONS")["ai_context"]["instructions"]
-    assert "Data-quality warning" not in bank
-    agg = (_dataset(doc, "aggregation").get("ai_context") or {}).get("instructions", "")
-    assert "Data-quality warning" not in agg
+    assert "Data-quality warning" not in _instructions(_dataset(doc, "BANK_TRANSACTIONS"))
+    assert "Data-quality warning" not in _instructions(_dataset(doc, "aggregation"))
 
 
 def test_dataset_dq_warning_triggers() -> None:
@@ -229,9 +235,9 @@ def _keyed_bundle(name, primary_keys=None, foreign_keys=None):
 
 def test_primary_key_and_unique_keys() -> None:
     b = _keyed_bundle("line_items", primary_keys=[{"name": "pk", "columns": ["order_id", "line_no"]}])
-    ds = ataccama_to_ossie([b])["datasets"][0]
-    assert ds["primary_key"] == ["order_id", "line_no"]  # composite, order preserved
-    assert ds["unique_keys"] == [["order_id", "line_no"]]
+    ds = ataccama_to_ossie([b]).datasets[0]
+    assert ds.primary_key == ["order_id", "line_no"]  # composite, order preserved
+    assert ds.unique_keys == [["order_id", "line_no"]]
 
 
 def test_relationship_emitted_when_target_in_set() -> None:
@@ -243,13 +249,12 @@ def test_relationship_emitted_when_target_in_set() -> None:
         ],
     )
     doc = ataccama_to_ossie([orders, line_items])
-    rels = doc["relationships"]
-    assert rels == [
-        {"name": "fk_order", "from": "line_items", "to": "orders", "from_columns": ["order_id"], "to_columns": ["id"]}
-    ]
-    # and the whole model is schema-valid with the relationship present
-    schema = json.loads(SCHEMA.read_text())
-    assert not list(Draft202012Validator(schema).iter_errors(doc))
+    (rel,) = doc.relationships
+    assert (rel.name, rel.from_dataset, rel.to) == ("fk_order", "line_items", "orders")
+    assert (rel.from_columns, rel.to_columns) == (["order_id"], ["id"])
+    # the alias 'from' is what reaches the document, and the whole model stays schema-valid
+    assert json.loads(doc.to_ossie_json())["relationships"][0]["from"] == "line_items"
+    assert not _schema_errors(doc)
 
 
 def test_relationship_skipped_when_target_not_in_set() -> None:
@@ -260,7 +265,7 @@ def test_relationship_skipped_when_target_not_in_set() -> None:
         ],
     )
     doc = ataccama_to_ossie([line_items])  # 'orders' not included
-    assert "relationships" not in doc
+    assert doc.relationships is None
 
 
 def test_relationship_names_deduplicated() -> None:
@@ -272,15 +277,15 @@ def test_relationship_names_deduplicated() -> None:
             {"name": "fk", "columns": ["b"], "referenced_table": "orders", "referenced_columns": ["id"]},
         ],
     )
-    rels = ataccama_to_ossie([orders, child])["relationships"]
-    assert [r["name"] for r in rels] == ["fk", "fk_2"]
+    rels = ataccama_to_ossie([orders, child]).relationships
+    assert [r.name for r in rels] == ["fk", "fk_2"]
 
 
-def test_fixture_items_have_no_keys(document: dict) -> None:
+def test_fixture_items_have_no_keys(document: OssieDocument) -> None:
     # BANK_TRANSACTIONS / aggregation have no PK/FK, so no key or relationship output.
-    for ds in document["datasets"]:
-        assert "primary_key" not in ds and "unique_keys" not in ds
-    assert "relationships" not in document
+    for ds in document.datasets:
+        assert ds.primary_key is None and ds.unique_keys is None
+    assert document.relationships is None
 
 
 # --- helper unit tests ---
@@ -321,14 +326,14 @@ def test_below_threshold_flag_true() -> None:
 
 def test_is_time_inferred_from_datatype() -> None:
     attr = CatalogAttribute(urn="urn:ata:t:catalog:catalog-attribute:1", name="created_at", data_type="DATETIME")
-    assert attribute_to_field(attr, terms={}, used=set())["dimension"] == {"is_time": True}
+    assert attribute_to_field(attr, terms={}, used=set()).is_time_dimension() is True
 
 
 def test_duplicate_dataset_names_are_disambiguated() -> None:
     items = [
         CatalogItemBundle(item=CatalogItem(urn=f"urn:ata:t:catalog:catalog-item:{i}", name="Orders")) for i in range(2)
     ]
-    names = [d["name"] for d in ataccama_to_ossie(items)["datasets"]]
+    names = [d.name for d in ataccama_to_ossie(items).datasets]
     assert names == ["Orders", "Orders_2"]
 
 

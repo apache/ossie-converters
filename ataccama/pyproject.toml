@@ -23,8 +23,8 @@ authors = [{name = "Ataccama", email = "support@ataccama.com"}]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "apache-ossie>=0.2.0.dev0",
     "python-dotenv>=1.0.0",
-    "pyyaml>=6.0.1",
     "requests>=2.31.0",
 ]
 
@@ -38,6 +38,11 @@ dev = [
     "pytest>=8.3.5",
     "pytest-cov>=6.0.0",
 ]
+
+# apache-ossie is not yet published to PyPI; resolve it from the in-repo
+# package for now. Remove this block once apache-ossie is published to PyPI.
+[tool.uv.sources]
+apache-ossie = { path = "../ossie/python", editable = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -40,7 +40,6 @@ import os
 import sys
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 
 from ataccama_ossie.ataccama_to_ossie import ataccama_to_ossie
@@ -125,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         dq_ai_warnings=args.dq_ai_warnings,
     )
 
-    text = yaml.dump(document, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    text = document.to_ossie_yaml()
     if args.output == "-":
         sys.stdout.write(text)
     else:
