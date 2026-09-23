@@ -225,23 +225,28 @@ def test_dataset_dq_warning_triggers() -> None:
 # --- keys & relationships ---
 
 
-def _keyed_bundle(name, primary_keys=None, foreign_keys=None):
+def _keyed_bundle(name, primary_key=None, foreign_keys=None):
     return CatalogItemBundle(
         item=CatalogItem(urn=f"urn:ata:t:catalog:catalog-item:{name}", name=name),
-        primary_keys=primary_keys or [],
+        primary_key=primary_key,
         foreign_keys=foreign_keys or [],
     )
 
 
 def test_primary_key_and_unique_keys() -> None:
-    b = _keyed_bundle("line_items", primary_keys=[{"name": "pk", "columns": ["order_id", "line_no"]}])
+    b = _keyed_bundle("line_items", primary_key={"name": "pk", "columns": ["order_id", "line_no"]})
     ds = ataccama_to_ossie([b]).datasets[0]
     assert ds.primary_key == ["order_id", "line_no"]  # composite, order preserved
     assert ds.unique_keys == [["order_id", "line_no"]]
 
 
+def test_no_keys_when_item_has_no_primary_key() -> None:
+    ds = ataccama_to_ossie([_keyed_bundle("events")]).datasets[0]
+    assert ds.primary_key is None and ds.unique_keys is None
+
+
 def test_relationship_emitted_when_target_in_set() -> None:
-    orders = _keyed_bundle("orders", primary_keys=[{"name": "pk", "columns": ["id"]}])
+    orders = _keyed_bundle("orders", primary_key={"name": "pk", "columns": ["id"]})
     line_items = _keyed_bundle(
         "line_items",
         foreign_keys=[

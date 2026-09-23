@@ -158,7 +158,7 @@ Primary/foreign keys are read via the Generic Metadata Entities API (`primaryKey
 `foreignKey`, and their column children) and fetched by default; pass `--no-relationships`
 to skip them.
 
-- **Primary keys** → `dataset.primary_key` (the first key's columns, order preserved) and
+- **Primary key** → `dataset.primary_key` (the key's columns, order preserved) and
   `dataset.unique_keys` (every key's column set). Composite keys are supported.
 - **Foreign keys** → `relationships` (`from`/`to` datasets with paired
   `from_columns`/`to_columns`).

@@ -359,9 +359,9 @@ def bundle_to_dataset(
     item = bundle.item
     name = _unique_name(item.name, used_dataset_names, fallback="dataset")
 
-    # Keys (from the Generic Metadata Entities API). primary_key = the first key's
-    # columns; unique_keys = every key's column set.
-    key_sets = [pk["columns"] for pk in bundle.primary_keys if pk.get("columns")]
+    # Keys (from the Generic Metadata Entities API). primary_key = the key's columns;
+    # unique_keys = every key's column set.
+    primary_key_columns = (bundle.primary_key or {}).get("columns") or None
 
     dataset_dq = _dataset_dq(bundle.dq_results, bundle.dq_threshold_pct)
 
@@ -397,9 +397,8 @@ def bundle_to_dataset(
     return OssieDataset(
         name=name,
         source=build_source(item),
-        # distinct list copies so the YAML has no shared anchors/aliases
-        primary_key=list(key_sets[0]) if key_sets else None,
-        unique_keys=[list(k) for k in key_sets] or None,
+        primary_key=primary_key_columns,
+        unique_keys=[primary_key_columns] if primary_key_columns else None,
         description=flatten_richtext(item.description),
         ai_context=ai_context,
         fields=fields or None,

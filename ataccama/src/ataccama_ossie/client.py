@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import sys
 import time
+import warnings
 from collections.abc import Iterator
 from typing import Any
 
@@ -226,16 +227,22 @@ class AtaccamaClient:
             )
         )
 
-    def get_primary_keys(self, catalog_item_urn: str) -> list[dict]:
-        """Primary keys for a catalog item: [{"name", "columns": [ordered column names]}]."""
-        result: list[dict] = []
+    def get_primary_key(self, catalog_item_urn: str) -> dict | None:
+        """The primary key of a catalog item: {"name", "columns": [ordered column names]}."""
+        keys: list[dict] = []
         for pk in self._entities_by_parent("primaryKey", catalog_item_urn, "name"):
             cols = self._entities_by_parent("primaryKeyColumn", pk["urn"], "name,order")
             cols.sort(key=lambda c: c.get("properties", {}).get("order") or 0)
             names = [c["properties"].get("name") for c in cols if c.get("properties", {}).get("name")]
             if names:
-                result.append({"name": pk.get("properties", {}).get("name"), "columns": names})
-        return result
+                keys.append({"name": pk.get("properties", {}).get("name"), "columns": names})
+        if len(keys) > 1:
+            warnings.warn(
+                f"{catalog_item_urn} reports {len(keys)} primary keys "
+                f"({', '.join(str(k['name']) for k in keys)}); using {keys[0]['name']!r}",
+                stacklevel=2,
+            )
+        return keys[0] if keys else None
 
     def get_foreign_keys(self, catalog_item_urn: str) -> list[dict]:
         """Foreign keys for a catalog item, with the referenced table and columns."""
@@ -291,10 +298,10 @@ class AtaccamaClient:
             if dq_results is not None:
                 dq_threshold_pct = self.get_dq_overall_threshold(catalog_item_urn)
 
-        primary_keys: list[dict] = []
+        primary_key: dict | None = None
         foreign_keys: list[dict] = []
         if with_relationships:
-            primary_keys = self.get_primary_keys(catalog_item_urn)
+            primary_key = self.get_primary_key(catalog_item_urn)
             foreign_keys = self.get_foreign_keys(catalog_item_urn)
 
         return CatalogItemBundle(
@@ -303,6 +310,6 @@ class AtaccamaClient:
             terms=terms,
             dq_results=dq_results,
             dq_threshold_pct=dq_threshold_pct,
-            primary_keys=primary_keys,
+            primary_key=primary_key,
             foreign_keys=foreign_keys,
         )
