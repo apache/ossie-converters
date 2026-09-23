@@ -75,14 +75,13 @@ ataccama-to-ossie --env-file .ataccama.env --urns-file items.txt -o my_model.oss
 ```
 
 ```python
-# Library
+# Library — returns an ossie.OssieDocument from the apache-ossie package
 from ataccama_ossie import AtaccamaClient, ataccama_to_ossie
-import yaml
 
 client = AtaccamaClient(base_url="https://<host>/api", token_url="...", client_id="...", client_secret="...")
 bundles = [client.fetch_bundle(urn) for urn in urns]
 document = ataccama_to_ossie(bundles, model_name="my_model")
-print(yaml.dump(document, sort_keys=False))
+print(document.to_ossie_yaml())
 ```
 
 ## Development
