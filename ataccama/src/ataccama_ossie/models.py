@@ -160,8 +160,8 @@ class CatalogItemBundle:
     dq_results: dict[str, Any] | None = None
     # The monitor's configured overall DQ threshold (0-100), or None if not set.
     dq_threshold_pct: float | None = None
-    # Primary keys: [{"name": str, "columns": [ordered column names]}].
-    primary_keys: list[dict[str, Any]] = field(default_factory=list)
+    # The primary key, or None if the item has none: {"name": str, "columns": [ordered column names]}.
+    primary_key: dict[str, Any] | None = None
     # Foreign keys: [{"name", "columns": [local cols], "referenced_table", "referenced_columns"}].
     foreign_keys: list[dict[str, Any]] = field(default_factory=list)
 
@@ -173,7 +173,7 @@ class CatalogItemBundle:
             terms={urn: Term.from_dict(t) for urn, t in d.get("terms", {}).items()},
             dq_results=d.get("dq_results"),
             dq_threshold_pct=d.get("dq_threshold_pct"),
-            primary_keys=list(d.get("primary_keys", [])),
+            primary_key=d.get("primary_key"),
             foreign_keys=list(d.get("foreign_keys", [])),
         )
 
@@ -185,7 +185,7 @@ class CatalogItemBundle:
             "terms": {urn: _dataclass_to_raw_term(t) for urn, t in self.terms.items()},
             "dq_results": self.dq_results,
             "dq_threshold_pct": self.dq_threshold_pct,
-            "primary_keys": self.primary_keys,
+            "primary_key": self.primary_key,
             "foreign_keys": self.foreign_keys,
         }
 
