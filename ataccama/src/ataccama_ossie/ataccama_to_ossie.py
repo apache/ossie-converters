@@ -351,6 +351,32 @@ def attribute_to_field(
 # --- catalog item -> dataset ---------------------------------------------
 
 
+def _secondary_unique_key_sets(
+    primary_key_columns: list[str] | None, unique_indexes: list[dict[str, Any]]
+) -> list[list[str]]:
+    """Unique indexes other than the primary key, as column sets without repeats.
+
+    A primary key is a unique constraint by definition, and ``dataset.primary_key``
+    already carries it, so restating it in ``unique_keys`` adds nothing -- and Snowflake
+    rejects a semantic view that declares the same columns as both. Every relational
+    engine backs a primary key with a real unique index, so that index does arrive here
+    and has to be filtered out.
+
+    Column order is a property of the index, not of the uniqueness guarantee, so key
+    sets are compared as sets: a unique index on ``(b, a)`` is the same constraint as a
+    primary key on ``(a, b)``. The surviving index keeps its own column order.
+    """
+    seen: set[frozenset[str]] = {frozenset(primary_key_columns)} if primary_key_columns else set()
+    key_sets: list[list[str]] = []
+    for index in unique_indexes:
+        columns = index.get("columns")
+        if not columns or frozenset(columns) in seen:
+            continue
+        seen.add(frozenset(columns))
+        key_sets.append(columns)
+    return key_sets
+
+
 def bundle_to_dataset(
     bundle: CatalogItemBundle,
     used_dataset_names: set[str],
@@ -360,8 +386,9 @@ def bundle_to_dataset(
     name = _unique_name(item.name, used_dataset_names, fallback="dataset")
 
     # Keys (from the Generic Metadata Entities API). primary_key = the key's columns;
-    # unique_keys = every key's column set.
+    # unique_keys = the unique indexes that are not the primary key.
     primary_key_columns = (bundle.primary_key or {}).get("columns") or None
+    unique_key_sets = _secondary_unique_key_sets(primary_key_columns, bundle.unique_indexes)
 
     dataset_dq = _dataset_dq(bundle.dq_results, bundle.dq_threshold_pct)
 
@@ -398,7 +425,7 @@ def bundle_to_dataset(
         name=name,
         source=build_source(item),
         primary_key=primary_key_columns,
-        unique_keys=[primary_key_columns] if primary_key_columns else None,
+        unique_keys=unique_key_sets or None,
         description=flatten_richtext(item.description),
         ai_context=ai_context,
         fields=fields or None,

@@ -244,6 +244,29 @@ class AtaccamaClient:
             )
         return keys[0] if keys else None
 
+    def get_unique_indexes(self, catalog_item_urn: str) -> list[dict]:
+        """Unique indexes of a catalog item: [{"name", "columns": [ordered column names]}].
+
+        Only the columns marked unique are taken: a unique index may also carry included
+        (covering) columns, which are stored in the index but excluded from what it
+        enforces uniqueness on.
+        """
+        result: list[dict] = []
+        for index in self._entities_by_parent("index", catalog_item_urn, "name,unique"):
+            if not index.get("properties", {}).get("unique"):
+                continue
+            cols = self._entities_by_parent("indexColumn", index["urn"], "name,unique,order")
+            cols.sort(key=lambda c: c.get("properties", {}).get("order") or 0)
+            names = [
+                c["properties"].get("name")
+                for c in cols
+                if c.get("properties", {}).get("unique") and c.get("properties", {}).get("name")
+            ]
+            if names:
+                result.append({"name": index.get("properties", {}).get("name"), "columns": names})
+        result.sort(key=lambda i: str(i["name"] or ""))
+        return result
+
     def get_foreign_keys(self, catalog_item_urn: str) -> list[dict]:
         """Foreign keys for a catalog item, with the referenced table and columns."""
         result: list[dict] = []
@@ -299,9 +322,11 @@ class AtaccamaClient:
                 dq_threshold_pct = self.get_dq_overall_threshold(catalog_item_urn)
 
         primary_key: dict | None = None
+        unique_indexes: list[dict] = []
         foreign_keys: list[dict] = []
         if with_relationships:
             primary_key = self.get_primary_key(catalog_item_urn)
+            unique_indexes = self.get_unique_indexes(catalog_item_urn)
             foreign_keys = self.get_foreign_keys(catalog_item_urn)
 
         return CatalogItemBundle(
@@ -311,5 +336,6 @@ class AtaccamaClient:
             dq_results=dq_results,
             dq_threshold_pct=dq_threshold_pct,
             primary_key=primary_key,
+            unique_indexes=unique_indexes,
             foreign_keys=foreign_keys,
         )
