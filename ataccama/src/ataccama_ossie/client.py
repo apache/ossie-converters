@@ -18,22 +18,40 @@
 """Live REST client for the Ataccama ONE public API.
 
 Handles OAuth2 client-credentials auth (tokens are short-lived, ~5 min, so we mint
-and refresh them automatically) and cursor-based pagination (``after``/``size``).
+and refresh them automatically), cursor-based pagination (``after``/``size``), and
+retries while the API rate-limits us.
 """
 
 from __future__ import annotations
 
+import sys
 import time
 from collections.abc import Iterator
 from typing import Any
 
 import requests
+from urllib3.exceptions import InvalidHeader
+from urllib3.util.retry import Retry
 
 from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
 
 DEFAULT_PAGE_SIZE = 200
 # Refresh the token this many seconds before it actually expires.
 TOKEN_EXPIRY_SKEW_S = 30
+TOO_MANY_REQUESTS = 429
+DEFAULT_MAX_RETRIES = 5
+DEFAULT_RETRY_BACKOFF_S = 1.0
+MAX_RETRY_BACKOFF_S = 60.0
+
+
+def _requested_retry_delay(retry_after: str | None) -> float | None:
+    """The delay a Retry-After header asks for, or None if it is absent or invalid."""
+    if retry_after is None:
+        return None
+    try:
+        return Retry().parse_retry_after(retry_after)
+    except InvalidHeader:
+        return None
 
 
 class AtaccamaClient:
@@ -47,6 +65,8 @@ class AtaccamaClient:
         client_secret: str,
         *,
         timeout: float = 30.0,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_backoff_s: float = DEFAULT_RETRY_BACKOFF_S,
         session: requests.Session | None = None,
     ) -> None:
         # base_url is the API root, e.g. https://<host>/api
@@ -55,6 +75,8 @@ class AtaccamaClient:
         self.client_id = client_id
         self.client_secret = client_secret
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_backoff_s = retry_backoff_s
         self._session = session or requests.Session()
         self._token: str | None = None
         self._token_expiry: float = 0.0
@@ -64,7 +86,8 @@ class AtaccamaClient:
     def _access_token(self) -> str:
         if self._token and time.time() < self._token_expiry - TOKEN_EXPIRY_SKEW_S:
             return self._token
-        resp = self._session.post(
+        resp = self._request(
+            "POST",
             self.token_url,
             data={
                 "grant_type": "client_credentials",
@@ -72,25 +95,65 @@ class AtaccamaClient:
                 "client_secret": self.client_secret,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=self.timeout,
+            authenticate=False,
         )
-        resp.raise_for_status()
         payload = resp.json()
-        self._token = payload["access_token"]
+        token = payload["access_token"]
+        self._token = token
         self._token_expiry = time.time() + float(payload.get("expires_in", 300))
-        return self._token
+        return token
 
     # --- low-level HTTP ---
 
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        data: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        authenticate: bool = True,
+    ) -> requests.Response:
+        """Send a request, retrying while the API rate-limits us (HTTP 429)."""
+        attempt = 0
+        while True:
+            request_headers = dict(headers or {})
+            if authenticate:
+                # Minted per attempt: a token can expire while we back off.
+                request_headers["Authorization"] = f"Bearer {self._access_token()}"
+            resp = self._session.request(
+                method,
+                url,
+                params=params,
+                data=data,
+                headers=request_headers,
+                timeout=self.timeout,
+            )
+            if resp.status_code != TOO_MANY_REQUESTS or attempt >= self.max_retries:
+                if resp.status_code == TOO_MANY_REQUESTS:
+                    print(
+                        f"[WARNING] Rate limited by {url}; giving up after {self.max_retries} retries", file=sys.stderr
+                    )
+                resp.raise_for_status()
+                return resp
+            delay = self._retry_delay(resp, attempt=attempt)
+            attempt += 1
+            print(
+                f"[WARNING] Rate limited by {url}; retrying in {delay:.1f}s (retry {attempt} of {self.max_retries})",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+    def _retry_delay(self, resp: requests.Response, *, attempt: int) -> float:
+        """Seconds to wait before retrying: the server's Retry-After, else exponential backoff."""
+        requested_delay = _requested_retry_delay(resp.headers.get("Retry-After"))
+        if requested_delay is None:
+            requested_delay = self.retry_backoff_s * 2**attempt
+        return min(requested_delay, MAX_RETRY_BACKOFF_S)
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        resp = self._session.get(
-            f"{self.base_url}{path}",
-            params=params,
-            headers={"Authorization": f"Bearer {self._access_token()}"},
-            timeout=self.timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        return self._request("GET", f"{self.base_url}{path}", params=params).json()
 
     def _paged(self, path: str, params: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:
         """Iterate every record across pages, following the ``meta.next`` cursor."""
