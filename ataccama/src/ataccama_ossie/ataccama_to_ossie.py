@@ -33,10 +33,23 @@ import json
 import re
 from typing import Any
 
+from ossie import (
+    OssieAIContextObject,
+    OssieCustomExtension,
+    OssieDataset,
+    OssieDialect,
+    OssieDialectExpression,
+    OssieDimension,
+    OssieDocument,
+    OssieExpression,
+    OssieField,
+    OssieRelationship,
+)
+
 from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
 
-OSSIE_VERSION = "0.2.0.dev0"
-VENDOR = "ATACCAMA"
+# todo: Until apache/ossie#629 adds OssieVendor.ATACCAMA and the ossie submodule is bumped past it.
+ATACCAMA_VENDOR_NAME = "ATACCAMA"
 
 # Ataccama semantic data types that represent points in time.
 TIME_DATA_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIME"}
@@ -154,7 +167,7 @@ def build_source(item: CatalogItem) -> str:
     return ".".join(_quote_source_part(part) for part in parts)
 
 
-def _terms_ai_context(term_urns: list[str], terms: dict[str, Term]) -> dict[str, Any] | None:
+def _terms_ai_context(term_urns: list[str], terms: dict[str, Term]) -> OssieAIContextObject | None:
     """Build an ai_context object from assigned business terms."""
     synonyms: list[str] = []
     instructions: list[str] = []
@@ -167,17 +180,17 @@ def _terms_ai_context(term_urns: list[str], terms: dict[str, Term]) -> dict[str,
         desc = flatten_richtext(term.description)
         if desc:
             instructions.append(f"{term.name}: {desc}" if term.name else desc)
-    ctx: dict[str, Any] = {}
-    if instructions:
-        ctx["instructions"] = " ".join(instructions)
-    if synonyms:
-        ctx["synonyms"] = synonyms
-    return ctx or None
+    if not instructions and not synonyms:
+        return None
+    return OssieAIContextObject(
+        instructions=" ".join(instructions) or None,
+        synonyms=tuple(synonyms) or None,
+    )
 
 
-def _ataccama_extension(data: dict[str, Any]) -> dict[str, str]:
+def _ataccama_extension(data: dict[str, Any]) -> OssieCustomExtension:
     """Wrap Ataccama-specific metadata as an Ossie custom_extension entry."""
-    return {"vendor_name": VENDOR, "data": json.dumps(data, sort_keys=True)}
+    return OssieCustomExtension(vendor_name=ATACCAMA_VENDOR_NAME, data=json.dumps(data, sort_keys=True))
 
 
 # --- data quality ---
@@ -284,16 +297,14 @@ def _dataset_dq_warning(dq: dict[str, Any] | None) -> str | None:
     )
 
 
-def _inject_warning(ai_context: dict[str, Any] | None, warning: str | None) -> dict[str, Any] | None:
+def _inject_warning(ai_context: OssieAIContextObject | None, warning: str | None) -> OssieAIContextObject | None:
     """Append a warning to an ai_context object's instructions (creating one if needed)."""
     if not warning:
         return ai_context
     if ai_context is None:
-        return {"instructions": warning}
-    ctx = dict(ai_context) if isinstance(ai_context, dict) else {"instructions": str(ai_context)}
-    existing = ctx.get("instructions")
-    ctx["instructions"] = f"{existing} {warning}" if existing else warning
-    return ctx
+        return OssieAIContextObject(instructions=warning)
+    existing = ai_context.instructions
+    return ai_context.model_copy(update={"instructions": f"{existing} {warning}" if existing else warning})
 
 
 # --- attribute -> field --------------------------------------------------
@@ -304,25 +315,10 @@ def attribute_to_field(
     terms: dict[str, Term],
     used: set[str],
     dq_by_attr: dict[str, dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+) -> OssieField:
     name = _unique_name(attr.name, used, fallback="column")
-    field_obj: dict[str, Any] = {
-        "name": name,
-        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": _sql_identifier(attr.name or name)}]},
-    }
-
-    if attr.data_type and attr.data_type.upper() in TIME_DATA_TYPES:
-        field_obj["dimension"] = {"is_time": True}
-
-    description = flatten_richtext(attr.description) or flatten_richtext(attr.comment)
-    if description:
-        field_obj["description"] = description
-
+    is_time = bool(attr.data_type and attr.data_type.upper() in TIME_DATA_TYPES)
     field_dq = dq_by_attr.get(attr.urn) if dq_by_attr else None
-
-    ai_context = _terms_ai_context([ta.term_urn for ta in attr.term_assignments], terms)
-    if ai_context:
-        field_obj["ai_context"] = ai_context
 
     # Preserve source-system typing and the attribute URN for round-tripping.
     ext_data: dict[str, Any] = {"attribute_urn": attr.urn}
@@ -334,9 +330,22 @@ def attribute_to_field(
         ext_data["term_urns"] = [ta.term_urn for ta in attr.term_assignments]
     if field_dq:
         ext_data["dq"] = field_dq
-    field_obj["custom_extensions"] = [_ataccama_extension(ext_data)]
 
-    return field_obj
+    return OssieField(
+        name=name,
+        expression=OssieExpression(
+            dialects=[
+                OssieDialectExpression(
+                    dialect=OssieDialect.ANSI_SQL,
+                    expression=_sql_identifier(attr.name or name),
+                )
+            ]
+        ),
+        dimension=OssieDimension(is_time=True) if is_time else None,
+        description=flatten_richtext(attr.description) or flatten_richtext(attr.comment),
+        ai_context=_terms_ai_context([ta.term_urn for ta in attr.term_assignments], terms),
+        custom_extensions=[_ataccama_extension(ext_data)],
+    )
 
 
 # --- catalog item -> dataset ---------------------------------------------
@@ -346,37 +355,23 @@ def bundle_to_dataset(
     bundle: CatalogItemBundle,
     used_dataset_names: set[str],
     dq_ai_warnings: bool = False,
-) -> dict[str, Any]:
+) -> OssieDataset:
     item = bundle.item
     name = _unique_name(item.name, used_dataset_names, fallback="dataset")
-
-    dataset: dict[str, Any] = {"name": name, "source": build_source(item)}
 
     # Keys (from the Generic Metadata Entities API). primary_key = the first key's
     # columns; unique_keys = every key's column set.
     key_sets = [pk["columns"] for pk in bundle.primary_keys if pk.get("columns")]
-    if key_sets:
-        # distinct list copies so the YAML has no shared anchors/aliases
-        dataset["primary_key"] = list(key_sets[0])
-        dataset["unique_keys"] = [list(k) for k in key_sets]
-
-    description = flatten_richtext(item.description)
-    if description:
-        dataset["description"] = description
 
     dataset_dq = _dataset_dq(bundle.dq_results, bundle.dq_threshold_pct)
 
     ai_context = _terms_ai_context([ta.term_urn for ta in item.term_assignments], bundle.terms)
     if dq_ai_warnings:
         ai_context = _inject_warning(ai_context, _dataset_dq_warning(dataset_dq))
-    if ai_context:
-        dataset["ai_context"] = ai_context
 
     dq_by_attr = _attribute_dq_index(bundle.dq_results)
     used_field_names: set[str] = set()
     fields = [attribute_to_field(attr, bundle.terms, used_field_names, dq_by_attr) for attr in bundle.attributes]
-    if fields:
-        dataset["fields"] = fields
 
     # Preserve everything with no Ossie-core home so the model round-trips.
     ext_data: dict[str, Any] = {"catalog_item_urn": item.urn}
@@ -398,26 +393,35 @@ def bundle_to_dataset(
         ext_data["aliases"] = item.aliases
     if dataset_dq:
         ext_data["dq"] = dataset_dq
-    dataset["custom_extensions"] = [_ataccama_extension(ext_data)]
 
-    return dataset
+    return OssieDataset(
+        name=name,
+        source=build_source(item),
+        # distinct list copies so the YAML has no shared anchors/aliases
+        primary_key=list(key_sets[0]) if key_sets else None,
+        unique_keys=[list(k) for k in key_sets] or None,
+        description=flatten_richtext(item.description),
+        ai_context=ai_context,
+        fields=fields or None,
+        custom_extensions=[_ataccama_extension(ext_data)],
+    )
 
 
 # --- relationships -------------------------------------------------------
 
 
-def _build_relationships(bundles: list[CatalogItemBundle], datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_relationships(bundles: list[CatalogItemBundle], datasets: list[OssieDataset]) -> list[OssieRelationship]:
     """Derive Ossie relationships from foreign keys.
 
     Only relationships whose target table is also in the converted set are emitted —
     Ossie requires both endpoints of a relationship to exist as datasets, so an FK to a
     table the caller didn't include is skipped (rather than producing an invalid model).
     """
-    dataset_names = {d["name"] for d in datasets}
-    relationships: list[dict[str, Any]] = []
+    dataset_names = {d.name for d in datasets}
+    relationships: list[OssieRelationship] = []
     used_names: set[str] = set()
     for bundle, dataset in zip(bundles, datasets):
-        from_name = dataset["name"]
+        from_name = dataset.name
         for fk in bundle.foreign_keys:
             to_name = fk.get("referenced_table")
             from_cols = fk.get("columns") or []
@@ -428,13 +432,13 @@ def _build_relationships(bundles: list[CatalogItemBundle], datasets: list[dict[s
                 continue  # need a well-formed, equal-cardinality column pairing
             rel_name = _unique_name(fk.get("name") or f"{from_name}_to_{to_name}", used_names, fallback="relationship")
             relationships.append(
-                {
-                    "name": rel_name,
-                    "from": from_name,
-                    "to": to_name,
-                    "from_columns": from_cols,
-                    "to_columns": to_cols,
-                }
+                OssieRelationship(
+                    name=rel_name,
+                    from_dataset=from_name,
+                    to=to_name,
+                    from_columns=from_cols,
+                    to_columns=to_cols,
+                )
             )
     return relationships
 
@@ -448,8 +452,8 @@ def ataccama_to_ossie(
     model_description: str | None = None,
     tenant: str | None = None,
     dq_ai_warnings: bool = False,
-) -> dict[str, Any]:
-    """Convert a list of catalog-item bundles into an Ossie document dict (ready for YAML).
+) -> OssieDocument:
+    """Convert a list of catalog-item bundles into an Ossie document.
 
     When ``dq_ai_warnings`` is set, datasets that Ataccama flags as below quality (below
     the configured threshold, or with active findings) get a natural-language warning
@@ -458,17 +462,14 @@ def ataccama_to_ossie(
     used_dataset_names: set[str] = set()
     datasets = [bundle_to_dataset(b, used_dataset_names, dq_ai_warnings) for b in bundles]
 
-    semantic_model: dict[str, Any] = {"name": model_name, "datasets": datasets}
-    if model_description:
-        semantic_model["description"] = model_description
-
-    relationships = _build_relationships(bundles, datasets)
-    if relationships:
-        semantic_model["relationships"] = relationships
-
     model_ext: dict[str, Any] = {"source": "ataccama-one-catalog"}
     if tenant:
         model_ext["tenant"] = tenant
-    semantic_model["custom_extensions"] = [_ataccama_extension(model_ext)]
 
-    return {"version": OSSIE_VERSION, **semantic_model}
+    return OssieDocument(
+        name=model_name,
+        description=model_description,
+        datasets=datasets,
+        relationships=_build_relationships(bundles, datasets) or None,
+        custom_extensions=[_ataccama_extension(model_ext)],
+    )
