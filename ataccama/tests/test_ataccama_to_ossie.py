@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
-from ossie import OssieDataset, OssieDialect, OssieDialectExpression, OssieDocument, OssieField
+from ossie import OssieDataset, OssieDataType, OssieDialect, OssieDialectExpression, OssieDocument, OssieField
 
 from ataccama_ossie.ataccama_to_ossie import (
     _dataset_dq,
@@ -374,6 +374,35 @@ def test_below_threshold_flag_true() -> None:
     assert dq["pass_rate_pct"] == 60.0
     assert dq["threshold_pct"] == 75
     assert dq["below_threshold"] is True
+
+
+@pytest.mark.parametrize(
+    "data_type,expected",
+    [
+        ("STRING", OssieDataType.STRING),
+        ("INTEGER", OssieDataType.INTEGER),
+        ("LONG", OssieDataType.INTEGER),  # Ossie has no wider integer
+        ("FLOAT", OssieDataType.FLOAT),
+        ("BOOLEAN", OssieDataType.BOOLEAN),
+        ("DATE", OssieDataType.DATE),
+        ("DATETIME", OssieDataType.DATE_TIME),
+        (None, None),
+    ],
+)
+def test_datatype_mapping(data_type, expected) -> None:
+    attr = CatalogAttribute(urn="urn:ata:t:catalog:catalog-attribute:1", name="c", data_type=data_type)
+    assert attribute_to_field(attr, terms={}, used=set()).datatype == expected
+
+
+def test_unrecognized_datatype_is_omitted_with_a_warning() -> None:
+    # Ossie omits datatype when the type is unknown rather than inventing one.
+    attr = CatalogAttribute(urn="urn:ata:t:catalog:catalog-attribute:1", name="payload", data_type="VARIANT")
+
+    with pytest.warns(UserWarning, match=r"'payload' has unrecognized Ataccama dataType 'VARIANT'"):
+        field = attribute_to_field(attr, terms={}, used=set())
+
+    assert field.datatype is None
+    assert _ext(field)["data_type"] == "VARIANT"  # still preserved verbatim in the extension
 
 
 def test_is_time_inferred_from_datatype() -> None:

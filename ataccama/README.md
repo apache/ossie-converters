@@ -105,6 +105,7 @@ Tests run fully offline against a recorded catalog fixture
 | assigned `Term`s | `dataset.ai_context` (`synonyms` + `instructions`) |
 | `CatalogAttribute` | `field` |
 | `CatalogAttribute.name` | `field.name` + quoted `ANSI_SQL` identifier expression |
+| `CatalogAttribute.dataType` | `field.datatype` (omitted, with a warning, for a type outside the mapping) |
 | `CatalogAttribute.dataType` ∈ {DATE, DATETIME, TIMESTAMP, TIME} | `field.dimension.is_time = true` |
 | `CatalogAttribute.description` / `comment` | `field.description` |
 | attribute `Term`s | `field.ai_context` |
