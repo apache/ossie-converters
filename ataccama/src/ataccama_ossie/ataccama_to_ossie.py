@@ -31,12 +31,14 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from typing import Any
 
 from ossie import (
     OssieAIContextObject,
     OssieCustomExtension,
     OssieDataset,
+    OssieDataType,
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
@@ -53,6 +55,20 @@ ATACCAMA_VENDOR_NAME = "ATACCAMA"
 
 # Ataccama semantic data types that represent points in time.
 TIME_DATA_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIME"}
+
+# Ataccama semantic data types, mapped to Ossie's portable vocabulary. Ataccama has no
+# exact-decimal type, so FLOAT becomes the approximate Ossie Float even for columns the
+# source stores as NUMERIC; columnType is preserved in custom_extensions for consumers
+# that need the exact/approximate distinction back.
+OSSIE_DATA_TYPES = {
+    "STRING": OssieDataType.STRING,
+    "INTEGER": OssieDataType.INTEGER,
+    "LONG": OssieDataType.INTEGER,
+    "FLOAT": OssieDataType.FLOAT,
+    "BOOLEAN": OssieDataType.BOOLEAN,
+    "DATE": OssieDataType.DATE,
+    "DATETIME": OssieDataType.DATE_TIME,
+}
 
 # A source segment safe to leave unquoted. This is the intersection of what the engines
 # accept, not any one engine's full grammar: a letter or underscore first (Snowflake,
@@ -310,6 +326,23 @@ def _inject_warning(ai_context: OssieAIContextObject | None, warning: str | None
 # --- attribute -> field --------------------------------------------------
 
 
+def _ossie_datatype(data_type: str | None, field_name: str) -> OssieDataType | None:
+    """Map an Ataccama dataType to Ossie's portable vocabulary.
+
+    Ossie omits ``datatype`` when the type is unknown rather than inventing one, so an
+    Ataccama type outside the mapping warns and yields ``None``.
+    """
+    if not data_type:
+        return None
+    datatype = OSSIE_DATA_TYPES.get(data_type.upper())
+    if datatype is None:
+        warnings.warn(
+            f"Field '{field_name}' has unrecognized Ataccama dataType '{data_type}'; datatype omitted.",
+            stacklevel=2,
+        )
+    return datatype
+
+
 def attribute_to_field(
     attr: CatalogAttribute,
     terms: dict[str, Term],
@@ -342,6 +375,7 @@ def attribute_to_field(
             ]
         ),
         dimension=OssieDimension(is_time=True) if is_time else None,
+        datatype=_ossie_datatype(attr.data_type, name),
         description=flatten_richtext(attr.description) or flatten_richtext(attr.comment),
         ai_context=_terms_ai_context([ta.term_urn for ta in attr.term_assignments], terms),
         custom_extensions=[_ataccama_extension(ext_data)],
