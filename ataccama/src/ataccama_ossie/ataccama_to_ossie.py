@@ -231,7 +231,7 @@ def _quality_summary(overall_quality: dict[str, Any] | None) -> dict[str, Any] |
 
 
 def _dataset_dq(dq_results: dict[str, Any] | None, threshold_pct: float | None = None) -> dict[str, Any] | None:
-    """Build the dataset-level DQ block from a raw DqResults payload.
+    """Build the dataset-level DQ block from a raw DqEvaluationResults payload.
 
     ``threshold_pct`` is the monitor's configured overall pass/fail bar (from the
     monitor config). When present alongside a pass rate, ``below_threshold`` records
@@ -263,16 +263,16 @@ def _dataset_dq(dq_results: dict[str, Any] | None, threshold_pct: float | None =
     # Always report the active-finding count (0 = no open data-quality issues) so the
     # "clean" state is an explicit signal, not just an omission.
     dq["active_findings"] = sum(1 for f in dq_results.get("overallDqFindings", []) or [] if f.get("status") == "ACTIVE")
-    if dq_results.get("processingUrn"):
-        dq["processing_urn"] = dq_results["processingUrn"]
-    if dq_results.get("dqResultsLink"):
-        dq["results_link"] = dq_results["dqResultsLink"]
+    if dq_results.get("workflowUrn"):
+        dq["processing_urn"] = dq_results["workflowUrn"]
+    if dq_results.get("dqEvaluationResultsLink"):
+        dq["results_link"] = dq_results["dqEvaluationResultsLink"]
 
     return dq or None
 
 
 def _attribute_dq_index(dq_results: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    """Map attributeUrn -> quality summary from a raw DqResults payload."""
+    """Map attributeUrn -> quality summary from a raw DqEvaluationResults payload."""
     index: dict[str, dict[str, Any]] = {}
     if not dq_results:
         return index
