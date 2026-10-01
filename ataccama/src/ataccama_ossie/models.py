@@ -156,7 +156,7 @@ class CatalogItemBundle:
     item: CatalogItem
     attributes: list[CatalogAttribute] = field(default_factory=list)
     terms: dict[str, Term] = field(default_factory=dict)
-    # Raw DqResults payload (overall + per-dimension + per-attribute quality), or None.
+    # Raw DqEvaluationResults payload (overall + per-dimension + per-attribute quality), or None.
     dq_results: dict[str, Any] | None = None
     # The monitor's configured overall DQ threshold (0-100), or None if not set.
     dq_threshold_pct: float | None = None

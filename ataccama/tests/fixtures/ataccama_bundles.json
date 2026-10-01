@@ -284,7 +284,7 @@
         }
       },
       "dq_results": {
-        "processingUrn": "urn:ata:example-tenant:data-quality:processing:00000000-0000-0000-0000-000000000001",
+        "workflowUrn": "urn:ata:example-tenant:data-quality:processing:00000000-0000-0000-0000-000000000001",
         "overallQuality": {
           "passedCount": 1784,
           "failedCount": 472
@@ -418,7 +418,7 @@
         ],
         "overallDqFindings": [],
         "catalogItemLink": "https://one.example.com/catalog/catalog-items/11111111-1111-1111-1111-000000000007",
-        "dqResultsLink": "https://one.example.com/entities/catalog-item-dq-configurations/11111111-1111-1111-1111-000000000008/results",
+        "dqEvaluationResultsLink": "https://one.example.com/entities/catalog-item-dq-configurations/11111111-1111-1111-1111-000000000008/results",
         "invalidSamplesLink": "https://one.example.com/entities/catalog-item-dq-configurations/11111111-1111-1111-1111-000000000008/invalid-records",
         "invalidRecordsExportResults": [
           {
@@ -3270,7 +3270,7 @@
       ],
       "terms": {},
       "dq_results": {
-        "processingUrn": "urn:ata:example-tenant:data-quality:processing:00000000-0000-0000-0000-000000000002",
+        "workflowUrn": "urn:ata:example-tenant:data-quality:processing:00000000-0000-0000-0000-000000000002",
         "overallQuality": {
           "passedCount": 0,
           "failedCount": 4
@@ -3321,7 +3321,7 @@
         ],
         "overallDqFindings": [],
         "catalogItemLink": "https://one.example.com/catalog/catalog-items/11111111-1111-1111-1111-000000000010",
-        "dqResultsLink": "https://one.example.com/entities/catalog-item-dq-configurations/11111111-1111-1111-1111-000000000011/results",
+        "dqEvaluationResultsLink": "https://one.example.com/entities/catalog-item-dq-configurations/11111111-1111-1111-1111-000000000011/results",
         "invalidSamplesLink": "https://one.example.com/entities/catalog-item-dq-configurations/11111111-1111-1111-1111-000000000011/invalid-records",
         "invalidRecordsExportResults": [],
         "dqAttributeResults": [

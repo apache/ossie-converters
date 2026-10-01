@@ -178,10 +178,13 @@ def test_raises_after_exhausting_retries(sleeps: list[float]) -> None:
     assert sleeps == [1.0, 2.0]
 
 
-def test_rate_limited_requests_report_no_results(sleeps: list[float]) -> None:
+def test_rate_limited_dq_request_raises_rather_than_reporting_no_results(sleeps: list[float]) -> None:
+    # Only a 404 means "this item has no DQ"; a rate-limited request is a real failure
+    # and must not be mistaken for absent data.
     client = make_client([FakeResponse(200, TOKEN_BODY), rate_limited()], max_retries=0)
 
-    assert client.get_dq_results("item-1") is None
+    with pytest.raises(requests.HTTPError):
+        client.get_dq_results("item-1")
 
 
 def test_token_request_is_retried(sleeps: list[float]) -> None:
@@ -311,3 +314,72 @@ def test_unique_indexes_are_sorted_by_name() -> None:
     )
 
     assert [i["name"] for i in client.get_unique_indexes("item-1")] == ["UX_A", "UX_B"]
+
+
+# --- data quality ---
+
+
+def test_dq_results_use_the_dq_evaluation_resource() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(200, {"workflowUrn": "urn:w"})])
+
+    assert client.get_dq_results("item-1") == {"workflowUrn": "urn:w"}
+
+    session: FakeSession = client._session  # type: ignore[assignment]
+    url = next(r["url"] for r in session.requests if r["method"] == "GET")
+    assert url.endswith("/dq-monitors/primary/processings/latest/results/dq-evaluation")
+
+
+def test_item_without_dq_reports_none() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(404)])
+
+    assert client.get_dq_results("item-1") is None
+
+
+def test_dq_server_error_is_not_mistaken_for_absent_dq() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(500)])
+
+    with pytest.raises(requests.HTTPError):
+        client.get_dq_results("item-1")
+
+
+def _threshold(value: int, severity: str = "WARNING") -> dict[str, Any]:
+    return {"urn": f"urn:ata:t:data-quality:dq-threshold:{value}", "value": value, "severity": severity}
+
+
+def test_overall_threshold_is_read_from_the_keyed_map() -> None:
+    client = make_client(
+        [FakeResponse(200, TOKEN_BODY), FakeResponse(200, {"overallDqThresholds": {"a-uuid": _threshold(80)}})]
+    )
+
+    assert client.get_dq_overall_threshold("item-1") == 80
+
+
+def test_critical_threshold_wins_over_a_stricter_warning() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            FakeResponse(
+                200,
+                {"overallDqThresholds": {"a": _threshold(90), "b": _threshold(60, "CRITICAL")}},
+            ),
+        ]
+    )
+
+    assert client.get_dq_overall_threshold("item-1") == 60
+
+
+def test_strictest_threshold_wins_when_no_critical_one_exists() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            FakeResponse(200, {"overallDqThresholds": {"a": _threshold(75), "b": _threshold(90)}}),
+        ]
+    )
+
+    assert client.get_dq_overall_threshold("item-1") == 90
+
+
+def test_monitor_without_thresholds_reports_none() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(200, {})])
+
+    assert client.get_dq_overall_threshold("item-1") is None

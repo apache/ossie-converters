@@ -39,6 +39,7 @@ from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBund
 DEFAULT_PAGE_SIZE = 200
 # Refresh the token this many seconds before it actually expires.
 TOKEN_EXPIRY_SKEW_S = 30
+NOT_FOUND = 404
 TOO_MANY_REQUESTS = 429
 DEFAULT_MAX_RETRIES = 5
 DEFAULT_RETRY_BACKOFF_S = 1.0
@@ -191,30 +192,40 @@ class AtaccamaClient:
     ) -> dict | None:
         """Latest DQ results for a catalog item's primary monitor.
 
-        Returns the raw ``DqResults`` payload (overall + per-dimension + per-attribute
-        quality), or ``None`` if the item has no monitor / published results.
+        Returns the raw ``DqEvaluationResults`` payload (overall + per-dimension +
+        per-attribute quality), or ``None`` if the item has no monitor / published results.
         """
         path = (
             f"/data-quality/v1/catalog-items/{catalog_item_urn}"
-            f"/dq-monitors/{monitor}/processings/{processing}/dq-results"
+            f"/dq-monitors/{monitor}/processings/{processing}/results/dq-evaluation"
         )
         try:
             return self._get(path)
-        except requests.HTTPError:
-            return None
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == NOT_FOUND:
+                return None
+            raise
 
     def get_dq_overall_threshold(self, catalog_item_urn: str, monitor: str = "primary") -> float | None:
         """The monitor's configured overall DQ threshold (0-100), or None if unset.
 
         This is the pass/fail bar shown in Ataccama, and is only available from the
         monitor-config endpoint (not the DQ results payload).
+
+        A monitor can carry several thresholds at different severities, keyed by
+        threshold id. The DQ block reports one, so CRITICAL wins and otherwise the
+        strictest bar does, leaving the reported verdict unable to understate.
         """
         try:
             mon = self._get(f"/data-quality/v1/catalog-items/{catalog_item_urn}/dq-monitors/{monitor}")
         except requests.HTTPError:
             return None
-        thresholds = mon.get("overallDqThresholds") or []
-        return thresholds[0].get("value") if thresholds else None
+        thresholds = [
+            (threshold.get("severity") == "CRITICAL", threshold["value"])
+            for threshold in (mon.get("overallDqThresholds") or {}).values()
+            if isinstance(threshold, dict) and threshold.get("value") is not None
+        ]
+        return max(thresholds)[1] if thresholds else None
 
     # --- generic metadata entities (keys & relationships) ---
 
