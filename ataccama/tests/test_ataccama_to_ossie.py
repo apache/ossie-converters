@@ -29,7 +29,15 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
-from ossie import OssieDataset, OssieDataType, OssieDialect, OssieDialectExpression, OssieDocument, OssieField
+from ossie import (
+    OssieAIContextObject,
+    OssieDataset,
+    OssieDataType,
+    OssieDialect,
+    OssieDialectExpression,
+    OssieDocument,
+    OssieField,
+)
 
 from ataccama_ossie.ataccama_to_ossie import (
     _dataset_dq,
@@ -121,6 +129,29 @@ def test_terms_become_ai_context(document: OssieDocument) -> None:
     email = _field(ds, "EMAIL")
     assert email.ai_context.synonyms == ("E-mail",)
     assert "email" in email.ai_context.instructions.lower()
+
+
+def test_ai_context_is_an_object_by_default(document: OssieDocument) -> None:
+    assert isinstance(_dataset(document, "BANK_TRANSACTIONS").ai_context, OssieAIContextObject)
+
+
+def test_flat_ai_context_emits_strings(bundles: list[CatalogItemBundle]) -> None:
+    document = ataccama_to_ossie(bundles, model_name="test_model", flat_ai_context=True)
+    ds = _dataset(document, "BANK_TRANSACTIONS")
+    assert isinstance(ds.ai_context, str)
+    assert "Synonyms: " in ds.ai_context
+    email = _field(ds, "EMAIL")
+    assert isinstance(email.ai_context, str)
+    assert "email" in email.ai_context.lower()
+    assert email.ai_context.endswith("Synonyms: E-mail.")
+    # the string branch of the schema's oneOf is just as valid as the object branch
+    assert not _schema_errors(document)
+
+
+def test_flat_ai_context_keeps_absent_context_absent(bundles: list[CatalogItemBundle]) -> None:
+    document = ataccama_to_ossie(bundles, flat_ai_context=True)
+    untermed = _field(_dataset(document, "BANK_TRANSACTIONS"), "TRANSACTION_ID")
+    assert untermed.ai_context is None
 
 
 def test_governance_metadata_preserved(document: OssieDocument) -> None:
