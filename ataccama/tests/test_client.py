@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from itertools import islice
 from typing import Any
 
 import pytest
@@ -26,6 +27,7 @@ import requests
 
 from ataccama_ossie import client as client_module
 from ataccama_ossie.client import MAX_RETRY_BACKOFF_S, AtaccamaClient
+from ataccama_ossie.models import CatalogItem
 
 TOKEN_BODY = {"access_token": "token-1", "expires_in": 300}
 
@@ -314,6 +316,174 @@ def test_unique_indexes_are_sorted_by_name() -> None:
     )
 
     assert [i["name"] for i in client.get_unique_indexes("item-1")] == ["UX_A", "UX_B"]
+
+
+# --- filtering catalog items ---
+
+CONNECTION = "urn:ata:t:processing:connection:c1"
+SOURCE = "urn:ata:t:catalog:source:s1"
+LOCATION = "urn:ata:t:catalog:location:l1"
+
+
+def _items_page(*names: str, next_cursor: str | None = None, total: int | None = None) -> FakeResponse:
+    data = [{"urn": f"urn:ata:t:catalog:catalog-item:{n}", "name": n} for n in names]
+    meta: dict[str, Any] = {"total": len(names) if total is None else total}
+    if next_cursor:
+        meta["next"] = next_cursor
+    return FakeResponse(200, {"data": data, "meta": meta})
+
+
+def _filter_request(client: AtaccamaClient) -> dict[str, Any]:
+    session: FakeSession = client._session  # type: ignore[assignment]
+    return next(r for r in session.requests if r["method"] == "POST" and "filter" in r["url"])
+
+
+def test_filtering_by_one_criterion_sends_a_bare_clause() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _items_page("customers")])
+
+    assert [i.name for i in client.find_catalog_items(source_urns=[SOURCE])] == ["customers"]
+    assert _filter_request(client)["json"] == {"filter": {"source": {"urn": {"in": [SOURCE]}}}}
+
+
+def test_several_criteria_are_combined_with_or() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _items_page("customers")])
+
+    list(
+        client.find_catalog_items(
+            catalog_item_urns=["urn:ata:t:catalog:catalog-item:a"],
+            connection_urns=[CONNECTION],
+            location_urns=[LOCATION],
+        )
+    )
+
+    assert _filter_request(client)["json"] == {
+        "filter": {
+            "or": [
+                {"urn": {"in": ["urn:ata:t:catalog:catalog-item:a"]}},
+                {"connection": {"urn": {"in": [CONNECTION]}}},
+                {"locations": {"any": {"urn": {"in": [LOCATION]}}}},
+            ]
+        }
+    }
+
+
+def test_several_urns_of_one_kind_become_a_single_in_list() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _items_page("customers")])
+
+    list(client.find_catalog_items(source_urns=[SOURCE, "urn:ata:t:catalog:source:s2"]))
+
+    assert _filter_request(client)["json"] == {
+        "filter": {"source": {"urn": {"in": [SOURCE, "urn:ata:t:catalog:source:s2"]}}}
+    }
+
+
+def test_filter_request_asks_for_the_largest_page_the_endpoint_allows() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _items_page("customers")])
+
+    list(client.find_catalog_items(source_urns=[SOURCE]))
+
+    request = _filter_request(client)
+    assert request["url"].endswith("/catalog/v1/catalog-items/filter")
+    assert request["params"] == {"include": "effectiveStewardship", "size": 100}
+
+
+def test_attribute_and_entity_listings_ask_for_the_largest_page_the_api_allows() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _page(), _page()])
+
+    client.get_attributes("item-1")
+    client.get_primary_key("item-1")
+
+    session: FakeSession = client._session  # type: ignore[assignment]
+    assert [r["params"]["size"] for r in session.requests if r["method"] == "GET"] == [100, 100]
+
+
+def test_filtering_follows_the_cursor_across_pages() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _items_page("customers", next_cursor="MQ==", total=2),
+            _items_page("orders", total=2),
+        ]
+    )
+
+    assert [i.name for i in client.find_catalog_items(source_urns=[SOURCE])] == ["customers", "orders"]
+
+
+def test_the_total_is_known_before_any_item_is_consumed() -> None:
+    # The count comes from the server, so a caller can size the run up front rather than
+    # gathering every item to find out how many there are.
+    client = make_client([FakeResponse(200, TOKEN_BODY), _items_page("customers", "orders", total=57)])
+
+    results = client.find_catalog_items(source_urns=[SOURCE])
+
+    assert results.total == 57
+
+
+def test_only_the_first_page_is_read_up_front() -> None:
+    # Page one is what carries the total; the rest wait until they are consumed, so
+    # enrichment can start without paging the whole catalog first.
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _items_page("customers", "orders", next_cursor="MQ==", total=3),
+            _items_page("invoices", total=3),
+        ]
+    )
+
+    results = client.find_catalog_items(source_urns=[SOURCE])
+
+    session: FakeSession = client._session  # type: ignore[assignment]
+    assert len([r for r in session.requests if "filter" in r["url"]]) == 1
+    assert [i.name for i in islice(results, 2)] == ["customers", "orders"]
+    assert len([r for r in session.requests if "filter" in r["url"]]) == 1
+
+
+def test_an_empty_result_reports_a_total_of_zero() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _items_page()])
+
+    results = client.find_catalog_items(source_urns=[SOURCE])
+
+    assert results.total == 0
+    assert list(results) == []
+
+
+def test_filtering_without_any_urn_is_refused_without_a_request() -> None:
+    client = make_client([])
+
+    with pytest.raises(ValueError, match="at least one"):
+        client.find_catalog_items()
+
+    session: FakeSession = client._session  # type: ignore[assignment]
+    assert session.requests == []
+
+
+def test_stewardship_is_requested_when_reading_one_catalog_item() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(200, {"urn": "item-1", "name": "customers"})])
+
+    client.get_catalog_item("item-1")
+
+    session: FakeSession = client._session  # type: ignore[assignment]
+    request = next(r for r in session.requests if r["method"] == "GET")
+    assert request["params"] == {"include": "effectiveStewardship"}
+
+
+def test_enriching_an_already_fetched_item_skips_the_catalog_item_request() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(),  # attributes
+            FakeResponse(404),  # dq results
+            _page(),  # primary keys
+            _page(),  # indexes
+            _page(),  # foreign keys
+        ]
+    )
+
+    bundle = client.fetch_bundle_for(CatalogItem(urn="item-1", name="customers"))
+
+    assert bundle.item.name == "customers"
+    session: FakeSession = client._session  # type: ignore[assignment]
+    assert not any(r["url"].endswith("/catalog-items/item-1") for r in session.requests)
 
 
 # --- data quality ---

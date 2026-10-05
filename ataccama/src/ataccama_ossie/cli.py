@@ -17,7 +17,10 @@
 
 """CLI: import selected Ataccama catalog items into an Ossie semantic model.
 
-Scope is defined by explicit catalog-item URNs (``--urn`` repeated, or ``--urns-file``).
+Scope is defined by explicit catalog-item URNs (``--urn`` repeated, or ``--urns-file``)
+and/or by connection, source, and location URNs. The groups are unioned, and a location
+covers everything in its subtree. It's recommended to not combine catalog items from
+multiple sources to avoid name clashes.
 
 Configuration is read from environment variables (optionally loaded from an env file
 via ``--env-file``):
@@ -38,12 +41,15 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Iterator
+from itertools import islice
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from ataccama_ossie.ataccama_to_ossie import ataccama_to_ossie
 from ataccama_ossie.client import AtaccamaClient
+from ataccama_ossie.models import CatalogItem
 
 REQUIRED_VARS = ("ATACCAMA_BASE_URL", "ATACCAMA_TOKEN_URL", "ATACCAMA_CLIENT_ID", "ATACCAMA_CLIENT_SECRET")
 
@@ -66,10 +72,51 @@ def _collect_urns(args: argparse.Namespace) -> list[str]:
     return [u for u in urns if not (u in seen or seen.add(u))]
 
 
+def _any_scope_urn(args: argparse.Namespace, requested_urns: list[str]) -> str:
+    """Any URN the run was scoped by; they all carry the tenant in the same position."""
+    return [*requested_urns, *(args.connection_urn or []), *(args.source_urn or []), *(args.location_urn or [])][0]
+
+
+def _reporting_progress(items: Iterator[CatalogItem], total: int, seen: list[str]) -> Iterator[CatalogItem]:
+    """Announce each item before it is enriched, and record what the filter returned."""
+    for position, item in enumerate(items, start=1):
+        seen.append(item.urn)
+        print(f"Fetching {position}/{total} {item.urn} ...", file=sys.stderr)
+        yield item
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or more, got {number}")
+    return number
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Import Ataccama ONE catalog items into an Ossie semantic model.")
     parser.add_argument("--urn", action="append", help="Catalog-item URN to convert (repeatable).")
     parser.add_argument("--urns-file", help="File with one catalog-item URN per line.")
+    parser.add_argument(
+        "--connection-urn",
+        action="append",
+        help="Convert every catalog item on this connection (repeatable).",
+    )
+    parser.add_argument(
+        "--source-urn",
+        action="append",
+        help="Convert every catalog item in this source (repeatable).",
+    )
+    parser.add_argument(
+        "--location-urn",
+        action="append",
+        help="Convert every catalog item under this location, anywhere in its subtree (repeatable).",
+    )
+    parser.add_argument(
+        "--max-items",
+        type=_positive_int,
+        help="Convert at most this many catalog items, for sampling a large source. "
+        "Extra matches are left out with a warning.",
+    )
     parser.add_argument("--model-name", default="ataccama_model", help="Ossie semantic model name.")
     parser.add_argument("--model-description", default=None, help="Ossie semantic model description.")
     parser.add_argument("--output", "-o", default="-", help="Output YAML path ('-' for stdout).")
@@ -102,9 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.env_file:
         load_dotenv(args.env_file, override=True)
 
-    urns = _collect_urns(args)
-    if not urns:
-        parser.error("provide at least one catalog-item URN via --urn or --urns-file")
+    requested_urns = _collect_urns(args)
+    if not (requested_urns or args.connection_urn or args.source_urn or args.location_urn):
+        parser.error("provide a scope: --urn/--urns-file, or --connection-urn/--source-urn/--location-urn")
 
     missing = [v for v in REQUIRED_VARS if not os.environ.get(v)]
     if missing:
@@ -117,19 +164,45 @@ def main(argv: list[str] | None = None) -> int:
         client_secret=os.environ["ATACCAMA_CLIENT_SECRET"],
     )
 
-    bundles = []
-    for urn in urns:
-        print(f"Fetching {urn} ...", file=sys.stderr)
-        bundles.append(client.fetch_bundle(urn, with_dq=not args.no_dq, with_relationships=not args.no_relationships))
+    print("Finding catalog items ...", file=sys.stderr)
+    # Every scope URN is a filter criterion, so one that matches nothing simply contributes
+    # nothing -- as true of a catalog item as of a source. Only an empty result is an error.
+    results = client.find_catalog_items(
+        catalog_item_urns=requested_urns,
+        connection_urns=args.connection_urn or [],
+        source_urns=args.source_urn or [],
+        location_urns=args.location_urn or [],
+    )
+    if not results.total:
+        parser.error("no catalog items match the given scope")
+
+    converting = results.total if args.max_items is None else min(results.total, args.max_items)
+    if converting < results.total:
+        print(
+            f"[WARNING] {results.total} catalog items match; converting the first {converting}. "
+            f"Relationships may be incomplete, as foreign keys pointing outside the converted "
+            f"set are dropped.",
+            file=sys.stderr,
+        )
+
+    returned_urns: list[str] = []
+    bundles = (
+        client.fetch_bundle_for(item, with_dq=not args.no_dq, with_relationships=not args.no_relationships)
+        for item in islice(_reporting_progress(results.items, converting, returned_urns), converting)
+    )
 
     document = ataccama_to_ossie(
         bundles,
         model_name=args.model_name,
         model_description=args.model_description,
-        tenant=_tenant_from_urn(urns[0]),
+        tenant=_tenant_from_urn(_any_scope_urn(args, requested_urns)),
         dq_ai_warnings=args.dq_ai_warnings,
         flat_ai_context=args.flat_ai_context,
     )
+
+    absent = [urn for urn in requested_urns if urn not in set(returned_urns)]
+    if absent and converting == results.total:
+        print(f"[WARNING] No catalog item matched: {', '.join(absent)}", file=sys.stderr)
 
     text = document.to_ossie_yaml()
     if args.output == "-":

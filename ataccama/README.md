@@ -34,9 +34,14 @@ custom extensions.
 
 - **Direction:** Ataccama → Ossie (import only). See [Limitations](#limitations) for why
   export (Ossie → Ataccama) is not provided.
-- **Input:** explicit catalog-item URNs. Ataccama catalogs are large (tens of thousands
-  of items, many of which are BI artifacts rather than tables), so the converter is
-  intentionally scoped to the items you name rather than crawling everything.
+- **Input:** explicit catalog-item URNs, and/or a connection, source, or location filter.
+  Ataccama catalogs are large (tens of thousands of items, many of which are BI artifacts
+  rather than tables), so the converter is always scoped rather than crawling everything —
+  but the filter lets you take a whole source without naming every table in it. Every
+  scoping flag is a filter criterion and they are unioned: a location covers everything in
+  its subtree, and a URN that matches nothing contributes nothing rather than failing the
+  run (a named catalog item that matched nothing is reported as a warning, since a typo
+  would otherwise quietly shrink the model). Only an empty result is an error.
 - **Data access:** a live REST client that authenticates via OAuth2 client-credentials
   (tokens are short-lived and refreshed automatically) and follows the catalog API's
   cursor pagination.
@@ -73,6 +78,25 @@ ataccama-to-ossie --env-file .ataccama.env --urn <urn> --dq-ai-warnings -o my_mo
 # or supply a file of URNs (one per line)
 ataccama-to-ossie --env-file .ataccama.env --urns-file items.txt -o my_model.ossie.yaml
 
+# every catalog item in a source, without naming each one
+ataccama-to-ossie --env-file .ataccama.env \
+    --source-urn urn:ata:<tenant>:catalog:source:<id> -o my_model.ossie.yaml
+
+# the same for a connection, or for everything under a location (its whole subtree,
+# so a database or schema URN brings in every item beneath it)
+ataccama-to-ossie --env-file .ataccama.env \
+    --connection-urn urn:ata:<tenant>:processing:connection:<id> -o my_model.ossie.yaml
+ataccama-to-ossie --env-file .ataccama.env \
+    --location-urn urn:ata:<tenant>:catalog:location:<id> -o my_model.ossie.yaml
+
+# scopes are unioned, so filters combine with each other and with named items
+ataccama-to-ossie --env-file .ataccama.env \
+    --source-urn <source-urn> --urn <catalog-item-urn> -o my_model.ossie.yaml
+
+# sample a large source: converts the first 20 matches and warns that the rest were
+# left out (it truncates rather than failing, so you need not know the count up front)
+ataccama-to-ossie --env-file .ataccama.env --source-urn <source-urn> --max-items 20 -o sample.ossie.yaml
+
 # compatibility: emit ai_context as plain strings instead of objects
 # (both are valid Ossie, but e.g. Snowflake's parser only accepts the string form)
 ataccama-to-ossie --env-file .ataccama.env --urn <urn> --flat-ai-context -o my_model.ossie.yaml
@@ -86,6 +110,14 @@ client = AtaccamaClient(base_url="https://<host>/api", token_url="...", client_i
 bundles = [client.fetch_bundle(urn) for urn in urns]
 document = ataccama_to_ossie(bundles, model_name="my_model")
 print(document.to_ossie_yaml())
+
+# Filtering: find_catalog_items returns whole catalog items, so fetch_bundle_for enriches
+# them without a second request each. Only the first page is read up front -- enough for
+# .total -- and the rest stream, so enrichment starts immediately. ataccama_to_ossie takes
+# any iterable, so each bundle is released once its dataset is built.
+results = client.find_catalog_items(source_urns=["urn:ata:<tenant>:catalog:source:<id>"])
+print(f"{results.total} catalog items match")
+document = ataccama_to_ossie((client.fetch_bundle_for(i) for i in results), model_name="my_model")
 ```
 
 ## Development
@@ -201,3 +233,13 @@ is an **analytics semantic model**. Some Ossie constructs therefore have no sour
   attributes, or relationships.
 - Items with no catalogued attributes (e.g. some dashboards/reports) produce a dataset
   with no `fields`.
+- **Breadth costs time.** Only the catalog items themselves come back in bulk (the filter
+  endpoint returns them whole, ~100 per request). Attributes, terms, DQ results and keys
+  have no batch endpoint, so each item costs its own round-trips, and a broad filter is slow
+  in proportion to what it matches. Items are streamed, so enrichment starts on the first
+  page rather than after the whole scope has been paged through, but the finished model is
+  still held in memory before it is written — relationships depend on every dataset name,
+  so the document cannot be emitted incrementally. `--max-items` bounds both.
+- **A narrowed scope narrows relationships.** Foreign keys pointing outside the converted
+  set are dropped, since Ossie requires both endpoints of a relationship to exist. This
+  applies to any scoping, `--max-items` included.
