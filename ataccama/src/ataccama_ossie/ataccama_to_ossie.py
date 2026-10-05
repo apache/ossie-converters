@@ -570,6 +570,7 @@ def ataccama_to_ossie(
     tenant: str | None = None,
     dq_ai_warnings: bool = False,
     flat_ai_context: bool = False,
+    ossie_version: str | None = None,
 ) -> OssieDocument:
     """Convert catalog-item bundles into an Ossie document.
 
@@ -580,6 +581,11 @@ def ataccama_to_ossie(
     When ``flat_ai_context`` is set, every ``ai_context`` is emitted as a plain string
     instead of an object. Both forms are valid Ossie, but some consumers (e.g. Snowflake)
     only accept the string form.
+
+    ``ossie_version`` stamps a different spec version on the document, for consumers
+    pinned to a released spec that reject this repo's in-development version. The Ossie
+    schema pins the version, so an overridden document does not validate against it --
+    hence the warning.
     """
     used_dataset_names: set[str] = set()
     datasets: list[OssieDataset] = []
@@ -600,4 +606,12 @@ def ataccama_to_ossie(
         relationships=_build_relationships(foreign_keys_by_dataset, {d.name for d in datasets}) or None,
         custom_extensions=[_ataccama_extension(model_ext)],
     )
+    if ossie_version and ossie_version != document.version:
+        warnings.warn(
+            f"Stamping Ossie version '{ossie_version}' instead of '{document.version}'. "
+            "The Ossie schema pins the version, so this document will not validate "
+            "against it.",
+            stacklevel=2,
+        )
+        document = document.model_copy(update={"version": ossie_version})
     return _flatten_ai_contexts(document) if flat_ai_context else document
