@@ -24,6 +24,7 @@ rich DQ results) and aggregation (a derived output with no locations and a 0% DQ
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -152,6 +153,30 @@ def test_flat_ai_context_keeps_absent_context_absent(bundles: list[CatalogItemBu
     document = ataccama_to_ossie(bundles, flat_ai_context=True)
     untermed = _field(_dataset(document, "BANK_TRANSACTIONS"), "TRANSACTION_ID")
     assert untermed.ai_context is None
+
+
+def test_document_stamps_the_converters_ossie_version(document: OssieDocument) -> None:
+    assert document.version == "0.2.0.dev0"
+    assert not _schema_errors(document)
+
+
+def test_ossie_version_override_warns_and_leaves_the_document_schema_invalid(
+    bundles: list[CatalogItemBundle],
+) -> None:
+    with pytest.warns(UserWarning, match=r"Stamping Ossie version '0\.1\.1'"):
+        document = ataccama_to_ossie(bundles, ossie_version="0.1.1")
+
+    assert document.version == "0.1.1"
+    # The schema pins the version, so the override is knowingly out of spec.
+    assert any("0.2.0.dev0" in error for error in _schema_errors(document))
+
+
+def test_ossie_version_matching_the_default_is_not_a_warning(bundles: list[CatalogItemBundle]) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        document = ataccama_to_ossie(bundles, ossie_version="0.2.0.dev0")
+
+    assert document.version == "0.2.0.dev0"
 
 
 def test_governance_metadata_preserved(document: OssieDocument) -> None:
