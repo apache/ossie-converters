@@ -19,7 +19,7 @@
 
 Handles OAuth2 client-credentials auth (tokens are short-lived, ~5 min, so we mint
 and refresh them automatically), cursor-based pagination (``after``/``size``), and
-retries while the API rate-limits us.
+retries while the API rate-limits us or answers with a transient gateway error.
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ CATALOG_ITEM_INCLUDES = "effectiveStewardship"
 TOKEN_EXPIRY_SKEW_S = 30
 NOT_FOUND = 404
 TOO_MANY_REQUESTS = 429
+RETRYABLE_STATUSES = frozenset({TOO_MANY_REQUESTS, 502, 503, 504})
 DEFAULT_MAX_RETRIES = 5
 DEFAULT_RETRY_BACKOFF_S = 1.0
 MAX_RETRY_BACKOFF_S = 60.0
@@ -74,6 +75,11 @@ class CatalogItemResults:
 
     def __iter__(self) -> Iterator[CatalogItem]:
         return self.items
+
+
+def _retry_reason(status_code: int) -> str:
+    """How to describe a retryable response, so the warning says what actually happened."""
+    return "Rate limited by" if status_code == TOO_MANY_REQUESTS else f"HTTP {status_code} from"
 
 
 def _catalog_items(pages: Iterator[dict[str, Any]]) -> Iterator[CatalogItem]:
@@ -181,17 +187,20 @@ class AtaccamaClient:
                 headers=request_headers,
                 timeout=self.timeout,
             )
-            if resp.status_code != TOO_MANY_REQUESTS or attempt >= self.max_retries:
-                if resp.status_code == TOO_MANY_REQUESTS:
+            if resp.status_code not in RETRYABLE_STATUSES or attempt >= self.max_retries:
+                if resp.status_code in RETRYABLE_STATUSES:
                     print(
-                        f"[WARNING] Rate limited by {url}; giving up after {self.max_retries} retries", file=sys.stderr
+                        f"[WARNING] {_retry_reason(resp.status_code)} {url}; "
+                        f"giving up after {self.max_retries} retries",
+                        file=sys.stderr,
                     )
                 resp.raise_for_status()
                 return resp
             delay = self._retry_delay(resp, attempt=attempt)
             attempt += 1
             print(
-                f"[WARNING] Rate limited by {url}; retrying in {delay:.1f}s (retry {attempt} of {self.max_retries})",
+                f"[WARNING] {_retry_reason(resp.status_code)} {url}; "
+                f"retrying in {delay:.1f}s (retry {attempt} of {self.max_retries})",
                 file=sys.stderr,
             )
             time.sleep(delay)
