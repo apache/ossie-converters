@@ -100,6 +100,12 @@ ataccama-to-ossie --env-file .ataccama.env --source-urn <source-urn> --max-items
 # compatibility: emit ai_context as plain strings instead of objects
 # (both are valid Ossie, but e.g. Snowflake's parser only accepts the string form)
 ataccama-to-ossie --env-file .ataccama.env --urn <urn> --flat-ai-context -o my_model.ossie.yaml
+
+# compatibility: stamp a released spec version instead of this repo's in-development one
+# (e.g. Snowflake rejects 0.2.0.dev0). The schema pins the version, so the result is
+# deliberately out of spec and will not pass validation -- the converter warns.
+ataccama-to-ossie --env-file .ataccama.env --urn <urn> \
+    --flat-ai-context --ossie-version 0.1.1 -o my_model.ossie.yaml
 ```
 
 ```python

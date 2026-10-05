@@ -144,6 +144,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Emit ai_context as plain strings instead of objects. Both forms are valid "
         "Ossie, but some consumers (e.g. Snowflake) only accept strings.",
     )
+    parser.add_argument(
+        "--ossie-version",
+        default=None,
+        help="Stamp a different Ossie spec version on the document, for consumers pinned "
+        "to a released spec (e.g. Snowflake, which rejects this repo's in-development "
+        "version). The schema pins the version, so the result will not validate against it.",
+    )
     args = parser.parse_args(argv)
 
     if args.env_file:
@@ -198,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         tenant=_tenant_from_urn(_any_scope_urn(args, requested_urns)),
         dq_ai_warnings=args.dq_ai_warnings,
         flat_ai_context=args.flat_ai_context,
+        ossie_version=args.ossie_version,
     )
 
     absent = [urn for urn in requested_urns if urn not in set(returned_urns)]
