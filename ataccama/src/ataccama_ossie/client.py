@@ -27,7 +27,9 @@ from __future__ import annotations
 import sys
 import time
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
+from itertools import chain
 from typing import Any
 
 import requests
@@ -36,7 +38,10 @@ from urllib3.util.retry import Retry
 
 from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
 
-DEFAULT_PAGE_SIZE = 200
+# The API caps every listing endpoint at this many records per page.
+MAX_PAGE_SIZE = 100
+# Stewardship is resolved only on request, and the converter emits it when present.
+CATALOG_ITEM_INCLUDES = "effectiveStewardship"
 # Refresh the token this many seconds before it actually expires.
 TOKEN_EXPIRY_SKEW_S = 30
 NOT_FOUND = 404
@@ -54,6 +59,48 @@ def _requested_retry_delay(retry_after: str | None) -> float | None:
         return Retry().parse_retry_after(retry_after)
     except InvalidHeader:
         return None
+
+
+@dataclass
+class CatalogItemResults:
+    """A filter's matches: how many there are, and the items themselves as they arrive.
+
+    ``total`` is the server's own count across every page, so a caller knows the size of
+    the run before enriching anything, without having to gather the items first.
+    """
+
+    total: int
+    items: Iterator[CatalogItem]
+
+    def __iter__(self) -> Iterator[CatalogItem]:
+        return self.items
+
+
+def _catalog_items(pages: Iterator[dict[str, Any]]) -> Iterator[CatalogItem]:
+    for page in pages:
+        for record in page.get("data", []):
+            yield CatalogItem.from_dict(record)
+
+
+def _catalog_item_filter_criteria(
+    *,
+    catalog_item_urns: Sequence[str],
+    connection_urns: Sequence[str],
+    source_urns: Sequence[str],
+    location_urns: Sequence[str],
+) -> list[dict[str, Any]]:
+    """One ``CatalogItemFilter`` clause per populated group, ready to be OR-ed.
+
+    ``locations.any`` matches anywhere in the hierarchy, so a location clause covers the
+    whole subtree rather than only the items directly under it.
+    """
+    groups = [
+        ({"urn": {"in": list(catalog_item_urns)}}, catalog_item_urns),
+        ({"connection": {"urn": {"in": list(connection_urns)}}}, connection_urns),
+        ({"source": {"urn": {"in": list(source_urns)}}}, source_urns),
+        ({"locations": {"any": {"urn": {"in": list(location_urns)}}}}, location_urns),
+    ]
+    return [clause for clause, urns in groups if urns]
 
 
 class AtaccamaClient:
@@ -114,6 +161,7 @@ class AtaccamaClient:
         *,
         params: dict[str, Any] | None = None,
         data: dict[str, str] | None = None,
+        json_body: Any | None = None,
         headers: dict[str, str] | None = None,
         authenticate: bool = True,
     ) -> requests.Response:
@@ -129,6 +177,7 @@ class AtaccamaClient:
                 url,
                 params=params,
                 data=data,
+                json=json_body,
                 headers=request_headers,
                 timeout=self.timeout,
             )
@@ -157,24 +206,89 @@ class AtaccamaClient:
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._request("GET", f"{self.base_url}{path}", params=params).json()
 
-    def _paged(self, path: str, params: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:
-        """Iterate every record across pages, following the ``meta.next`` cursor."""
+    def _post(self, path: str, json_body: Any, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request("POST", f"{self.base_url}{path}", params=params, json_body=json_body).json()
+
+    def _pages(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        json_body: Any | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield each raw page, following the ``meta.next`` cursor.
+
+        Pages carry ``meta.total`` alongside their records, which callers that need the
+        size of the whole result read off the first one.
+
+        A ``json_body`` switches the pages from GET to POST, as the filter endpoints
+        expect; the cursor stays in the query string either way.
+        """
         params = dict(params or {})
-        params.setdefault("size", DEFAULT_PAGE_SIZE)
+        params.setdefault("size", MAX_PAGE_SIZE)
         after: str | None = None
         while True:
             if after is not None:
                 params["after"] = after
-            body = self._get(path, params)
-            yield from body.get("data", [])
-            after = (body.get("meta") or {}).get("next")
+            page = self._post(path, json_body, params) if json_body is not None else self._get(path, params)
+            yield page
+            after = (page.get("meta") or {}).get("next")
             if not after:
                 break
+
+    def _paged(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        json_body: Any | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Iterate every record across pages."""
+        for page in self._pages(path, params, json_body=json_body):
+            yield from page.get("data", [])
 
     # --- catalog endpoints ---
 
     def get_catalog_item(self, urn: str) -> CatalogItem:
-        return CatalogItem.from_dict(self._get(f"/catalog/v1/catalog-items/{urn}"))
+        return CatalogItem.from_dict(self._get(f"/catalog/v1/catalog-items/{urn}", {"include": CATALOG_ITEM_INCLUDES}))
+
+    def find_catalog_items(
+        self,
+        *,
+        catalog_item_urns: Sequence[str] = (),
+        connection_urns: Sequence[str] = (),
+        source_urns: Sequence[str] = (),
+        location_urns: Sequence[str] = (),
+    ) -> CatalogItemResults:
+        """The catalog items matching any of the given URNs, connections, sources or locations.
+
+        Every group is a filter criterion and they are OR-ed, so each one widens the result
+        and a URN that matches nothing simply contributes nothing. Location matching covers
+        the whole subtree, meaning one schema or database URN brings in every item beneath it.
+
+        Items come back whole, exactly as ``get_catalog_item`` returns them, so callers can
+        hand them straight to ``fetch_bundle_for`` without a second request per item.
+
+        Only the first page is read here -- enough to learn ``total`` -- and the rest are
+        fetched as they are consumed, so a caller that stops early, or that enriches each
+        item as it arrives, never pays for the rest of the catalog.
+        """
+        criteria = _catalog_item_filter_criteria(
+            catalog_item_urns=catalog_item_urns,
+            connection_urns=connection_urns,
+            source_urns=source_urns,
+            location_urns=location_urns,
+        )
+        if not criteria:
+            raise ValueError("at least one catalog-item, connection, source, or location URN is required")
+        pages = self._pages(
+            "/catalog/v1/catalog-items/filter",
+            {"include": CATALOG_ITEM_INCLUDES},
+            json_body={"filter": criteria[0] if len(criteria) == 1 else {"or": criteria}},
+        )
+        first = next(pages, None) or {}
+        total = (first.get("meta") or {}).get("total") or 0
+        return CatalogItemResults(total=total, items=_catalog_items(chain([first], pages)))
 
     def get_attributes(self, catalog_item_urn: str) -> list[CatalogAttribute]:
         return [
@@ -308,7 +422,21 @@ class AtaccamaClient:
         self, catalog_item_urn: str, *, with_dq: bool = True, with_relationships: bool = True
     ) -> CatalogItemBundle:
         """Fetch a catalog item, its attributes, referenced terms, and (by default) DQ results."""
-        item = self.get_catalog_item(catalog_item_urn)
+        return self.fetch_bundle_for(
+            self.get_catalog_item(catalog_item_urn),
+            with_dq=with_dq,
+            with_relationships=with_relationships,
+        )
+
+    def fetch_bundle_for(
+        self, item: CatalogItem, *, with_dq: bool = True, with_relationships: bool = True
+    ) -> CatalogItemBundle:
+        """Everything an already-fetched catalog item needs to become a dataset.
+
+        ``find_catalog_items`` returns whole items, so enriching them this way skips the
+        per-item catalog-item request entirely.
+        """
+        catalog_item_urn = item.urn
         attributes = self.get_attributes(catalog_item_urn)
 
         term_urns: set[str] = {ta.term_urn for ta in item.term_assignments}
