@@ -91,6 +91,12 @@ def main(argv: list[str] | None = None) -> int:
         "Ataccama flags as below quality — below its configured threshold, or with active "
         "findings (opt-in; requires DQ, so not with --no-dq).",
     )
+    parser.add_argument(
+        "--flat-ai-context",
+        action="store_true",
+        help="Emit ai_context as plain strings instead of objects. Both forms are valid "
+        "Ossie, but some consumers (e.g. Snowflake) only accept strings.",
+    )
     args = parser.parse_args(argv)
 
     if args.env_file:
@@ -122,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         model_description=args.model_description,
         tenant=_tenant_from_urn(urns[0]),
         dq_ai_warnings=args.dq_ai_warnings,
+        flat_ai_context=args.flat_ai_context,
     )
 
     text = document.to_ossie_yaml()

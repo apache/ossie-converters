@@ -72,6 +72,10 @@ ataccama-to-ossie --env-file .ataccama.env --urn <urn> --dq-ai-warnings -o my_mo
 
 # or supply a file of URNs (one per line)
 ataccama-to-ossie --env-file .ataccama.env --urns-file items.txt -o my_model.ossie.yaml
+
+# compatibility: emit ai_context as plain strings instead of objects
+# (both are valid Ossie, but e.g. Snowflake's parser only accepts the string form)
+ataccama-to-ossie --env-file .ataccama.env --urn <urn> --flat-ai-context -o my_model.ossie.yaml
 ```
 
 ```python
@@ -102,7 +106,7 @@ Tests run fully offline against a recorded catalog fixture
 | `CatalogItem.name` | `dataset.name` (de-duplicated if repeated) |
 | `CatalogItem.locations` + name | `dataset.source` (best-effort dotted namespace) |
 | `CatalogItem.description` (rich text) | `dataset.description` (flattened to plain text) |
-| assigned `Term`s | `dataset.ai_context` (`synonyms` + `instructions`) |
+| assigned `Term`s | `dataset.ai_context` (`synonyms` + `instructions`; a plain string with `--flat-ai-context`) |
 | `CatalogAttribute` | `field` |
 | `CatalogAttribute.name` | `field.name` + quoted `ANSI_SQL` identifier expression |
 | `CatalogAttribute.dataType` | `field.datatype` (omitted, with a warning, for a type outside the mapping) |
