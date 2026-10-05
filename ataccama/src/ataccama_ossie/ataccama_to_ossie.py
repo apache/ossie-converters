@@ -35,6 +35,7 @@ import warnings
 from typing import Any
 
 from ossie import (
+    OssieAIContext,
     OssieAIContextObject,
     OssieCustomExtension,
     OssieDataset,
@@ -503,6 +504,60 @@ def _build_relationships(bundles: list[CatalogItemBundle], datasets: list[OssieD
     return relationships
 
 
+# --- consumer compatibility ----------------------------------------------
+
+
+def _flat_ai_context(ai_context: OssieAIContext | None) -> str | None:
+    """Render an ai_context as the plain-string form the Ossie schema also allows.
+
+    ``ai_context`` is a ``Union[str, OssieAIContextObject]``, so both forms are
+    spec-valid; some consumers (e.g. Snowflake) accept only the string.
+    """
+    if ai_context is None or isinstance(ai_context, str):
+        return ai_context
+    parts: list[str] = []
+    if ai_context.instructions:
+        parts.append(ai_context.instructions)
+    if ai_context.synonyms:
+        parts.append("Synonyms: " + ", ".join(ai_context.synonyms) + ".")
+    if ai_context.examples:
+        parts.append("Examples: " + "; ".join(ai_context.examples) + ".")
+    return "\n".join(parts) or None
+
+
+def _flattened_nodes(
+    nodes: list[OssieField] | list[OssieRelationship] | None,
+) -> list[OssieField] | list[OssieRelationship] | None:
+    """Flatten each node's ai_context, leaving an absent list absent.
+
+    Serialization drops ``None`` but keeps ``[]``, so turning a missing list into an
+    empty one would add a meaningless ``fields: []`` / ``relationships: []`` to the output.
+    """
+    if not nodes:
+        return nodes
+    return [node.model_copy(update={"ai_context": _flat_ai_context(node.ai_context)}) for node in nodes]
+
+
+def _flatten_ai_contexts(document: OssieDocument) -> OssieDocument:
+    """Return a copy of ``document`` with every ai_context rendered as a plain string."""
+    datasets = [
+        dataset.model_copy(
+            update={
+                "ai_context": _flat_ai_context(dataset.ai_context),
+                "fields": _flattened_nodes(dataset.fields),
+            }
+        )
+        for dataset in document.datasets
+    ]
+    return document.model_copy(
+        update={
+            "ai_context": _flat_ai_context(document.ai_context),
+            "datasets": datasets,
+            "relationships": _flattened_nodes(document.relationships),
+        }
+    )
+
+
 # --- top level -----------------------------------------------------------
 
 
@@ -512,12 +567,17 @@ def ataccama_to_ossie(
     model_description: str | None = None,
     tenant: str | None = None,
     dq_ai_warnings: bool = False,
+    flat_ai_context: bool = False,
 ) -> OssieDocument:
     """Convert a list of catalog-item bundles into an Ossie document.
 
     When ``dq_ai_warnings`` is set, datasets that Ataccama flags as below quality (below
     the configured threshold, or with active findings) get a natural-language warning
     appended to their ``ai_context.instructions`` (see ``_dataset_dq_warning``).
+
+    When ``flat_ai_context`` is set, every ``ai_context`` is emitted as a plain string
+    instead of an object. Both forms are valid Ossie, but some consumers (e.g. Snowflake)
+    only accept the string form.
     """
     used_dataset_names: set[str] = set()
     datasets = [bundle_to_dataset(b, used_dataset_names, dq_ai_warnings) for b in bundles]
@@ -526,10 +586,11 @@ def ataccama_to_ossie(
     if tenant:
         model_ext["tenant"] = tenant
 
-    return OssieDocument(
+    document = OssieDocument(
         name=model_name,
         description=model_description,
         datasets=datasets,
         relationships=_build_relationships(bundles, datasets) or None,
         custom_extensions=[_ataccama_extension(model_ext)],
     )
+    return _flatten_ai_contexts(document) if flat_ai_context else document
