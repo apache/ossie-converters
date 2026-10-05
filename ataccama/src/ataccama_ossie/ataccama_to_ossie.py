@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import re
 import warnings
+from collections.abc import Iterable
 from typing import Any
 
 from ossie import (
@@ -471,19 +472,20 @@ def bundle_to_dataset(
 # --- relationships -------------------------------------------------------
 
 
-def _build_relationships(bundles: list[CatalogItemBundle], datasets: list[OssieDataset]) -> list[OssieRelationship]:
+def _build_relationships(
+    foreign_keys_by_dataset: list[tuple[str, list[dict[str, Any]]]],
+    dataset_names: set[str],
+) -> list[OssieRelationship]:
     """Derive Ossie relationships from foreign keys.
 
     Only relationships whose target table is also in the converted set are emitted —
     Ossie requires both endpoints of a relationship to exist as datasets, so an FK to a
     table the caller didn't include is skipped (rather than producing an invalid model).
     """
-    dataset_names = {d.name for d in datasets}
     relationships: list[OssieRelationship] = []
     used_names: set[str] = set()
-    for bundle, dataset in zip(bundles, datasets):
-        from_name = dataset.name
-        for fk in bundle.foreign_keys:
+    for from_name, foreign_keys in foreign_keys_by_dataset:
+        for fk in foreign_keys:
             to_name = fk.get("referenced_table")
             from_cols = fk.get("columns") or []
             to_cols = fk.get("referenced_columns") or []
@@ -562,14 +564,14 @@ def _flatten_ai_contexts(document: OssieDocument) -> OssieDocument:
 
 
 def ataccama_to_ossie(
-    bundles: list[CatalogItemBundle],
+    bundles: Iterable[CatalogItemBundle],
     model_name: str = "ataccama_model",
     model_description: str | None = None,
     tenant: str | None = None,
     dq_ai_warnings: bool = False,
     flat_ai_context: bool = False,
 ) -> OssieDocument:
-    """Convert a list of catalog-item bundles into an Ossie document.
+    """Convert catalog-item bundles into an Ossie document.
 
     When ``dq_ai_warnings`` is set, datasets that Ataccama flags as below quality (below
     the configured threshold, or with active findings) get a natural-language warning
@@ -580,7 +582,12 @@ def ataccama_to_ossie(
     only accept the string form.
     """
     used_dataset_names: set[str] = set()
-    datasets = [bundle_to_dataset(b, used_dataset_names, dq_ai_warnings) for b in bundles]
+    datasets: list[OssieDataset] = []
+    foreign_keys_by_dataset: list[tuple[str, list[dict[str, Any]]]] = []
+    for bundle in bundles:
+        dataset = bundle_to_dataset(bundle, used_dataset_names, dq_ai_warnings)
+        datasets.append(dataset)
+        foreign_keys_by_dataset.append((dataset.name, bundle.foreign_keys))
 
     model_ext: dict[str, Any] = {"source": "ataccama-one-catalog"}
     if tenant:
@@ -590,7 +597,7 @@ def ataccama_to_ossie(
         name=model_name,
         description=model_description,
         datasets=datasets,
-        relationships=_build_relationships(bundles, datasets) or None,
+        relationships=_build_relationships(foreign_keys_by_dataset, {d.name for d in datasets}) or None,
         custom_extensions=[_ataccama_extension(model_ext)],
     )
     return _flatten_ai_contexts(document) if flat_ai_context else document
