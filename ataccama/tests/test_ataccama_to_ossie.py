@@ -364,6 +364,58 @@ def test_relationship_names_deduplicated() -> None:
     assert [r.name for r in rels] == ["fk", "fk_2"]
 
 
+def test_relationship_resolves_a_target_defined_later() -> None:
+    # Targets are matched against the whole converted set, not only what came before.
+    line_items = _keyed_bundle(
+        "line_items",
+        foreign_keys=[
+            {"name": "fk_order", "columns": ["order_id"], "referenced_table": "orders", "referenced_columns": ["id"]}
+        ],
+    )
+    orders = _keyed_bundle("orders")
+    (rel,) = ataccama_to_ossie([line_items, orders]).relationships
+    assert (rel.from_dataset, rel.to) == ("line_items", "orders")
+
+
+def test_each_relationship_keeps_its_own_dataset() -> None:
+    # Foreign keys are paired with their dataset by name rather than by position.
+    hub = _keyed_bundle("hub")
+    left = _keyed_bundle(
+        "left",
+        foreign_keys=[{"name": "fk_l", "columns": ["a"], "referenced_table": "hub", "referenced_columns": ["id"]}],
+    )
+    right = _keyed_bundle(
+        "right",
+        foreign_keys=[{"name": "fk_r", "columns": ["b"], "referenced_table": "hub", "referenced_columns": ["id"]}],
+    )
+    rels = ataccama_to_ossie([hub, left, right]).relationships
+    assert [(r.name, r.from_dataset) for r in rels] == [("fk_l", "left"), ("fk_r", "right")]
+
+
+def test_bundles_may_arrive_as_a_generator(bundles: list[CatalogItemBundle]) -> None:
+    # Conversion makes a single pass, so callers can stream bundles in and let each one go.
+    from_list = ataccama_to_ossie(bundles, model_name="test_model", tenant="example-tenant")
+    from_generator = ataccama_to_ossie((b for b in bundles), model_name="test_model", tenant="example-tenant")
+    assert from_generator.to_ossie_json() == from_list.to_ossie_json()
+
+
+def test_generator_of_keyed_bundles_still_builds_relationships() -> None:
+    orders = _keyed_bundle("orders")
+    line_items = _keyed_bundle(
+        "line_items",
+        foreign_keys=[
+            {"name": "fk_order", "columns": ["order_id"], "referenced_table": "orders", "referenced_columns": ["id"]}
+        ],
+    )
+    (rel,) = ataccama_to_ossie(iter([orders, line_items])).relationships
+    assert (rel.from_dataset, rel.to) == ("line_items", "orders")
+
+
+def test_duplicate_dataset_names_are_deduplicated_in_one_pass() -> None:
+    first, second = _keyed_bundle("orders"), _keyed_bundle("orders")
+    assert [d.name for d in ataccama_to_ossie(iter([first, second])).datasets] == ["orders", "orders_2"]
+
+
 def test_fixture_items_have_no_keys(document: OssieDocument) -> None:
     # BANK_TRANSACTIONS / aggregation have no PK/FK, so no key or relationship output.
     for ds in document.datasets:
