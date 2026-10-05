@@ -168,6 +168,85 @@ def test_falls_back_to_backoff_for_an_invalid_retry_after(retry_after: str, slee
     assert sleeps == [1.5]
 
 
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_transient_gateway_errors_are_retried(status: int, sleeps: list[float]) -> None:
+    client = make_client(
+        [FakeResponse(200, TOKEN_BODY), FakeResponse(status), FakeResponse(200, {"urn": "item-1"})],
+        retry_backoff_s=2.0,
+    )
+
+    assert client._get("/catalog/v1/catalog-items/item-1") == {"urn": "item-1"}
+    assert sleeps == [2.0]
+
+
+def test_gateway_error_warning_names_the_status(sleeps: list[float], capsys: pytest.CaptureFixture[str]) -> None:
+    # "Rate limited" would be a lie for a 503, so the warning reports what came back.
+    client = make_client(
+        [FakeResponse(200, TOKEN_BODY), FakeResponse(503), FakeResponse(200, {})],
+        max_retries=3,
+        retry_backoff_s=1.0,
+    )
+
+    client._get("/catalog/v1/catalog-items/item-1")
+
+    assert capsys.readouterr().err == (
+        "[WARNING] HTTP 503 from https://example.test/api/catalog/v1/catalog-items/item-1; "
+        "retrying in 1.0s (retry 1 of 3)\n"
+    )
+
+
+def test_gateway_error_honours_retry_after(sleeps: list[float]) -> None:
+    # A 503 commonly carries Retry-After; it is respected as for a rate limit.
+    client = make_client(
+        [FakeResponse(200, TOKEN_BODY), FakeResponse(503, headers={"Retry-After": "4"}), FakeResponse(200, {})]
+    )
+
+    client._get("/catalog/v1/catalog-items/item-1")
+
+    assert sleeps == [4.0]
+
+
+def test_gateway_error_is_raised_once_retries_run_out(sleeps: list[float]) -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(503)], max_retries=0)
+
+    with pytest.raises(requests.HTTPError):
+        client._get("/catalog/v1/catalog-items/item-1")
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 500])
+def test_other_errors_are_not_retried(status: int, sleeps: list[float]) -> None:
+    # 500 is not transient the way a gateway error is; retrying it just repeats the fault.
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(status)])
+
+    with pytest.raises(requests.HTTPError):
+        client._get("/catalog/v1/catalog-items/item-1")
+    assert sleeps == []
+
+
+def test_a_gateway_error_does_not_look_like_absent_dq(sleeps: list[float]) -> None:
+    # Only a 404 means "this item has no DQ"; an exhausted 503 must still raise.
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(503)], max_retries=0)
+
+    with pytest.raises(requests.HTTPError):
+        client.get_dq_results("item-1")
+
+
+def test_a_gateway_error_mid_stream_is_retried(sleeps: list[float]) -> None:
+    # The failure that aborted a real export: a page fetched part-way through paging.
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _items_page("customers", next_cursor="MQ==", total=2),
+            FakeResponse(503),
+            _items_page("orders", total=2),
+        ],
+        retry_backoff_s=1.0,
+    )
+
+    assert [i.name for i in client.find_catalog_items(source_urns=[SOURCE])] == ["customers", "orders"]
+    assert sleeps == [1.0]
+
+
 def test_raises_after_exhausting_retries(sleeps: list[float]) -> None:
     client = make_client(
         [FakeResponse(200, TOKEN_BODY), rate_limited(), rate_limited(), rate_limited()],
