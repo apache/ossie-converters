@@ -405,16 +405,16 @@ def test_relationship_resolves_a_target_defined_later() -> None:
 def test_each_relationship_keeps_its_own_dataset() -> None:
     # Foreign keys are paired with their dataset by name rather than by position.
     hub = _keyed_bundle("hub")
-    left = _keyed_bundle(
-        "left",
+    spoke_a = _keyed_bundle(
+        "spoke_a",
         foreign_keys=[{"name": "fk_l", "columns": ["a"], "referenced_table": "hub", "referenced_columns": ["id"]}],
     )
-    right = _keyed_bundle(
-        "right",
+    spoke_b = _keyed_bundle(
+        "spoke_b",
         foreign_keys=[{"name": "fk_r", "columns": ["b"], "referenced_table": "hub", "referenced_columns": ["id"]}],
     )
-    rels = ataccama_to_ossie([hub, left, right]).relationships
-    assert [(r.name, r.from_dataset) for r in rels] == [("fk_l", "left"), ("fk_r", "right")]
+    rels = ataccama_to_ossie([hub, spoke_a, spoke_b]).relationships
+    assert [(r.name, r.from_dataset) for r in rels] == [("fk_l", "spoke_a"), ("fk_r", "spoke_b")]
 
 
 def test_bundles_may_arrive_as_a_generator(bundles: list[CatalogItemBundle]) -> None:
@@ -524,6 +524,93 @@ def test_duplicate_dataset_names_are_disambiguated() -> None:
     ]
     names = [d.name for d in ataccama_to_ossie(items).datasets]
     assert names == ["Orders", "Orders_2"]
+
+
+def _named_bundle(name, columns=(), primary_key=None, foreign_keys=None):
+    return CatalogItemBundle(
+        item=CatalogItem(urn=f"urn:ata:t:catalog:catalog-item:{name}", name=name),
+        attributes=[CatalogAttribute(urn=f"urn:ata:t:catalog:catalog-attribute:{name}:{c}", name=c) for c in columns],
+        primary_key=primary_key,
+        foreign_keys=foreign_keys or [],
+    )
+
+
+@pytest.mark.parametrize(
+    "catalog_name,expected",
+    [
+        ("CHURN_CUSTOMERS", "CHURN_CUSTOMERS"),  # already an identifier: left bare, so it case-folds
+        ("TX_2022-07", '"TX_2022-07"'),  # Snowflake: "Invalid identifier 'TX_2022-07'"
+        ("US SEC_FAILS TO DELIVER", '"US SEC_FAILS TO DELIVER"'),
+        # stripped first, so a leading space alone does not force delimiting
+        (" CREDIT_CARDS_ATTRITED", "CREDIT_CARDS_ATTRITED"),
+        ("orders.csv", '"orders.csv"'),
+        ("2022_SALES", '"2022_SALES"'),  # an identifier may not start with a digit
+        ("Zakaznici", "Zakaznici"),
+        ("Zákazníci", '"Zákazníci"'),  # delimiting keeps the name exact, accents included
+        ("ORDER", '"ORDER"'),  # a reserved word needs delimiting despite its characters
+        ('odd"name', '"odd""name"'),  # an embedded delimiter is doubled
+    ],
+)
+def test_dataset_names_are_declarable_identifiers(catalog_name: str, expected: str) -> None:
+    assert ataccama_to_ossie([_named_bundle(catalog_name)]).datasets[0].name == expected
+
+
+def test_delimiting_a_name_keeps_the_physical_name_in_source_and_expressions() -> None:
+    document = ataccama_to_ossie([_named_bundle("TX_2022-07", columns=["Customer Name"])])
+    dataset = document.datasets[0]
+    assert dataset.name == '"TX_2022-07"'
+    assert dataset.source == '"TX_2022-07"'
+    field = dataset.fields[0]
+    assert field.name == '"Customer Name"'
+    assert field.expression.dialects[0].expression == '"Customer Name"'
+
+
+def test_keys_reference_the_declared_field_names() -> None:
+    bundle = _named_bundle("t", columns=["Cust Id"], primary_key={"name": "pk", "columns": ["Cust Id"]})
+    assert ataccama_to_ossie([bundle]).datasets[0].primary_key == ['"Cust Id"']
+
+
+def test_delimiting_keeps_names_distinct_that_sanitizing_would_have_merged() -> None:
+    bundle = _named_bundle(
+        "t",
+        columns=["Customer Name", "Customer-Name"],
+        primary_key={"name": "pk", "columns": ["Customer-Name"]},
+    )
+    dataset = ataccama_to_ossie([bundle]).datasets[0]
+    # sanitizing would collapse both to Customer_Name and need a _2 suffix; delimiting does not
+    assert [f.name for f in dataset.fields] == ['"Customer Name"', '"Customer-Name"']
+    assert dataset.primary_key == ['"Customer-Name"']
+
+
+def test_repeated_awkward_name_suffixes_inside_the_delimiters() -> None:
+    names = [d.name for d in ataccama_to_ossie([_named_bundle("test coll"), _named_bundle("test coll")]).datasets]
+    assert names == ['"test coll"', '"test coll_2"']
+
+
+def test_relationships_reference_declared_dataset_and_field_names() -> None:
+    document = ataccama_to_ossie(
+        [
+            _named_bundle(
+                "TX_2022-07",
+                columns=["Cust Id"],
+                foreign_keys=[
+                    {
+                        "name": "fk1",
+                        "columns": ["Cust Id"],
+                        "referenced_table": "US SEC_FAILS TO DELIVER",
+                        "referenced_columns": ["Ref-Id"],
+                    }
+                ],
+            ),
+            _named_bundle("US SEC_FAILS TO DELIVER", columns=["Ref-Id"]),
+        ]
+    )
+    (relationship,) = document.relationships
+    assert relationship.from_dataset == '"TX_2022-07"'
+    assert relationship.to == '"US SEC_FAILS TO DELIVER"'
+    assert relationship.from_columns == ['"Cust Id"']
+    assert relationship.to_columns == ['"Ref-Id"']
+    assert not _schema_errors(document)
 
 
 def test_build_source_uses_reversed_locations_then_name() -> None:

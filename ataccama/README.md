@@ -141,12 +141,12 @@ Tests run fully offline against a recorded catalog fixture
 | Ataccama ONE | Ossie Semantic Model |
 |---|---|
 | `CatalogItem` | `dataset` |
-| `CatalogItem.name` | `dataset.name` (de-duplicated if repeated) |
+| `CatalogItem.name` | `dataset.name` (delimited if not already an identifier, de-duplicated if repeated) |
 | `CatalogItem.locations` + name | `dataset.source` (best-effort dotted namespace) |
 | `CatalogItem.description` (rich text) | `dataset.description` (flattened to plain text) |
 | assigned `Term`s | `dataset.ai_context` (`synonyms` + `instructions`; a plain string with `--flat-ai-context`) |
 | `CatalogAttribute` | `field` |
-| `CatalogAttribute.name` | `field.name` + quoted `ANSI_SQL` identifier expression |
+| `CatalogAttribute.name` | `field.name` (delimited: `Join Date` → `"Join Date"`) + quoted `ANSI_SQL` identifier expression carrying the physical name verbatim |
 | `CatalogAttribute.dataType` | `field.datatype` (omitted, with a warning, for a type outside the mapping) |
 | `CatalogAttribute.dataType` ∈ {DATE, DATETIME, TIMESTAMP, TIME} | `field.dimension.is_time = true` |
 | `CatalogAttribute.description` / `comment` | `field.description` |
@@ -212,6 +212,9 @@ to skip them.
   since uniqueness does not depend on column order.
 - **Foreign keys** → `relationships` (`from`/`to` datasets with paired
   `from_columns`/`to_columns`).
+
+Keys and relationships name physical columns and tables, but reference the `name`s the
+model declares, delimited the same way, so they keep pointing at the right objects.
 
 Keys are only present where the source system defined them (typically database tables, not
 BI artifacts). Because Ossie requires both ends of a relationship to exist in the model, a

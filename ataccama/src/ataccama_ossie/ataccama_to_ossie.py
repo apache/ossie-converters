@@ -33,7 +33,7 @@ import json
 import re
 import warnings
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, NamedTuple
 
 from ossie import (
     OssieAIContext,
@@ -72,19 +72,19 @@ OSSIE_DATA_TYPES = {
     "DATETIME": OssieDataType.DATE_TIME,
 }
 
-# A source segment safe to leave unquoted. This is the intersection of what the engines
+# A value safe to leave unquoted. This is the intersection of what the engines
 # accept, not any one engine's full grammar: a letter or underscore first (Snowflake,
 # PostgreSQL, Oracle, SQL Server and BigQuery all reject a leading digit), then letters,
 # digits and underscores. `$` is legal unquoted in Snowflake and Oracle but not in
 # Databricks or BigQuery, so it is left out -- quoting a segment that did not need it
-# only costs case sensitivity on that one segment.
-_BARE_SOURCE_PART = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# only costs case sensitivity for that one value.
+_BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Words every engine reserves, which need quoting even though their characters are fine.
 # Deliberately short: each engine reserves far more, but a catalog item named `JOIN` or
-# `ORDER` is the realistic case, and over-quoting a non-reserved word costs case
+# `ORDER` is the realistic case, and over-quoting a non-reserved word only costs case
 # sensitivity.
-_RESERVED_SOURCE_PARTS = frozenset(
+_RESERVED_WORDS = frozenset(
     """
     all alter and any as between by case cast check column create cross current default
     delete distinct drop else end exists false for from full grant group having in inner
@@ -136,13 +136,37 @@ def flatten_richtext(value: Any) -> str | None:
     return text or None
 
 
+def _as_identifier(value: str) -> str:
+    """Render a catalog name or source segment as an identifier a consumer can resolve.
+
+    A value that already reads as a plain unquoted identifier is left alone so it keeps
+    case-folding; anything else becomes a delimited identifier. Delimiting preserves the
+    catalog name exactly instead of rewriting it, which matters because the same value
+    also has to match the physical object.
+
+    This settles both roles because the rule is the same. For a dataset or field ``name``,
+    consumers read it as a SQL identifier -- Snowflake rejects a bare ``TX_2022-07`` with
+    "Invalid identifier". For a ``source`` segment, the segments are joined with ``.``, so
+    a dot would add levels (``orders.csv``), a dash would read as subtraction and a space
+    or newline would end the identifier.
+    """
+    if _BARE_IDENTIFIER.fullmatch(value) and value.lower() not in _RESERVED_WORDS:
+        return value
+    escaped = value.replace('"', '""')
+    return f'"{escaped}"'
+
+
 def _unique_name(desired: str, used: set[str], *, fallback: str) -> str:
-    """Return a name unique within ``used`` (Ossie requires unique dataset/field names)."""
+    """Return a declarable name unique within ``used``.
+
+    The de-duplication suffix is applied to the catalog name before it is rendered, so a
+    repeated awkward name becomes ``"test coll_2"`` rather than ``"test coll"_2``.
+    """
     base = desired.strip() or fallback
-    candidate = base
+    candidate = _as_identifier(base)
     n = 2
     while candidate in used:
-        candidate = f"{base}_{n}"
+        candidate = _as_identifier(f"{base}_{n}")
         n += 1
     used.add(candidate)
     return candidate
@@ -151,24 +175,6 @@ def _unique_name(desired: str, used: set[str], *, fallback: str) -> str:
 def _sql_identifier(name: str) -> str:
     """Quote a column name as an ANSI SQL identifier (names may contain spaces/punctuation)."""
     escaped = name.replace('"', '""')
-    return f'"{escaped}"'
-
-
-def _quote_source_part(part: str) -> str:
-    """Quote a source segment unless it is already a bare SQL identifier.
-
-    Segments are joined with ``.`` to form a dotted source, so anything a SQL parser
-    would not read as one unquoted identifier has to be quoted: a dot would add levels
-    (``orders.csv``), a dash would read as subtraction (``TX_2022-07``), a space or
-    newline would end the identifier.
-
-    Only segments that read as a plain unquoted identifier are left bare, since consumers
-    case-fold unquoted identifiers but preserve quoted ones -- quoting everything would
-    make the common case case-sensitive and stop it matching the physical table.
-    """
-    if _BARE_SOURCE_PART.fullmatch(part) and part.lower() not in _RESERVED_SOURCE_PARTS:
-        return part
-    escaped = part.replace('"', '""')
     return f'"{escaped}"'
 
 
@@ -182,7 +188,7 @@ def build_source(item: CatalogItem) -> str:
     """
     parts = [loc.name for loc in reversed(item.locations) if loc.name]
     parts.append(item.name)
-    return ".".join(_quote_source_part(part) for part in parts)
+    return ".".join(_as_identifier(part) for part in parts)
 
 
 def _terms_ai_context(term_urns: list[str], terms: dict[str, Term]) -> OssieAIContextObject | None:
@@ -387,6 +393,21 @@ def attribute_to_field(
 # --- catalog item -> dataset ---------------------------------------------
 
 
+def _field_names_by_column(attributes: list[CatalogAttribute], fields: list[OssieField]) -> dict[str, str]:
+    """Map each physical column name to the field name the dataset declares for it."""
+    return {attr.name: field.name for attr, field in zip(attributes, fields) if attr.name}
+
+
+def _as_field_names(columns: list[str], field_names_by_column: dict[str, str]) -> list[str]:
+    """Translate physical column names into the field names the dataset declares.
+
+    A column with no field of its own (an index over a column the catalog item does not
+    expose as an attribute) falls back to its sanitized name, which is the name that
+    field would have had.
+    """
+    return [field_names_by_column.get(column) or _as_identifier(column) for column in columns]
+
+
 def _secondary_unique_key_sets(
     primary_key_columns: list[str] | None, unique_indexes: list[dict[str, Any]]
 ) -> list[list[str]]:
@@ -421,11 +442,6 @@ def bundle_to_dataset(
     item = bundle.item
     name = _unique_name(item.name, used_dataset_names, fallback="dataset")
 
-    # Keys (from the Generic Metadata Entities API). primary_key = the key's columns;
-    # unique_keys = the unique indexes that are not the primary key.
-    primary_key_columns = (bundle.primary_key or {}).get("columns") or None
-    unique_key_sets = _secondary_unique_key_sets(primary_key_columns, bundle.unique_indexes)
-
     dataset_dq = _dataset_dq(bundle.dq_results, bundle.dq_threshold_pct)
 
     ai_context = _terms_ai_context([ta.term_urn for ta in item.term_assignments], bundle.terms)
@@ -435,6 +451,18 @@ def bundle_to_dataset(
     dq_by_attr = _attribute_dq_index(bundle.dq_results)
     used_field_names: set[str] = set()
     fields = [attribute_to_field(attr, bundle.terms, used_field_names, dq_by_attr) for attr in bundle.attributes]
+
+    # Keys (from the Generic Metadata Entities API) name physical columns, but a key has
+    # to reference the field names the dataset actually declares, which sanitizing and
+    # de-duplication may have changed. Fields are built first so the mapping exists.
+    # primary_key = the key's columns; unique_keys = the unique indexes that are not it.
+    columns_to_fields = _field_names_by_column(bundle.attributes, fields)
+    key_columns = (bundle.primary_key or {}).get("columns")
+    primary_key_columns = _as_field_names(key_columns, columns_to_fields) if key_columns is not None else None
+    unique_key_sets = [
+        _as_field_names(columns, columns_to_fields)
+        for columns in _secondary_unique_key_sets(key_columns, bundle.unique_indexes)
+    ]
 
     # Preserve everything with no Ossie-core home so the model round-trips.
     ext_data: dict[str, Any] = {"catalog_item_urn": item.urn}
@@ -472,35 +500,52 @@ def bundle_to_dataset(
 # --- relationships -------------------------------------------------------
 
 
-def _build_relationships(
-    foreign_keys_by_dataset: list[tuple[str, list[dict[str, Any]]]],
-    dataset_names: set[str],
-) -> list[OssieRelationship]:
+class ConvertedDataset(NamedTuple):
+    """What relationship building needs from a converted item, without the bundle.
+
+    Conversion makes a single pass over the bundles, so the bundle itself is released
+    once its dataset exists; the foreign keys and the column mapping are kept instead.
+    """
+
+    name: str
+    table: str
+    foreign_keys: list[dict[str, Any]]
+    field_names_by_column: dict[str, str]
+
+
+def _build_relationships(converted: list[ConvertedDataset]) -> list[OssieRelationship]:
     """Derive Ossie relationships from foreign keys.
 
-    Only relationships whose target table is also in the converted set are emitted —
-    Ossie requires both endpoints of a relationship to exist as datasets, so an FK to a
-    table the caller didn't include is skipped (rather than producing an invalid model).
+    Foreign keys name physical tables and columns, while a relationship has to reference
+    the dataset and field names the model declares, so both ends are resolved through the
+    converted set.
+
+    Only relationships whose target table is also in that set are emitted — Ossie requires
+    both endpoints of a relationship to exist as datasets, so an FK to a table the caller
+    didn't include is skipped (rather than producing an invalid model).
     """
+    by_table = {entry.table: entry for entry in converted if entry.table}
     relationships: list[OssieRelationship] = []
     used_names: set[str] = set()
-    for from_name, foreign_keys in foreign_keys_by_dataset:
-        for fk in foreign_keys:
-            to_name = fk.get("referenced_table")
+    for entry in converted:
+        for fk in entry.foreign_keys:
+            target = by_table.get(fk.get("referenced_table") or "")
             from_cols = fk.get("columns") or []
             to_cols = fk.get("referenced_columns") or []
-            if not to_name or to_name not in dataset_names:
+            if target is None:
                 continue  # target not in the converted set
             if not from_cols or len(from_cols) != len(to_cols):
                 continue  # need a well-formed, equal-cardinality column pairing
-            rel_name = _unique_name(fk.get("name") or f"{from_name}_to_{to_name}", used_names, fallback="relationship")
+            rel_name = _unique_name(
+                fk.get("name") or f"{entry.name}_to_{target.name}", used_names, fallback="relationship"
+            )
             relationships.append(
                 OssieRelationship(
                     name=rel_name,
-                    from_dataset=from_name,
-                    to=to_name,
-                    from_columns=from_cols,
-                    to_columns=to_cols,
+                    from_dataset=entry.name,
+                    to=target.name,
+                    from_columns=_as_field_names(from_cols, entry.field_names_by_column),
+                    to_columns=_as_field_names(to_cols, target.field_names_by_column),
                 )
             )
     return relationships
@@ -589,11 +634,18 @@ def ataccama_to_ossie(
     """
     used_dataset_names: set[str] = set()
     datasets: list[OssieDataset] = []
-    foreign_keys_by_dataset: list[tuple[str, list[dict[str, Any]]]] = []
+    converted: list[ConvertedDataset] = []
     for bundle in bundles:
         dataset = bundle_to_dataset(bundle, used_dataset_names, dq_ai_warnings)
         datasets.append(dataset)
-        foreign_keys_by_dataset.append((dataset.name, bundle.foreign_keys))
+        converted.append(
+            ConvertedDataset(
+                name=dataset.name,
+                table=bundle.item.name,
+                foreign_keys=bundle.foreign_keys,
+                field_names_by_column=_field_names_by_column(bundle.attributes, dataset.fields or []),
+            )
+        )
 
     model_ext: dict[str, Any] = {"source": "ataccama-one-catalog"}
     if tenant:
@@ -603,7 +655,7 @@ def ataccama_to_ossie(
         name=model_name,
         description=model_description,
         datasets=datasets,
-        relationships=_build_relationships(foreign_keys_by_dataset, {d.name for d in datasets}) or None,
+        relationships=_build_relationships(converted) or None,
         custom_extensions=[_ataccama_extension(model_ext)],
     )
     if ossie_version and ossie_version != document.version:
