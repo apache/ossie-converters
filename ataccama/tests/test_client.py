@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import warnings
 from itertools import islice
 from typing import Any
 
@@ -395,6 +396,97 @@ def test_unique_indexes_are_sorted_by_name() -> None:
     )
 
     assert [i["name"] for i in client.get_unique_indexes("item-1")] == ["UX_A", "UX_B"]
+
+
+# --- foreign keys ---
+
+
+def _foreign_key_column(urn: str, order: int, **properties: Any) -> dict[str, Any]:
+    return _entity(urn, order=order, **properties)
+
+
+def test_foreign_key_columns_are_ordered_and_paired() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("fk-1", name="FK_LINES_ORDERS")),
+            _page(
+                _foreign_key_column(
+                    "c-2", 2, name="line_no", referencedTableName="orders", referencedColumnName="line"
+                ),
+                _foreign_key_column("c-1", 1, name="order_id", referencedTableName="orders", referencedColumnName="id"),
+            ),
+        ]
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        foreign_keys = client.get_foreign_keys("item-1")
+
+    assert foreign_keys == [
+        {
+            "name": "FK_LINES_ORDERS",
+            "columns": ["order_id", "line_no"],
+            "referenced_table": "orders",
+            "referenced_columns": ["id", "line"],
+        }
+    ]
+
+
+def test_foreign_key_rows_missing_either_side_are_dropped_without_misaligning_the_rest() -> None:
+    # Filtering local and referenced names separately would pair c with y here and still
+    # pass the equal-length check downstream; dropping whole rows keeps the pairs intact.
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("fk-1", name="FK_ABC")),
+            _page(
+                _foreign_key_column("c-1", 1, name="a", referencedTableName="target", referencedColumnName="x"),
+                _foreign_key_column("c-2", 2, referencedTableName="target", referencedColumnName="y"),
+                _foreign_key_column("c-3", 3, name="c", referencedTableName="target"),
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"Invalid reference pair for foreign key FK_ABC") as recorded:
+        foreign_keys = client.get_foreign_keys("item-1")
+
+    assert len(recorded) == 2
+    assert foreign_keys[0]["columns"] == ["a"]
+    assert foreign_keys[0]["referenced_columns"] == ["x"]
+
+
+def test_foreign_key_referencing_several_tables_has_no_referenced_table() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("fk-1", name="FK_MIXED")),
+            _page(
+                _foreign_key_column("c-1", 1, name="a", referencedTableName="orders", referencedColumnName="id"),
+                _foreign_key_column("c-2", 2, name="b", referencedTableName="invoices", referencedColumnName="id"),
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"Invalid referenced table for foreign key FK_MIXED of catalog item item-1"):
+        foreign_keys = client.get_foreign_keys("item-1")
+
+    assert foreign_keys[0]["referenced_table"] is None
+
+
+def test_foreign_key_without_a_referenced_table_has_no_referenced_table() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("fk-1", name="FK_DANGLING")),
+            _page(_foreign_key_column("c-1", 1, name="a", referencedColumnName="id")),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"Invalid referenced table for foreign key FK_DANGLING"):
+        foreign_keys = client.get_foreign_keys("item-1")
+
+    assert foreign_keys[0]["referenced_table"] is None
 
 
 # --- filtering catalog items ---

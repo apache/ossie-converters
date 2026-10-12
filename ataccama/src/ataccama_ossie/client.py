@@ -27,7 +27,7 @@ from __future__ import annotations
 import sys
 import time
 import warnings
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import chain
 from typing import Any
@@ -401,26 +401,57 @@ class AtaccamaClient:
         result.sort(key=lambda i: str(i["name"] or ""))
         return result
 
+    @classmethod
+    def _extract_reference_column_pairs(
+        cls, catalog_item_urn: str, foreign_key_name: str, foreign_key_column_properties: Iterable[dict]
+    ) -> list[tuple[str, str]]:
+        result: list[tuple[str, str]] = []
+        for column_properties in foreign_key_column_properties:
+            source_column = column_properties.get("name")
+            target_column = column_properties.get("referencedColumnName")
+            if source_column and target_column:
+                result.append((source_column, target_column))
+            else:
+                warnings.warn(
+                    f"Invalid reference pair for foreign key {foreign_key_name} of catalog item {catalog_item_urn}: {source_column}, {target_column}"
+                )
+        return result
+
+    @classmethod
+    def _extract_referenced_table(
+        cls, catalog_item_urn: str, foreign_key_name: str, foreign_key_column_properties: Iterable[dict]
+    ) -> str | None:
+        ref_tables = {
+            c.get("referencedTableName") for c in foreign_key_column_properties if c.get("referencedTableName")
+        }
+        if len(ref_tables) == 1:
+            return next(iter(ref_tables))
+        else:
+            warnings.warn(
+                f"Invalid referenced table for foreign key {foreign_key_name} of catalog item {catalog_item_urn}: {ref_tables}"
+            )
+            return None
+
     def get_foreign_keys(self, catalog_item_urn: str) -> list[dict]:
         """Foreign keys for a catalog item, with the referenced table and columns."""
         result: list[dict] = []
         for fk in self._entities_by_parent("foreignKey", catalog_item_urn, "name"):
+            foreign_key_name = fk.get("properties", {}).get("name")
             cols = self._entities_by_parent(
                 "foreignKeyColumn", fk["urn"], "name,referencedTableName,referencedColumnName,order"
             )
-            cols.sort(key=lambda c: c.get("properties", {}).get("order") or 0)
-            local = [c["properties"].get("name") for c in cols]
-            ref_cols = [c["properties"].get("referencedColumnName") for c in cols]
-            ref_tables = {
-                c["properties"].get("referencedTableName") for c in cols if c["properties"].get("referencedTableName")
-            }
+            cols_properties = sorted((c["properties"] for c in cols), key=lambda c: c.get("order") or 0)
+            ref_column_pairs: list[tuple[str, str]] = self._extract_reference_column_pairs(
+                catalog_item_urn, foreign_key_name, cols_properties
+            )
+            ref_table = self._extract_referenced_table(catalog_item_urn, foreign_key_name, cols_properties)
             result.append(
                 {
-                    "name": fk.get("properties", {}).get("name"),
-                    "columns": [c for c in local if c],
+                    "name": foreign_key_name,
+                    "columns": [from_column for from_column, _ in ref_column_pairs],
                     # a foreign key targets a single table; None if inconsistent/missing
-                    "referenced_table": next(iter(ref_tables)) if len(ref_tables) == 1 else None,
-                    "referenced_columns": [c for c in ref_cols if c],
+                    "referenced_table": ref_table,
+                    "referenced_columns": [to_column for _, to_column in ref_column_pairs],
                 }
             )
         return result
