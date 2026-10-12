@@ -44,6 +44,7 @@ MAX_PAGE_SIZE = 100
 CATALOG_ITEM_INCLUDES = "effectiveStewardship"
 # Refresh the token this many seconds before it actually expires.
 TOKEN_EXPIRY_SKEW_S = 30
+FORBIDDEN = 403
 NOT_FOUND = 404
 TOO_MANY_REQUESTS = 429
 RETRYABLE_STATUSES = frozenset({TOO_MANY_REQUESTS, 502, 503, 504})
@@ -341,8 +342,10 @@ class AtaccamaClient:
         """
         try:
             mon = self._get(f"/data-quality/v1/catalog-items/{catalog_item_urn}/dq-monitors/{monitor}")
-        except requests.HTTPError:
-            return None
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == NOT_FOUND:
+                return None
+            raise
         thresholds = [
             (threshold.get("severity") == "CRITICAL", threshold["value"])
             for threshold in (mon.get("overallDqThresholds") or {}).values()
@@ -489,9 +492,11 @@ class AtaccamaClient:
                 continue
             try:
                 terms[urn] = self.get_term(urn)
-            except requests.HTTPError:
-                # A referenced term may be inaccessible; skip it rather than fail the whole run.
-                continue
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code in (NOT_FOUND, FORBIDDEN):
+                    warnings.warn(f"Term {urn} is inaccessible (status code {exc.response.status_code})")
+                    continue
+                raise
 
         dq_results = None
         dq_threshold_pct = None
