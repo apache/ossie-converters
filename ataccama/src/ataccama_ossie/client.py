@@ -42,6 +42,7 @@ from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBund
 MAX_PAGE_SIZE = 100
 # Stewardship is resolved only on request, and the converter emits it when present.
 CATALOG_ITEM_INCLUDES = "effectiveStewardship"
+SCHEMA_LOCATION_TYPE = "schemaLocation"
 # Refresh the token this many seconds before it actually expires.
 TOKEN_EXPIRY_SKEW_S = 30
 FORBIDDEN = 403
@@ -136,6 +137,8 @@ class AtaccamaClient:
         self._session = session or requests.Session()
         self._token: str | None = None
         self._token_expiry: float = 0.0
+        # Catalog items in one schema share its location, so each location is looked up once.
+        self._location_types: dict[str, str] = {}
 
     # --- auth ---
 
@@ -353,7 +356,25 @@ class AtaccamaClient:
         ]
         return max(thresholds)[1] if thresholds else None
 
-    # --- generic metadata entities (keys & relationships) ---
+    # --- generic metadata entities (locations, keys & relationships) ---
+
+    def get_location_type(self, location_urn: str) -> str:
+        """The metadata-model type of a location, such as ``schemaLocation`` or ``databaseLocation``."""
+        if location_urn not in self._location_types:
+            location = self._get(f"/catalog/v1/entities/{location_urn}")
+            self._location_types[location_urn] = location["concreteType"]
+        return self._location_types[location_urn]
+
+    def get_schema_name(self, item: CatalogItem) -> str | None:
+        """The name of the schema location a catalog item sits in, or None if it is not in one."""
+        return next(
+            (
+                location.name
+                for location in item.locations
+                if location.urn and self.get_location_type(location.urn) == SCHEMA_LOCATION_TYPE
+            ),
+            None,
+        )
 
     def _entities_by_parent(self, entity_type: str, parent_urn: str, properties: str) -> list[dict]:
         """List entities of a type filtered to a parent, via the Generic Metadata Entities API."""
@@ -423,17 +444,19 @@ class AtaccamaClient:
     @classmethod
     def _extract_referenced_table(
         cls, catalog_item_urn: str, foreign_key_name: str, foreign_key_column_properties: Iterable[dict]
-    ) -> str | None:
-        ref_tables = {
-            c.get("referencedTableName") for c in foreign_key_column_properties if c.get("referencedTableName")
+    ) -> tuple[str | None, str | None]:
+        referenced_tables = {
+            (c.get("referencedSchema"), c.get("referencedTableName"))
+            for c in foreign_key_column_properties
+            if c.get("referencedTableName")
         }
-        if len(ref_tables) == 1:
-            return next(iter(ref_tables))
-        else:
+        if len(referenced_tables) > 1:
             warnings.warn(
-                f"Invalid referenced table for foreign key {foreign_key_name} of catalog item {catalog_item_urn}: {ref_tables}"
+                f"Inconsistent referenced table for foreign key {foreign_key_name} of catalog item "
+                f"{catalog_item_urn}: {sorted(referenced_tables, key=str)}"
             )
-            return None
+            return None, None
+        return next(iter(referenced_tables), (None, None))
 
     def get_foreign_keys(self, catalog_item_urn: str) -> list[dict]:
         """Foreign keys for a catalog item, with the referenced table and columns."""
@@ -441,18 +464,19 @@ class AtaccamaClient:
         for fk in self._entities_by_parent("foreignKey", catalog_item_urn, "name"):
             foreign_key_name = fk.get("properties", {}).get("name")
             cols = self._entities_by_parent(
-                "foreignKeyColumn", fk["urn"], "name,referencedTableName,referencedColumnName,order"
+                "foreignKeyColumn", fk["urn"], "name,referencedSchema,referencedTableName,referencedColumnName,order"
             )
             cols_properties = sorted((c["properties"] for c in cols), key=lambda c: c.get("order") or 0)
             ref_column_pairs: list[tuple[str, str]] = self._extract_reference_column_pairs(
                 catalog_item_urn, foreign_key_name, cols_properties
             )
-            ref_table = self._extract_referenced_table(catalog_item_urn, foreign_key_name, cols_properties)
+            ref_schema, ref_table = self._extract_referenced_table(catalog_item_urn, foreign_key_name, cols_properties)
             result.append(
                 {
                     "name": foreign_key_name,
                     "columns": [from_column for from_column, _ in ref_column_pairs],
                     # a foreign key targets a single table; None if inconsistent/missing
+                    "referenced_schema": ref_schema,
                     "referenced_table": ref_table,
                     "referenced_columns": [to_column for _, to_column in ref_column_pairs],
                 }
@@ -508,10 +532,12 @@ class AtaccamaClient:
         primary_key: dict | None = None
         unique_indexes: list[dict] = []
         foreign_keys: list[dict] = []
+        schema_name: str | None = None
         if with_relationships:
             primary_key = self.get_primary_key(catalog_item_urn)
             unique_indexes = self.get_unique_indexes(catalog_item_urn)
             foreign_keys = self.get_foreign_keys(catalog_item_urn)
+            schema_name = self.get_schema_name(item)
 
         return CatalogItemBundle(
             item=item,
@@ -522,4 +548,5 @@ class AtaccamaClient:
             primary_key=primary_key,
             unique_indexes=unique_indexes,
             foreign_keys=foreign_keys,
+            schema_name=schema_name,
         )
