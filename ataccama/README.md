@@ -211,7 +211,10 @@ to skip them.
   included (covering) columns stay out of the key. Keys are compared as column *sets*,
   since uniqueness does not depend on column order.
 - **Foreign keys** → `relationships` (`from`/`to` datasets with paired
-  `from_columns`/`to_columns`).
+  `from_columns`/`to_columns`). The target is matched by table name and, when the foreign
+  key names its schema, by the catalog item's schema location as well, so same-named tables
+  in different schemas stay apart. A foreign key whose target does not match exactly one
+  converted item is skipped with a warning.
 
 Keys and relationships name physical columns and tables, but reference the `name`s the
 model declares, delimited the same way, so they keep pointing at the right objects.

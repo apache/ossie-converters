@@ -28,7 +28,7 @@ import requests
 
 from ataccama_ossie import client as client_module
 from ataccama_ossie.client import MAX_RETRY_BACKOFF_S, AtaccamaClient
-from ataccama_ossie.models import CatalogItem, CatalogItemBundle, TermAssignment
+from ataccama_ossie.models import CatalogItem, CatalogItemBundle, CatalogLocation, TermAssignment
 
 TOKEN_BODY = {"access_token": "token-1", "expires_in": 300}
 
@@ -412,9 +412,21 @@ def test_foreign_key_columns_are_ordered_and_paired() -> None:
             _page(_entity("fk-1", name="FK_LINES_ORDERS")),
             _page(
                 _foreign_key_column(
-                    "c-2", 2, name="line_no", referencedTableName="orders", referencedColumnName="line"
+                    "c-2",
+                    2,
+                    name="line_no",
+                    referencedSchema="sales",
+                    referencedTableName="orders",
+                    referencedColumnName="line",
                 ),
-                _foreign_key_column("c-1", 1, name="order_id", referencedTableName="orders", referencedColumnName="id"),
+                _foreign_key_column(
+                    "c-1",
+                    1,
+                    name="order_id",
+                    referencedSchema="sales",
+                    referencedTableName="orders",
+                    referencedColumnName="id",
+                ),
             ),
         ]
     )
@@ -427,6 +439,7 @@ def test_foreign_key_columns_are_ordered_and_paired() -> None:
         {
             "name": "FK_LINES_ORDERS",
             "columns": ["order_id", "line_no"],
+            "referenced_schema": "sales",
             "referenced_table": "orders",
             "referenced_columns": ["id", "line"],
         }
@@ -468,13 +481,15 @@ def test_foreign_key_referencing_several_tables_has_no_referenced_table() -> Non
         ]
     )
 
-    with pytest.warns(UserWarning, match=r"Invalid referenced table for foreign key FK_MIXED of catalog item item-1"):
+    with pytest.warns(
+        UserWarning, match=r"Inconsistent referenced table for foreign key FK_MIXED of catalog item item-1"
+    ):
         foreign_keys = client.get_foreign_keys("item-1")
 
-    assert foreign_keys[0]["referenced_table"] is None
+    assert (foreign_keys[0]["referenced_schema"], foreign_keys[0]["referenced_table"]) == (None, None)
 
 
-def test_foreign_key_without_a_referenced_table_has_no_referenced_table() -> None:
+def test_foreign_key_without_a_referenced_table_has_none() -> None:
     client = make_client(
         [
             FakeResponse(200, TOKEN_BODY),
@@ -483,10 +498,120 @@ def test_foreign_key_without_a_referenced_table_has_no_referenced_table() -> Non
         ]
     )
 
-    with pytest.warns(UserWarning, match=r"Invalid referenced table for foreign key FK_DANGLING"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         foreign_keys = client.get_foreign_keys("item-1")
 
     assert foreign_keys[0]["referenced_table"] is None
+
+
+def test_foreign_key_without_a_referenced_schema_has_none() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("fk-1", name="FK_NO_SCHEMA")),
+            _page(_foreign_key_column("c-1", 1, name="a", referencedTableName="orders", referencedColumnName="id")),
+        ]
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        foreign_keys = client.get_foreign_keys("item-1")
+
+    assert foreign_keys[0]["referenced_schema"] is None
+
+
+@pytest.mark.parametrize("second_schema", ["archive", None], ids=["another schema", "no schema"])
+def test_foreign_key_columns_disagreeing_on_the_schema_have_no_referenced_table(second_schema: str | None) -> None:
+    second_column_schema = {"referencedSchema": second_schema} if second_schema else {}
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _page(_entity("fk-1", name="FK_MIXED_SCHEMAS")),
+            _page(
+                _foreign_key_column(
+                    "c-1",
+                    1,
+                    name="a",
+                    referencedSchema="sales",
+                    referencedTableName="orders",
+                    referencedColumnName="id",
+                ),
+                _foreign_key_column(
+                    "c-2",
+                    2,
+                    name="b",
+                    referencedTableName="orders",
+                    referencedColumnName="line",
+                    **second_column_schema,
+                ),
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"Inconsistent referenced table for foreign key FK_MIXED_SCHEMAS"):
+        foreign_keys = client.get_foreign_keys("item-1")
+
+    assert (foreign_keys[0]["referenced_schema"], foreign_keys[0]["referenced_table"]) == (None, None)
+
+
+# --- locations ---
+
+
+def _location_entity(urn: str, concrete_type: str) -> FakeResponse:
+    return FakeResponse(200, {"urn": urn, "rootSuperType": "location", "concreteType": concrete_type})
+
+
+def _item_in(*locations: CatalogLocation) -> CatalogItem:
+    return CatalogItem(urn="item-1", name="orders", locations=list(locations))
+
+
+SALES_SCHEMA = CatalogLocation(name="sales", urn="urn:ata:t:catalog:location:sales")
+SHOP_DATABASE = CatalogLocation(name="shop", urn="urn:ata:t:catalog:location:shop")
+
+
+def test_schema_name_is_the_schema_location_among_the_item_locations() -> None:
+    client = make_client(
+        [
+            FakeResponse(200, TOKEN_BODY),
+            _location_entity(SHOP_DATABASE.urn, "databaseLocation"),
+            _location_entity(SALES_SCHEMA.urn, "schemaLocation"),
+        ]
+    )
+
+    assert client.get_schema_name(_item_in(SHOP_DATABASE, SALES_SCHEMA)) == "sales"
+
+    session: FakeSession = client._session  # type: ignore[assignment]
+    assert [r["url"] for r in session.requests if r["method"] == "GET"] == [
+        f"https://example.test/api/catalog/v1/entities/{SHOP_DATABASE.urn}",
+        f"https://example.test/api/catalog/v1/entities/{SALES_SCHEMA.urn}",
+    ]
+
+
+def test_item_outside_any_schema_has_no_schema_name() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _location_entity(SHOP_DATABASE.urn, "databaseLocation")])
+
+    assert client.get_schema_name(_item_in(SHOP_DATABASE)) is None
+
+
+def test_each_location_type_is_looked_up_once() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _location_entity(SALES_SCHEMA.urn, "schemaLocation")])
+
+    assert client.get_schema_name(_item_in(SALES_SCHEMA)) == "sales"
+    assert client.get_schema_name(_item_in(SALES_SCHEMA)) == "sales"
+
+    session: FakeSession = client._session  # type: ignore[assignment]
+    assert len([r for r in session.requests if r["method"] == "GET"]) == 1
+
+
+def test_bundle_without_relationships_skips_location_lookups() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _page(), FakeResponse(404)])  # token, attributes, dq
+
+    bundle = client.fetch_bundle_for(_item_in(SALES_SCHEMA), with_relationships=False)
+
+    assert bundle.schema_name is None
+    session: FakeSession = client._session  # type: ignore[assignment]
+    assert not any("/catalog/v1/entities/" in r["url"] for r in session.requests)
 
 
 # --- filtering catalog items ---

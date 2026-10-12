@@ -281,13 +281,24 @@ def test_dataset_dq_warning_triggers() -> None:
 # --- keys & relationships ---
 
 
-def _keyed_bundle(name, primary_key=None, unique_indexes=None, foreign_keys=None):
+def _keyed_bundle(name, primary_key=None, unique_indexes=None, foreign_keys=None, schema_name=None):
     return CatalogItemBundle(
         item=CatalogItem(urn=f"urn:ata:t:catalog:catalog-item:{name}", name=name),
         primary_key=primary_key,
         unique_indexes=unique_indexes or [],
         foreign_keys=foreign_keys or [],
+        schema_name=schema_name,
     )
+
+
+def _orders_foreign_key(referenced_schema=None):
+    return {
+        "name": "fk_order",
+        "columns": ["order_id"],
+        "referenced_schema": referenced_schema,
+        "referenced_table": "orders",
+        "referenced_columns": ["id"],
+    }
 
 
 def test_primary_key_is_not_restated_as_a_unique_key() -> None:
@@ -372,7 +383,65 @@ def test_relationship_skipped_when_target_not_in_set() -> None:
             {"name": "fk", "columns": ["order_id"], "referenced_table": "orders", "referenced_columns": ["id"]}
         ],
     )
-    doc = ataccama_to_ossie([line_items])  # 'orders' not included
+    with pytest.warns(UserWarning, match=r"Foreign key fk references table orders which is not in the converted set"):
+        doc = ataccama_to_ossie([line_items])  # 'orders' not included
+    assert doc.relationships is None
+
+
+def test_relationship_skipped_when_the_foreign_key_has_no_referenced_table() -> None:
+    line_items = _keyed_bundle(
+        "line_items",
+        foreign_keys=[{"name": "fk", "columns": ["order_id"], "referenced_table": None, "referenced_columns": ["id"]}],
+    )
+
+    with pytest.warns(UserWarning, match=r"Foreign key fk has no referenced table; skipped"):
+        doc = ataccama_to_ossie([line_items])
+
+    assert doc.relationships is None
+
+
+def test_relationship_targets_the_table_in_the_referenced_schema() -> None:
+    sales_orders = _keyed_bundle("orders", schema_name="sales")
+    archive_orders = _keyed_bundle("orders", schema_name="archive")
+    line_items = _keyed_bundle("line_items", schema_name="sales", foreign_keys=[_orders_foreign_key("archive")])
+
+    doc = ataccama_to_ossie([sales_orders, archive_orders, line_items])
+
+    (rel,) = doc.relationships
+    assert [d.name for d in doc.datasets] == ["orders", "orders_2", "line_items"]
+    assert rel.to == "orders_2"
+
+
+def test_relationship_skipped_when_only_another_schema_has_the_table() -> None:
+    sales_orders = _keyed_bundle("orders", schema_name="sales")
+    line_items = _keyed_bundle("line_items", schema_name="sales", foreign_keys=[_orders_foreign_key("archive")])
+
+    with pytest.warns(UserWarning, match=r"references table archive\.orders which is not in the converted set"):
+        doc = ataccama_to_ossie([sales_orders, line_items])
+
+    assert doc.relationships is None
+
+
+def test_relationship_skipped_when_a_named_schema_cannot_be_confirmed() -> None:
+    orders_in_unknown_schema = _keyed_bundle("orders")
+    line_items = _keyed_bundle("line_items", schema_name="sales", foreign_keys=[_orders_foreign_key("sales")])
+
+    with pytest.warns(UserWarning, match=r"references table sales\.orders which is not in the converted set"):
+        doc = ataccama_to_ossie([orders_in_unknown_schema, line_items])
+
+    assert doc.relationships is None
+
+
+def test_relationship_skipped_when_the_target_is_ambiguous() -> None:
+    sales_orders = _keyed_bundle("orders", schema_name="sales")
+    archive_orders = _keyed_bundle("orders", schema_name="archive")
+    line_items = _keyed_bundle("line_items", foreign_keys=[_orders_foreign_key()])
+
+    with pytest.warns(
+        UserWarning, match=r"references table orders, which matches 2 converted datasets \(orders, orders_2\)"
+    ):
+        doc = ataccama_to_ossie([sales_orders, archive_orders, line_items])
+
     assert doc.relationships is None
 
 
