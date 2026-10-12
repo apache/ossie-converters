@@ -509,8 +509,42 @@ class ConvertedDataset(NamedTuple):
 
     name: str
     table: str
+    schema: str | None
     foreign_keys: list[dict[str, Any]]
     field_names_by_column: dict[str, str]
+
+
+def _foreign_key_target(
+    foreign_key: dict[str, Any], datasets_by_table: dict[str, list[ConvertedDataset]]
+) -> ConvertedDataset | None:
+    """The converted dataset a foreign key references, or None if it is missing or ambiguous.
+
+    Tables are matched by name, and by schema too whenever the foreign key names one. A
+    candidate whose schema is unknown does not match a named schema: a missing relationship
+    is reported, a wrong one would not be.
+    """
+    referenced_table = foreign_key.get("referenced_table")
+    if referenced_table is None:
+        warnings.warn(f"Foreign key {foreign_key.get('name')} has no referenced table; skipped")
+        return None
+    referenced_schema = foreign_key.get("referenced_schema")
+    candidates = datasets_by_table.get(referenced_table, [])
+    if referenced_schema is not None:
+        candidates = [candidate for candidate in candidates if candidate.schema == referenced_schema]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    qualified_table = f"{referenced_schema}.{referenced_table}" if referenced_schema else referenced_table
+    if candidates:
+        warnings.warn(
+            f"Foreign key {foreign_key.get('name')} references table {qualified_table}, which matches "
+            f"{len(candidates)} converted datasets ({', '.join(c.name for c in candidates)}); skipped"
+        )
+    else:
+        warnings.warn(
+            f"Foreign key {foreign_key.get('name')} references table {qualified_table} which is not in the converted set"
+        )
+    return None
 
 
 def _build_relationships(converted: list[ConvertedDataset]) -> list[OssieRelationship]:
@@ -524,16 +558,19 @@ def _build_relationships(converted: list[ConvertedDataset]) -> list[OssieRelatio
     both endpoints of a relationship to exist as datasets, so an FK to a table the caller
     didn't include is skipped (rather than producing an invalid model).
     """
-    by_table = {entry.table: entry for entry in converted if entry.table}
+    datasets_by_table: dict[str, list[ConvertedDataset]] = {}
+    for entry in converted:
+        if entry.table:
+            datasets_by_table.setdefault(entry.table, []).append(entry)
     relationships: list[OssieRelationship] = []
     used_names: set[str] = set()
     for entry in converted:
         for fk in entry.foreign_keys:
-            target = by_table.get(fk.get("referenced_table") or "")
+            target = _foreign_key_target(fk, datasets_by_table)
             from_cols = fk.get("columns") or []
             to_cols = fk.get("referenced_columns") or []
             if target is None:
-                continue  # target not in the converted set
+                continue
             if not from_cols or len(from_cols) != len(to_cols):
                 continue  # need a well-formed, equal-cardinality column pairing
             rel_name = _unique_name(
@@ -642,6 +679,7 @@ def ataccama_to_ossie(
             ConvertedDataset(
                 name=dataset.name,
                 table=bundle.item.name,
+                schema=bundle.schema_name,
                 foreign_keys=bundle.foreign_keys,
                 field_names_by_column=_field_names_by_column(bundle.attributes, dataset.fields or []),
             )
