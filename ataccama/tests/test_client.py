@@ -28,7 +28,7 @@ import requests
 
 from ataccama_ossie import client as client_module
 from ataccama_ossie.client import MAX_RETRY_BACKOFF_S, AtaccamaClient
-from ataccama_ossie.models import CatalogItem
+from ataccama_ossie.models import CatalogItem, CatalogItemBundle, TermAssignment
 
 TOKEN_BODY = {"access_token": "token-1", "expires_in": 300}
 
@@ -724,3 +724,38 @@ def test_monitor_without_thresholds_reports_none() -> None:
     client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(200, {})])
 
     assert client.get_dq_overall_threshold("item-1") is None
+
+
+def test_missing_monitor_reports_no_threshold() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(404)])
+
+    assert client.get_dq_overall_threshold("item-1") is None
+
+
+def test_threshold_server_error_is_not_mistaken_for_an_unset_threshold() -> None:
+    client = make_client([FakeResponse(200, TOKEN_BODY), FakeResponse(500)])
+
+    with pytest.raises(requests.HTTPError):
+        client.get_dq_overall_threshold("item-1")
+
+
+# --- terms ---
+
+
+def _fetch_item_with_term(term_response: FakeResponse) -> CatalogItemBundle:
+    client = make_client([FakeResponse(200, TOKEN_BODY), _page(), term_response])  # token, attributes, term
+    item = CatalogItem(urn="item-1", name="customers", term_assignments=[TermAssignment(term_urn="term-1")])
+    return client.fetch_bundle_for(item, with_dq=False, with_relationships=False)
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_inaccessible_term_is_skipped_with_a_warning(status: int) -> None:
+    with pytest.warns(UserWarning, match=rf"Term term-1 is inaccessible \(status code {status}\)"):
+        bundle = _fetch_item_with_term(FakeResponse(status))
+
+    assert bundle.terms == {}
+
+
+def test_term_server_error_fails_the_fetch() -> None:
+    with pytest.raises(requests.HTTPError):
+        _fetch_item_with_term(FakeResponse(500))
