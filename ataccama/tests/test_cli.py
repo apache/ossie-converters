@@ -39,7 +39,8 @@ class StubClient:
 
     instance: StubClient | None = None
 
-    def __init__(self, **_: Any) -> None:
+    def __init__(self, **connection: Any) -> None:
+        self.connection = connection
         self.find_calls: list[dict[str, Any]] = []
         self.enriched: list[str] = []
         StubClient.instance = self
@@ -57,6 +58,8 @@ class StubClient:
 def client(monkeypatch: pytest.MonkeyPatch) -> type[StubClient]:
     for var in cli_module.REQUIRED_VARS:
         monkeypatch.setenv(var, "x")
+    monkeypatch.delenv("ATACCAMA_TENANT", raising=False)
+    monkeypatch.delenv("ATACCAMA_TOKEN_URL", raising=False)
     StubClient.available = []
     StubClient.instance = None
     monkeypatch.setattr(cli_module, "AtaccamaClient", StubClient)
@@ -198,6 +201,51 @@ def test_tenant_comes_from_the_scope_urn(client, tmp_path: Path) -> None:
     cli_module.main(["--source-urn", SOURCE_URN, "-o", str(out)])
 
     assert "example-tenant" in out.read_text()
+
+
+def test_the_token_tenant_defaults_to_the_scope_urn(client, tmp_path: Path) -> None:
+    client.available = _items("customers")
+
+    _run(tmp_path, "--source-urn", SOURCE_URN)
+
+    assert client.instance.connection["tenant"] == "example-tenant"
+    assert client.instance.connection["token_url"] is None
+
+
+def test_an_explicit_tenant_wins_over_the_scope_urn(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client.available = _items("customers")
+    monkeypatch.setenv("ATACCAMA_TENANT", "other-tenant")
+
+    _run(tmp_path, "--source-urn", SOURCE_URN)
+
+    assert client.instance.connection["tenant"] == "other-tenant"
+
+
+def test_the_document_names_the_tenant_used_to_connect(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client.available = _items("customers")
+    monkeypatch.setenv("ATACCAMA_TENANT", "other-tenant")
+
+    _run(tmp_path, "--source-urn", SOURCE_URN)
+
+    assert '"tenant": "other-tenant"' in (tmp_path / "out.yaml").read_text()
+
+
+def test_an_explicit_token_url_is_passed_through(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client.available = _items("customers")
+    monkeypatch.setenv("ATACCAMA_TOKEN_URL", "https://sso.example.test/token")
+
+    _run(tmp_path, "--source-urn", SOURCE_URN)
+
+    assert client.instance.connection["token_url"] == "https://sso.example.test/token"
+
+
+def test_a_scope_without_a_tenant_needs_explicit_configuration(
+    client, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        _run(tmp_path, "--source-urn", "not-a-urn")
+
+    assert "set ATACCAMA_TENANT or ATACCAMA_TOKEN_URL" in capsys.readouterr().err
 
 
 def test_max_items_below_one_is_rejected(client, tmp_path: Path) -> None:

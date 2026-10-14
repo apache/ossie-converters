@@ -27,7 +27,7 @@ import pytest
 import requests
 
 from ataccama_ossie import client as client_module
-from ataccama_ossie.client import MAX_RETRY_BACKOFF_S, AtaccamaClient
+from ataccama_ossie.client import MAX_RETRY_BACKOFF_S, AtaccamaClient, api_root, keycloak_token_url
 from ataccama_ossie.models import CatalogItem, CatalogItemBundle, CatalogLocation, TermAssignment
 
 TOKEN_BODY = {"access_token": "token-1", "expires_in": 300}
@@ -884,3 +884,57 @@ def test_inaccessible_term_is_skipped_with_a_warning(status: int) -> None:
 def test_term_server_error_fails_the_fetch() -> None:
     with pytest.raises(requests.HTTPError):
         _fetch_item_with_term(FakeResponse(500))
+
+
+# --- connection ---
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://acme.ataccama.one",
+        "https://acme.ataccama.one/",
+        "https://acme.ataccama.one/api",
+        "https://acme.ataccama.one/api/",
+    ],
+)
+def test_base_url_may_be_the_host_or_the_api_root(base_url: str) -> None:
+    assert api_root(base_url) == "https://acme.ataccama.one/api"
+
+
+@pytest.mark.parametrize("base_url", ["https://acme.ataccama.one/", "https://acme.ataccama.one/api"])
+def test_token_url_is_the_tenant_realm_on_the_api_host(base_url: str) -> None:
+    assert keycloak_token_url(base_url, "acme") == (
+        "https://acme.ataccama.one/auth/realms/acme/protocol/openid-connect/token"
+    )
+
+
+def test_tokens_are_minted_from_the_tenant_realm() -> None:
+    session = FakeSession([FakeResponse(200, TOKEN_BODY), FakeResponse(200, {})])
+    client = AtaccamaClient(
+        base_url="https://acme.ataccama.one", client_id="id", client_secret="secret", tenant="acme", session=session
+    )
+
+    client._get("/catalog/v1/catalog-items/item-1")
+
+    assert [r["url"] for r in session.requests] == [
+        "https://acme.ataccama.one/auth/realms/acme/protocol/openid-connect/token",
+        "https://acme.ataccama.one/api/catalog/v1/catalog-items/item-1",
+    ]
+
+
+def test_an_explicit_token_url_wins_over_the_tenant() -> None:
+    client = AtaccamaClient(
+        base_url="https://acme.ataccama.one",
+        client_id="id",
+        client_secret="secret",
+        tenant="acme",
+        token_url="https://sso.example.test/token",
+    )
+
+    assert client.token_url == "https://sso.example.test/token"
+
+
+def test_a_client_needs_a_tenant_or_a_token_url() -> None:
+    with pytest.raises(ValueError, match="either token_url or tenant is required"):
+        AtaccamaClient(base_url="https://acme.ataccama.one", client_id="id", client_secret="secret")

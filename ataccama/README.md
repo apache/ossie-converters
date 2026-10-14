@@ -52,10 +52,11 @@ The client reads connection settings from environment variables (or a `--env-fil
 
 | Variable | Description |
 |---|---|
-| `ATACCAMA_BASE_URL` | API root, e.g. `https://<host>/api` |
-| `ATACCAMA_TOKEN_URL` | OAuth2 token endpoint (Keycloak `.../protocol/openid-connect/token`) |
+| `ATACCAMA_BASE_URL` | the tenant's host, e.g. `https://<host>` (the API root `https://<host>/api` works too) |
 | `ATACCAMA_CLIENT_ID` | service-account client id |
 | `ATACCAMA_CLIENT_SECRET` | service-account client secret |
+| `ATACCAMA_TENANT` | optional: the tenant whose Keycloak realm issues tokens; defaults to the tenant in the scope URNs (`urn:ata:<tenant>:...`) |
+| `ATACCAMA_TOKEN_URL` | optional: the OAuth2 token endpoint, overriding the one derived from the tenant (`https://<host>/auth/realms/<tenant>/protocol/openid-connect/token`) |
 
 > Never commit credentials. Keep them in a git-ignored env file.
 
@@ -112,7 +113,7 @@ ataccama-to-ossie --env-file .ataccama.env --urn <urn> \
 # Library — returns an ossie.OssieDocument from the apache-ossie package
 from ataccama_ossie import AtaccamaClient, ataccama_to_ossie
 
-client = AtaccamaClient(base_url="https://<host>/api", token_url="...", client_id="...", client_secret="...")
+client = AtaccamaClient(base_url="https://<host>", client_id="...", client_secret="...", tenant="<tenant>")
 bundles = [client.fetch_bundle(urn) for urn in urns]
 document = ataccama_to_ossie(bundles, model_name="my_model")
 print(document.to_ossie_yaml())
