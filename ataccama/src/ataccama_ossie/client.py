@@ -31,6 +31,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import chain
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 from urllib3.exceptions import InvalidHeader
@@ -38,6 +39,7 @@ from urllib3.util.retry import Retry
 
 from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
 
+API_PATH = "/api"
 # The API caps every listing endpoint at this many records per page.
 MAX_PAGE_SIZE = 100
 # Stewardship is resolved only on request, and the converter emits it when present.
@@ -52,6 +54,18 @@ RETRYABLE_STATUSES = frozenset({TOO_MANY_REQUESTS, 502, 503, 504})
 DEFAULT_MAX_RETRIES = 5
 DEFAULT_RETRY_BACKOFF_S = 1.0
 MAX_RETRY_BACKOFF_S = 60.0
+
+
+def api_root(base_url: str) -> str:
+    """The API root for a base URL given either as the host or as the API root itself."""
+    root = base_url.rstrip("/")
+    return root if root.endswith(API_PATH) else f"{root}{API_PATH}"
+
+
+def keycloak_token_url(base_url: str, tenant: str) -> str:
+    """The token endpoint of the tenant's Keycloak realm, which Ataccama ONE serves on the API's host."""
+    host = urlsplit(base_url)
+    return f"{host.scheme}://{host.netloc}/auth/realms/{tenant}/protocol/openid-connect/token"
 
 
 def _requested_retry_delay(retry_after: str | None) -> float | None:
@@ -117,17 +131,25 @@ class AtaccamaClient:
     def __init__(
         self,
         base_url: str,
-        token_url: str,
         client_id: str,
         client_secret: str,
         *,
+        token_url: str | None = None,
+        tenant: str | None = None,
         timeout: float = 30.0,
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_backoff_s: float = DEFAULT_RETRY_BACKOFF_S,
         session: requests.Session | None = None,
     ) -> None:
-        # base_url is the API root, e.g. https://<host>/api
-        self.base_url = base_url.rstrip("/")
+        """Connect to a tenant, given its host (or API root) and either its name or its token URL.
+
+        An explicit ``token_url`` wins; otherwise it is derived from ``tenant``.
+        """
+        if token_url is None:
+            if tenant is None:
+                raise ValueError("either token_url or tenant is required")
+            token_url = keycloak_token_url(base_url, tenant)
+        self.base_url = api_root(base_url)
         self.token_url = token_url
         self.client_id = client_id
         self.client_secret = client_secret

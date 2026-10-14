@@ -25,10 +25,12 @@ multiple sources to avoid name clashes.
 Configuration is read from environment variables (optionally loaded from an env file
 via ``--env-file``):
 
-  ATACCAMA_BASE_URL       API root, e.g. https://<host>/api
-  ATACCAMA_TOKEN_URL      OAuth2 token endpoint (Keycloak openid-connect/token)
+  ATACCAMA_BASE_URL       host, e.g. https://<host>, or the API root https://<host>/api
   ATACCAMA_CLIENT_ID      service-account client id
   ATACCAMA_CLIENT_SECRET  service-account client secret
+  ATACCAMA_TENANT         optional; the tenant whose Keycloak realm issues tokens,
+                          defaulting to the tenant in the scope URNs
+  ATACCAMA_TOKEN_URL      optional; overrides the token endpoint derived from the tenant
 
 Example:
   ataccama-to-ossie --env-file .ataccama.env \\
@@ -51,7 +53,7 @@ from ataccama_ossie.ataccama_to_ossie import ataccama_to_ossie
 from ataccama_ossie.client import AtaccamaClient
 from ataccama_ossie.models import CatalogItem
 
-REQUIRED_VARS = ("ATACCAMA_BASE_URL", "ATACCAMA_TOKEN_URL", "ATACCAMA_CLIENT_ID", "ATACCAMA_CLIENT_SECRET")
+REQUIRED_VARS = ("ATACCAMA_BASE_URL", "ATACCAMA_CLIENT_ID", "ATACCAMA_CLIENT_SECRET")
 
 
 def _tenant_from_urn(urn: str) -> str | None:
@@ -164,11 +166,17 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         parser.error(f"missing required configuration: {', '.join(missing)}")
 
+    token_url = os.environ.get("ATACCAMA_TOKEN_URL") or None
+    tenant = os.environ.get("ATACCAMA_TENANT") or _tenant_from_urn(_any_scope_urn(args, requested_urns))
+    if token_url is None and tenant is None:
+        parser.error("cannot tell the tenant from the scope URNs: set ATACCAMA_TENANT or ATACCAMA_TOKEN_URL")
+
     client = AtaccamaClient(
         base_url=os.environ["ATACCAMA_BASE_URL"],
-        token_url=os.environ["ATACCAMA_TOKEN_URL"],
         client_id=os.environ["ATACCAMA_CLIENT_ID"],
         client_secret=os.environ["ATACCAMA_CLIENT_SECRET"],
+        token_url=token_url,
+        tenant=tenant,
     )
 
     print("Finding catalog items ...", file=sys.stderr)
@@ -202,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         bundles,
         model_name=args.model_name,
         model_description=args.model_description,
-        tenant=_tenant_from_urn(_any_scope_urn(args, requested_urns)),
+        tenant=tenant,
         dq_ai_warnings=args.dq_ai_warnings,
         flat_ai_context=args.flat_ai_context,
         ossie_version=args.ossie_version,
