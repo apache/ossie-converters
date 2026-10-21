@@ -94,6 +94,12 @@ from ossie_sigma.sigma_formula import (
             'CASE WHEN "A" > 2 THEN 1 WHEN "A" > 1 THEN 2 WHEN "A" > 0 THEN 3 ELSE 4 END',
         ),
         ("NullIf([A], 0)", "T", 'NULLIF("A", 0)'),
+        ("Text([Employee Number])", "T", 'CAST("Employee Number" AS VARCHAR)'),
+        (
+            "CountDistinctIf(Text([Employee Number]) & [Region], [Hours] > 0)",
+            "T",
+            'COUNT(DISTINCT CASE WHEN "Hours" > 0 THEN CAST("Employee Number" AS VARCHAR) || "Region" END)',
+        ),
         ("Percentile([X], 0.75)", "T", 'PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "X")'),
         ("StdDev([X])", "T", 'STDDEV_SAMP("X")'),
         ("-[X]", "T", '-"X"'),
@@ -183,6 +189,9 @@ def test_is_plain_column_ref():
         ('CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 ELSE 3 END', "T", "If(([A] > 1), 1, ([A] > 0), 2, 3)"),
         ('NULLIF("A", 0)', "T", "NullIf([A], 0)"),
         ('SUM("A") / NULLIF(SUM("B"), 0)', "T", "(Sum([A]) / NullIf(Sum([B]), 0))"),
+        ('CAST("A" AS VARCHAR)', "T", "Text([A])"),
+        ('CAST("A" AS TEXT)', "T", "Text([A])"),
+        ('CAST("A" AS VARCHAR) || "B"', "T", "Text([A]) & [B]"),
     ],
 )
 def test_reverse_translation_basic(sql, dataset_alias, expected):
@@ -215,6 +224,18 @@ def test_null_returning_formulas_round_trip(formula):
 def test_reverse_translation_gives_up_on_simple_case():
     # CASE <expr> WHEN <value> compares against an operand; Sigma's If() has no such form.
     assert sql_to_sigma_formula('CASE "A" WHEN 1 THEN 2 END', dataset_alias="T") is None
+
+
+def test_text_round_trips():
+    sql = to_ansi_sql(parse_formula("Text([A]) & [B]"), dataset_alias="T")
+    back = sql_to_sigma_formula(sql, dataset_alias="T")
+    assert back == "Text([A]) & [B]"
+
+
+def test_reverse_translation_gives_up_on_non_text_casts():
+    # Only a cast to text has a Sigma equivalent; numeric and date casts are not mapped.
+    assert sql_to_sigma_formula('CAST("A" AS INT)') is None
+    assert sql_to_sigma_formula('CAST("A" AS DATE)') is None
 
 
 def test_reverse_translation_gives_up_on_count_star():
