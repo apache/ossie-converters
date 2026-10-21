@@ -32,10 +32,10 @@ This converter is distributed as a Python package. Install it with `uv` or
 `pip`:
 
 ```bash
-uv tool install ossie-hex
+uv tool install apache-ossie-hex
 
 # Alternatively
-pip install ossie-hex
+pip install apache-ossie-hex
 ```
 
 Requires Python 3.11 or newer.

@@ -19,7 +19,7 @@
 
 # Contributing to the Ossie–Hex converter
 
-This document covers development of the `ossie-hex` package. Repository-wide
+This document covers development of the `apache-ossie-hex` package. Repository-wide
 contribution, review, and Apache release requirements are documented in the
 [project contribution guide][ossie-contributing].
 
