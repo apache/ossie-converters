@@ -537,6 +537,8 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
 
     if name == "if" and len(args) == 3:
         return _case(built[0], built[1], built[2])
+    if name == "if" and len(args) == 2:
+        return _case(built[0], built[1], None)
     if name == "ifnull" and len(args) == 2:
         return exp.Coalesce(this=built[0], expressions=[built[1]])
     if name == "isnull" and len(args) == 1:
@@ -654,6 +656,9 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Boolean):
         return "TRUE" if node.this else "FALSE"
 
+    if isinstance(node, exp.Null):
+        return "Null()"
+
     if isinstance(node, exp.Count):
         inner = node.this
         if isinstance(inner, exp.Distinct) and len(inner.expressions) == 1:
@@ -709,12 +714,21 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Case):
         ifs = node.args.get("ifs", [])
         default = node.args.get("default")
-        if len(ifs) == 1 and default is not None:
+        if len(ifs) == 1:
             cond = _render_sql_node(ifs[0].this, dataset_alias)
             then = _render_sql_node(ifs[0].args["true"], dataset_alias)
+            if default is None:
+                # Sigma's If() returns Null when the else argument is omitted,
+                # matching CASE without ELSE.
+                return f"If({cond}, {then})"
             otherwise = _render_sql_node(default, dataset_alias)
             return f"If({cond}, {then}, {otherwise})"
         raise _NotTranslatable("Multi-branch CASE has no single Sigma If() equivalent")
+
+    if isinstance(node, exp.Nullif):
+        left = _render_sql_node(node.this, dataset_alias)
+        right = _render_sql_node(node.expression, dataset_alias)
+        return f"If(({left} = {right}), Null(), {left})"
 
     if isinstance(node, exp.Coalesce) and len(node.expressions) == 1:
         return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"
