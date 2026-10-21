@@ -85,6 +85,7 @@ from ossie_sigma.sigma_formula import (
         ("If([A] = [B], Null(), [A])", "T", 'CASE WHEN "A" = "B" THEN NULL ELSE "A" END'),
         # Sigma's If() returns Null when the else argument is omitted.
         ("If([A] > 0, [B])", "T", 'CASE WHEN "A" > 0 THEN "B" END'),
+        ("NullIf([A], 0)", "T", 'NULLIF("A", 0)'),
         ("Percentile([X], 0.75)", "T", 'PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "X")'),
         ("StdDev([X])", "T", 'STDDEV_SAMP("X")'),
         ("-[X]", "T", '-"X"'),
@@ -167,8 +168,8 @@ def test_is_plain_column_ref():
         ("NULL", "T", "Null()"),
         ('CASE WHEN "A" > 0 THEN "B" END', "T", "If(([A] > 0), [B])"),
         ('CASE WHEN "A" > 0 THEN "B" ELSE NULL END', "T", "If(([A] > 0), [B], Null())"),
-        ('NULLIF("A", 0)', "T", "If(([A] = 0), Null(), [A])"),
-        ('SUM("A") / NULLIF(SUM("B"), 0)', "T", "(Sum([A]) / If((Sum([B]) = 0), Null(), Sum([B])))"),
+        ('NULLIF("A", 0)', "T", "NullIf([A], 0)"),
+        ('SUM("A") / NULLIF(SUM("B"), 0)', "T", "(Sum([A]) / NullIf(Sum([B]), 0))"),
     ],
 )
 def test_reverse_translation_basic(sql, dataset_alias, expected):
@@ -184,6 +185,7 @@ def test_reverse_translation_basic(sql, dataset_alias, expected):
         "If([A] > 0, [B])",
         "If([A] > 0, [B], Null())",
         "If([A] = 0, Null(), [A])",
+        "NullIf([A], 0)",
         "CountIf([A] > 0)",
     ],
 )

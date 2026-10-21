@@ -539,6 +539,8 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
         return _case(built[0], built[1], built[2])
     if name == "if" and len(args) == 2:
         return _case(built[0], built[1], None)
+    if name == "nullif" and len(args) == 2:
+        return exp.Nullif(this=built[0], expression=built[1])
     if name == "ifnull" and len(args) == 2:
         return exp.Coalesce(this=built[0], expressions=[built[1]])
     if name == "isnull" and len(args) == 1:
@@ -726,9 +728,8 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         raise _NotTranslatable("Multi-branch CASE has no single Sigma If() equivalent")
 
     if isinstance(node, exp.Nullif):
-        left = _render_sql_node(node.this, dataset_alias)
-        right = _render_sql_node(node.expression, dataset_alias)
-        return f"If(({left} = {right}), Null(), {left})"
+        # Sigma has a native NullIf(), which evaluates its first argument once.
+        return f"NullIf({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expression, dataset_alias)})"
 
     if isinstance(node, exp.Coalesce) and len(node.expressions) == 1:
         return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"

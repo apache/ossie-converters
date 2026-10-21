@@ -308,7 +308,7 @@ def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula(
         ),
         (
             "SUM(orders.amount) / NULLIF(SUM(orders.hours), 0)",
-            "(Sum([amount]) / If((Sum([hours]) = 0), Null(), Sum([hours])))",
+            "(Sum([amount]) / NullIf(Sum([hours]), 0))",
         ),
     ],
 )
