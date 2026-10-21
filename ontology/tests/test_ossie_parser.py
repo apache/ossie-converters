@@ -72,6 +72,35 @@ def test_embedded_core_document_version_survives_roundtrip(flights_model, tmp_pa
     )
 
 
+def test_datatypes_survive_ontology_converter_roundtrip(flights_path, tmp_path):
+    document = yaml.safe_load(flights_path.read_text())
+    semantic_model = document["ontology_mappings"][0]["semantic_model"]
+    field = semantic_model["datasets"][0]["fields"][0]
+    field["datatype"] = "String"
+    semantic_model["metrics"] = [{
+        "name": "flight_count",
+        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+        "datatype": "Integer",
+    }]
+
+    source_path = tmp_path / "with_datatypes.yaml"
+    source_path.write_text(yaml.safe_dump(document, sort_keys=False))
+    model = OssieParser().parse(source_path)
+
+    exported = OssieToSpecConverter.convert(model).dump_yaml()
+    exported_document = yaml.safe_load(exported)
+    exported_semantic_model = exported_document["ontology_mappings"][0]["semantic_model"]
+    assert exported_semantic_model["datasets"][0]["fields"][0]["datatype"] == "String"
+    assert exported_semantic_model["metrics"][0]["datatype"] == "Integer"
+
+    roundtrip_path = tmp_path / "roundtrip.yaml"
+    roundtrip_path.write_text(exported)
+    reparsed = OssieParser().parse(roundtrip_path)
+    mapping = reparsed.ontology_mappings[0]
+    assert mapping.semantic_model.datasets[0].fields[0].datatype == "String"
+    assert mapping.semantic_model.metrics[0].datatype == "Integer"
+
+
 @pytest.mark.parametrize("version", ["missing", "0.1.0", "0.2.0", None, 2])
 def test_parse_rejects_invalid_embedded_version(flights_path, tmp_path, version):
     document = yaml.safe_load(flights_path.read_text())

@@ -496,6 +496,7 @@ class DatasetField:
     description: str | None = None
     ai_context: AiContext | None = None
     custom_extensions: list[CustomExtension] = field(default_factory=list)
+    datatype: str | None = None
     # Back-reference to the owning Dataset, wired by Dataset.__init__. Used by
     # mapping-expression rendering to reconstruct `<dataset>.<field>` strings
     # for round-trip output. Not in the spec — purely runtime metadata.
@@ -659,6 +660,7 @@ class Metric:
     """Logical-model-level metric defined as a multi-dialect aggregate expression."""
     _name: str
     _expression: DialectExpressionSet
+    _datatype: str | None
     _description: str | None
     _ai_context: AiContext | None
     _custom_extensions: list[CustomExtension]
@@ -670,9 +672,11 @@ class Metric:
         description: str | None = None,
         ai_context: AiContext | None = None,
         custom_extensions: list[CustomExtension] | None = None,
+        datatype: str | None = None,
     ):
         self._name = name
         self._expression = expression
+        self._datatype = datatype
         self._description = description
         self._ai_context = ai_context
         self._custom_extensions = custom_extensions or []
@@ -684,6 +688,10 @@ class Metric:
     @property
     def expression(self) -> DialectExpressionSet:
         return self._expression
+
+    @property
+    def datatype(self) -> str | None:
+        return self._datatype
 
     @property
     def description(self) -> str | None:

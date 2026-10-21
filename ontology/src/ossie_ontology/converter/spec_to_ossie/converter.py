@@ -479,6 +479,7 @@ def _convert_dataset_field(fl: SpecDatasetField) -> DatasetField:
     return DatasetField(
         name=fl.name,
         expression=_convert_expression(fl.expression),
+        datatype=fl.datatype,
         dimension=_convert_dimension(fl.dimension),
         label=fl.label,
         description=fl.description,
@@ -539,6 +540,7 @@ def _convert_metric(m: SpecMetric) -> Metric:
     return Metric(
         name=m.name,
         expression=_convert_expression(m.expression),
+        datatype=m.datatype,
         description=m.description,
         ai_context=m.ai_context,
         custom_extensions=[_convert_custom_extension(ce) for ce in m.custom_extensions],
