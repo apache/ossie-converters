@@ -117,7 +117,7 @@ def fixtures_dir() -> Path:
 
 @pytest.fixture(scope="session")
 def specs_dir() -> Path:
-    """Full ontologies: flights, retail, tpch."""
+    """Full ontologies: flights, retail, tpch, AutoOntologyTPCH."""
     return _SPECS_DIR
 
 
@@ -153,7 +153,7 @@ def flights_model(flights_path: Path) -> OssieOntology:
 # The corpus the snapshot suites run over, and the single source of that list --
 # tests/relationalai/test_converter.py imports it rather than repeating it. `flights`
 # also keeps the named fixtures above, since several tests assert on it directly.
-SPEC_NAMES = ["flights", "retail", "tpch"]
+SPEC_NAMES = ["flights", "retail", "tpch", "AutoOntologyTPCH"]
 
 
 @pytest.fixture

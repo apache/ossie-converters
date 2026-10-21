@@ -92,6 +92,11 @@ class Eref:
             if isinstance(identifier[k], EntityMapping):
                 args[k] = identifier[k].ref()
                 constraints += identifier[k].constraints()
+            elif isinstance(identifier[k], ConditionValue):
+                raise ValueError(
+                    f"Identifier '{k}' of '{self._entity_type._name}' is read from a condition; "
+                    "an entity cannot be identified by one"
+                )
             elif isinstance(identifier[k], ValueMapping):
                 args[k] = identifier[k].expr()
                 constraints += identifier[k].constraints()
@@ -185,6 +190,21 @@ class ValueMapping:
     def where(self, expr):
         self._constraints.append(expr)
         return self
+
+
+# A Boolean read from a condition, such as `"L_LINESTATUS" IS NULL`: the value
+# TRUE, constrained to the rows where the condition holds. Nothing is asserted
+# for the other rows -- under PyRel's closed-world reading, a row without the
+# fact is one for which the condition is not TRUE.
+class ConditionValue(ValueMapping):
+    def __init__(self, conditions: list, value=True):
+        super().__init__(value)
+        for condition in conditions:
+            self.where(condition)
+
+    # The same condition with its value transformed, e.g. cast to a value type.
+    def map(self, fn) -> "ConditionValue":
+        return ConditionValue(self.constraints(), fn(self.expr()))
 
 
 class EBinding(Eref):
@@ -341,6 +361,8 @@ class GRBinding:
             if isinstance(expr, EntityMapping):
                 self._key_constraints += expr.constraints()
                 self._keys.append(expr.ref())
+            elif isinstance(expr, ConditionValue):
+                raise ValueError("A relationship key cannot be read from a condition")
             else:
                 self._keys.append(expr)
 

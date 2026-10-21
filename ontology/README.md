@@ -92,6 +92,21 @@ plain `FormulaFactory` and `MappingFormulaFactory` from `ossie_ontology.model`.
 `SpecToOssieConverter` and `PalantirToOssieConverter` take the same argument and
 default the same way.
 
+A dataset field is read through its SQL `expression`, not its `name`: the name
+is what mappings call the field, the expression is what it reads. A field
+`line_status` with the expression `L_LINESTATUS` reads the `L_LINESTATUS`
+column, and one with `"L_LINESTATUS" IS NULL` reads no column of its own but a
+condition over one. The `SNOWFLAKE` dialect is used when a field has it, then
+`ANSI_SQL`. `ossie_ontology.expr.sql` parses the scalar subset a row-level
+field needs — columns (quoted or not), literals, `NULL`, arithmetic, `||`,
+comparisons, `IS [NOT] NULL`, `AND`/`OR`/`NOT` — and the conversion renders it
+as PyRel over the table. A condition becomes a Boolean asserted `TRUE` on the
+rows where SQL says it is `TRUE`, and on no others: under PyRel's closed-world
+reading, a row without the fact is one where the condition does not hold, so
+ask `not_(Item.flag)` rather than `Item.flag == False`. Anything else (`CASE`,
+`CAST`, functions, a column qualified by a table) fails the conversion with a
+message naming the field.
+
 Two things about the environment this needs. Constructing a model makes
 `relationalai` resolve its configuration, so a `raiconfig.yaml` must be present.
 And each dataset's `source` is read from the configured connection to get its
@@ -100,8 +115,9 @@ column types, so the call above needs one that can reach those tables.
 To convert without a warehouse, pass a different `table_provider`. The default,
 `warehouse_table`, resolves each dataset's `source` against the connection —
 which is what gets the column identifiers right, since Snowflake folds an
-unquoted name to upper case. The alternative, `declared_table`, declares the
-columns from the Ossie spec instead and reads nothing:
+unquoted name to upper case — and a column a field reads that the table lacks
+fails the conversion. The alternative, `declared_table`, declares the columns
+the fields' expressions read, from the Ossie spec, and reads nothing:
 
 ```python
 from ossie_ontology.converter.ossie_to_relationalai import declared_table

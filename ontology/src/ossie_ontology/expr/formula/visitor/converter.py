@@ -37,7 +37,8 @@ from relationalai.semantics.frontend.base import Ref, Concept as RAIConcept, Cor
     Relationship as RAIRelationship
 
 from ossie_ontology.reasoner import OntologyReasoner
-from ossie_ontology.vendor.relationalai.mappings import ValueMapping
+from ossie_ontology.vendor.relationalai.fields import render_field
+from ossie_ontology.vendor.relationalai.mappings import ConditionValue, ValueMapping
 from ossie_ontology.vendor.relationalai.ontology import OntologyModel
 from ossie_ontology.expr.formula.model import (
     AggregationMethod,
@@ -312,6 +313,11 @@ class MappingFormulaConverter(GenericFormulaConverter):
             self.result = expr.accept(self, None)
         else:
             raw = expr.accept(self, None)
+            if isinstance(raw, ConditionValue):
+                # A field read from a condition, mapped on its own: it already
+                # carries the condition it is TRUE under.
+                self.result = raw.map(self._concept) if self._concept is not None else raw
+                return
             # A value-type wrapper (`StoreNr(T.id)`) already casts the value,
             # to the type the spec checked against the mapping's own.
             if self._concept is not None and not self._is_value_type_wrapper(expr):
@@ -328,7 +334,7 @@ class MappingFormulaConverter(GenericFormulaConverter):
         if dataset is not None:
             table = self._ontology.lookup_table(dataset.name)
             assert table is not None, f"Table '{dataset.name}' not found in ontology"
-            return table.__getattr__(field.name)
+            return self._field_value(field, table, parent)
         raise ValueError(f"Cannot resolve table for field '{field.name}' — dataset back-reference is missing")
 
     def visit_dotjoinhandle(self, node: DotJoinHandle, parent):
@@ -338,12 +344,27 @@ class MappingFormulaConverter(GenericFormulaConverter):
             if dataset is not None:
                 table = self._ontology.lookup_table(dataset.name)
                 assert table is not None, f"Table '{dataset.name}' not found in ontology"
-                return table.__getattr__(field.name)
+                return self._field_value(field, table, parent)
             if isinstance(node._handle1, DatasetRefHandle):
                 table = self._ontology.lookup_table(node._handle1.name())
                 assert table is not None, f"Table '{node._handle1.name()}' not found in ontology"
-                return table.__getattr__(field.name)
+                return self._field_value(field, table, parent)
         raise ValueError(f"Unsupported dot-join in mapping expression: '{node}'")
+
+    @staticmethod
+    def _field_value(field, table, parent):
+        """What *field*'s expression reads from *table* -- not its name.
+
+        A field read from a condition is TRUE only where the condition holds, so
+        it can only be a mapping's whole expression, never an operand inside one.
+        """
+        value = render_field(field, table)
+        if isinstance(value, ConditionValue) and parent is not None:
+            raise ValueError(
+                f"Field '{field.name}' is a condition, so a mapping can only read it on its "
+                f"own, not inside a larger expression"
+            )
+        return value
 
     def visit_literalhandle(self, node: LiteralHandle, parent):
         return node._val

@@ -31,7 +31,8 @@ import warnings
 from typing import Any, Callable
 
 from relationalai.util.naming import NameCache
-from ossie_ontology.vendor.relationalai.mappings import EntityMapping
+from ossie_ontology.vendor.relationalai.fields import render_field, table_schema
+from ossie_ontology.vendor.relationalai.mappings import ConditionValue, EntityMapping
 from ossie_ontology.vendor.relationalai.ontology import OntologyModel
 from ossie_ontology.expr.formula.model import Formula
 from ossie_ontology.expr.formula.visitor.converter import FormulaConverter, MappingFormulaConverter
@@ -68,14 +69,15 @@ def warehouse_table(ontology: "OntologyModel", dataset: Dataset,
     """Resolve a dataset to the warehouse table its `source` names.
 
     The schema is deliberately *not* passed on: pyrel reads the real columns
-    from the table instead. That costs a connection when the model is compiled,
-    but it is the only way to get the column identifiers right — Snowflake folds
-    an unquoted name to upper case, so declaring the spec's `airport_code`
-    yields `AIRPORT_CODE`, which does not address a column created as
-    `"airport_code"`. Only the table itself knows which it is.
+    from the table instead. That costs a connection during conversion, when
+    each column a field's expression reads is looked up, but it is the only way
+    to be sure of them — Snowflake folds an unquoted name to upper case, so an
+    expression `airport_code` reads `AIRPORT_CODE`, which is not a column created
+    as `"airport_code"`. Only the table itself knows which it has, and a column
+    it lacks fails the conversion rather than becoming an untyped property.
 
-    Use :func:`declared_table` where the spec's field names are known to match
-    and a connection is unwanted.
+    Use :func:`declared_table` where the fields' expressions are known to spell
+    the columns as the table stores them and a connection is unwanted.
     """
     return ontology.base_model().Table(dataset.source)
 
@@ -84,10 +86,12 @@ def declared_table(ontology: "OntologyModel", dataset: Dataset,
                    schema: dict[str, RAIConcept]) -> Any:
     """Resolve a dataset to its table, declaring the columns from the spec.
 
-    Nothing is read from the warehouse, so conversion and compilation work with
-    no connection — which is what makes an offline test suite possible. The
-    tradeoff is the one :func:`warehouse_table` avoids: the declared identifiers
-    have to match how the table was actually created.
+    The columns are the ones the fields' expressions read, under the
+    identifiers they are written with — not the fields' names, which are only
+    what mappings call them. Nothing is read from the warehouse, so conversion
+    and compilation work with no connection — which is what makes an offline
+    test suite possible. The tradeoff is the one :func:`warehouse_table` avoids:
+    the declared identifiers have to match how the table was actually created.
     """
     return ontology.base_model().Table(dataset.source, schema=schema)
 
@@ -167,16 +171,11 @@ class OssieToRelationalAIConverter:
         """Column types for *dataset*, taken from the Ossie spec that declares it.
 
         Handed to the table provider so it can declare the columns up front,
-        which is what keeps the conversion from needing a live warehouse. A
-        column is declared as the builtin its `datatype` holds (pyrel names
-        them the same); one with no datatype, or none with a builtin (`Time`,
-        `Opaque`), is declared `String`.
+        which is what keeps the conversion from needing a live warehouse. The
+        columns are the ones the fields' expressions read -- `line_status`
+        declares `L_LINESTATUS` -- typed as `fields.table_schema` describes.
         """
-        schema = {}
-        for fl in dataset.fields:
-            name = (fl.datatype.builtin_name if fl.datatype is not None else None) or "String"
-            schema[fl.name] = OssieToRelationalAIConverter._concept(ontology, name)
-        return schema
+        return table_schema(dataset, lambda name: OssieToRelationalAIConverter._concept(ontology, name))
 
     # ------------------------------------------------------------------
     # Concepts
@@ -408,8 +407,14 @@ class OssieToRelationalAIConverter:
                 f"Dataset '{dataset.name}' has no table in the converted ontology; "
                 f"it is referenced by the mapping for column '{expression.name}'"
             )
-            result = table.__getattr__(expression.name)
-            return concept(result) if concept is not None else result
+            # The field's expression says what it reads; its name is only what
+            # the mapping calls it.
+            result = render_field(expression, table)
+            if concept is None:
+                return result
+            if isinstance(result, ConditionValue):
+                return result.map(concept)
+            return concept(result)
         if isinstance(expression, Formula):
             return MappingFormulaConverter(ontology, expression, concept=concept).result
         raise ValueError(f"Unsupported expression type in mapping: {type(expression)}")

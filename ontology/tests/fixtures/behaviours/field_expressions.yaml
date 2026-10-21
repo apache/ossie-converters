@@ -1,0 +1,164 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+# Dataset fields read through their SQL `expression`, never their `name`. Each
+# field of ITEMS is one shape the expression can take:
+#
+#   * `nr` and `label` are columns under another name (I_NR, I_LABEL);
+#   * `code` is a quoted, case-sensitive column, "i_code";
+#   * `full_label` concatenates, `gross` computes, `raw` has no datatype;
+#   * `missing_label` and `is_cheap` are conditions, asserted TRUE on the rows
+#     where they hold and on no others; `is_cheap` is NOT (I_PRICE >= 10), which
+#     SQL makes UNKNOWN rather than TRUE when the price is NULL.
+#
+# I_NR is read by `nr` as an Integer and again inside `gross`: one column,
+# declared once.
+version: 0.2.0.dev0
+name: FieldExpressions
+ontology:
+- concept: Item
+  type: EntityType
+  identify_by: [nr]
+  relationships:
+  - name: nr
+    roles:
+    - concept: Integer
+    verbalizes: ['{Item} has nr {Integer}']
+    multiplicity: OneToOne
+  - name: label
+    roles:
+    - concept: String
+    verbalizes: ['{Item} has label {String}']
+    multiplicity: ManyToOne
+  - name: code
+    roles:
+    - concept: String
+    verbalizes: ['{Item} has code {String}']
+    multiplicity: ManyToOne
+  - name: full_label
+    roles:
+    - concept: String
+    verbalizes: ['{Item} has full label {String}']
+    multiplicity: ManyToOne
+  - name: gross
+    roles:
+    - concept: Decimal
+    verbalizes: ['{Item} has gross {Decimal}']
+    multiplicity: ManyToOne
+  - name: missing_label
+    roles:
+    - concept: Boolean
+    verbalizes: ['{Item} has missing label {Boolean}']
+    multiplicity: ManyToOne
+  - name: is_cheap
+    roles:
+    - concept: Boolean
+    verbalizes: ['{Item} is cheap {Boolean}']
+    multiplicity: ManyToOne
+ontology_mappings:
+- name: field_expressions_mapping
+  semantic_model:
+    version: 0.2.0.dev0
+    name: Field expressions semantic model
+    datasets:
+    - name: ITEMS
+      source: DB.SCHEMA.ITEMS
+      fields:
+      - name: nr
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: I_NR
+        datatype: Integer
+      - name: label
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: i_label
+        datatype: String
+      - name: code
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: '"i_code"'
+        datatype: String
+      - name: price
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: I_PRICE
+        datatype: Decimal
+      - name: full_label
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: "i_label || ' #' || \"i_code\""
+        datatype: String
+      - name: gross
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: I_PRICE * 1.2
+        datatype: Decimal
+      - name: missing_label
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: i_label IS NULL
+          - dialect: SNOWFLAKE
+            expression: '"I_LABEL" IS NULL'
+        datatype: Boolean
+      - name: is_cheap
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: NOT (I_PRICE >= 10)
+        datatype: Boolean
+      - name: raw
+        expression:
+          dialects:
+          - dialect: ANSI_SQL
+            expression: I_RAW
+  concept_mappings:
+  - concept: Item
+    object_mappings:
+    - referent_mappings:
+      - relationship: nr
+        expression: ITEMS.nr
+    link_mappings:
+    - object_mapping:
+        referent_mappings:
+        - relationship: nr
+          expression: ITEMS.nr
+      children:
+      - object_mapping:
+          expression: ITEMS.label
+        relationship: label
+      - object_mapping:
+          expression: ITEMS.code
+        relationship: code
+      - object_mapping:
+          expression: ITEMS.full_label
+        relationship: full_label
+      - object_mapping:
+          expression: ITEMS.gross
+        relationship: gross
+      - object_mapping:
+          expression: ITEMS.missing_label
+        relationship: missing_label
+      - object_mapping:
+          expression: ITEMS.is_cheap
+        relationship: is_cheap
