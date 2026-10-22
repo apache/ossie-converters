@@ -321,7 +321,7 @@ class OssieToLightdashConverter:
             joins = joins_by_dataset.setdefault(dataset.name, [])
             references = references_by_dataset.setdefault(dataset.name, {})
             for stashed_join in stash.get("joins") or []:
-                if not isinstance(stashed_join, dict) or not stashed_join.get("join"):
+                if not isinstance(stashed_join, dict) or not isinstance(stashed_join.get("join"), str):
                     continue
                 key = (stashed_join.get("join"), stashed_join.get("alias"))
                 for index, join in enumerate(joins):
@@ -330,8 +330,17 @@ class OssieToLightdashConverter:
                         break
                 else:
                     joins.append(stashed_join)
+                # `references` is keyed by Ossie dataset name, the way field
+                # and metric expressions name a dataset; the stashed join
+                # names the Lightdash model, which can differ (dataset
+                # `customer_ds` over source `public.customer` is model
+                # `customer`). A join to a model outside the document is kept
+                # under the model name so an expression that names it still
+                # resolves.
+                joined_model = stashed_join["join"]
+                joined_dataset = dataset_by_model_name.get(joined_model.casefold(), joined_model)
                 references.setdefault(
-                    stashed_join["join"], stashed_join.get("alias") or stashed_join["join"]
+                    joined_dataset, stashed_join.get("alias") or joined_model
                 )
             if not joins:
                 del joins_by_dataset[dataset.name]

@@ -26,9 +26,11 @@ vocabulary.
 import json
 import re
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from ossie import OssieDataType
+
+from ossie_lightdash.converter_issues import ConversionError
 
 # Column types keyed by model name, then by lower-cased column name.
 Catalog = Dict[str, Dict[str, str]]
@@ -95,19 +97,85 @@ def warehouse_type_to_datatype(warehouse_type: str) -> Optional[OssieDataType]:
 def load_catalog(path: Path) -> Catalog:
     """Read a dbt ``catalog.json`` into ``{model: {column: type}}``.
 
-    Models and seeds are keyed by their dbt name (the last segment of the
-    node's unique id); column names are lower-cased because warehouses differ
-    in how they report case.
+    Models and seeds are keyed by the node's ``name``, which is the name
+    Lightdash uses for the model. The last segment of a node's unique ID is
+    not that name: a versioned model's unique ID ends in ``.v2``. When a
+    model has several versions, the latest version (``latest_version``, or
+    the highest ``version``) supplies the types. Two packages that each
+    define a model with the same name make the catalog ambiguous for that
+    name, which raises a ``ConversionError`` rather than letting one package
+    silently supply the other's types. Column names are lower-cased because
+    warehouses differ in how they report case.
+
+    Raises:
+        ConversionError: If the file is not a JSON object with a ``nodes``
+            mapping, or a model name is defined by more than one package.
     """
-    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ConversionError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ConversionError(f"{path} is not a dbt catalog: expected a JSON object")
+    nodes = document.get("nodes")
+    if nodes is None:
+        nodes = {}
+    if not isinstance(nodes, dict):
+        raise ConversionError(f"{path} is not a dbt catalog: `nodes` must be an object")
+
     catalog: Catalog = {}
-    for unique_id, node in (document.get("nodes") or {}).items():
+    # (package, version) of the node that supplied each name's types.
+    provenance: Dict[str, Any] = {}
+    for unique_id, node in nodes.items():
+        if not isinstance(node, dict):
+            raise ConversionError(f"{path}: node {unique_id} must be an object")
         kind = unique_id.split(".", 1)[0]
         if kind not in ("model", "seed"):
             continue
-        name = unique_id.rsplit(".", 1)[-1]
+        name = node.get("name") or _name_from_unique_id(unique_id, node)
+        package = node.get("package_name") or unique_id.split(".")[1:2]
+        version = node.get("version")
+        previous = provenance.get(name)
+        if previous is not None:
+            previous_package, previous_version = previous
+            if previous_package != package:
+                raise ConversionError(
+                    f"{path} names model {name!r} in two packages "
+                    f"({previous_package} and {package}); the catalog cannot say "
+                    f"which one a Lightdash model called {name!r} is built from"
+                )
+            # Several versions of one model: the latest one supplies the types.
+            if not _is_newer_version(node, version, previous_version):
+                continue
+        provenance[name] = (package, version)
+        columns = node.get("columns")
+        if columns is None:
+            columns = {}
+        if not isinstance(columns, dict):
+            raise ConversionError(f"{path}: columns of {unique_id} must be an object")
         catalog[name] = {
-            column_name.lower(): (column.get("type") or "")
-            for column_name, column in (node.get("columns") or {}).items()
+            column_name.lower(): ((column or {}).get("type") or "")
+            for column_name, column in columns.items()
         }
     return catalog
+
+
+def _name_from_unique_id(unique_id: str, node: Dict[str, Any]) -> str:
+    """The model name for a node that carries no ``name``: the last segment
+    of the unique ID, or the one before it for a versioned model
+    (``model.pkg.orders.v2``)."""
+    segments = unique_id.split(".")
+    if node.get("version") is not None and len(segments) >= 4 and re.fullmatch(r"v\w+", segments[-1]):
+        return segments[-2]
+    return segments[-1]
+
+
+def _is_newer_version(node: Dict[str, Any], version: Any, previous_version: Any) -> bool:
+    """True when ``node`` should replace the version already recorded."""
+    latest = node.get("latest_version")
+    if latest is not None:
+        return str(version) == str(latest)
+    try:
+        return float(version) > float(previous_version)
+    except (TypeError, ValueError):
+        return str(version) > str(previous_version)

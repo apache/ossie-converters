@@ -283,13 +283,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             import_parser.error(f"{args.input}: not valid YAML: {exc}")
         for file in skipped:
             print(f"Skipped {file}: not valid YAML (a template or Jinja-only file?)", file=sys.stderr)
+        catalog = None
+        if args.catalog:
+            try:
+                catalog = load_catalog(args.catalog)
+            except OSError as exc:
+                import_parser.error(f"cannot read --catalog {args.catalog}: {exc.strerror or exc}")
+            except ConversionError as exc:
+                import_parser.error(str(exc))
         try:
             result = LightdashToOssieConverter(OssieDialect[args.dialect]).convert(
                 schema_yml,
                 database=args.database,
                 schema=args.schema,
                 semantic_model_name=args.semantic_model_name,
-                catalog=load_catalog(args.catalog) if args.catalog else None,
+                catalog=catalog,
             )
         except ConversionError as exc:
             import_parser.error(f"{args.input}: {exc}")

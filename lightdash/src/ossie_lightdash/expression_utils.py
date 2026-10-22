@@ -190,7 +190,10 @@ def ossie_sql_to_lightdash(
     (joined from ``dataset``) becomes ``${<join reference>.column}``, where the
     join reference is the joined model's name or its alias.
     """
-    names = {dataset: None, **(references or {})}
+    # The dataset's own mapping is applied last so a join reference can never
+    # override it: in a self-join (`employees` joined as `manager`), the
+    # model's own columns stay `${TABLE}.col`.
+    names = {**(references or {}), dataset: None}
 
     def replace(match: "re.Match[str]") -> str:
         name, column = match.group(1), match.group(2)
