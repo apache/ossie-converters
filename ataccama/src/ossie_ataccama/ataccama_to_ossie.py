@@ -50,7 +50,7 @@ from ossie import (
     OssieRelationship,
 )
 
-from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
+from ossie_ataccama.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
 
 # todo: Until apache/ossie#629 adds OssieVendor.ATACCAMA and the ossie submodule is bumped past it.
 ATACCAMA_VENDOR_NAME = "ATACCAMA"

@@ -49,9 +49,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from ataccama_ossie.ataccama_to_ossie import ataccama_to_ossie
-from ataccama_ossie.client import AtaccamaClient
-from ataccama_ossie.models import CatalogItem
+from ossie_ataccama.ataccama_to_ossie import ataccama_to_ossie
+from ossie_ataccama.client import AtaccamaClient
+from ossie_ataccama.models import CatalogItem
 
 REQUIRED_VARS = ("ATACCAMA_BASE_URL", "ATACCAMA_CLIENT_ID", "ATACCAMA_CLIENT_SECRET")
 
