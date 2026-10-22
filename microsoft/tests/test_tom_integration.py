@@ -54,12 +54,13 @@ if not (ASSEMBLIES / "Microsoft.AnalysisServices.Tabular.dll").is_file():
     "input_path", ["mini.pbip", "mini.SemanticModel", "mini.SemanticModel/definition"]
 )
 @pytest.mark.parametrize("translate_dax", [False, True])
-def test_a_split_pbip_imports_the_bigquery_source(input_path, translate_dax, tmp_path):
+def test_a_split_pbip_imports_an_inline_table(input_path, translate_dax, tmp_path):
     project = HERE / "fixtures" / "mini-pbip"
     yaml_text = import_powerbi_project(project / input_path, translate_dax=translate_dax)
     document = yaml.safe_load(yaml_text)
     assert document["datasets"][0]["name"] == "Orders"
-    assert document["datasets"][0]["source"] == "analytics-prod.sales.orders"
+    # Inline M has no physical relation; the converter uses the model table name.
+    assert document["datasets"][0]["source"] == "Orders"
     expected = [{"dialect": "DAX", "expression": "SUM(Orders[id])"}]
     if translate_dax:
         expected.insert(0, {"dialect": "OSSIE_SQL_2026", "expression": "SUM(Orders.id)"})
