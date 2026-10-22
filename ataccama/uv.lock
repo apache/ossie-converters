@@ -30,7 +30,7 @@ requires-dist = [
 dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
-name = "ataccama-ossie"
+name = "apache-ossie-ataccama"
 version = "0.2.0.dev0"
 source = { editable = "." }
 dependencies = [
