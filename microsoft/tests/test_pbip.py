@@ -37,7 +37,7 @@ def _project(root: Path) -> Path:
     _write(definition / "database.tmdl", "database mini\n\tcompatibilityLevel: 1567\n")
     _write(definition / "model.tmdl", "model Model\n\nref table Orders\n")
     _write(definition / "tables" / "Orders.tmdl", "table Orders\n")
-    _write(definition / "cultures" / "ja-JP.tmdl", "cultureInfo ja-JP\n")
+    _write(definition / "cultures" / "en-US.tmdl", "cultureInfo en-US\n")
     _write(definition / "diagramLayout.json", "{}\n")
     _write(root / "mini.SemanticModel" / ".pbi" / "localSettings.json", "{}\n")
     report = root / "mini.Report"
@@ -74,7 +74,7 @@ def test_tmdl_documents_keep_refs_and_skip_non_tmdl(tmp_path):
     assert [path for path, _text in documents] == [
         "database.tmdl",
         "model.tmdl",
-        "cultures/ja-JP.tmdl",
+        "cultures/en-US.tmdl",
         "tables/Orders.tmdl",
     ]
     model = dict(documents)["model.tmdl"]
