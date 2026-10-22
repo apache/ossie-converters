@@ -111,7 +111,7 @@ ataccama-to-ossie --env-file .ataccama.env --urn <urn> \
 
 ```python
 # Library — returns an ossie.OssieDocument from the apache-ossie package
-from ataccama_ossie import AtaccamaClient, ataccama_to_ossie
+from ossie_ataccama import AtaccamaClient, ataccama_to_ossie
 
 client = AtaccamaClient(base_url="https://<host>", client_id="...", client_secret="...", tenant="<tenant>")
 bundles = [client.fetch_bundle(urn) for urn in urns]

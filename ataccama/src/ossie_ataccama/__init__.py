@@ -17,9 +17,9 @@
 
 """Ataccama ONE -> Ossie semantic model importer."""
 
-from ataccama_ossie.ataccama_to_ossie import ataccama_to_ossie
-from ataccama_ossie.client import AtaccamaClient
-from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
+from ossie_ataccama.ataccama_to_ossie import ataccama_to_ossie
+from ossie_ataccama.client import AtaccamaClient
+from ossie_ataccama.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
 
 __all__ = [
     "AtaccamaClient",

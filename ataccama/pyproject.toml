@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ataccama-to-ossie = "ataccama_ossie.cli:main"
+ataccama-to-ossie = "ossie_ataccama.cli:main"
 
 [dependency-groups]
 dev = [
@@ -50,11 +50,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-include = ["src/ataccama_ossie/**/*"]
+include = ["src/ossie_ataccama/**/*"]
 ignore-vcs = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ataccama_ossie"]
+packages = ["src/ossie_ataccama"]
 
 [tool.ruff]
 line-length = 120

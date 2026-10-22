@@ -24,9 +24,9 @@ from typing import Any
 
 import pytest
 
-from ataccama_ossie import cli as cli_module
-from ataccama_ossie.client import CatalogItemResults
-from ataccama_ossie.models import CatalogItem, CatalogItemBundle
+from ossie_ataccama import cli as cli_module
+from ossie_ataccama.client import CatalogItemResults
+from ossie_ataccama.models import CatalogItem, CatalogItemBundle
 
 ITEM_URN = "urn:ata:example-tenant:catalog:catalog-item:{}"
 SOURCE_URN = "urn:ata:example-tenant:catalog:source:s1"

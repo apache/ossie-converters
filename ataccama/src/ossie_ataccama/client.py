@@ -37,7 +37,7 @@ import requests
 from urllib3.exceptions import InvalidHeader
 from urllib3.util.retry import Retry
 
-from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
+from ossie_ataccama.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
 
 API_PATH = "/api"
 # The API caps every listing endpoint at this many records per page.

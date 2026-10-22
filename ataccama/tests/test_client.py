@@ -26,9 +26,9 @@ from typing import Any
 import pytest
 import requests
 
-from ataccama_ossie import client as client_module
-from ataccama_ossie.client import MAX_RETRY_BACKOFF_S, AtaccamaClient, api_root, keycloak_token_url
-from ataccama_ossie.models import CatalogItem, CatalogItemBundle, CatalogLocation, TermAssignment
+from ossie_ataccama import client as client_module
+from ossie_ataccama.client import MAX_RETRY_BACKOFF_S, AtaccamaClient, api_root, keycloak_token_url
+from ossie_ataccama.models import CatalogItem, CatalogItemBundle, CatalogLocation, TermAssignment
 
 TOKEN_BODY = {"access_token": "token-1", "expires_in": 300}
 
