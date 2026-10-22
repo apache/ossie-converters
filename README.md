@@ -122,6 +122,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `HOLISTICS` | Holistics AML dataset |
 | `LIGHTDASH` | Lightdash semantic layer (model files, or dbt `meta`) |
 | `ATACCAMA` | Ataccama ONE catalog metadata |
+| `SAP_CSN` | SAP CSN (Core Schema Notation) document |
 
 [`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped spoke. It reads one Snowflake semantic view, writes one Ossie document, writes a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. It does not call `snowflake` (Cortex Analyst export only) or `wisdom` (that spoke drops synonyms and field or metric `ai_context`).
 
