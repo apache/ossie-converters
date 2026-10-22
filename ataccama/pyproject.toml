@@ -16,12 +16,22 @@
 # under the License.
 
 [project]
-name = "ataccama-ossie"
+name = "apache-ossie-ataccama"
 version = "0.2.0.dev0"
 description = "Importer from Ataccama ONE catalog metadata to the Ossie semantic model"
-authors = [{name = "Ataccama", email = "support@ataccama.com"}]
+authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
+maintainers = [
+    { name = "Rostislav Osvald", email = "rostislav.osvald@ataccama.com" },
+]
 readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+keywords = [
+    "Apache Ossie",
+    "Ossie",
+    "Ataccama",
+    "Ataccama ONE",
+]
 dependencies = [
     "apache-ossie>=0.2.0.dev0",
     "python-dotenv>=1.0.0",
@@ -31,6 +41,10 @@ dependencies = [
 
 [project.scripts]
 ataccama-to-ossie = "ossie_ataccama.cli:main"
+
+[project.urls]
+homepage = "https://ossie.apache.org/"
+repository = "https://github.com/apache/ossie-converters/"
 
 [dependency-groups]
 dev = [
