@@ -14,19 +14,19 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Convert an Ossie document into Lightdash semantic definitions.
+"""Converts an Ossie document into Lightdash semantic definitions.
 
-``convert`` produces a dbt ``schema.yml``-shaped dictionary whose ``meta``
-blocks carry Lightdash dimensions, metrics and joins, ready to be merged into
-a dbt project that Lightdash reads. ``convert_models`` produces Lightdash's
-own dbt-free model files (``type: model``, ``sql_from``, typed dimensions),
-which ``lightdash deploy`` reads directly. Lightdash-specific presentation attributes that
-have no Ossie vocabulary round-trip through ``custom_extensions`` entries with
-``vendor_name: LIGHTDASH``; their keys are overlaid onto the generated
-definitions and win for presentation attributes, while structural keys
-(``sql``/``label`` on dimensions, ``sql``/``description`` on metrics,
-``join``/``sql_on`` on joins) are protected so they can never override the
-Ossie-derived definition.
+``convert`` produces a dictionary in the shape of a dbt ``schema.yml``, whose
+``meta`` blocks hold Lightdash dimensions, metrics, and joins, for merging
+into a dbt project that Lightdash reads. ``convert_models`` produces native
+Lightdash model files (``type: model``, ``sql_from``, typed dimensions),
+which ``lightdash deploy`` reads directly. Lightdash presentation attributes
+that have no Ossie vocabulary round-trip through ``custom_extensions``
+entries with ``vendor_name: LIGHTDASH``. Their keys are merged into the
+generated definitions and win for presentation attributes. Structural keys
+(``sql`` and ``label`` on dimensions, ``sql`` and ``description`` on metrics,
+``join`` and ``sql_on`` on joins) are protected, so they can't override the
+definition derived from Ossie.
 """
 
 import json
@@ -59,34 +59,35 @@ from ossie_lightdash.expression_utils import (
 
 LIGHTDASH_VENDOR_NAME = "LIGHTDASH"
 
-# Structural keys are owned by Ossie vocabulary (the import direction never puts
-# them into the extension); dropping them here keeps a hand-authored extension
-# from overriding the Ossie-derived definition. ``type`` stays overridable on
-# metrics whose expression is not a recognised aggregation: it is the channel
-# for types an expression cannot express (``boolean``, ``string``, ...).
+# Ossie vocabulary owns the structural keys, and the import never writes them
+# to the extension. Dropping them here keeps a hand-written extension from
+# overriding the definition derived from Ossie. ``type`` stays overridable on
+# a metric whose expression is not a recognized aggregation, because that is
+# how a type an expression can't express (``boolean``, ``string``, and so on)
+# reaches Lightdash.
 _PROTECTED_DIMENSION_KEYS = {"sql", "label", "ai_hint", "hidden", "column_meta"}
 _PROTECTED_METRIC_KEYS = {"sql", "description", "ai_hint", "name", "model"}
 _PROTECTED_AGGREGATION_KEYS = _PROTECTED_METRIC_KEYS | {"type", "percentile"}
 _PROTECTED_JOIN_KEYS = {"join", "sql_on", "alias"}
-# Dataset-level stash keys that map to Ossie vocabulary or are handled apart.
+# Dataset extension keys that map to Ossie vocabulary or are handled separately.
 _PROTECTED_MODEL_KEYS = {"joins", "metrics", "primary_key", "ai_hint", "name", "type", "sql_from"}
-# Order of the top-level keys in a Lightdash model file; anything else
-# (stashed model meta) follows in source order.
+# Order of the top-level keys in a Lightdash model file. Any other key (model
+# meta from the extension) follows in source order.
 _MODEL_KEY_ORDER = ("type", "name", "label", "description", "sql_from", "primary_key", "ai_hint")
 _DIMENSION_KEY_ORDER = ("name", "type", "label", "description", "sql", "hidden")
 
-# Joins a dataset declares, keyed by the joined dataset: the name Lightdash SQL
-# uses to reference it (the joined model, or its alias). The first join to a
-# dataset wins when it is joined more than once.
+# The joins a dataset declares, keyed by the joined dataset. The value is the
+# name Lightdash SQL uses to reference it: the joined model, or its alias. When
+# a dataset is joined more than once, the first join wins.
 JoinReferences = Dict[str, str]
 
 
 def _lightdash_extension_data(element: Any, issues: List[ConverterIssue]) -> Dict[str, Any]:
-    """Return the ``lightdash`` vendor extension data of an Ossie element, if any."""
+    """Gets the ``LIGHTDASH`` extension data of an Ossie element, or an empty mapping."""
     data: Dict[str, Any] = {}
     for extension in element.custom_extensions or []:
-        # The registered token is LIGHTDASH; documents written before the
-        # registration used the lowercase name.
+        # The vendor name is LIGHTDASH. Documents written before it was
+        # registered used the lowercase name.
         if extension.vendor_name.upper() == LIGHTDASH_VENDOR_NAME:
             try:
                 data.update(json.loads(extension.data))
@@ -108,9 +109,9 @@ def _lightdash_extension_data(element: Any, issues: List[ConverterIssue]) -> Dic
 
 
 def _ai_hint(ai_context: Any) -> Any:
-    """Ossie `ai_context` as a Lightdash `ai_hint`: one line stays a string, a
-    multi-line instruction becomes a list, and synonyms and examples of the
-    structured form are rendered as extra hints."""
+    """Converts an Ossie `ai_context` to a Lightdash `ai_hint`. One line stays
+    a string, a multi-line instruction becomes a list, and the synonyms and
+    examples of the structured form become extra hints."""
     if ai_context is None:
         return None
     if isinstance(ai_context, str):
@@ -128,7 +129,7 @@ def _ai_hint(ai_context: Any) -> Any:
 
 
 def _ordered(entries: Dict[str, Any], order: Tuple[str, ...]) -> Dict[str, Any]:
-    """Return ``entries`` with the keys in ``order`` first, the rest as they came."""
+    """Reorders ``entries`` so the keys in ``order`` come first. The rest keep their order."""
     return {
         **{key: entries[key] for key in order if key in entries},
         **{key: value for key, value in entries.items() if key not in order},
@@ -138,7 +139,7 @@ def _ordered(entries: Dict[str, Any], order: Tuple[str, ...]) -> Dict[str, Any]:
 def _to_lightdash_model(
     dataset: OssieDataset, model: Dict[str, Any], issues: List[ConverterIssue]
 ) -> Dict[str, Any]:
-    """Reshape a dbt-flavoured model into a Lightdash model file."""
+    """Reshapes a dbt model with Lightdash meta into a Lightdash model file."""
     meta = dict(model.get("meta") or {})
     out: Dict[str, Any] = {"type": "model", "name": model["name"]}
     if model.get("description"):
@@ -186,7 +187,7 @@ def _to_lightdash_model(
 
 
 def _nest_meta_under_config(node: Dict[str, Any]) -> None:
-    """Move a node's ``meta`` under ``config`` (the dbt 1.10+ placement)."""
+    """Moves a node's ``meta`` under ``config``, the placement dbt 1.10 and later use."""
     meta = node.pop("meta", None)
     if meta:
         node["config"] = {"meta": meta}
@@ -198,9 +199,13 @@ _SOURCE_PATH_RE = re.compile(rf"{_SOURCE_IDENTIFIER}(?:\s*\.\s*{_SOURCE_IDENTIFI
 
 
 def _model_name_for(dataset: OssieDataset) -> str:
-    """Use a simple source's table name, otherwise its logical dataset name."""
+    """Derives the model name: a simple source's table name, otherwise the dataset name.
+
+    Raises:
+        ValueError: If neither forms a valid model name.
+    """
     source = dataset.source.strip()
-    # BigQuery may quote the entire project.dataset.table path with backticks.
+    # BigQuery can quote the whole project.dataset.table path with backticks.
     if re.fullmatch(r"`[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+`", source):
         source = source[1:-1]
         candidate = source.rsplit(".", 1)[-1]
@@ -221,11 +226,12 @@ def _model_name_for(dataset: OssieDataset) -> str:
 
 
 class OssieToLightdashConverter:
-    """Converts an OssieDocument into a Lightdash-flavoured dbt schema.yml dict.
+    """Converts an ``OssieDocument`` into Lightdash definitions.
 
-    ``dialect`` is the expression dialect to prefer (the project's warehouse);
-    ``OSSIE_SQL_2026`` and ``ANSI_SQL`` are the fallbacks. An expression offering
-    none of these is taken from its first dialect with a ``DIALECT_UNAVAILABLE`` issue.
+    ``dialect`` is the expression dialect to prefer, the project's warehouse.
+    ``OSSIE_SQL_2026`` and ``ANSI_SQL`` are the fallbacks. For an expression
+    that offers none of these, the converter takes the first dialect offered
+    and records a ``DIALECT_UNAVAILABLE`` issue.
     """
 
     def __init__(
@@ -238,7 +244,7 @@ class OssieToLightdashConverter:
         self._meta_under_config = meta_under_config
 
     def convert(self, document: OssieDocument) -> ConverterResult[Dict[str, Any]]:
-        """Ossie document → dbt ``schema.yml`` dict with Lightdash ``meta``."""
+        """Converts the document into a dbt ``schema.yml`` dictionary with Lightdash ``meta``."""
         issues: List[ConverterIssue] = []
         models = [model for _, model in self._convert_semantic_model(document, issues)]
         if self._meta_under_config:
@@ -249,12 +255,12 @@ class OssieToLightdashConverter:
         return ConverterResult(output={"version": 2, "models": models}, issues=issues)
 
     def convert_models(self, document: OssieDocument) -> ConverterResult[List[Dict[str, Any]]]:
-        """Ossie document → Lightdash model files (one dict per dataset).
+        """Converts the document into Lightdash model files, one dictionary per dataset.
 
-        The dbt-free format has a home for everything the dbt flavour has to
-        stash: ``sql_from`` is the dataset's ``source`` verbatim, model meta
-        becomes top-level keys, and every dimension carries its own ``type``
-        and ``sql``.
+        The model-file format has a place for everything the dbt format keeps
+        in the extension: ``sql_from`` is the dataset's ``source`` verbatim,
+        model meta becomes top-level keys, and every dimension has its own
+        ``type`` and ``sql``.
         """
         issues: List[ConverterIssue] = []
         models: List[Dict[str, Any]] = []
@@ -291,7 +297,8 @@ class OssieToLightdashConverter:
         dataset_by_model_name: Dict[str, str] = {}
         for dataset in datasets:
             name = _model_name_for(dataset)
-            # Also reject case-only collisions on case-insensitive filesystems.
+            # Also reject names that differ only in case, for case-insensitive
+            # file systems.
             previous = dataset_by_model_name.get(name.casefold())
             if previous is not None:
                 raise ValueError(
@@ -303,8 +310,9 @@ class OssieToLightdashConverter:
             dataset_by_model_name[name.casefold()] = dataset.name
             model_name_by_dataset[dataset.name] = name
 
-        # Joins are planned first: field and metric expressions may reference
-        # other datasets only through the joins their own dataset declares.
+        # Joins are planned first, because field and metric expressions can
+        # reference other datasets only through the joins their own dataset
+        # declares.
         joins_by_dataset, references_by_dataset = self._plan_joins(
             semantic_model, model_name_by_dataset, issues
         )
@@ -315,9 +323,10 @@ class OssieToLightdashConverter:
         for dataset in datasets:
             stash = _lightdash_extension_data(dataset, issues)
             stash_by_dataset[dataset.name] = stash
-            # A stashed join (chained, expression, extra conditions) is
-            # restored verbatim, replacing the generated join to the same
-            # target and alias, and its target becomes referenceable.
+            # A join kept in the extension (chained, expression, extra
+            # conditions) is restored verbatim. It replaces the generated join
+            # to the same target and alias, and its target becomes
+            # referenceable.
             joins = joins_by_dataset.setdefault(dataset.name, [])
             references = references_by_dataset.setdefault(dataset.name, {})
             for stashed_join in stash.get("joins") or []:
@@ -331,12 +340,11 @@ class OssieToLightdashConverter:
                 else:
                     joins.append(stashed_join)
                 # `references` is keyed by Ossie dataset name, the way field
-                # and metric expressions name a dataset; the stashed join
-                # names the Lightdash model, which can differ (dataset
-                # `customer_ds` over source `public.customer` is model
-                # `customer`). A join to a model outside the document is kept
-                # under the model name so an expression that names it still
-                # resolves.
+                # and metric expressions name a dataset. The join names the
+                # Lightdash model, which can differ: dataset `customer_ds`
+                # over source `public.customer` is model `customer`. A join
+                # to a model outside the document is keyed by the model name,
+                # so an expression that names it still resolves.
                 joined_model = stashed_join["join"]
                 joined_dataset = dataset_by_model_name.get(joined_model.casefold(), joined_model)
                 references.setdefault(
@@ -404,9 +412,10 @@ class OssieToLightdashConverter:
                 )
                 continue
             extension_data = _lightdash_extension_data(relationship, issues)
-            # Lightdash refuses to join the same table twice without an alias;
-            # a stashed alias is restored, otherwise the relationship name
-            # aliases every repeat of a dataset pair.
+            # Lightdash rejects a second join to the same table without an
+            # alias. An alias from the extension is restored. Otherwise the
+            # relationship name is the alias for every repeat of a dataset
+            # pair.
             pair = (relationship.from_dataset, relationship.to)
             alias = extension_data.get("alias")
             if alias is None and pair in joined_pairs:
@@ -420,7 +429,8 @@ class OssieToLightdashConverter:
                 )
             )
             # An Ossie relationship always runs from the many side to the one
-            # side; a stashed Lightdash `relationship` overrides it below.
+            # side. A Lightdash `relationship` from the extension overrides it
+            # below.
             join: Dict[str, Any] = {"join": to_model_name}
             if alias:
                 join["alias"] = alias
@@ -455,8 +465,8 @@ class OssieToLightdashConverter:
 
             dimension: Dict[str, Any] = {}
             if field.dimension is None:
-                # Every Lightdash column is a dimension; a measure-only Ossie
-                # field is a hidden one.
+                # Every Lightdash column is a dimension. A measure-only Ossie
+                # field becomes a hidden one.
                 dimension["hidden"] = True
             if field.label:
                 dimension["label"] = field.label
@@ -467,8 +477,8 @@ class OssieToLightdashConverter:
             if lightdash_type is not None:
                 dimension["type"] = lightdash_type
             elif field.dimension is not None and field.dimension.is_time:
-                # No datatype to translate, but the field is declared as a
-                # time axis: `date` is the closest Lightdash type.
+                # There is no datatype to translate, and the field is declared
+                # as a time axis. `date` is the closest Lightdash type.
                 dimension["type"] = "date"
             if (
                 field.dimension is not None
@@ -476,8 +486,8 @@ class OssieToLightdashConverter:
                 and not is_temporal(field.datatype)
                 and field.datatype is not None
             ):
-                # A non-temporal datatype flagged as a time axis (e.g. a year
-                # stored as Integer) has no Lightdash equivalent.
+                # A non-temporal datatype with a time-axis role (for example,
+                # a year stored as Integer) has no Lightdash equivalent.
                 issues.append(
                     ConverterIssue(
                         issue_type=ConverterIssueType.TIME_ROLE_NOT_REPRESENTABLE,
@@ -489,8 +499,8 @@ class OssieToLightdashConverter:
                 and field.dimension.is_time is False
                 and is_temporal(field.datatype)
             ):
-                # Explicitly withdrawn from the time axis: Lightdash's role
-                # marker for that is `time_intervals: OFF`.
+                # The field is explicitly removed from the time axis.
+                # Lightdash's marker for that is `time_intervals: OFF`.
                 dimension["time_intervals"] = "OFF"
             expression = self._pick_expression(field.expression, field.name, issues)
             if expression and expression != field.name:
@@ -516,7 +526,7 @@ class OssieToLightdashConverter:
                     if key not in _PROTECTED_DIMENSION_KEYS
                 }
             )
-            # A dimension with nothing to say is Lightdash's default: no meta.
+            # A dimension with no attributes is Lightdash's default: no meta.
             if dimension:
                 column["meta"] = {"dimension": dimension}
             column_meta = field_data.get("column_meta")
@@ -560,8 +570,8 @@ class OssieToLightdashConverter:
         target_dataset = self._resolve_target_dataset(
             expression, dataset_names, references_by_dataset
         )
-        # An expression that names no dataset at all can still be placed when
-        # the stash says which model it came from.
+        # An expression that names no dataset can still be placed when the
+        # extension records which model it came from.
         stashed_model = extension_data.get("model")
         if target_dataset is None and stashed_model in dataset_names:
             if not referenced_datasets(expression, set(dataset_names)):
@@ -585,7 +595,8 @@ class OssieToLightdashConverter:
 
         # A single aggregation becomes a typed metric: on the column when the
         # operand is one of the dataset's columns, otherwise on the model with
-        # the operand as `sql`. Anything else is a `number` metric with raw SQL.
+        # the operand as `sql`. Any other expression becomes a `number` metric
+        # with raw SQL.
         target_column: Optional[str] = None
         parsed = parse_aggregation(expression)
         if parsed is not None:
@@ -615,8 +626,9 @@ class OssieToLightdashConverter:
             }
         )
 
-        # The Lightdash name is the stashed one, else the Ossie name with the
-        # `<model>_` field-id prefix removed, else the Ossie name as is.
+        # The Lightdash name is the one from the extension, else the Ossie
+        # name with the `<model>_` field-ID prefix removed, else the Ossie
+        # name as is.
         lightdash_name = extension_data.get("name")
         if not isinstance(lightdash_name, str) or not lightdash_name:
             prefix = f"{target_dataset}_"
@@ -641,11 +653,15 @@ class OssieToLightdashConverter:
         dataset_names: List[str],
         references_by_dataset: Dict[str, JoinReferences],
     ) -> Optional[str]:
-        """The dataset whose model hosts the metric.
+        """Selects the dataset whose model holds the metric.
 
-        A metric spanning several datasets lives on the one that joins all the
-        others directly: Lightdash resolves ``${other.column}`` only against
-        the joins the hosting model declares, never transitively.
+        A metric that spans several datasets goes on the one that joins all
+        the others directly, because Lightdash resolves ``${other.column}``
+        only against the joins the model declares, never transitively.
+
+        Returns:
+            The dataset name, or None when no dataset joins every referenced
+            dataset.
         """
         referenced = referenced_datasets(expression, set(dataset_names))
         if len(referenced) == 0:

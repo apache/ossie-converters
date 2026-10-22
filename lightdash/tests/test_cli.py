@@ -59,8 +59,8 @@ def test_export_writes_a_lightdash_project(tmp_path, capsys):
     # The one loss is named, explained, and counted.
     assert captured.err.splitlines()[:5] == [
         "TIME_ROLE_NOT_REPRESENTABLE  (1 element)",
-        "  is_time on a non-date type (e.g. an integer year); Lightdash has no such marker, "
-        "the column is a plain dimension",
+        "  is_time on a non-date type (for example, an integer year); Lightdash has no such marker, "
+        "so the column is a plain dimension",
         "    d_year",
         "",
         "1 issue(s); everything else converted cleanly. Pass --verbose to list every element.",
