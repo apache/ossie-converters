@@ -1319,6 +1319,273 @@ class TestConverterIssues:
         assert len(cumulative_issues) == 1
         assert cumulative_issues[0].element_name == "cumulative_revenue"
 
+    def test_derived_metric_depending_on_cumulative_is_dropped(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        base = _simple_metric("revenue", "revenue")
+        cumulative = PydanticMetric(
+            name="rolling_revenue",
+            description=None,
+            type=MetricType.CUMULATIVE,
+            type_params=PydanticMetricTypeParams(
+                measure=PydanticMetricInputMeasure(name="revenue"),
+                cumulative_type_params=PydanticCumulativeTypeParams(
+                    window=PydanticMetricTimeWindow(count=7, granularity="day"),
+                ),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+        derived = PydanticMetric(
+            name="rolling_margin",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="rolling_revenue / revenue",
+                metrics=[PydanticMetricInput(name="rolling_revenue"), PydanticMetricInput(name="revenue")],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[base, cumulative, derived]))
+
+        derived_issues = [
+            i for i in result.issues if i.issue_type == ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS
+        ]
+        assert [i.element_name for i in derived_issues] == ["rolling_margin"]
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue", "rolling_revenue"}
+
+    def test_derived_metric_with_offset_input_is_dropped(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        revenue = _simple_metric("revenue", "revenue")
+        change = PydanticMetric(
+            name="month_over_month_growth",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="(cur - pre) / pre",
+                metrics=[
+                    PydanticMetricInput(name="revenue", alias="cur"),
+                    PydanticMetricInput(
+                        name="revenue",
+                        alias="pre",
+                        offset_window=PydanticMetricTimeWindow(count=1, granularity="month"),
+                    ),
+                ],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue, change]))
+
+        derived_issues = [
+            i for i in result.issues if i.issue_type == ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS
+        ]
+        assert [i.element_name for i in derived_issues] == ["month_over_month_growth"]
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue"}
+
+    def test_derived_metric_with_offset_to_grain_input_is_dropped(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        revenue = _simple_metric("revenue", "revenue")
+        ytd = PydanticMetric(
+            name="ytd_growth",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="(cur - soy) / soy",
+                metrics=[
+                    PydanticMetricInput(name="revenue", alias="cur"),
+                    PydanticMetricInput(
+                        name="revenue",
+                        alias="soy",
+                        offset_to_grain="year",
+                    ),
+                ],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue, ytd]))
+
+        assert any(
+            i.issue_type == ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS and i.element_name == "ytd_growth"
+            for i in result.issues
+        )
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue"}
+
+    def test_nested_derived_metric_with_offset_dependency_is_dropped(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        revenue = _simple_metric("revenue", "revenue")
+        prior_revenue = PydanticMetric(
+            name="prior_revenue",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="pre",
+                metrics=[
+                    PydanticMetricInput(
+                        name="revenue",
+                        alias="pre",
+                        offset_window=PydanticMetricTimeWindow(count=1, granularity="month"),
+                    )
+                ],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+        growth = PydanticMetric(
+            name="nested_growth",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="revenue / prior_revenue - 1",
+                metrics=[PydanticMetricInput(name="revenue"), PydanticMetricInput(name="prior_revenue")],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(
+            _manifest(semantic_models=[sm], metrics=[revenue, prior_revenue, growth])
+        )
+
+        issue_names = {
+            issue.element_name
+            for issue in result.issues
+            if issue.issue_type == ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS
+        }
+        assert issue_names == {"prior_revenue", "nested_growth"}
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue"}
+
+    def test_ratio_metric_with_offset_input_is_dropped(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        revenue = _simple_metric("revenue", "revenue")
+        ratio = PydanticMetric(
+            name="month_over_month_ratio",
+            description=None,
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(
+                    name="revenue",
+                    offset_window=PydanticMetricTimeWindow(count=1, granularity="month"),
+                ),
+                denominator=PydanticMetricInput(name="revenue"),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue, ratio]))
+
+        ratio_issues = [
+            issue
+            for issue in result.issues
+            if issue.issue_type == ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS
+        ]
+        assert [issue.element_name for issue in ratio_issues] == ["month_over_month_ratio"]
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue"}
+
+    def test_derived_metric_depending_on_conversion_is_dropped(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[
+                _measure("visits", agg=AggregationType.COUNT, expr="visit_id"),
+                _measure("purchases", agg=AggregationType.COUNT, expr="purchase_id"),
+            ],
+        )
+        conversion = PydanticMetric(
+            name="purchase_rate",
+            description=None,
+            type=MetricType.CONVERSION,
+            type_params=PydanticMetricTypeParams(
+                conversion_type_params=PydanticConversionTypeParams(
+                    base_measure=PydanticMetricInputMeasure(name="visits"),
+                    conversion_measure=PydanticMetricInputMeasure(name="purchases"),
+                    entity="user",
+                ),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+        derived = PydanticMetric(
+            name="scaled_purchase_rate",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="purchase_rate * 100",
+                metrics=[PydanticMetricInput(name="purchase_rate")],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[conversion, derived]))
+
+        assert any(
+            i.issue_type == ConverterIssueType.CONVERSION_METRIC_DROPPED and i.element_name == "purchase_rate"
+            for i in result.issues
+        )
+        assert any(
+            i.issue_type == ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS
+            and i.element_name == "scaled_purchase_rate"
+            for i in result.issues
+        )
+        assert result.output.metrics is None
+
+    def test_ordinary_derived_metric_is_not_flagged(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[
+                _measure("revenue", agg=AggregationType.SUM, expr="amount"),
+                _measure("cost", agg=AggregationType.SUM, expr="cost"),
+            ],
+        )
+        revenue = _simple_metric("revenue", "revenue")
+        cost = _simple_metric("cost", "cost")
+        margin = PydanticMetric(
+            name="margin",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="revenue - cost",
+                metrics=[PydanticMetricInput(name="revenue"), PydanticMetricInput(name="cost")],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue, cost, margin]))
+
+        assert not any(i.issue_type == ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS for i in result.issues)
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue", "cost", "margin"}
+
 
 class TestFilterRendering:
     """Unit tests for the Jinja → SQL rendering of where-filter templates."""

@@ -124,6 +124,7 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 | `PRIVATE_METRIC_DROPPED` | Ossie has no visibility modifiers |
 | `NATURAL_ENTITY_DROPPED` | Ossie has no natural-key entity type |
 | `CUMULATIVE_SEMANTICS_LOSS` | Window/grain semantics cannot be expressed in an Ossie expression string; the base aggregation is preserved |
+| `NON_PORTABLE_METRIC_SEMANTICS` | A metric uses window, grain, offset, time-spine, or conversion semantics that Ossie cannot represent; the metric is dropped |
 | `AMBIGUOUS_REFERENCE_METRIC_DROPPED` | An input metric is listed more than once under one reference with differing filters, so the expression reference is ambiguous; give each occurrence a distinct alias |
 | `CONSTANT_METRIC_SEMANTIC_MODEL_LOSS` | A metric over a constant, such as a row count (`SUM(1)`), has no column to carry its semantic model; recorded when the manifest has more than one, since converting it back will refuse it |
 
