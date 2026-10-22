@@ -58,6 +58,9 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
         "MetricFlow SIMPLE metrics require one supported aggregation over a safe scalar expression "
         "owned by exactly one semantic model"
     ),
+    ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION: (
+        "its DBT custom_extensions data is not a JSON object, so config.meta could not be restored"
+    ),
 }
 
 _DROPPED_ISSUE_TYPES = {

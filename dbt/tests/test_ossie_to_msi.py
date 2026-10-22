@@ -1297,6 +1297,29 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
         assert sm.dimensions[0].config is None
 
+    def test_malformed_dbt_extension_json_is_skipped_with_issue(self) -> None:
+        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data="{not json")]
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.semantic_models[0].dimensions[0].config is None
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, "status")
+        ]
+
+    def test_non_object_dbt_extension_json_is_skipped_with_issue(self) -> None:
+        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps(["not", "an", "object"]))]
+        doc = _ossie_doc(
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount")])],
+            metrics=[_ossie_metric("revenue", "SUM(amount)", custom_extensions=ext)],
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics[0].config is None
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, "revenue")
+        ]
+
 
 class TestOssieToMSIRoundTrip:
     def test_sum_over_case_round_trip_does_not_double_aggregate(self) -> None:
