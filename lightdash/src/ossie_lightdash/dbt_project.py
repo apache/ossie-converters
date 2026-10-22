@@ -14,13 +14,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Read Lightdash definitions from a file or a project directory.
+"""Reads Lightdash definitions from a file or a project directory.
 
-Two shapes are understood and merged: dbt schema files (``models:`` /
-``seeds:`` lists with Lightdash ``meta``) and Lightdash's own dbt-free model
-files (``type: model``, ``sql_from``, a ``dimensions:`` list). The latter are
-folded into the dbt shape, with ``sql_from`` kept as the model's source, so
-the converter has one input model.
+Two shapes are read and merged: dbt schema files (``models:`` and ``seeds:``
+lists with Lightdash ``meta``) and native Lightdash model files
+(``type: model``, ``sql_from``, a ``dimensions:`` list). The loader folds a
+model file into the dbt shape and keeps ``sql_from`` as the model's source,
+so the converter has one input shape.
 """
 
 from pathlib import Path
@@ -32,12 +32,12 @@ _MODEL_FILE_TYPES = {"model", "model/v1beta", "model/v1"}
 _DIMENSION_OWN_KEYS = {"name", "description", "metrics", "additional_dimensions"}
 _MODEL_OWN_KEYS = {"type", "name", "description", "dimensions"}
 
-# Directories dbt or Python tooling generate; nothing in them is authored schema.
+# Directories that dbt or Python tooling generate. None of them holds authored schema.
 _SKIPPED_DIRS = {"target", "dbt_packages", "logs", ".git", "node_modules", "env", "venv", ".venv", "site-packages", "__pycache__"}
 
 
 def is_model_file(document: Any) -> bool:
-    """True for a Lightdash dbt-free model file (``type: model`` + dimensions)."""
+    """Checks whether ``document`` is a native Lightdash model file."""
     return (
         isinstance(document, dict)
         and document.get("type") in _MODEL_FILE_TYPES
@@ -47,12 +47,13 @@ def is_model_file(document: Any) -> bool:
 
 
 def model_file_to_dbt_model(document: Dict[str, Any]) -> Dict[str, Any]:
-    """Fold a Lightdash model file into the dbt model shape the converter reads.
+    """Folds a Lightdash model file into the dbt model shape the converter reads.
 
-    Dimensions become columns whose ``meta.dimension`` carries everything but
-    the column-level keys; ``metrics`` and ``additional_dimensions`` stay at
-    column level; every other top-level key (``sql_from``, ``joins``,
-    ``metrics``, ``primary_key``, ``sql_filter``, ...) becomes model meta.
+    Dimensions become columns. A column's ``meta.dimension`` holds every
+    dimension key except the column-level ones; ``metrics`` and
+    ``additional_dimensions`` stay at column level. Every other top-level key
+    (``sql_from``, ``joins``, ``metrics``, ``primary_key``, ``sql_filter``, and
+    so on) becomes model meta.
     """
     columns: List[Dict[str, Any]] = []
     for dimension in document["dimensions"]:
@@ -78,19 +79,20 @@ def model_file_to_dbt_model(document: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_schema(path: Path) -> Dict[str, Any]:
-    """Return ``{"version": 2, "models": [...], "seeds": [...]}`` for ``path``."""
+    """Reads ``path`` into ``{"version": 2, "models": [...], "seeds": [...]}``."""
     schema, _ = load_schema_with_skips(path)
     return schema
 
 
 def load_schema_with_skips(path: Path) -> Tuple[Dict[str, Any], List[Path]]:
-    """``load_schema`` plus the files that were skipped because they are not
-    valid YAML (templates with placeholders, Jinja-only files, ...).
+    """Reads ``path`` like ``load_schema`` and also returns the skipped files.
 
-    A file is read as is. A directory is walked in sorted order; every
-    ``.yml`` / ``.yaml`` file contributes its list-valued ``models:`` and
-    ``seeds:`` entries (``dbt_project.yml`` has a dict-valued ``models:`` and
-    is skipped by that rule), and generated directories are ignored.
+    A skipped file is one that isn't valid YAML, such as a template with
+    placeholders or a Jinja-only file. A single file is read as is. A
+    directory is walked in sorted order, and every ``.yml`` or ``.yaml`` file
+    contributes its list-valued ``models:`` and ``seeds:`` entries.
+    ``dbt_project.yml`` has a mapping-valued ``models:``, so that rule skips
+    it. Generated directories are ignored.
     """
     if path.is_file():
         document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

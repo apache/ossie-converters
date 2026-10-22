@@ -35,8 +35,13 @@ from ossie_lightdash.ossie_to_lightdash import OssieToLightdashConverter
 
 
 def _read_document(path: Path) -> OssieDocument:
-    """The Ossie document at ``path``, or a ``ConversionError`` that says
-    where it stops being one (the first schema violation, by location)."""
+    """Reads the Ossie document at ``path``.
+
+    Raises:
+        ConversionError: If the file is not valid YAML or JSON, or not a valid
+            Ossie document. The message names the location of the first
+            schema violation.
+    """
     text = path.read_text(encoding="utf-8")
     try:
         if path.suffix == ".json":
@@ -66,8 +71,8 @@ _PLACEHOLDER = "CHANGE_ME"
 
 
 def _existing_warehouse_type(config: Path) -> Optional[str]:
-    """warehouse.type of an existing config; None when there is no config or
-    no readable type in it."""
+    """Gets ``warehouse.type`` from an existing config, or None when there is
+    no config or no readable type in it."""
     if not config.exists():
         return None
     try:
@@ -83,10 +88,10 @@ def _existing_warehouse_type(config: Path) -> Optional[str]:
 def _write_lightdash_project(
     models, output: Path, *, name: str, warehouse: Optional[str]
 ) -> None:
-    """Write one model file per dataset plus a starter lightdash.config.yml.
+    """Writes one model file per dataset and a starter ``lightdash.config.yml``.
 
-    Files go to ``<output>/lightdash/models/<model>.yml``, the layout
-    ``lightdash deploy`` looks for; an existing config is left alone.
+    Model files go to ``<output>/lightdash/models/<model>.yml``, the layout
+    ``lightdash deploy`` reads. An existing config is not modified.
     """
     models_dir = output / "lightdash" / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -94,8 +99,8 @@ def _write_lightdash_project(
         (models_dir / f"{model['name']}.yml").write_text(
             yaml.safe_dump(model, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
-    # The config is rewritten while it still carries the placeholder and kept
-    # once a real warehouse type is in it, whether we or the user put it there.
+    # The config is rewritten while it still holds the placeholder, and kept
+    # after it holds a real warehouse type, whoever wrote that type.
     config = output / "lightdash.config.yml"
     existing = _existing_warehouse_type(config)
     if existing is not None and existing != _PLACEHOLDER:
@@ -122,8 +127,8 @@ def _write_lightdash_project(
 
 
 def _add_io_arguments(parser: argparse.ArgumentParser, input_help: str, output_help: str) -> None:
-    """``-i/--input`` and ``-o/--output`` like the other converters; the two
-    positionals are still accepted."""
+    """Adds ``-i/--input`` and ``-o/--output``, as the other converters do.
+    The two positional arguments are also accepted."""
     parser.add_argument("-v", "--verbose", action="store_true", help="list every affected element, not just the first few per issue type")
     parser.add_argument("-i", "--input", dest="input_flag", metavar="INPUT", type=Path, help=input_help)
     parser.add_argument("-o", "--output", dest="output_flag", metavar="OUTPUT", type=Path, help=output_help)
@@ -157,9 +162,9 @@ def _wrap(names, indent: str = "    ") -> str:
 
 
 def _print_issues(issues, verbose: bool = False) -> None:
-    """A short block per issue type: header with the count, the explanation,
-    then the affected elements (the first few, or all of them with
-    ``verbose``)."""
+    """Prints a short block per issue type to stderr: a header with the count,
+    the explanation, then the affected elements (the first few, or all of
+    them with ``verbose``)."""
     by_type: "dict" = {}
     for issue in issues:
         by_type.setdefault(issue.issue_type, []).append(issue.element_name)
@@ -318,7 +323,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 encoding="utf-8",
             )
 
-    # Issues first, then what was written, all on stderr like the other converters.
+    # Issues first, then what was written. Everything goes to stderr, as in the
+    # other converters.
     _print_issues(result.issues, verbose=args.verbose)
     print(summary, file=sys.stderr)
     return 0

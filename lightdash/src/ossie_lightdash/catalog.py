@@ -16,10 +16,10 @@
 # under the License.
 """Column types from a dbt ``catalog.json``.
 
-``dbt docs generate`` records the warehouse's real type for every column of
-every model. Lightdash learns most dimension types from the warehouse rather
-than from YAML, so a Lightdash project usually has few authored types; the
-catalog fills the gaps with the physical type reduced to Ossie's logical
+``dbt docs generate`` records the warehouse type of every column of every
+model. Lightdash takes most dimension types from the warehouse rather than
+from YAML, so a Lightdash project usually has few authored types. The catalog
+supplies the missing ones, with the physical type reduced to Ossie's logical
 vocabulary.
 """
 
@@ -74,14 +74,18 @@ _EXACT = {
     "TIMESTAMP WITH TIME ZONE": OssieDataType.DATE_TIME_TZ,
     "TIME": OssieDataType.TIME,
 }
-# Exact-decimal families: integral when the scale is 0 (or, for NUMBER, when
-# Snowflake's default NUMBER(38,0) is spelled without arguments).
+# Exact-decimal families. The type is integral when the scale is 0, or, for
+# NUMBER, when Snowflake's default NUMBER(38,0) is written without arguments.
 _DECIMAL_FAMILY = {"NUMERIC", "BIGNUMERIC", "DECIMAL", "NUMBER"}
 
 
 def warehouse_type_to_datatype(warehouse_type: str) -> Optional[OssieDataType]:
-    """Reduce a physical column type to an Ossie datatype, or None when the
-    type is outside the portable vocabulary (arrays, structs, JSON, ...)."""
+    """Reduces a physical column type to an Ossie datatype.
+
+    Returns:
+        The datatype, or None when the type is outside the portable
+        vocabulary (arrays, structs, JSON, and so on).
+    """
     match = _TYPE_RE.match(warehouse_type or "")
     if match is None:
         return None
@@ -95,21 +99,20 @@ def warehouse_type_to_datatype(warehouse_type: str) -> Optional[OssieDataType]:
 
 
 def load_catalog(path: Path) -> Catalog:
-    """Read a dbt ``catalog.json`` into ``{model: {column: type}}``.
+    """Reads a dbt ``catalog.json`` into ``{model: {column: type}}``.
 
     Models and seeds are keyed by the node's ``name``, which is the name
     Lightdash uses for the model. The last segment of a node's unique ID is
     not that name: a versioned model's unique ID ends in ``.v2``. When a
     model has several versions, the latest version (``latest_version``, or
-    the highest ``version``) supplies the types. Two packages that each
-    define a model with the same name make the catalog ambiguous for that
-    name, which raises a ``ConversionError`` rather than letting one package
-    silently supply the other's types. Column names are lower-cased because
-    warehouses differ in how they report case.
+    the highest ``version``) supplies the types. Column names are lower-cased
+    because warehouses differ in how they report case.
 
     Raises:
         ConversionError: If the file is not a JSON object with a ``nodes``
-            mapping, or a model name is defined by more than one package.
+            mapping, or two packages define a model with the same name. In
+            the second case the catalog can't say which package a Lightdash
+            model is built from, so neither package supplies the types.
     """
     try:
         document = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -124,7 +127,7 @@ def load_catalog(path: Path) -> Catalog:
         raise ConversionError(f"{path} is not a dbt catalog: `nodes` must be an object")
 
     catalog: Catalog = {}
-    # (package, version) of the node that supplied each name's types.
+    # The (package, version) of the node that supplied each name's types.
     provenance: Dict[str, Any] = {}
     for unique_id, node in nodes.items():
         if not isinstance(node, dict):
@@ -144,7 +147,7 @@ def load_catalog(path: Path) -> Catalog:
                     f"({previous_package} and {package}); the catalog cannot say "
                     f"which one a Lightdash model called {name!r} is built from"
                 )
-            # Several versions of one model: the latest one supplies the types.
+            # Several versions of one model. The latest one supplies the types.
             if not _is_newer_version(node, version, previous_version):
                 continue
         provenance[name] = (package, version)
@@ -161,8 +164,8 @@ def load_catalog(path: Path) -> Catalog:
 
 
 def _name_from_unique_id(unique_id: str, node: Dict[str, Any]) -> str:
-    """The model name for a node that carries no ``name``: the last segment
-    of the unique ID, or the one before it for a versioned model
+    """Derives the model name of a node that has no ``name``: the last
+    segment of the unique ID, or the segment before it for a versioned model
     (``model.pkg.orders.v2``)."""
     segments = unique_id.split(".")
     if node.get("version") is not None and len(segments) >= 4 and re.fullmatch(r"v\w+", segments[-1]):
@@ -171,7 +174,7 @@ def _name_from_unique_id(unique_id: str, node: Dict[str, Any]) -> str:
 
 
 def _is_newer_version(node: Dict[str, Any], version: Any, previous_version: Any) -> bool:
-    """True when ``node`` should replace the version already recorded."""
+    """Checks whether ``node`` replaces the version already recorded."""
     latest = node.get("latest_version")
     if latest is not None:
         return str(version) == str(latest)

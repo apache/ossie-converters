@@ -14,15 +14,15 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Convert Lightdash semantic definitions into an Ossie document.
+"""Converts Lightdash semantic definitions into an Ossie document.
 
-The input is a dbt ``schema.yml``-shaped dictionary whose ``meta`` blocks
-carry Lightdash dimensions, metrics and joins. Structural information becomes
-first-class Ossie vocabulary (datasets, fields, metrics, relationships);
-Lightdash presentation attributes without Ossie vocabulary (``format``,
-``round``, ``group_label``, ``hidden``, ...) are preserved in
-``custom_extensions`` entries with ``vendor_name: LIGHTDASH`` so that the
-export direction can reproduce them exactly.
+The input is a dictionary in the shape of a dbt ``schema.yml``, whose
+``meta`` blocks hold Lightdash dimensions, metrics, and joins. Structural
+information becomes Ossie vocabulary: datasets, fields, metrics, and
+relationships. Lightdash presentation attributes without Ossie vocabulary
+(``format``, ``round``, ``group_label``, ``hidden``, and so on) are stored in
+``custom_extensions`` entries with ``vendor_name: LIGHTDASH``, so the export
+direction reproduces them exactly.
 """
 
 import json
@@ -66,15 +66,15 @@ from ossie_lightdash.expression_utils import (
 
 LIGHTDASH_VENDOR_NAME = "LIGHTDASH"
 
-# Keys that are structurally encoded in Ossie vocabulary and therefore must NOT
-# be duplicated into the extension (a stale copy would win on export).
+# Keys that Ossie vocabulary encodes. They must not be copied into the
+# extension, because a stale copy would win on export.
 _STRUCTURAL_METRIC_KEYS = {"sql", "description", "ai_hint", "name", "model"}
 _STRUCTURAL_DIMENSION_KEYS = {"label", "sql", "ai_hint", "hidden"}
 _STRUCTURAL_JOIN_KEYS = {"join", "sql_on"}
-# Model meta with Ossie vocabulary; everything else is stashed on the dataset.
+# Model meta with Ossie vocabulary. Every other key goes to the dataset's extension.
 _HANDLED_MODEL_KEYS = {"metrics", "joins", "primary_key", "ai_hint", "sql_from"}
 _HANDLED_COLUMN_KEYS = {"dimension", "metrics"}
-# Model meta that changes query results, not just presentation.
+# Model meta that changes query results, not only presentation.
 _ROW_FILTER_KEYS = ("sql_filter", "sql_where", "required_filters")
 
 _JOIN_PAIR_RE = re.compile(
@@ -83,7 +83,7 @@ _JOIN_PAIR_RE = re.compile(
 
 
 class _Edge:
-    """A relationship derived from a join, before de-duplication."""
+    """Holds a relationship derived from a join, before deduplication."""
 
     def __init__(self, from_model, to_model, from_columns, to_columns, reference, extras):
         self.from_model = from_model
@@ -99,7 +99,7 @@ class _Edge:
 
     @property
     def key(self):
-        # An aliased join is a distinct relationship even on the same columns.
+        # An aliased join is a distinct relationship, even on the same columns.
         return (*self.columns_key, self.reference)
 
 
@@ -121,7 +121,7 @@ def _lightdash_extension(data: Dict[str, Any]) -> List[OssieCustomExtension]:
 
 
 def _ai_context(ai_hint: Any) -> Optional[str]:
-    """Lightdash `ai_hint` (a string or a list of strings) as Ossie `ai_context`."""
+    """Converts a Lightdash `ai_hint` (a string or a list of strings) to an Ossie `ai_context`."""
     if isinstance(ai_hint, list):
         return "\n".join(str(hint) for hint in ai_hint) or None
     if isinstance(ai_hint, str):
@@ -138,7 +138,7 @@ def _primary_key(primary_key: Any) -> Optional[List[str]]:
 
 
 def _merge_meta(base: Any, override: Any) -> Dict[str, Any]:
-    """Deep-merge two meta blocks; keys in ``override`` win."""
+    """Deep-merges two meta blocks. Keys in ``override`` win."""
     merged: Dict[str, Any] = dict(base) if isinstance(base, dict) else {}
     if isinstance(override, dict):
         for key, value in override.items():
@@ -150,11 +150,12 @@ def _merge_meta(base: Any, override: Any) -> Dict[str, Any]:
 
 
 def _mapping(value: Any, what: str) -> Dict[str, Any]:
-    """``value`` as a mapping, or a ``ConversionError`` naming ``what``.
+    """Returns ``value`` as a mapping. A missing value is an empty mapping.
 
-    A missing value is an empty mapping; anything else that is not a mapping
-    (a bare string where a block was meant, a list, ...) is an authoring
-    error the converter reports rather than trips over.
+    Raises:
+        ConversionError: If ``value`` is present and not a mapping, such as a
+            bare string or a list where a block was meant. The message names
+            ``what``.
     """
     if value is None:
         return {}
@@ -164,7 +165,12 @@ def _mapping(value: Any, what: str) -> Dict[str, Any]:
 
 
 def _sequence(value: Any, what: str) -> List[Any]:
-    """``value`` as a list, or a ``ConversionError`` naming ``what``."""
+    """Returns ``value`` as a list. A missing value is an empty list.
+
+    Raises:
+        ConversionError: If ``value`` is present and not a list. The message
+            names ``what``.
+    """
     if value is None:
         return []
     if isinstance(value, list):
@@ -173,7 +179,12 @@ def _sequence(value: Any, what: str) -> List[Any]:
 
 
 def _named(value: Any, what: str) -> Dict[str, Any]:
-    """A mapping with a non-empty string ``name``, or a ``ConversionError``."""
+    """Returns ``value`` as a mapping that has a non-empty string ``name``.
+
+    Raises:
+        ConversionError: If ``value`` is not a mapping or has no name. The
+            message names ``what``.
+    """
     node = _mapping(value, what)
     name = node.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -182,10 +193,11 @@ def _named(value: Any, what: str) -> Dict[str, Any]:
 
 
 def lightdash_meta(node: Dict[str, Any]) -> Dict[str, Any]:
-    """The Lightdash meta of a dbt model or column.
+    """Gets the Lightdash meta of a dbt model or column.
 
-    dbt 1.10+ moved ``meta`` under ``config``; Lightdash reads both and lets
-    ``config.meta`` win, so the converter merges them the same way.
+    dbt 1.10 and later place ``meta`` under ``config``. Lightdash reads both
+    and gives ``config.meta`` precedence, so the converter merges them the
+    same way.
     """
     what = f"{node.get('name', '?')}"
     meta = _mapping(node.get("meta"), f"meta of {what}")
@@ -204,8 +216,8 @@ def _unique_name(base: str, used: Set[str]) -> str:
 
 
 class _ModelContext:
-    """Expression rewriting for one model: alias resolution, metric inlining
-    and non-portable reference detection, with the issues they raise."""
+    """Rewrites expressions for one model: resolves aliases, inlines metrics,
+    detects non-portable references, and records the issues each raises."""
 
     def __init__(
         self,
@@ -222,14 +234,18 @@ class _ModelContext:
         self.dialect = dialect
         self.column_types: Dict[str, str] = {}
         self.column_names: List[str] = []
-        # Datatypes from --catalog, consulted when a column has no authored type.
+        # Datatypes from --catalog, used when a column has no authored type.
         self.catalog_datatypes: Dict[str, "OssieDataType"] = {}
         self._expressions: Dict[str, Optional[str]] = {}
         self._resolving: Set[str] = set()
 
     def rewrite(self, sql: str, element_name: str) -> Optional[str]:
-        """Rewrite Lightdash SQL into an Ossie expression, or None (with an
-        issue) when it references parameters or user attributes."""
+        """Rewrites Lightdash SQL into an Ossie expression.
+
+        Returns:
+            The expression, or None when the SQL references parameters or
+            user attributes. In that case an issue is recorded.
+        """
         if has_non_portable_reference(sql):
             self.issues.append(
                 ConverterIssue(
@@ -275,9 +291,12 @@ class _ModelContext:
         return result.expression
 
     def metric_expression(self, name: str) -> Optional[str]:
-        """The Ossie expression of one of this model's metrics, or None when the
-        name is not a metric, the metric is not portable, or it references
-        itself."""
+        """Gets the Ossie expression of one of this model's metrics.
+
+        Returns:
+            The expression, or None when ``name`` is not a metric, the metric
+            is not portable, or the metric references itself.
+        """
         if name not in self.definitions:
             return None
         if name in self._expressions:
@@ -311,11 +330,12 @@ class _ModelContext:
 
 
 class LightdashToOssieConverter:
-    """Converts a Lightdash-flavoured dbt schema.yml dict into an OssieDocument.
+    """Converts a dbt ``schema.yml`` dictionary with Lightdash meta into an ``OssieDocument``.
 
-    Lightdash SQL is written for the project's warehouse; ``dialect`` labels the
-    emitted expressions accordingly (``ANSI_SQL`` when the warehouse has no
-    Ossie dialect, e.g. Postgres or Redshift).
+    Lightdash SQL is written for the project's warehouse, and ``dialect``
+    labels the emitted expressions with that warehouse's Ossie dialect. Use
+    ``ANSI_SQL`` for a warehouse that has no Ossie dialect, such as Postgres
+    or Redshift.
     """
 
     def __init__(self, dialect: OssieDialect = OssieDialect.ANSI_SQL) -> None:
@@ -339,7 +359,7 @@ class LightdashToOssieConverter:
         direct_edges: List[_Edge] = []
         derived_edges: List[_Edge] = []
 
-        # Seeds are tables to Lightdash just like models.
+        # Lightdash treats seeds as tables, the same as models.
         schema_yml = _mapping(schema_yml, "the schema document")
         nodes = [
             *_sequence(schema_yml.get("models"), "models"),
@@ -359,8 +379,8 @@ class LightdashToOssieConverter:
             direct_edges.extend(model_direct)
             derived_edges.extend(model_derived)
 
-        # Edges a model declares itself come first, so an edge that a chained
-        # join merely passes through does not shadow the declared one.
+        # Edges that a model declares itself come first, so an edge that a
+        # chained join passes through can't shadow the declared one.
         dataset_names = {dataset.name for dataset in datasets}
         seen_edges: Set[tuple] = set()
         seen_columns: Set[tuple] = set()
@@ -375,7 +395,7 @@ class LightdashToOssieConverter:
                 continue
             derived = edge in derived_edges
             # A derived edge is redundant with any declared edge on the same
-            # columns; a declared edge is redundant only with an identical one.
+            # columns. A declared edge is redundant only with an identical one.
             if (derived and edge.columns_key in seen_columns) or edge.key in seen_edges:
                 continue
             seen_edges.add(edge.key)
@@ -416,9 +436,9 @@ class LightdashToOssieConverter:
     ) -> Tuple[OssieDataset, List[OssieMetric], List[_Edge], List[_Edge]]:
         name = model["name"]
         model_meta = lightdash_meta(model)
-        # A model that names its own relation (Lightdash model files, or
-        # `meta.sql_from` in dbt) is the source verbatim; otherwise the source
-        # is assembled from the flags.
+        # A model that names its own relation (a Lightdash model file, or
+        # `meta.sql_from` in dbt) supplies the source verbatim. Otherwise the
+        # source is assembled from the flags.
         if isinstance(model_meta.get("sql_from"), str) and model_meta["sql_from"].strip():
             source = model_meta["sql_from"].strip()
         else:
@@ -446,7 +466,7 @@ class LightdashToOssieConverter:
         ]
         model["columns"] = columns
 
-        # Metric definitions are collected before any SQL is rewritten so that
+        # Metric definitions are collected before any SQL is rewritten, so
         # `${metric}` references can be inlined.
         definitions: Dict[str, Tuple[Dict[str, Any], Optional[str]]] = {}
         for column in columns:
@@ -485,7 +505,8 @@ class LightdashToOssieConverter:
             dimension_meta = _mapping(
                 lightdash_meta(column).get("dimension"), f"dimension of column {column['name']} of model {name}"
             )
-            # Authored types are intent and win; the catalog fills the gaps.
+            # An authored type expresses intent and wins. The catalog supplies
+            # the rest.
             if dimension_meta.get("type"):
                 context.column_types[column["name"]] = dimension_meta["type"]
             elif column["name"].lower() in context.catalog_datatypes:
@@ -513,8 +534,9 @@ class LightdashToOssieConverter:
             joins, from_model=name, aliases=aliases, issues=issues
         )
 
-        # Model meta without Ossie vocabulary, and joins Ossie cannot reproduce
-        # exactly, travel on the dataset so export restores the explore as is.
+        # Model meta without Ossie vocabulary, and joins that Ossie can't
+        # reproduce exactly, are stored in the dataset's extension so the
+        # export restores the explore as it was.
         stash = {
             key: value for key, value in model_meta.items() if key not in _HANDLED_MODEL_KEYS
         }
@@ -555,8 +577,9 @@ class LightdashToOssieConverter:
         label: Optional[str] = None
         ai_context: Optional[str] = None
         extension_data: Dict[str, Any] = {}
-        # Every dbt column is a Lightdash dimension unless it is hidden; a
-        # hidden column is the closest Lightdash comes to a measure-only field.
+        # Every dbt column is a Lightdash dimension unless it is hidden. A
+        # hidden column is the closest Lightdash equivalent of a measure-only
+        # field.
         hidden = bool((dimension_meta or {}).get("hidden"))
         dimension: Optional[OssieDimension] = None if hidden else OssieDimension()
         if dimension_meta is None:
@@ -577,10 +600,10 @@ class LightdashToOssieConverter:
             datatype = lightdash_type_to_datatype(dimension_meta.get("type"))
             if datatype is None:
                 datatype = context.catalog_datatypes.get(column_name.lower())
-            # `is_time` is a role marker in Ossie, not a type. Lightdash's only
-            # role marker is `time_intervals: OFF`, which withdraws a temporal
-            # column from the time axis; otherwise `is_time` is left unset so
-            # the datatype decides.
+            # In Ossie, `is_time` is a role marker, not a type. Lightdash's
+            # only role marker is `time_intervals: OFF`, which removes a
+            # temporal column from the time axis. Otherwise `is_time` stays
+            # unset and the datatype decides.
             excluded = set(_STRUCTURAL_DIMENSION_KEYS)
             time_intervals = dimension_meta.get("time_intervals")
             if not hidden and (time_intervals is False or time_intervals == "OFF"):
@@ -635,9 +658,9 @@ class LightdashToOssieConverter:
                 )
             )
 
-        # Typed aggregations (and their percentile) are recovered from the
-        # expression on export; only types an expression cannot encode
-        # (`boolean`, `string`, `date`, ...) travel in the extension.
+        # The export recovers a typed aggregation, and its percentile, from
+        # the expression. Only a type an expression can't encode (`boolean`,
+        # `string`, `date`, and so on) is stored in the extension.
         lightdash_type = definition.get("type", "number")
         excluded = set(_STRUCTURAL_METRIC_KEYS)
         if lightdash_type == "number" or lightdash_type in AGGREGATE_TYPES:
@@ -647,10 +670,10 @@ class LightdashToOssieConverter:
         extension_data = {
             key: value for key, value in definition.items() if key not in excluded
         }
-        # Lightdash scopes metric names per model; Ossie scopes them per
-        # semantic model. The Ossie name is Lightdash's own field id,
-        # `<model>_<metric>`, and the bare name travels in the extension so
-        # export restores it exactly.
+        # Lightdash scopes metric names per model, and Ossie per semantic
+        # model. The Ossie name is Lightdash's field ID, `<model>_<metric>`.
+        # The bare name is stored in the extension, so the export restores it
+        # exactly.
         extension_data["name"] = metric_name
         extension_data["model"] = context.dataset_name
         qualified = f"{context.dataset_name}_{metric_name}"
@@ -682,15 +705,19 @@ class LightdashToOssieConverter:
         aliases: Dict[str, str],
         issues: List[ConverterIssue],
     ) -> Tuple[List[_Edge], List[_Edge], List[Dict[str, Any]]]:
-        """Relationships and stashed joins for one model's explore.
+        """Derives relationships from one model's joins.
 
         A pair ``${M.x} = ${T.y}`` on model M's join to T is a direct edge
         M -> T. A pair through another model already joined in the explore,
-        ``${A.x} = ${T.y}``, is a chained join: the edge A -> T is derived and
-        the join itself is stashed verbatim, since Ossie relationships cannot
-        say which explore includes it. A join whose ``sql_on`` the export
-        direction would not rebuild identically (extra conditions, expression
-        joins) is stashed the same way.
+        ``${A.x} = ${T.y}``, is a chained join: the edge A -> T is derived,
+        and the join itself is kept verbatim, because Ossie relationships
+        can't say which explore includes it. A join whose ``sql_on`` the
+        export wouldn't rebuild identically (extra conditions, expression
+        joins) is kept the same way.
+
+        Returns:
+            The direct edges, the derived edges, and the joins to keep in the
+            dataset's extension.
         """
         direct: List[_Edge] = []
         derived: List[_Edge] = []
@@ -731,8 +758,8 @@ class LightdashToOssieConverter:
                 derived.append(
                     _Edge(aliases.get(other, other), to_model, other_columns, target_columns, to_model, {})
                 )
-            # Pair order and side order are not semantic: `${T.y} = ${M.x}`
-            # rebuilds as `${M.x} = ${T.y}` without needing a stash.
+            # Pair order and side order carry no meaning. `${T.y} = ${M.x}`
+            # rebuilds as `${M.x} = ${T.y}`, so it needs no copy in the extension.
             rebuilt_pairs = {
                 (from_model, left, reference, right) for left, right in zip(*direct_columns)
             }

@@ -19,9 +19,9 @@
 Lightdash SQL snippets reference the current model as ``${TABLE}.column``,
 sibling fields as ``${column}`` or ``${metric}``, joined models as
 ``${other_table.column}`` and project parameters or user attributes as
-``${lightdash.…}`` / ``${ld.…}``. Ossie expressions reference columns as
-``dataset.column``. These helpers translate between the two spellings and
-recognise the aggregation shapes that map onto Lightdash's typed metrics.
+``${lightdash.…}`` or ``${ld.…}``. Ossie expressions reference columns as
+``dataset.column``. These helpers translate between the two forms and
+recognize the aggregation shapes that map to Lightdash's typed metrics.
 """
 
 import re
@@ -39,15 +39,15 @@ _SQLGLOT_DIALECTS = {
 
 _REFERENCE_RE = re.compile(r"\$\{([^}]+)\}")
 _NON_PORTABLE_REFERENCE_RE = re.compile(r"\$\{(?:lightdash|ld)\.[^}]*\}")
-# Liquid tags and bare `ld.parameters.x` / `ld.query.filters` / `ld.user.x`
-# references inside them are evaluated by Lightdash at query time.
+# Lightdash evaluates Liquid tags, and the bare `ld.parameters.x`,
+# `ld.query.filters`, and `ld.user.x` references inside them, at query time.
 _NON_PORTABLE_SYNTAX_RE = re.compile(
     r"\{%|\{\{|(?<![\w.])(?:lightdash|ld)\.(?:parameters|query|user)\."
 )
 _COLUMN_REFERENCE_RE = re.compile(r"^[A-Za-z_]\w*(?:\.\w+)?$")
 
-# Lightdash metric types that are encoded as an aggregation in the Ossie
-# expression. Anything else is exported as a `number` metric with raw SQL.
+# Lightdash metric types that the Ossie expression encodes as an aggregation.
+# Any other type exports as a `number` metric with raw SQL.
 _AGGREGATE_FUNCTIONS = {
     "sum": "SUM",
     "min": "MIN",
@@ -98,8 +98,8 @@ class ParsedAggregation:
 
 
 def _is_single_call_body(body: str) -> bool:
-    """True when the parentheses in ``body`` are balanced, i.e. the outer
-    parentheses around it belong to one function call."""
+    """Checks whether the parentheses in ``body`` are balanced, that is,
+    whether the parentheses around it belong to one function call."""
     depth = 0
     for char in body:
         if char == "(":
@@ -112,13 +112,15 @@ def _is_single_call_body(body: str) -> bool:
 
 
 def parse_aggregation(expression: str) -> Optional[ParsedAggregation]:
-    """Recognise an expression that is exactly one aggregation over an operand.
+    """Parses an expression that is exactly one aggregation over an operand.
 
-    ``SUM(x)``, ``COUNT(DISTINCT x)``, ``SUM(DISTINCT x)`` and
-    ``PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x)`` map onto Lightdash's typed
-    metrics; the operand may be a bare column reference or any expression.
-    Returns None for anything else (``COUNT(*)``, arithmetic between
-    aggregations, unknown functions).
+    ``SUM(x)``, ``COUNT(DISTINCT x)``, ``SUM(DISTINCT x)``, and
+    ``PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x)`` map to Lightdash's typed
+    metrics. The operand can be a bare column reference or any expression.
+
+    Returns:
+        The parsed aggregation, or None for any other shape (``COUNT(*)``,
+        arithmetic between aggregations, unknown functions).
     """
     percentile_match = _PERCENTILE_RE.match(expression)
     if percentile_match:
@@ -148,10 +150,11 @@ def parse_aggregation(expression: str) -> Optional[ParsedAggregation]:
 def build_aggregation(
     lightdash_type: str, inner: str, percentile: Optional[float] = None
 ) -> Optional[str]:
-    """Build the Ossie expression for a typed Lightdash metric over ``inner``.
+    """Builds the Ossie expression for a typed Lightdash metric over ``inner``.
 
-    Returns None for metric types that are not aggregations (``number``,
-    ``string``, ``boolean``, ...).
+    Returns:
+        The expression, or None for a metric type that is not an aggregation
+        (``number``, ``string``, ``boolean``, and so on).
     """
     if lightdash_type == "percentile":
         fraction = (50 if percentile is None else percentile) / 100
@@ -165,17 +168,17 @@ def build_aggregation(
 
 
 def is_column_reference(expression: str) -> bool:
-    """True for a bare ``column`` or ``qualifier.column`` reference."""
+    """Checks whether ``expression`` is a bare ``column`` or ``qualifier.column`` reference."""
     return _COLUMN_REFERENCE_RE.match(expression) is not None
 
 
 def strip_qualifier(column_ref: str) -> str:
-    """Return the bare column name of a possibly ``qualifier.column`` reference."""
+    """Gets the bare column name of a ``column`` or ``qualifier.column`` reference."""
     return column_ref.rsplit(".", 1)[-1]
 
 
 def qualifier_of(column_ref: str) -> Optional[str]:
-    """Return the qualifier of a ``qualifier.column`` reference, if present."""
+    """Gets the qualifier of a ``qualifier.column`` reference, or None."""
     if "." in column_ref:
         return column_ref.rsplit(".", 1)[0]
     return None
@@ -184,14 +187,15 @@ def qualifier_of(column_ref: str) -> Optional[str]:
 def ossie_sql_to_lightdash(
     expression: str, dataset: str, references: Optional[Dict[str, str]] = None
 ) -> str:
-    """Rewrite Ossie column references into Lightdash references.
+    """Rewrites Ossie column references into Lightdash references.
 
-    ``dataset.column`` becomes ``${TABLE}.column``; a dataset in ``references``
-    (joined from ``dataset``) becomes ``${<join reference>.column}``, where the
-    join reference is the joined model's name or its alias.
+    ``dataset.column`` becomes ``${TABLE}.column``. A dataset in
+    ``references`` (joined from ``dataset``) becomes
+    ``${<join reference>.column}``, where the join reference is the joined
+    model's name or its alias.
     """
-    # The dataset's own mapping is applied last so a join reference can never
-    # override it: in a self-join (`employees` joined as `manager`), the
+    # The dataset's own mapping is applied last, so a join reference can't
+    # override it. In a self-join (`employees` joined as `manager`), the
     # model's own columns stay `${TABLE}.col`.
     names = {**(references or {}), dataset: None}
 
@@ -207,8 +211,8 @@ def ossie_sql_to_lightdash(
 
 
 def has_non_portable_reference(sql: str) -> bool:
-    """True when the SQL depends on Lightdash query-time evaluation: project
-    parameters, user attributes, or Liquid templating."""
+    """Checks whether the SQL depends on Lightdash query-time evaluation:
+    project parameters, user attributes, or Liquid templating."""
     return (
         _NON_PORTABLE_REFERENCE_RE.search(sql) is not None
         or _NON_PORTABLE_SYNTAX_RE.search(sql) is not None
@@ -229,14 +233,14 @@ def lightdash_sql_to_ossie(
     aliases: Optional[Dict[str, str]] = None,
     resolve_metric: Optional[Callable[[str], Optional[str]]] = None,
 ) -> RewriteResult:
-    """Rewrite Lightdash references into Ossie ``dataset.column`` references.
+    """Rewrites Lightdash references into Ossie ``dataset.column`` references.
 
-    ``${TABLE}.column`` and bare ``${column}`` refer to the current model;
+    ``${TABLE}.column`` and bare ``${column}`` refer to the current model.
     ``${other_table.column}`` refers to a joined model and becomes a
-    cross-dataset reference; ``${alias.column}`` is flattened onto the joined
-    model; ``${metric}`` is replaced by that metric's expression when
-    ``resolve_metric`` knows it. Parameter and user-attribute references are
-    left untouched: callers check ``has_non_portable_reference`` first.
+    cross-dataset reference. ``${alias.column}`` is rewritten to the joined
+    model. ``${metric}`` is replaced by that metric's expression when
+    ``resolve_metric`` returns one. Parameter and user-attribute references
+    are left unchanged; call ``has_non_portable_reference`` first.
     """
     alias_map = aliases or {}
     result = RewriteResult(expression="")
@@ -267,14 +271,19 @@ def lightdash_sql_to_ossie(
 
 
 def qualify_bare_columns(sql: str, dataset: str, columns, *, dialect: str = "ANSI_SQL") -> str:
-    """Prefix bare references to the model's own columns with the dataset name.
+    """Prefixes bare references to the model's own columns with the dataset name.
 
-    Lightdash lets SQL name a column of the current model without ``${TABLE}``
-    (``SUM(budget_use)``); Ossie consumers need ``dataset.column``.
-    SQL parsing distinguishes column references from types, date parts and
-    qualified paths. Insert prefixes at the original identifier offsets rather
-    than rendering the AST, preserving dialect syntax, comments and whitespace.
-    Unsupported syntax raises so the caller can report it without guessing.
+    Lightdash SQL can name a column of the current model without ``${TABLE}``
+    (``SUM(budget_use)``). Ossie consumers need ``dataset.column``. The parser
+    distinguishes column references from types, date parts, and qualified
+    paths. The prefix is inserted at the original identifier offset rather
+    than by rendering the syntax tree, so dialect syntax, comments, and
+    whitespace are preserved.
+
+    Raises:
+        ValueError: If the SQL is not a single expression or an identifier
+            has no source position. sqlglot raises its own error for syntax
+            it can't parse. The caller reports either instead of guessing.
     """
     lookup = {column.lower() for column in columns}
     if not lookup:
@@ -286,8 +295,8 @@ def qualify_bare_columns(sql: str, dataset: str, columns, *, dialect: str = "ANS
     for column in statements[0].find_all(exp.Column):
         if column.table or column.name.lower() not in lookup:
             continue
-        # Nested queries have their own column scope; do not bind their names
-        # to the enclosing Lightdash model.
+        # A nested query has its own column scope. Don't bind its names to the
+        # enclosing Lightdash model.
         if column.find_ancestor(exp.Query):
             continue
         start = column.this.meta.get("start")
@@ -300,7 +309,7 @@ def qualify_bare_columns(sql: str, dataset: str, columns, *, dialect: str = "ANS
 
 
 def referenced_datasets(expression: str, dataset_names: set) -> set:
-    """Return which of the given dataset names an Ossie expression references."""
+    """Gets the subset of ``dataset_names`` that ``expression`` references."""
     found = set()
     for match in re.finditer(r"([A-Za-z_]\w*)\.\w+", expression):
         if match.group(1) in dataset_names:
