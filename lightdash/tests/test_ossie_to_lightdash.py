@@ -795,3 +795,121 @@ class TestOssieToLightdash:
             for issue in result.issues
             if issue.issue_type is ConverterIssueType.DIMENSION_TYPE_DEFAULTED
         ] == ["orders.status", "orders.amount", "orders.customer_id", "customers.customer_id"]
+
+
+class TestReviewFindings:
+    """Regressions from the apache/ossie-converters#7 review."""
+
+    def test_stashed_join_resolves_references_by_dataset_name(self):
+        """A stashed join names the Lightdash model; expressions name the
+        Ossie dataset. When the two differ, the join must still make the
+        dataset referenceable, or a cross-dataset metric is dropped with a
+        false FIELD_REFERENCE_UNJOINED / CROSS_DATASET_METRIC_DROPPED."""
+        store_sales = OssieDataset(
+            name="sales_ds",
+            source="public.store_sales",
+            fields=[
+                OssieField(name="customer_sk", expression=_ansi("customer_sk")),
+                OssieField(name="amount", expression=_ansi("amount")),
+            ],
+            custom_extensions=[
+                OssieCustomExtension(
+                    vendor_name="LIGHTDASH",
+                    data=json.dumps(
+                        {
+                            "joins": [
+                                {
+                                    "join": "customer",
+                                    "sql_on": "${store_sales.customer_sk} = ${customer.customer_sk} AND ${customer.active}",
+                                }
+                            ]
+                        }
+                    ),
+                )
+            ],
+        )
+        customer = OssieDataset(
+            name="customer_ds",
+            source="public.customer",
+            fields=[
+                OssieField(name="customer_sk", expression=_ansi("customer_sk")),
+                OssieField(name="segment", expression=_ansi("segment"), dimension=OssieDimension()),
+            ],
+        )
+        document = OssieDocument(
+            version="0.2.0.dev0",
+            name="sales",
+            datasets=[store_sales, customer],
+            metrics=[
+                OssieMetric(
+                    name="amount_per_customer",
+                    expression=_ansi("SUM(sales_ds.amount) / COUNT(DISTINCT customer_ds.customer_sk)"),
+                )
+            ],
+        )
+        store_sales.fields.append(
+            OssieField(
+                name="customer_segment",
+                expression=_ansi("customer_ds.segment"),
+                dimension=OssieDimension(),
+            )
+        )
+        result = OssieToLightdashConverter().convert(document)
+        model = _model(result.output, "store_sales")
+        assert model["meta"]["joins"][0]["join"] == "customer"
+        assert _column(model, "customer_segment")["meta"]["dimension"]["sql"] == "${customer.segment}"
+        assert model["meta"]["metrics"]["amount_per_customer"]["sql"] == (
+            "SUM(${TABLE}.amount) / COUNT(DISTINCT ${customer.customer_sk})"
+        )
+        assert result.issues == []
+
+    def test_self_join_keeps_the_models_own_columns_on_table(self):
+        """A self-join registers the dataset as a join reference; the
+        dataset's own mapping must still win for its own columns."""
+        employees = OssieDataset(
+            name="employees",
+            source="hr.employees",
+            fields=[
+                OssieField(name="id", expression=_ansi("id")),
+                OssieField(name="manager_id", expression=_ansi("manager_id")),
+                OssieField(name="name", expression=_ansi("name"), dimension=OssieDimension()),
+                OssieField(
+                    name="name_upper",
+                    expression=_ansi("UPPER(employees.name)"),
+                    dimension=OssieDimension(),
+                ),
+            ],
+        )
+        document = OssieDocument(
+            version="0.2.0.dev0",
+            name="hr",
+            datasets=[employees],
+            relationships=[
+                OssieRelationship.model_validate(
+                    {
+                        "name": "reports_to",
+                        "from": "employees",
+                        "to": "employees",
+                        "from_columns": ["manager_id"],
+                        "to_columns": ["id"],
+                        "custom_extensions": [
+                            {"vendor_name": "LIGHTDASH", "data": json.dumps({"alias": "manager"})}
+                        ],
+                    }
+                )
+            ],
+            metrics=[OssieMetric(name="headcount", expression=_ansi("COUNT(DISTINCT employees.id)"))],
+        )
+        result = OssieToLightdashConverter().convert(document)
+        model = _model(result.output, "employees")
+        assert model["meta"]["joins"] == [
+            {
+                "join": "employees",
+                "alias": "manager",
+                "sql_on": "${employees.manager_id} = ${manager.id}",
+                "relationship": "many-to-one",
+            }
+        ]
+        assert _column(model, "name_upper")["meta"]["dimension"]["sql"] == "UPPER(${TABLE}.name)"
+        assert _column(model, "id")["meta"]["metrics"]["headcount"] == {"type": "count_distinct"}
+        assert result.issues == []

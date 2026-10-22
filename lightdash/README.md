@@ -80,7 +80,11 @@ type from the catalog as the field's `datatype`, reduced to Ossie's vocabulary
 (`INT64` becomes `Integer`, `NUMBER(12,2)` becomes `Decimal`, `TIMESTAMP_TZ`
 becomes `DateTimeTz`). An authored type takes precedence. Lightdash takes most
 column types from the warehouse rather than from YAML, so without a catalog
-most fields have no datatype. A model that is missing from the catalog is
+most fields have no datatype. Models are matched by dbt name, so a versioned
+model (`model.shop.orders.v2`) matches `orders`, and its latest version
+supplies the types. A catalog in which two packages define the same model
+name is rejected with `ConversionError`, because it can't say which package a
+Lightdash model is built from. A model that is missing from the catalog is
 reported with `CATALOG_MODEL_MISSING`, which also identifies a stale catalog.
 
 The default export writes `my-project/lightdash/models/<model>.yml`, one file
