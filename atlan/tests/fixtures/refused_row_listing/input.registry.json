@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_customer_id_by_email",
+ "kind": "metric",
+ "app": "metric",
+ "name": "customer_id_by_email",
+ "display_name": "Customer Id By Email",
+ "description": "Look up a customer id by email address",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:customer_id_by_email",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "customer_id_by_email",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "customer",
+   "population": "One customer looked up by email",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "SELECT C_CUSTOMER_ID, C_EMAIL_ADDRESS FROM TPCDS.PUBLIC.CUSTOMER WHERE C_EMAIL_ADDRESS = 'someone@example.com'",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.CUSTOMER",
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.CUSTOMER",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

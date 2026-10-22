@@ -1,0 +1,3 @@
+{
+ "reason": "dialect 'promql' is not SQL, so the formula has no Ossie expression"
+}

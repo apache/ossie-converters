@@ -1,0 +1,31 @@
+{
+ "preferred_customer_count": {
+  "name": "preferred_customer_count",
+  "description": "Count of customers whose preferred flag is set",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT(CASE WHEN (m.C_PREFERRED_CUST_FLAG = 'Y') THEN 1 END)",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "preferred_customer_count",
+    "datatype": "integer"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.CUSTOMER",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.CUSTOMER",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [],
+   "dimensions": [],
+   "examples": [],
+   "grain": "customer",
+   "population": "Customers flagged as preferred"
+  }
+ }
+}

@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_open_order_count_and_value",
+ "kind": "metric",
+ "app": "metric",
+ "name": "open_order_count_and_value",
+ "display_name": "Open Order Count And Value",
+ "description": "Count and value of sales that were never returned",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:open_order_count_and_value",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "open_order_count_and_value",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "single aggregate row",
+   "population": "Store sales never returned",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "SELECT COUNT(*), COALESCE(SUM(s.SS_NET_PAID), 0) FROM TPCDS.PUBLIC.STORE_SALES s LEFT JOIN TPCDS.PUBLIC.STORE_RETURNS r ON s.SS_TICKET_NUMBER = r.SR_TICKET_NUMBER WHERE r.SR_TICKET_NUMBER IS NULL",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

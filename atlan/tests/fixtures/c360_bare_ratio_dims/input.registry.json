@@ -1,0 +1,95 @@
+{
+ "id": "metric_synth_active_shoppers_change_vs_60-90_days_ago",
+ "kind": "metric",
+ "app": "metric",
+ "name": "Active shoppers change vs 60-90 days ago",
+ "display_name": "Active Shoppers Change Vs 60-90 Days Ago",
+ "description": "Percentage change in active shoppers against the value 60 to 90 days ago",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "warehouse-tables/active_shoppers_change",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "ratio",
+    "reaggregation": "none",
+    "null_handling": "ignore",
+    "zero_denominator": "null"
+   },
+   "output": {
+    "alias": "active_shoppers_change_pct",
+    "datatype": "decimal",
+    "unit": "percent"
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "store_name",
+     "kind": "categorical",
+     "sql": "store_name",
+     "datatype": "string",
+     "description": "Store name."
+    },
+    {
+     "name": "division",
+     "kind": "categorical",
+     "sql": "division",
+     "datatype": "string",
+     "description": "Sales division."
+    },
+    {
+     "name": "state",
+     "kind": "categorical",
+     "sql": "state",
+     "datatype": "string",
+     "description": "Store state."
+    },
+    {
+     "name": "segment",
+     "kind": "categorical",
+     "sql": "segment",
+     "datatype": "string",
+     "description": "Store size segment."
+    },
+    {
+     "name": "lifecycle_stage",
+     "kind": "categorical",
+     "sql": "lifecycle_stage",
+     "datatype": "string",
+     "description": "Opened, mature or closing."
+    },
+    {
+     "name": "milestone",
+     "kind": "categorical",
+     "sql": "milestone",
+     "datatype": "string",
+     "description": "Latest milestone reached."
+    }
+   ],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "store",
+   "population": "Stores with a monthly snapshot",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "100.0 * (SUM(active_shoppers) - SUM(shoppers_90d)) / NULLIF(SUM(shoppers_90d), 0)",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_MONTHLY_SNAPSHOT",
+    "alias": "store_monthly_snapshot",
+    "entity": "TPCDS.PUBLIC.STORE_MONTHLY_SNAPSHOT",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}
