@@ -162,6 +162,7 @@ by `dbt parse`.
   and non-SQL measure expressions such as DAX, are dropped with an
   `UNSUPPORTED_METRIC_EXPRESSION` issue
 - Time dimensions always receive `TimeGranularity.DAY` (Ossie carries no granularity field)
+- A `DBT` `custom_extensions` entry whose `data` is not a JSON object is skipped with `INVALID_DBT_CUSTOM_EXTENSION`; the rest of the element still converts
 
 ## Development
 
