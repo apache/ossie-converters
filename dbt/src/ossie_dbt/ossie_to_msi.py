@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 from dataclasses import dataclass
 from typing import List, Optional, Set, Tuple
 
@@ -22,6 +23,7 @@ import sqlglot
 from sqlglot import exp
 
 from ossie import (
+    OssieCustomExtension,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
@@ -29,6 +31,7 @@ from ossie import (
     OssieExpression,
     OssieField,
     OssieSemanticModel,
+    OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
 from ossie_dbt.expression_utils import (
@@ -41,6 +44,9 @@ from ossie_dbt.expression_utils import (
     _try_parse_ratio,
 )
 
+from metricflow_semantic_interfaces.implementations.element_config import (
+    PydanticSemanticLayerElementConfig,
+)
 from metricflow_semantic_interfaces.implementations.elements.dimension import (
     PydanticDimension,
     PydanticDimensionTypeParams,
@@ -168,7 +174,22 @@ class OssieToMSIConverter:
             entities=entities,
             dimensions=dimensions,
             measures=[],
+            config=self._config_from_custom_extensions(dataset.custom_extensions),
         )
+
+    @staticmethod
+    def _config_from_custom_extensions(
+        custom_extensions: Optional[List[OssieCustomExtension]],
+    ) -> Optional[PydanticSemanticLayerElementConfig]:
+        """Reconstruct MSI `config.meta` from the `custom_extensions` entry this converter wrote (#42).
+
+        Only the DBT-vendor entry round-trips; extensions written by another vendor did not
+        originate from config.meta and have no meaning as one.
+        """
+        for ext in custom_extensions or []:
+            if ext.vendor_name == OssieVendor.DBT.value:
+                return PydanticSemanticLayerElementConfig(meta=json.loads(ext.data))
+        return None
 
     @staticmethod
     def _build_key_sets(dataset: OssieDataset, ossie_sm: OssieSemanticModel) -> _KeySets:
@@ -227,7 +248,7 @@ class OssieToMSIConverter:
                     description=field.description,
                     label=field.label,
                     role=None,
-                    config=None,
+                    config=self._config_from_custom_extensions(field.custom_extensions),
                 )
             )
             return
@@ -240,7 +261,7 @@ class OssieToMSIConverter:
                     description=field.description,
                     label=field.label,
                     role=None,
-                    config=None,
+                    config=self._config_from_custom_extensions(field.custom_extensions),
                 )
             )
             return
@@ -253,7 +274,7 @@ class OssieToMSIConverter:
                     description=field.description,
                     label=field.label,
                     role=None,
-                    config=None,
+                    config=self._config_from_custom_extensions(field.custom_extensions),
                 )
             )
             return
@@ -267,7 +288,7 @@ class OssieToMSIConverter:
                     expr=expr_or_none,
                     description=field.description,
                     label=field.label,
-                    config=None,
+                    config=self._config_from_custom_extensions(field.custom_extensions),
                 )
             )
             return
@@ -279,7 +300,7 @@ class OssieToMSIConverter:
                 expr=expr_or_none,
                 description=field.description,
                 label=field.label,
-                config=None,
+                config=self._config_from_custom_extensions(field.custom_extensions),
             )
         )
 
@@ -306,6 +327,7 @@ class OssieToMSIConverter:
                         metric.description,
                         ossie_sm.datasets,
                         dialect,
+                        config=self._config_from_custom_extensions(metric.custom_extensions),
                     )
                 )
             except _UnresolvedRowCountDataset:
@@ -326,6 +348,7 @@ class OssieToMSIConverter:
         description: Optional[str],
         datasets: List[OssieDataset],
         dialect: str = "",
+        config: Optional[PydanticSemanticLayerElementConfig] = None,
     ) -> List[PydanticMetric]:
         """Return one or more PydanticMetric objects for the given Ossie expression.
 
@@ -370,7 +393,7 @@ class OssieToMSIConverter:
                     ),
                     filter=None,
                     metadata=None,
-                    config=None,
+                    config=config,
                 )
             ]
 
@@ -380,8 +403,8 @@ class OssieToMSIConverter:
             num_expr, den_expr = ratio_result
             num_name = f"{name}__numerator"
             den_name = f"{name}__denominator"
-            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect)
-            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect)
+            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect, config=config)
+            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect, config=config)
             ratio_metric = PydanticMetric(
                 name=name,
                 description=description,
@@ -392,7 +415,7 @@ class OssieToMSIConverter:
                 ),
                 filter=None,
                 metadata=None,
-                config=None,
+                config=config,
             )
             return [*num_metrics, *den_metrics, ratio_metric]
 
