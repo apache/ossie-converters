@@ -40,7 +40,7 @@ from ossie import (
     OssieField,
 )
 
-from ataccama_ossie.ataccama_to_ossie import (
+from ossie_ataccama.ataccama_to_ossie import (
     _dataset_dq,
     _dataset_dq_warning,
     _quality_summary,
@@ -49,7 +49,7 @@ from ataccama_ossie.ataccama_to_ossie import (
     build_source,
     flatten_richtext,
 )
-from ataccama_ossie.models import CatalogAttribute, CatalogItem, CatalogItemBundle, CatalogLocation
+from ossie_ataccama.models import CatalogAttribute, CatalogItem, CatalogItemBundle, CatalogLocation
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ataccama_bundles.json"
 SCHEMA = Path(__file__).parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
