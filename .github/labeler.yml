@@ -44,6 +44,10 @@ converter/honeydew:
   - changed-files:
       - any-glob-to-any-file: 'honeydew/**'
 
+converter/lightdash:
+  - changed-files:
+      - any-glob-to-any-file: 'lightdash/**'
+
 converter/microsoft:
   - changed-files:
       - any-glob-to-any-file: 'microsoft/**'
