@@ -67,6 +67,36 @@ def test_a_conversion_error_exits_non_zero_with_a_message(capsys, tmp_path):
     assert capsys.readouterr().err.startswith("Error: Invalid YAML")
 
 
+@pytest.mark.parametrize(
+    ("command", "text"),
+    [
+        # Valid YAML in the wrong shape: a scalar where a list or a mapping belongs.
+        ("import", ("semantic_model:\n  name: m\n  tables:\n    - name: db.s.t\n"
+                    "      dimensions: true\n")),
+        ("export", ("version: 0.2.0.dev0\nname: m\ndatasets:\n  - name: t\n"
+                    "    source: db.s.t\n    fields:\n      - name: a\n"
+                    "        expression: a\n")),
+    ],
+    ids=["import", "export"],
+)
+def test_a_malformed_model_exits_non_zero_without_a_traceback(
+        command, text, capsys, tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(text)
+    assert main([command, "-i", str(bad)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Error: ")
+    assert "Traceback" not in err
+
+
+@pytest.mark.parametrize("command", ["import", "export"])
+def test_input_that_is_not_utf8_exits_non_zero_with_a_message(command, capsys, tmp_path):
+    bad = tmp_path / "latin1.yaml"
+    bad.write_bytes("semantic_model:\n  name: caf\xe9\n".encode("latin-1"))
+    assert main([command, "-i", str(bad)]) == 1
+    assert "is not UTF-8 text" in capsys.readouterr().err
+
+
 def test_a_missing_input_file_exits_non_zero_with_a_message(capsys):
     assert main(["import", "-i", "/nonexistent/model.yaml"]) == 1
     assert "Error:" in capsys.readouterr().err

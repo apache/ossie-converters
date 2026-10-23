@@ -272,6 +272,11 @@ when an input breaks one of these:
 - the Apache Ossie `version` is neither `0.2.0.dev0` nor `0.1.1` (export) — see
   [Spec versions](#spec-versions);
 - the input YAML is malformed, or its root is not a mapping;
+- a value has the wrong YAML kind — a scalar where a list or mapping belongs, a list
+  item that is itself a list or mapping, or a `custom_extensions` entry that is not a
+  mapping with string `vendor_name` and `data`. A null is read as empty, since Solid
+  writes an empty list as one;
+- the input file is not UTF-8 (CLI);
 - a Solid model has no `tables`, or an Apache Ossie model has no `datasets` — the spec
   requires at least one dataset;
 - an Apache Ossie model declares two datasets with the same `name`, which relationships

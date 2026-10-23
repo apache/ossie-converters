@@ -41,6 +41,8 @@ from ._common import (
     SUPPORTED_DIALECTS,
     ConversionError,
     ai_context_parts,
+    as_list,
+    as_str,
     clean_text,
     dump_yaml,
     foreign_vendor_extensions,
@@ -114,7 +116,7 @@ def _convert_model(ossie, explicit_dialect, model_name):
     if not isinstance(datasets, list) or not datasets:
         raise ConversionError("Apache Ossie model has no 'datasets'")
 
-    stash = read_stash(ossie)
+    stash = read_stash(ossie, "model")
     resolved_dialect = _resolve_dialect(explicit_dialect, stash, ossie)
     _warn_foreign_extensions(ossie, "model", ossie.get("name"))
 
@@ -136,10 +138,10 @@ def _convert_model(ossie, explicit_dialect, model_name):
     has_dimension_metadata = any(
         isinstance(field, dict) and field.get("dimension") is not None
         for dataset in datasets
-        for field in dataset.get("fields") or []
+        for field in as_list(dataset.get("fields"), f"dataset '{dataset['name']}': fields")
     )
 
-    instructions, _, examples = ai_context_parts(ossie.get("ai_context"))
+    instructions, _, examples = ai_context_parts(ossie.get("ai_context"), "model")
     llm_description, model_description = _model_descriptions(
         stash, clean_text(ossie.get("description")))
     business_context = {}
@@ -167,10 +169,11 @@ def _convert_model(ossie, explicit_dialect, model_name):
     ]
 
     metrics = _convert_metrics(
-        ossie.get("metrics") or [], by_name, resolved_dialect)
+        as_list(ossie.get("metrics"), "model: metrics"), by_name, resolved_dialect)
     if metrics:
         solid["metrics"] = metrics
-    relationships = _convert_relationships(ossie.get("relationships") or [], by_name)
+    relationships = _convert_relationships(
+        as_list(ossie.get("relationships"), "model: relationships"), by_name)
     if relationships:
         solid["relationships"] = relationships
     for key in ("example_queries", "benchmark_questions"):
@@ -258,9 +261,10 @@ def _resolve_dialect(explicit, stash, ossie):
     # hand a non-SQL formula to sqlglot and to Solid as though it were SQL.
     found, unreadable = set(), set()
     for expression in _all_expressions(ossie):
-        for entry in (expression or {}).get("dialects") or []:
-            dialect = entry.get("dialect")
-            if not dialect or dialect in PORTABLE_DIALECTS:
+        entries = expression.get("dialects") if isinstance(expression, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            dialect = entry.get("dialect") if isinstance(entry, dict) else None
+            if not isinstance(dialect, str) or dialect in PORTABLE_DIALECTS:
                 continue
             (found if dialect in SUPPORTED_DIALECTS else unreadable).add(dialect)
     if unreadable:
@@ -277,13 +281,16 @@ def _resolve_dialect(explicit, stash, ossie):
 
 
 def _all_expressions(ossie):
-    for dataset in ossie.get("datasets") or []:
-        for field in dataset.get("fields") or []:
-            if isinstance(field, dict):
-                yield field.get("expression")
-    for metric in ossie.get("metrics") or []:
-        if isinstance(metric, dict):
-            yield metric.get("expression")
+    """Every field and metric expression, skipping anything malformed -- the per-object
+    conversion reports those, naming the object."""
+    def entries(value):
+        return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+    for dataset in entries(ossie.get("datasets")):
+        for field in entries(dataset.get("fields")):
+            yield field.get("expression")
+    for metric in entries(ossie.get("metrics")):
+        yield metric.get("expression")
 
 
 def _warn_foreign_extensions(obj, scope, name):
@@ -291,16 +298,16 @@ def _warn_foreign_extensions(obj, scope, name):
 
     Solid's format has no slot for vendor metadata, so these cannot be carried across.
     """
-    foreign = foreign_vendor_extensions(obj)
+    foreign = foreign_vendor_extensions(obj, f"{scope} '{name}'")
     if foreign:
-        vendors = ", ".join(sorted({e.get("vendor_name", "?") for e in foreign}))
+        vendors = ", ".join(sorted({e.get("vendor_name") or "?" for e in foreign}))
         warn(scope, f"'{name}': custom_extensions for {vendors} have no Solid "
                     f"equivalent and were dropped")
 
 
 def _convert_dataset(dataset, dialect, recorded_dialect, has_dimension_metadata):
     name = require_str(dataset, "name", "dataset")
-    stash = read_stash(dataset)
+    stash = read_stash(dataset, f"dataset '{name}'")
     _warn_foreign_extensions(dataset, "dataset", name)
 
     # Solid identifies a table by its fully-qualified name, which is the Apache Ossie
@@ -310,7 +317,8 @@ def _convert_dataset(dataset, dialect, recorded_dialect, has_dimension_metadata)
     description = clean_text(dataset.get("description"))
     if description:
         table["description"] = description
-    instructions, synonyms, examples = ai_context_parts(dataset.get("ai_context"))
+    instructions, synonyms, examples = ai_context_parts(
+        dataset.get("ai_context"), f"dataset '{name}'")
     if instructions:
         table["manual_description"] = instructions
     if synonyms:
@@ -319,21 +327,22 @@ def _convert_dataset(dataset, dialect, recorded_dialect, has_dimension_metadata)
         warn("dataset", f"'{name}': ai_context.examples has no Solid equivalent at the "
                         f"table level and was dropped")
 
-    primary_key = string_list(dataset.get("primary_key"))
+    primary_key = string_list(dataset.get("primary_key"), f"dataset '{name}': primary_key")
     if primary_key:
         # Solid stores a composite key as one comma-joined scalar.
         table["primary_key"] = PK_SEPARATOR.join(primary_key)
-    unique_keys = dataset.get("unique_keys")
+    unique_keys = as_list(dataset.get("unique_keys"), f"dataset '{name}': unique_keys")
     if unique_keys and unique_keys != [primary_key]:
         warn("dataset", f"'{name}': unique_keys have no Solid equivalent and were "
                         f"dropped")
     # Solid emits `quality_rank` on every table, empty when the rank is unset.
-    table["quality_rank"] = stash.get("quality_rank", "")
-    if stash.get("indexes"):
-        table["indexes"] = list(stash["indexes"])
+    table["quality_rank"] = clean_text(stash.get("quality_rank")) or ""
+    indexes = string_list(stash.get("indexes"), f"dataset '{name}': stashed indexes")
+    if indexes:
+        table["indexes"] = indexes
 
     dimensions, facts = [], []
-    for field in dataset.get("fields") or []:
+    for field in as_list(dataset.get("fields"), f"dataset '{name}': fields"):
         if not isinstance(field, dict):
             raise ConversionError(f"Dataset '{name}': each field must be a mapping")
         column, is_dimension = _convert_field(
@@ -349,7 +358,7 @@ def _convert_dataset(dataset, dialect, recorded_dialect, has_dimension_metadata)
 def _convert_field(field, dialect, recorded_dialect, dataset_name,
                    has_dimension_metadata):
     name = require_str(field, "name", f"field in '{dataset_name}'")
-    stash = read_stash(field)
+    stash = read_stash(field, f"field '{dataset_name}.{name}'")
     _warn_foreign_extensions(field, "field", f"{dataset_name}.{name}")
     solid_name = _solid_name(name, stash, "field", f"{dataset_name}.{name}")
 
@@ -363,9 +372,10 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name,
         warn("field", f"'{dataset_name}.{name}' has no {dialect} expression; the "
                       f"{fallback} one was used")
 
+    datatype = _declared_datatype(field, f"{dataset_name}.{name}")
     recorded_type = _recorded_type(
-        field, stash, recorded_dialect, f"{dataset_name}.{name}")
-    raw_type = recorded_type or datatypes.to_raw_type(field.get("datatype"), dialect)
+        datatype, stash, recorded_dialect, f"{dataset_name}.{name}")
+    raw_type = recorded_type or datatypes.to_raw_type(datatype, dialect)
     is_dimension = _is_dimension(field, stash, raw_type, has_dimension_metadata)
 
     column = {"name": solid_name}
@@ -392,7 +402,8 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name,
     description = clean_text(field.get("description"))
     if description:
         column["description"] = description
-    instructions, synonyms, examples = ai_context_parts(field.get("ai_context"))
+    instructions, synonyms, examples = ai_context_parts(
+        field.get("ai_context"), f"field '{dataset_name}.{name}'")
     if instructions:
         column["manual_description"] = instructions
     if is_metric_fact:
@@ -409,8 +420,10 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name,
     if field.get("label"):
         warn("field", f"'{dataset_name}.{name}': label '{field['label']}' has no Solid "
                       f"equivalent and was dropped")
-    if stash.get("sample_values"):
-        column["sample_values"] = list(stash["sample_values"])
+    sample_values = as_list(stash.get("sample_values"),
+                            f"field '{dataset_name}.{name}': stashed sample_values")
+    if sample_values:
+        column["sample_values"] = list(sample_values)
     return column, is_dimension
 
 
@@ -433,7 +446,21 @@ def _is_computed(expression, name):
     return expression.strip().strip('"`[]').lower() != name.strip().lower()
 
 
-def _recorded_type(field, stash, recorded_dialect, label):
+def _declared_datatype(field, label):
+    """The field's `datatype`, or None when it is absent or not one this converter knows.
+
+    An unknown name is reported and ignored rather than rejected, so a model written
+    against a later spec version that adds a datatype still converts.
+    """
+    datatype = as_str(field.get("datatype"), f"Field '{label}': datatype")
+    if datatype is not None and datatype not in datatypes.OSSIE_DATATYPES:
+        warn("field", f"'{label}': datatype '{datatype}' is not one this converter "
+                      f"knows, so it was ignored")
+        return None
+    return datatype
+
+
+def _recorded_type(datatype, stash, recorded_dialect, label):
     """The raw warehouse type import stashed, while the field's `datatype` still agrees.
 
     The portable `datatype` is lossy, so the stashed type is what Solid gets back. If
@@ -443,7 +470,6 @@ def _recorded_type(field, stash, recorded_dialect, label):
     know it may drop it, which should not wipe every Solid type.
     """
     stashed = clean_text(stash.get("type"))
-    datatype = field.get("datatype")
     if not stashed or datatype is None:
         return stashed
     if datatypes.to_ossie_datatype(stashed, recorded_dialect) == datatype:
@@ -477,7 +503,7 @@ def _convert_relationships(relationships, by_name):
     for relationship in relationships:
         if not isinstance(relationship, dict):
             raise ConversionError("Each entry of 'relationships' must be a mapping")
-        name = relationship.get("name", "<unnamed>")
+        name = relationship.get("name") or "<unnamed>"
         source = require_str(relationship, "from", f"relationship '{name}'")
         target = require_str(relationship, "to", f"relationship '{name}'")
         for end in (source, target):
@@ -485,8 +511,10 @@ def _convert_relationships(relationships, by_name):
                 raise ConversionError(
                     f"Relationship '{name}' references dataset '{end}', which is not "
                     f"declared in 'datasets'")
-        source_columns = string_list(relationship.get("from_columns"))
-        target_columns = string_list(relationship.get("to_columns"))
+        source_columns = string_list(
+            relationship.get("from_columns"), f"relationship '{name}': from_columns")
+        target_columns = string_list(
+            relationship.get("to_columns"), f"relationship '{name}': to_columns")
         if not source_columns or not target_columns:
             raise ConversionError(
                 f"Relationship '{name}' is missing from_columns/to_columns")
@@ -495,14 +523,14 @@ def _convert_relationships(relationships, by_name):
                 f"Relationship '{name}' has {len(source_columns)} from_columns but "
                 f"{len(target_columns)} to_columns; they must correspond positionally")
 
-        stash = read_stash(relationship)
+        stash = read_stash(relationship, f"relationship '{name}'")
         _warn_foreign_extensions(relationship, "relationship", name)
         # A Solid relationship is just a table pair and its join keys -- it carries no
         # free text -- so any annotation on the Apache Ossie side is dropped. The
         # exception is the note import writes for a one-to-one, which is this
         # converter's own marker and means nothing to Solid.
         instructions, synonyms, examples = ai_context_parts(
-            relationship.get("ai_context"))
+            relationship.get("ai_context"), f"relationship '{name}'")
         if instructions == ONE_TO_ONE_NOTE:
             instructions = None
         dropped = [
@@ -542,7 +570,7 @@ def _convert_metrics(metrics, by_name, dialect):
         if not isinstance(metric, dict):
             raise ConversionError("Each entry of 'metrics' must be a mapping")
         name = require_str(metric, "name", "metric")
-        stash = read_stash(metric)
+        stash = read_stash(metric, f"metric '{name}'")
         _warn_foreign_extensions(metric, "metric", name)
         solid_name = _solid_name(name, stash, "metric", name)
         # Solid types a metric by evaluating its formula against the warehouse, so its
@@ -570,13 +598,14 @@ def _convert_metrics(metrics, by_name, dialect):
         if tables is None:
             tables = referenced
         elif not ({t.lower() for t in referenced}
-                  <= {t.lower() for t in string_list(tables)}):
+                  <= {t.lower() for t in string_list(
+                      tables, f"metric '{name}': stashed tables")}):
             # Import stashes `tables` only for an expression that does not name them
             # all, so the stash may list more than the expression reads, never other
             # tables. An expression reading one the stash lacks was edited in Apache
             # Ossie, and binding it to the stashed tables would join the wrong one.
             warn("metric", f"'{name}' reads {', '.join(referenced)}, which the tables "
-                           f"recorded at import ({', '.join(string_list(tables))}) do "
+                           f"recorded at import ({', '.join(tables)}) do "
                            f"not include, "
                            f"so its expression was edited in Apache Ossie; the tables "
                            f"were taken from the expression")
@@ -595,7 +624,7 @@ def _convert_metrics(metrics, by_name, dialect):
         if description:
             solid_metric["description"] = description
         solid_metric["expression"] = bare
-        _, synonyms, examples = ai_context_parts(metric.get("ai_context"))
+        _, synonyms, examples = ai_context_parts(metric.get("ai_context"), f"metric '{name}'")
         if synonyms:
             solid_metric["synonyms"] = synonyms
         if examples:
