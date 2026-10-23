@@ -35,7 +35,7 @@ catalog and consumed by its text-to-SQL agents. Its export is the YAML you get f
 layer version.
 
 On **export** (Apache Ossie → Solid), Apache Ossie constructs with no Solid slot —
-`unique_keys`, field `label`, computed dimensions, metric `datatype`, relationship
+`unique_keys`, field `label`, computed fields, metric `datatype`, relationship
 `ai_context`, foreign-vendor `custom_extensions`, `ai_context.examples` below the model
 level — are **dropped with a warning**. On
 **import** (Solid → Apache Ossie), Solid-only features are instead **preserved** in
@@ -149,20 +149,43 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 
 | Apache Ossie | Solid | Notes |
 |---|---|---|
-| `fields[]` | `dimensions[]` + `facts[]` | Solid splits columns two ways; Apache Ossie has one list. Import records the split as the presence of the `dimension` block, and export reads it back. An Apache Ossie model that carries no `dimension` block anywhere is split the way Solid itself does it — by data type. |
+| `fields[]` | `dimensions[]` + `facts[]` | Solid splits columns two ways; Apache Ossie has one list. See [Dimensions and facts](#dimensions-and-facts). |
 | `dimension.is_time` | — | Set explicitly on import from the resolved `datatype`, rather than left to the spec's default, so a consumer that does not implement the default still reads the same role. |
 | `expression.dialects[]` | the column's own name | A Solid column's expression is a bare reference to itself; a name needing quoting is quoted for the resolved dialect. |
 | `datatype` | `type` | See [Data types](#data-types). |
 | `description` | `description` | |
 | `ai_context.instructions` | `manual_description` | |
 | `ai_context.synonyms` | `synonyms` | |
-| `custom_extensions[SOLID]` | `type` (raw), `sample_values` | The raw warehouse type is always kept, since the portable `datatype` is lossy. |
+| `custom_extensions[SOLID]` | `type` (raw), `sample_values`, role | The raw warehouse type is always kept, since the portable `datatype` is lossy; the role is described under [Dimensions and facts](#dimensions-and-facts). |
+
+### Dimensions and facts
+
+Import stashes each column's Solid role — `dimension`, `fact`, or `metric` — and also
+writes a `dimension` block on every dimension, so other tools read the same split.
+Export decides each field's role in this order:
+
+1. **A `dimension` block, or the stashed role.** A block makes the field a dimension, and
+   wins over a stashed `fact` or `metric` with a warning, since adding one is an edit
+   made in Apache Ossie. A missing block does not override a stashed `dimension`: the
+   block is optional, and a tool that does not read it may drop it.
+2. **The `datatype`**, by Solid's type rule: numeric types are facts, anything else a
+   dimension. This is the type-prefix part of solid-server's split, which is a prefix
+   match, so `BIGINT`, `SMALLINT` and `BIGNUMERIC` are dimensions there too. Solid also
+   weighs column names and cardinality, which an offline converter cannot see.
+3. **With no `datatype` either, the producer's convention.** Some converters (GoodData,
+   OrionBelt, Cube) mark every dimension, so their unmarked fields are measures and
+   become facts. Others (Omni, Microsoft) mark only time fields; there an unmarked,
+   untyped field cannot be shown to be numeric and becomes a dimension, as an untyped
+   column is in Solid. A model marks its dimensions when any field that is not a time
+   dimension carries a block.
 
 A Solid **fact may be a table-scoped metric** rather than a catalog column — it carries an
-`expression` and no `type`. Import keeps the expression and marks the field
-`role: metric` in the stash; export re-emits it as an expression-only fact. A
-hand-edited fact carrying both a `type` and an `expression` is marked the same way and
-keeps both on export.
+`expression` and no `type`. Its role is `metric`, and export re-emits it as an
+expression-only fact. A hand-edited fact carrying both a `type` and an `expression` is
+marked the same way and keeps both on export. A **dimension with an `expression`**,
+which Solid's own export never writes but a hand-edited model can, is stashed as
+`computed` and keeps its expression on export too. Any other computed field is reported
+and exported as a plain column, since a Solid column is a catalog column.
 
 A Solid table **may declare a column name twice**, where Apache Ossie needs field names
 unique within a dataset. Import renames the duplicate (`status` → `status_2`) with a
@@ -337,7 +360,9 @@ both read from the `ossie` submodule.
 model produced by *another vendor's* converter, which carries no `custom_extensions[SOLID]`
 stash, no `dimension` blocks, usually no `datatype`, and metrics written against bare
 column names. It sweeps every Ossie fixture the other converters in this repository ship,
-asserting that each converts to a well-formed Solid model that re-imports schema-valid.
+asserting that each converts to a well-formed Solid model that re-imports schema-valid,
+and that every field whose `dimension` block or `datatype` settles its role lands in
+`dimensions` or `facts` accordingly.
 That sweep deliberately pins **no** warning counts, because those fixtures belong to other
 converters and each converter's CI is path-filtered to its own directory — a pin here would
 break on a main-branch push from a PR that never ran this suite. The exact interop gaps are

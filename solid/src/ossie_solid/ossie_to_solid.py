@@ -42,6 +42,7 @@ from ._common import (
     ConversionError,
     ai_context_parts,
     as_list,
+    as_mapping,
     as_str,
     clean_text,
     dump_yaml,
@@ -132,11 +133,13 @@ def _convert_model(ossie, explicit_dialect, model_name):
                 f"Apache Ossie model declares dataset '{name}' more than once; dataset "
                 f"names must be unique")
         by_name[name] = dataset
-    # Whether the model records Solid's fact/dimension split at all. If no field
-    # anywhere carries a `dimension` block the model was not produced by this converter,
-    # so the split is re-derived from the data types the way Solid itself does it.
-    has_dimension_metadata = any(
-        isinstance(field, dict) and field.get("dimension") is not None
+    # Whether the producer marks its dimensions explicitly, putting a `dimension` block
+    # on fields that are not time dimensions too. GoodData, OrionBelt and Cube do; Omni
+    # and Microsoft mark only time fields. It only settles a field that has neither a
+    # role nor a datatype to go on (see _field_role).
+    marks_dimensions = any(
+        isinstance(field, dict) and _dimension_block(field) is not None
+        and not _is_time(field)
         for dataset in datasets
         for field in as_list(dataset.get("fields"), f"dataset '{dataset['name']}': fields")
     )
@@ -164,7 +167,7 @@ def _convert_model(ossie, explicit_dialect, model_name):
     recorded_dialect = (datatypes.normalize_dialect(stashed_dialect)
                         if stashed_dialect else resolved_dialect)
     solid["tables"] = [
-        _convert_dataset(d, resolved_dialect, recorded_dialect, has_dimension_metadata)
+        _convert_dataset(d, resolved_dialect, recorded_dialect, marks_dimensions)
         for d in datasets
     ]
 
@@ -305,7 +308,7 @@ def _warn_foreign_extensions(obj, scope, name):
                     f"equivalent and were dropped")
 
 
-def _convert_dataset(dataset, dialect, recorded_dialect, has_dimension_metadata):
+def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     name = require_str(dataset, "name", "dataset")
     stash = read_stash(dataset, f"dataset '{name}'")
     _warn_foreign_extensions(dataset, "dataset", name)
@@ -346,7 +349,7 @@ def _convert_dataset(dataset, dialect, recorded_dialect, has_dimension_metadata)
         if not isinstance(field, dict):
             raise ConversionError(f"Dataset '{name}': each field must be a mapping")
         column, is_dimension = _convert_field(
-            field, dialect, recorded_dialect, name, has_dimension_metadata)
+            field, dialect, recorded_dialect, name, marks_dimensions)
         (dimensions if is_dimension else facts).append(column)
     if dimensions:
         table["dimensions"] = dimensions
@@ -355,8 +358,7 @@ def _convert_dataset(dataset, dialect, recorded_dialect, has_dimension_metadata)
     return table
 
 
-def _convert_field(field, dialect, recorded_dialect, dataset_name,
-                   has_dimension_metadata):
+def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensions):
     name = require_str(field, "name", f"field in '{dataset_name}'")
     stash = read_stash(field, f"field '{dataset_name}.{name}'")
     _warn_foreign_extensions(field, "field", f"{dataset_name}.{name}")
@@ -376,17 +378,17 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name,
     recorded_type = _recorded_type(
         datatype, stash, recorded_dialect, f"{dataset_name}.{name}")
     raw_type = recorded_type or datatypes.to_raw_type(datatype, dialect)
-    is_dimension = _is_dimension(field, stash, raw_type, has_dimension_metadata)
+    role = _field_role(field, stash, datatype, raw_type, marks_dimensions,
+                       f"{dataset_name}.{name}")
+    is_dimension = role == DIMENSION
+    computed = _is_computed(expression, solid_name)
 
     column = {"name": solid_name}
     # A Solid fact may be a table-scoped metric instead of a catalog column, in which
     # case it carries an expression and no type. Everything else is a column, whose
     # expression is just its own name.
-    is_metric_fact = (
-        not is_dimension
-        and (stash.get("role") == "metric"
-             or (raw_type is None and _is_computed(expression, solid_name)))
-    )
+    is_metric_fact = role == METRIC or (
+        role == FACT and stash.get("role") is None and raw_type is None and computed)
     if is_metric_fact:
         # Only a fact Solid itself typed keeps a type; a metric has no catalog type to
         # derive one from.
@@ -408,7 +410,12 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name,
         column["manual_description"] = instructions
     if is_metric_fact:
         column["expression"] = expression
-    elif _is_computed(expression, solid_name):
+    elif is_dimension and stash.get("computed") and computed:
+        # A Solid dimension that carried an expression. Solid's own export never writes
+        # one, but a hand-edited model can, and the round trip keeps it. The live
+        # expression is used, so an edit in Apache Ossie wins.
+        column["expression"] = expression
+    elif computed:
         warn("field", f"'{dataset_name}.{name}' is a computed field "
                       f"(`{expression}`); Solid columns map to catalog columns, so the "
                       f"expression was dropped")
@@ -427,18 +434,57 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name,
     return column, is_dimension
 
 
-def _is_dimension(field, stash, raw_type, has_dimension_metadata):
-    """Decide whether a field belongs in Solid's `dimensions` or its `facts`.
+# Solid's roles for a column: a dimension, a fact that is a catalog column, or a fact
+# that is a table-scoped metric (an expression, usually with no type).
+DIMENSION, FACT, METRIC = "dimension", "fact", "metric"
 
-    A model this converter produced records the original split as the presence of the
-    `dimension` block. A hand-authored Apache Ossie model has no such marker, so the
-    split is re-derived from the data type the way solid-server does it.
+
+def _dimension_block(field):
+    """The field's `dimension` block, or None when it has none."""
+    if field.get("dimension") is None:
+        return None
+    return as_mapping(field["dimension"], f"Field '{field.get('name')}': dimension")
+
+
+def _is_time(field):
+    """Whether a field is a time dimension: an explicit `is_time`, else the spec's
+    default, which is true for a temporal datatype."""
+    is_time = (_dimension_block(field) or {}).get("is_time")
+    if is_time is not None:
+        return is_time is True
+    return field.get("datatype") in datatypes.TEMPORAL_DATATYPES
+
+
+def _field_role(field, stash, datatype, raw_type, marks_dimensions, label):
+    """Decide which of Solid's roles a field takes: DIMENSION, FACT or METRIC.
+
+    In order:
+
+    1. A `dimension` block, or a role import stashed. The block wins over a stashed
+       fact or metric, since adding one is an edit made in Apache Ossie. A missing block
+       does not override a stashed dimension: the block is optional, and a tool that
+       does not read it may drop it, as a missing `datatype` does not wipe a stashed type.
+    2. The datatype, by Solid's own rule: numeric types are facts, everything else a
+       dimension (datatypes.is_solid_fact_type).
+    3. With no datatype either, the producer's convention. A model that marks its
+       dimensions explicitly leaves the block off the fields that are not dimensions,
+       so an unmarked field is a fact; otherwise it is a dimension, as an untyped column
+       is in Solid.
     """
-    if has_dimension_metadata:
-        return field.get("dimension") is not None
-    if stash.get("role") == "metric":
-        return False
-    return not datatypes.is_solid_fact_type(raw_type)
+    stashed = stash.get("role")
+    if stashed not in (DIMENSION, FACT, METRIC):
+        stashed = None
+    if _dimension_block(field) is not None:
+        if stashed in (FACT, METRIC):
+            warn("field", f"'{label}' was given a dimension block in Apache Ossie, so it "
+                          f"is exported as a dimension rather than Solid's original "
+                          f"{stashed}")
+        return DIMENSION
+    if stashed:
+        return stashed
+    if datatype is not None:
+        return FACT if datatypes.is_solid_fact_type(raw_type) else DIMENSION
+    return FACT if marks_dimensions else DIMENSION
 
 
 def _is_computed(expression, name):

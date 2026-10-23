@@ -122,6 +122,55 @@ def test_reimporting_another_vendors_model_is_schema_valid(path, assert_valid_os
     assert_valid_ossie(ossie)
 
 
+NUMERIC_DATATYPES = {"Integer", "Decimal", "Float"}
+
+
+def _split_expectations(path):
+    """(field name, expected Solid list, actual Solid list) for each field whose
+    markings settle its role, in every dataset of another vendor's model.
+
+    The expectation is stated in terms of what the other converter wrote, so it holds
+    whatever its fixtures contain: a field with a `dimension` block is a dimension, and
+    an unmarked one with a numeric datatype is a fact, with any other datatype a
+    dimension. An unmarked, untyped field follows its producer's convention instead;
+    that case is pinned in test_ossie_to_solid.py.
+    """
+    document = yaml.safe_load(path.read_text())
+    solid, _ = convert_quietly(convert_ossie_to_solid, path.read_text())
+    found = []
+    for dataset, table in zip(document["datasets"], solid_model_of(solid)["tables"]):
+        dimensions = {c["name"] for c in table.get("dimensions") or []}
+        for field in dataset.get("fields") or []:
+            if field.get("dimension") is not None:
+                expected = "dimensions"
+            elif field.get("datatype") in NUMERIC_DATATYPES:
+                expected = "facts"
+            elif field.get("datatype"):
+                expected = "dimensions"
+            else:
+                continue
+            actual = "dimensions" if field["name"] in dimensions else "facts"
+            found.append((f"{dataset['name']}.{field['name']}", expected, actual))
+    return found
+
+
+@pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
+@pytest.mark.parametrize("path", FOREIGN, ids=_fixture_id)
+def test_another_vendors_fields_land_where_their_markings_put_them(path):
+    """The fact/dimension split, not just a well-formed result."""
+    wrong = [f"{name}: expected in {expected}, got {actual}"
+             for name, expected, actual in _split_expectations(path)
+             if expected != actual]
+    assert not wrong, "\n".join(wrong)
+
+
+@pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
+def test_the_split_check_actually_covers_fields():
+    """Guard against the split check passing because no fixture marks anything."""
+    checked = sum(len(_split_expectations(path)) for path in FOREIGN)
+    assert checked >= 50, f"only {checked} fields carried a block or a datatype"
+
+
 @pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
 def test_the_sweep_actually_found_the_other_converters():
     """Guard against the discovery silently matching nothing and the sweep passing.
