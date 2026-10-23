@@ -148,6 +148,130 @@ def test_without_dimension_metadata_the_split_falls_back_to_solids_type_rule():
     assert "c_email_address" in by_name(table["dimensions"])  # String -> dimension
 
 
+def _split(fields, **dataset):
+    """Export one dataset holding `fields`; return (dimension names, fact names)."""
+    ossie = {
+        "version": "0.2.0.dev0",
+        "name": "m",
+        "datasets": [{"name": "orders", "source": "db.s.orders", "fields": [
+            {"expression": {"dialects": [{"dialect": "ANSI_SQL",
+                                          "expression": f["name"]}]}, **f}
+            for f in fields
+        ], **dataset}],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    table = solid_model_of(solid)["tables"][0]
+    return ([c["name"] for c in table.get("dimensions") or []],
+            [c["name"] for c in table["facts"]]), warnings_
+
+
+def test_a_time_only_dimension_block_does_not_turn_other_fields_into_facts():
+    # The Microsoft and Omni converters mark only temporal fields with a block, so
+    # its absence elsewhere says nothing; the datatype decides those.
+    split, _ = _split([
+        {"name": "region", "datatype": "String"},
+        {"name": "placed_at", "datatype": "DateTime", "dimension": {"is_time": True}},
+        {"name": "amount", "datatype": "Decimal"},
+    ])
+    assert split == (["region", "placed_at"], ["amount"])
+
+
+def test_an_untyped_field_follows_a_producer_that_marks_its_dimensions():
+    # GoodData and OrionBelt put a block on every dimension, time or not, and carry no
+    # datatype, so there the unmarked fields are the measures.
+    split, _ = _split([
+        {"name": "customer_sk", "dimension": {"is_time": False}},
+        {"name": "sold_on", "dimension": {"is_time": True}},
+        {"name": "quantity"},
+    ])
+    assert split == (["customer_sk", "sold_on"], ["quantity"])
+
+
+def test_an_untyped_field_is_a_dimension_when_only_time_fields_are_marked():
+    # With no datatype and no convention to read, an unmarked field cannot be shown to
+    # be numeric, which leaves it a dimension, as an untyped column is in Solid.
+    split, _ = _split([
+        {"name": "order_key"},
+        {"name": "ordered_on", "dimension": {"is_time": True}},
+    ])
+    assert split == (["order_key", "ordered_on"], [])
+
+
+def test_a_block_on_a_temporal_field_counts_as_time_only_by_the_spec_default():
+    # `dimension: {}` on a DateTime field defaults to is_time: true, so it is no sign
+    # that the producer marks its other dimensions.
+    split, _ = _split([
+        {"name": "placed_at", "datatype": "DateTime", "dimension": {}},
+        {"name": "order_key"},
+    ])
+    assert split == (["placed_at", "order_key"], [])
+
+
+def _role_edit(edit):
+    """Import the TPC-DS fixture, apply `edit` to the Apache Ossie model, export."""
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
+    model = yaml.safe_load(ossie)
+    fields = {f["name"]: f for f in model["datasets"][0]["fields"]}
+    edit(fields)
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
+    table = solid_model_of(solid)["tables"][0]
+    return by_name(table.get("dimensions") or []), by_name(table["facts"]), warnings_
+
+
+def test_the_stashed_role_survives_a_tool_dropping_the_dimension_block():
+    # The block is optional, and a tool that does not read it may drop it; that is not
+    # an edit, as a dropped `datatype` is not.
+    def drop_blocks(fields):
+        for field in fields.values():
+            field.pop("dimension", None)
+
+    dimensions, facts, warnings_ = _role_edit(drop_blocks)
+    assert "ss_customer_sk" in dimensions
+    assert "ss_net_profit" in facts
+    assert not any("dimension block" in w for w in warnings_)
+
+
+def test_a_dimension_block_added_in_ossie_wins_over_the_stashed_role():
+    def mark(fields):
+        fields["ss_net_profit"]["dimension"] = {"is_time": False}
+
+    dimensions, facts, warnings_ = _role_edit(mark)
+    assert "ss_net_profit" in dimensions and "ss_net_profit" not in facts
+    assert any("'store_sales.ss_net_profit' was given a dimension block" in w
+               for w in warnings_)
+
+
+def test_a_computed_dimension_keeps_its_expression_until_it_is_made_plain():
+    solid = yaml.safe_load(fixture("tpcds_solid.yaml"))
+    solid["semantic_model"]["tables"][0]["dimensions"][0]["expression"] = (
+        "CAST(ss_sold_date_sk AS VARCHAR)")
+    name = solid["semantic_model"]["tables"][0]["dimensions"][0]["name"]
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+
+    back, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    column = by_name(solid_model_of(back)["tables"][0]["dimensions"])[name]
+    assert column["expression"] == "CAST(ss_sold_date_sk AS VARCHAR)"
+    assert not any("computed field" in w for w in warnings_)
+
+    # Edited back to a plain reference in Apache Ossie: the edit wins.
+    model = yaml.safe_load(ossie)
+    model["datasets"][0]["fields"][0]["expression"]["dialects"][0]["expression"] = name
+    back, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
+    assert "expression" not in by_name(solid_model_of(back)["tables"][0]["dimensions"])[name]
+
+
+def test_an_expression_added_to_a_plain_dimension_in_ossie_is_dropped_with_a_warning():
+    # Solid dimensions are catalog columns. Only one that already carried an
+    # expression in Solid keeps one.
+    def compute(fields):
+        fields["ss_customer_sk"]["expression"]["dialects"][0]["expression"] = (
+            "ss_customer_sk + 1")
+
+    dimensions, _, warnings_ = _role_edit(compute)
+    assert "expression" not in dimensions["ss_customer_sk"]
+    assert any("'store_sales.ss_customer_sk' is a computed field" in w for w in warnings_)
+
+
 def test_the_stashed_raw_type_wins_over_the_portable_datatype(from_fixture):
     table = by_name(from_fixture["tables"])["tpcds.public.store_sales"]
     assert by_name(table["facts"])["ss_sales_price"]["type"] == "NUMBER(7,2)"

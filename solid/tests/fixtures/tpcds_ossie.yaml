@@ -63,7 +63,7 @@ datasets:
       - transaction date
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: ss_item_sk
     expression:
       dialects:
@@ -79,7 +79,7 @@ datasets:
       - item
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: ss_ticket_number
     expression:
       dialects:
@@ -91,7 +91,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: ss_customer_sk
     expression:
       dialects:
@@ -107,7 +107,7 @@ datasets:
       - buyer
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: ss_store_sk
     expression:
       dialects:
@@ -123,7 +123,7 @@ datasets:
       - location
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: ss_sold_at
     expression:
       dialects:
@@ -135,7 +135,7 @@ datasets:
       is_time: true
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TIMESTAMP_NTZ"}'
+      data: '{"_v": 1, "type": "TIMESTAMP_NTZ", "role": "dimension"}'
   - name: ss_quantity
     expression:
       dialects:
@@ -149,7 +149,7 @@ datasets:
       - quantity
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "fact"}'
   - name: ss_sales_price
     expression:
       dialects:
@@ -164,7 +164,7 @@ datasets:
       - price
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)"}'
+      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
   - name: ss_ext_sales_price
     expression:
       dialects:
@@ -178,7 +178,7 @@ datasets:
       - line total
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)"}'
+      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
   - name: ss_net_profit
     expression:
       dialects:
@@ -192,7 +192,7 @@ datasets:
       - margin
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)"}'
+      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
   - name: ss_discount_pct
     expression:
       dialects:
@@ -230,7 +230,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: d_date
     expression:
       dialects:
@@ -246,7 +246,7 @@ datasets:
       - day
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "DATE"}'
+      data: '{"_v": 1, "type": "DATE", "role": "dimension"}'
   - name: d_year
     expression:
       dialects:
@@ -261,7 +261,8 @@ datasets:
       - year
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "sample_values": ["2022", "2023", "2024"]}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension", "sample_values": ["2022", "2023",
+        "2024"]}'
   - name: d_quarter_name
     expression:
       dialects:
@@ -277,7 +278,7 @@ datasets:
       - fiscal quarter
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "sample_values": ["2024Q1", "2024Q2"]}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension", "sample_values": ["2024Q1", "2024Q2"]}'
   - name: d_month_name
     expression:
       dialects:
@@ -292,7 +293,7 @@ datasets:
       - month
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   custom_extensions:
   - vendor_name: SOLID
     data: '{"_v": 1, "quality_rank": "high"}'
@@ -318,7 +319,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: c_customer_id
     expression:
       dialects:
@@ -334,7 +335,7 @@ datasets:
       - customer number
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: c_first_name
     expression:
       dialects:
@@ -346,7 +347,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: c_last_name
     expression:
       dialects:
@@ -358,7 +359,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: c_email_address
     expression:
       dialects:
@@ -375,7 +376,7 @@ datasets:
       - contact
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: c_preferences
     expression:
       dialects:
@@ -387,7 +388,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "VARIANT"}'
+      data: '{"_v": 1, "type": "VARIANT", "role": "dimension"}'
   custom_extensions:
   - vendor_name: SOLID
     data: '{"_v": 1, "quality_rank": "mediocre"}'
@@ -413,7 +414,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: i_item_id
     expression:
       dialects:
@@ -430,7 +431,7 @@ datasets:
       - SKU
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: i_item_desc
     expression:
       dialects:
@@ -446,7 +447,7 @@ datasets:
       - item name
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: i_brand
     expression:
       dialects:
@@ -462,7 +463,7 @@ datasets:
       - manufacturer
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: i_category
     expression:
       dialects:
@@ -478,7 +479,7 @@ datasets:
       - department
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "sample_values": ["Electronics", "Home", "Sports"]}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension", "sample_values": ["Electronics", "Home", "Sports"]}'
   - name: i_current_price
     expression:
       dialects:
@@ -492,7 +493,7 @@ datasets:
       - list price
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)"}'
+      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
   custom_extensions:
   - vendor_name: SOLID
     data: '{"_v": 1, "quality_rank": "high"}'
@@ -518,7 +519,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
   - name: s_store_id
     expression:
       dialects:
@@ -534,7 +535,7 @@ datasets:
       - store number
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: s_store_name
     expression:
       dialects:
@@ -550,7 +551,7 @@ datasets:
       - location name
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: s_city
     expression:
       dialects:
@@ -566,7 +567,7 @@ datasets:
       - location
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT"}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
   - name: s_state
     expression:
       dialects:
@@ -582,7 +583,7 @@ datasets:
       - region
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "sample_values": ["CA", "NY", "TX"]}'
+      data: '{"_v": 1, "type": "TEXT", "role": "dimension", "sample_values": ["CA", "NY", "TX"]}'
   - name: s_is_franchise
     expression:
       dialects:
@@ -594,7 +595,7 @@ datasets:
       is_time: false
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "BOOLEAN"}'
+      data: '{"_v": 1, "type": "BOOLEAN", "role": "dimension"}'
   - name: s_number_employees
     expression:
       dialects:
@@ -608,7 +609,7 @@ datasets:
       - staff size
     custom_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)"}'
+      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "fact"}'
   custom_extensions:
   - vendor_name: SOLID
     data: '{"_v": 1, "quality_rank": "high"}'

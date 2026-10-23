@@ -18,6 +18,8 @@
 # A small Solid export whose type vocabulary is BigQuery's: INT64, FLOAT64, BOOL.
 # The project id carries a hyphen, which a dataset name must not, and the metric uses
 # COUNTIF -- a BigQuery-only function that has to survive qualification untouched.
+# `started_month` is a computed dimension: Solid's own export never writes an
+# `expression` on a dimension, but a hand-edited model can, and the round trip keeps it.
 semantic_model:
   name: 'web_sessions'
 
@@ -55,6 +57,10 @@ semantic_model:
         - name: 'started_at'
           type: 'DATETIME'
           description: Session start, with no timezone.
+        - name: 'started_month'
+          type: 'STRING'
+          description: Calendar month the session started in.
+          expression: "FORMAT_DATE('%Y-%m', started_on)"
       facts:
         - name: 'page_views'
           type: 'INT64'

@@ -313,10 +313,17 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
         # Apache Ossie's portable datatype is lossy (NUMBER(38,2), NUMERIC and DECIMAL
         # all collapse to Decimal), so the catalog's own type name is kept verbatim.
         stash["type"] = raw_type
-    if solid_expression and not is_dimension:
-        # Recorded even beside a `type`: on export the stashed type would otherwise
-        # read the field back as a plain column and drop its expression.
-        stash["role"] = "metric"
+    # Solid's role for the column, so export puts it back in the same list without
+    # inferring it. A fact with an expression is a table-scoped metric, recorded even
+    # beside a `type`: the stashed type would otherwise read it back as a plain column
+    # and drop its expression. A dimension with an expression is likewise recorded as
+    # computed, so its expression is restored rather than dropped as a foreign one is.
+    if is_dimension:
+        stash["role"] = "dimension"
+        if solid_expression:
+            stash["computed"] = True
+    else:
+        stash["role"] = "metric" if solid_expression else "fact"
     sample_values = as_list(column.get("sample_values"),
                             f"column '{dataset_name}.{raw_name}': 'sample_values'")
     if sample_values:
