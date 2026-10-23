@@ -83,6 +83,9 @@ from ossie_sigma.sigma_formula import (
         ('DateAdd([D], 3, "day")', "T", "DATE_ADD(\"D\", 3, 'DAY')"),
         ('DateDiff([Start], [End], "month")', "T", 'DATEDIFF("End", "Start", MONTH)'),
         ("If([A] = [B], Null(), [A])", "T", 'CASE WHEN "A" = "B" THEN NULL ELSE "A" END'),
+        # Sigma's If() returns Null when the else argument is omitted.
+        ("If([A] > 0, [B])", "T", 'CASE WHEN "A" > 0 THEN "B" END'),
+        ("NullIf([A], 0)", "T", 'NULLIF("A", 0)'),
         ("Percentile([X], 0.75)", "T", 'PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "X")'),
         ("StdDev([X])", "T", 'STDDEV_SAMP("X")'),
         ("-[X]", "T", '-"X"'),
@@ -118,7 +121,7 @@ def test_renders_to_a_warehouse_dialect_from_the_same_tree():
         'DateAdd([D], 1, "fortnight")',
         # Arities the mapping does not claim to cover.
         "Left([Name])",
-        "If([A], 1)",
+        "If([A])",
     ],
 )
 def test_untranslatable_functions_return_none(formula):
@@ -162,12 +165,36 @@ def test_is_plain_column_ref():
         ('-(- "A")', "T", "-(-[A])"),
         ('-("A" || "B")', "T", "-([A] & [B])"),
         ('-("A" + "B")', "T", "-(([A] + [B]))"),
+        ("NULL", "T", "Null()"),
+        ('CASE WHEN "A" > 0 THEN "B" END', "T", "If(([A] > 0), [B])"),
+        ('CASE WHEN "A" > 0 THEN "B" ELSE NULL END', "T", "If(([A] > 0), [B], Null())"),
+        ('NULLIF("A", 0)', "T", "NullIf([A], 0)"),
+        ('SUM("A") / NULLIF(SUM("B"), 0)', "T", "(Sum([A]) / NullIf(Sum([B]), 0))"),
     ],
 )
 def test_reverse_translation_basic(sql, dataset_alias, expected):
     result = sql_to_sigma_formula(sql, dataset_alias=dataset_alias)
     assert result == expected
     assert parse_formula(result) is not None
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "Null()",
+        "If([A] > 0, [B])",
+        "If([A] > 0, [B], Null())",
+        "If([A] = 0, Null(), [A])",
+        "NullIf([A], 0)",
+        "CountIf([A] > 0)",
+    ],
+)
+def test_null_returning_formulas_round_trip(formula):
+    # Every SQL form the forward direction emits must translate back to Sigma.
+    sql = to_ansi_sql(parse_formula(formula), dataset_alias="T")
+    back = sql_to_sigma_formula(sql, dataset_alias="T")
+    assert back is not None
+    assert to_ansi_sql(parse_formula(back), dataset_alias="T") == sql
 
 
 def test_reverse_translation_gives_up_on_count_star():
