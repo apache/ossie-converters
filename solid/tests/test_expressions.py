@@ -216,10 +216,10 @@ def test_no_datasets_are_reported_for_a_bare_expression():
         ("amount", "SNOWFLAKE", "amount"),
         ("odd name", "SNOWFLAKE", '"odd name"'),
         ("odd name", "DATABRICKS", "`odd name`"),
-        ("select", "SNOWFLAKE", '"select"'),
+        ("select", "SNOWFLAKE", '"SELECT"'),
         # Reserved words sqlglot reads back as ordinary columns, so a parse round trip
         # never caught them.
-        ("order", "SNOWFLAKE", '"order"'),
+        ("order", "SNOWFLAKE", '"ORDER"'),
         ("group", "DATABRICKS", "`group`"),
         ("limit", "ANSI_SQL", '"limit"'),
         ("table", "BIGQUERY", "`table`"),
@@ -236,18 +236,26 @@ def test_a_column_name_renders_as_a_valid_reference(name, dialect, expected):
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        # Solid reports Snowflake names as INFORMATION_SCHEMA stores them, upper case
-        # for any column created unquoted. A reserved one is quoted in that case, which
-        # is exactly the column's name.
+        # A quoted name is case-sensitive on Snowflake and a bare one folds to upper
+        # case, so a reserved name is quoted in upper case: it names the column the
+        # bare name would have, as every other name does. Solid reports Snowflake names
+        # as INFORMATION_SCHEMA stores them, upper case for a column created unquoted,
+        # so for its own exports this is the name as reported.
         ("ORDER", '"ORDER"'),
-        # A quoted name is case-sensitive on Snowflake, so a name that is not reserved
-        # there is never quoted: `"comment"` would not match a column named COMMENT.
+        ("order", '"ORDER"'),
+        ("Order", '"ORDER"'),
+        # A name that is not reserved there is never quoted: `"comment"` would not
+        # match a column named COMMENT.
         ("COMMENT", "COMMENT"),
         ("comment", "comment"),
-        ("ACCOUNT_ID", "ACCOUNT_ID"),
+        # Restricted only in SHOW commands, so an ordinary column name.
+        ("account", "account"),
+        ("schema", "schema"),
+        # Not a regular identifier, so there is no bare form to follow.
+        ("my col", '"my col"'),
     ],
 )
-def test_snowflake_quotes_only_reserved_names_and_keeps_their_case(name, expected):
+def test_snowflake_quotes_only_reserved_names_in_the_case_they_fold_to(name, expected):
     assert column_reference(name, "SNOWFLAKE") == expected
 
 
@@ -260,12 +268,14 @@ def test_every_reserved_word_is_quoted_and_reads_back_as_its_column(dialect):
 
     from ossie_solid.expressions import _RESERVED, _read
 
+    # Snowflake quotes in the case a bare name folds to (see column_reference).
+    folded = str.upper if dialect == "SNOWFLAKE" else str.lower
     for word in sorted(_RESERVED[dialect]):
         rendered = column_reference(word.lower(), dialect)
         assert rendered != word.lower(), word
         parsed = sqlglot.parse_one(f"SELECT {rendered} FROM t", read=_read(dialect))
         (column,) = parsed.expressions
-        assert isinstance(column, exp.Column) and column.name == word.lower(), word
+        assert isinstance(column, exp.Column) and column.name == folded(word), word
 
 
 def test_bigquerys_list_covers_the_one_sqlglot_ships():
@@ -279,14 +289,17 @@ def test_bigquerys_list_covers_the_one_sqlglot_ships():
     assert not missing, sorted(missing)
 
 
-def test_solids_snowflake_list_is_complete():
-    """The Snowflake list is copied from Snowflake's documentation, which is also
-    solid-server's SNOWFLAKE_RESERVED_WORDS_SET; it must not grow past it, since a quoted
-    name is case-sensitive there."""
+def test_the_snowflake_list_is_its_documented_column_and_alias_restrictions():
+    """Snowflake's documented 92 reserved and limited keywords, less the eight it
+    restricts only in SHOW commands. It must not grow past that, since a quoted name is
+    case-sensitive there."""
     from ossie_solid._reserved_words import SNOWFLAKE
 
-    assert len(SNOWFLAKE) == 92
-    assert {"ORDER", "GROUP", "TABLE", "QUALIFY", "MINUS"} <= SNOWFLAKE
+    show_only = {"ACCOUNT", "CONNECTION", "DATABASE", "GSCLUSTER", "ISSUE",
+                 "ORGANIZATION", "SCHEMA", "VIEW"}
+    assert len(SNOWFLAKE) == 92 - len(show_only)
+    assert not show_only & SNOWFLAKE
+    assert {"ORDER", "GROUP", "TABLE", "QUALIFY", "MINUS", "WINDOW"} <= SNOWFLAKE
     assert not {"COMMENT", "LIMIT", "DATE", "NAME", "VALUE"} & SNOWFLAKE
 
 

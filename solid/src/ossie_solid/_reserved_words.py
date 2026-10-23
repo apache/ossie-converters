@@ -25,10 +25,11 @@ How wide each list is follows from what quoting costs in that dialect:
 
 - **Snowflake** and the **SQL standard** fold an unquoted name to upper case and match a
   quoted one exactly, so quoting a name that did not need it can stop it matching its
-  column. Snowflake's list is therefore exactly its documented reserved words; the
-  `ANSI_SQL` one is the narrower set common engines also reserve (see below), rather
-  than every word SQL:2016 reserves. (Solid reports names in the case the catalog stores
-  them, so a reserved name it does quote, `"ORDER"`, still matches.)
+  column. Snowflake's list is therefore only the words its documentation says cannot be
+  a column or a table alias, and the `ANSI_SQL` one is the narrower set common engines
+  also reserve (see below), rather than every word SQL:2016 reserves. On Snowflake a
+  reserved name is also quoted in upper case, the case an unquoted one folds to (see
+  expressions.column_reference).
 - **Databricks** and **BigQuery** match a backtick-quoted name case-insensitively, so
   needless quoting is harmless there, and their lists also take in the SQL standard's.
 
@@ -40,17 +41,18 @@ def _words(text):
     return frozenset(text.split())
 
 
-# Snowflake, "Reserved & limited keywords". The same 92 words as solid-server's
-# SNOWFLAKE_RESERVED_WORDS_SET (common/src/value/semantic_layer/snowflake_constants.py).
+# Snowflake, "Reserved & limited keywords": the 92 words solid-server's
+# SNOWFLAKE_RESERVED_WORDS_SET also holds, less the eight the documentation restricts
+# only "as an identifier in a SHOW command" (ACCOUNT, CONNECTION, DATABASE, GSCLUSTER,
+# ISSUE, ORGANIZATION, SCHEMA, VIEW), which are ordinary column names and aliases.
 SNOWFLAKE = _words("""
-ACCOUNT ALL ALTER AND ANY AS BETWEEN BY CASE CAST CHECK COLUMN CONNECT CONNECTION
-CONSTRAINT CREATE CROSS CURRENT CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER
-DATABASE DELETE DISTINCT DROP ELSE EXISTS FALSE FOLLOWING FOR FROM FULL GRANT GROUP
-GSCLUSTER HAVING ILIKE IN INCREMENT INNER INSERT INTERSECT INTO IS ISSUE JOIN LATERAL
-LEFT LIKE LOCALTIME LOCALTIMESTAMP MINUS NATURAL NOT NULL OF ON OR ORDER ORGANIZATION
-QUALIFY REGEXP REVOKE RIGHT RLIKE ROW ROWS SAMPLE SCHEMA SELECT SET SOME START TABLE
-TABLESAMPLE THEN TO TRIGGER TRUE TRY_CAST UNION UNIQUE UPDATE USING VALUES VIEW WHEN
-WHENEVER WHERE WINDOW WITH
+ALL ALTER AND ANY AS BETWEEN BY CASE CAST CHECK COLUMN CONNECT CONSTRAINT CREATE CROSS
+CURRENT CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER DELETE DISTINCT DROP
+ELSE EXISTS FALSE FOLLOWING FOR FROM FULL GRANT GROUP HAVING ILIKE IN INCREMENT INNER
+INSERT INTERSECT INTO IS JOIN LATERAL LEFT LIKE LOCALTIME LOCALTIMESTAMP MINUS NATURAL
+NOT NULL OF ON OR ORDER QUALIFY REGEXP REVOKE RIGHT RLIKE ROW ROWS SAMPLE SELECT SET SOME
+START TABLE TABLESAMPLE THEN TO TRIGGER TRUE TRY_CAST UNION UNIQUE UPDATE USING VALUES
+WHEN WHENEVER WHERE WINDOW WITH
 """)
 
 # The SQL standard's reserved words that common engines also reserve: PostgreSQL's
