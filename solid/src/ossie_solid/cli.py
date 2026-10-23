@@ -76,17 +76,20 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     convert = convert_solid_to_ossie if args.command == "import" else convert_ossie_to_solid
     try:
-        with open(args.input) as handle:
+        with open(args.input, encoding="utf-8") as handle:
             source = handle.read()
         with warnings.catch_warnings():
             warnings.simplefilter("always")
             warnings.showwarning = _show_warning
             output = convert(source, dialect=args.dialect, model_name=args.name)
         if args.output:
-            with open(args.output, "w") as handle:
+            with open(args.output, "w", encoding="utf-8") as handle:
                 handle.write(output)
         else:
             sys.stdout.write(output)
+    except UnicodeDecodeError as e:
+        print(f"Error: {args.input} is not UTF-8 text: {e}", file=sys.stderr)
+        return 1
     except (ConversionError, OSError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1

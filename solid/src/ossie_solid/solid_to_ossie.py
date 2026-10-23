@@ -31,6 +31,8 @@ from ._common import (
     ONE_TO_ONE_NOTE,
     OSSIE_VERSION,
     ConversionError,
+    as_list,
+    as_mapping,
     build_ai_context,
     clean_text,
     dataset_name_for,
@@ -87,8 +89,8 @@ def convert_solid_to_ossie(solid_yaml_str, dialect=None, model_name=None):
 
 
 def _convert_model(solid, explicit_dialect, model_name):
-    tables = solid.get("tables") or []
-    if not isinstance(tables, list) or not tables:
+    tables = as_list(solid.get("tables"), "semantic_model: 'tables'")
+    if not tables:
         # Apache Ossie requires at least one dataset (schema: datasets.minItems = 1).
         raise ConversionError("Solid semantic model has no 'tables'; an Apache Ossie "
                               "model requires at least one dataset")
@@ -118,12 +120,14 @@ def _convert_model(solid, explicit_dialect, model_name):
         by_source[key] = dataset
 
     relationships = _convert_relationships(
-        solid.get("relationships") or [], by_source)
+        as_list(solid.get("relationships"), "semantic_model: 'relationships'"),
+        by_source)
     metrics = _convert_metrics(
-        solid.get("metrics") or [], by_source, datasets, resolved_dialect)
+        as_list(solid.get("metrics"), "semantic_model: 'metrics'"),
+        by_source, datasets, resolved_dialect)
 
-    business = solid.get("business_context")
-    business = business if isinstance(business, dict) else {}
+    business = as_mapping(
+        solid.get("business_context"), "semantic_model: 'business_context'")
     llm_description = clean_text(solid.get("model_llm_description"))
     customer_description = clean_text(business.get("model_description"))
     raw_instructions = clean_text(business.get("custom_instructions"))
@@ -137,7 +141,8 @@ def _convert_model(solid, explicit_dialect, model_name):
         # reaches an LLM; do the same for the Apache Ossie consumer, keeping the tagged
         # original in the stash.
         instructions=resolve_asset_links(raw_instructions) if raw_instructions else None,
-        examples=string_list(business.get("business_questions")),
+        examples=string_list(business.get("business_questions"),
+                             "business_context: 'business_questions'"),
     )
     if ai_context:
         model["ai_context"] = ai_context
@@ -182,7 +187,7 @@ def _columns_of(table):
     """Dimensions followed by facts, skipping anything that is not a mapping."""
     columns = []
     for key in ("dimensions", "facts"):
-        for column in table.get(key) or []:
+        for column in as_list(table.get(key), f"table '{table.get('name')}': '{key}'"):
             if isinstance(column, dict):
                 columns.append(column)
     return columns
@@ -196,7 +201,8 @@ def _convert_table(table, dialect, taken_names):
 
     dataset = {"name": name, "source": source}
 
-    primary_key = _split_primary_key(table.get("primary_key"))
+    primary_key = _split_primary_key(
+        table.get("primary_key"), f"table '{source}': 'primary_key'")
     if primary_key:
         dataset["primary_key"] = primary_key
 
@@ -210,15 +216,15 @@ def _convert_table(table, dialect, taken_names):
     # directions, so neither needs stashing.
     ai_context = build_ai_context(
         instructions=clean_text(table.get("manual_description")),
-        synonyms=string_list(table.get("synonyms")),
+        synonyms=string_list(table.get("synonyms"), f"table '{source}': 'synonyms'"),
     )
     if ai_context:
         dataset["ai_context"] = ai_context
 
     fields, field_names = [], set()
-    for column in table.get("dimensions") or []:
+    for column in as_list(table.get("dimensions"), f"table '{source}': 'dimensions'"):
         fields.append(_convert_column(column, dialect, name, field_names, True))
-    for column in table.get("facts") or []:
+    for column in as_list(table.get("facts"), f"table '{source}': 'facts'"):
         fields.append(_convert_column(column, dialect, name, field_names, False))
     if fields:
         dataset["fields"] = fields
@@ -227,14 +233,14 @@ def _convert_table(table, dialect, taken_names):
     quality_rank = clean_text(table.get("quality_rank"))
     if quality_rank:
         stash["quality_rank"] = quality_rank
-    indexes = string_list(table.get("indexes"))
+    indexes = string_list(table.get("indexes"), f"table '{source}': 'indexes'")
     if indexes:
         stash["indexes"] = indexes
     write_stash(dataset, stash)
     return dataset
 
 
-def _split_primary_key(value):
+def _split_primary_key(value, what):
     """Split Solid's comma-joined primary key scalar into Apache Ossie's column array.
 
     solid-server joins a composite key's column names with `", "` into a single scalar
@@ -243,7 +249,7 @@ def _split_primary_key(value):
     hand-edited export may already carry one.
     """
     if isinstance(value, list):
-        return string_list(value)
+        return string_list(value, what)
     text = clean_text(value)
     if not text:
         return []
@@ -292,7 +298,8 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
 
     ai_context = build_ai_context(
         instructions=clean_text(column.get("manual_description")),
-        synonyms=string_list(column.get("synonyms")),
+        synonyms=string_list(
+            column.get("synonyms"), f"column '{dataset_name}.{raw_name}': 'synonyms'"),
     )
     if ai_context:
         field["ai_context"] = ai_context
@@ -310,7 +317,8 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
         # Recorded even beside a `type`: on export the stashed type would otherwise
         # read the field back as a plain column and drop its expression.
         stash["role"] = "metric"
-    sample_values = column.get("sample_values")
+    sample_values = as_list(column.get("sample_values"),
+                            f"column '{dataset_name}.{raw_name}': 'sample_values'")
     if sample_values:
         stash["sample_values"] = sample_values
     write_stash(field, stash)
@@ -333,10 +341,10 @@ def _convert_relationships(relationships, by_source):
                  f"which is not in 'tables'; the relationship was dropped")
             continue
 
-        join_keys = relationship.get("join_keys")
-        join_keys = join_keys if isinstance(join_keys, dict) else {}
-        left_columns = string_list(join_keys.get("left"))
-        right_columns = string_list(join_keys.get("right"))
+        what = f"relationship '{left_source}' -> '{right_source}'"
+        join_keys = as_mapping(relationship.get("join_keys"), f"{what}: 'join_keys'")
+        left_columns = string_list(join_keys.get("left"), f"{what}: 'join_keys.left'")
+        right_columns = string_list(join_keys.get("right"), f"{what}: 'join_keys.right'")
         if not left_columns or not right_columns:
             warn("relationship",
                  f"'{left['name']}' -> '{right['name']}' has no join keys; the "
@@ -435,7 +443,8 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
             continue
 
         owners, unknown = [], []
-        for source in string_list(metric.get("tables")):
+        tables = string_list(metric.get("tables"), f"metric '{raw_name}': 'tables'")
+        for source in tables:
             dataset = by_source.get(source.lower())
             (owners if dataset is not None else unknown).append(dataset or source)
         for source in unknown:
@@ -451,7 +460,7 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
         description = clean_text(metric.get("description"))
         if description:
             converted_metric["description"] = description
-        synonyms = string_list(metric.get("synonyms"))
+        synonyms = string_list(metric.get("synonyms"), f"metric '{raw_name}': 'synonyms'")
         if synonyms:
             converted_metric["ai_context"] = {"synonyms": synonyms}
 
@@ -465,7 +474,7 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
         if (unknown
                 or status in (UNPARSED, AMBIGUOUS)
                 or referenced_datasets(expression, dialect, dataset_names) != expected):
-            stash["tables"] = string_list(metric.get("tables"))
+            stash["tables"] = tables
         write_stash(converted_metric, stash)
         converted.append(converted_metric)
     return converted
