@@ -279,8 +279,9 @@ def test_the_stashed_raw_type_wins_over_the_portable_datatype(from_fixture):
 
 def test_without_a_stash_the_type_is_derived_from_the_datatype(from_example):
     table = by_name(from_example["tables"])["tpcds.public.store_sales"]
-    # The example is ANSI_SQL, so the ANSI type names are used.
-    assert by_name(table["facts"])["ss_sales_price"]["type"] == "DECIMAL"
+    # The example is ANSI_SQL, so the ANSI type names are used, with a scale so the
+    # column is still a decimal: a bare DECIMAL has a scale of 0.
+    assert by_name(table["facts"])["ss_sales_price"]["type"] == "DECIMAL(38,9)"
 
 
 def test_a_field_with_no_datatype_gets_an_empty_type_and_a_warning():
@@ -695,8 +696,9 @@ def test_a_vendor_dialect_beside_ossie_sql_2026_is_still_resolved():
     ])
     solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
     assert warnings_ == []
-    # The Decimal column is typed in Snowflake's vocabulary, not ANSI's `DECIMAL`.
-    assert solid_model_of(solid)["tables"][0]["facts"][0]["type"] == "NUMBER"
+    # The Decimal column is typed in Snowflake's vocabulary, not ANSI's `DECIMAL`, and
+    # with a scale: a bare NUMBER is NUMBER(38,0), an integer.
+    assert solid_model_of(solid)["tables"][0]["facts"][0]["type"] == "NUMBER(38,9)"
 
 
 # --- non-SQL dialects --------------------------------------------------------------
