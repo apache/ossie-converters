@@ -272,6 +272,30 @@ def test_an_expression_added_to_a_plain_dimension_in_ossie_is_dropped_with_a_war
     assert any("'store_sales.ss_customer_sk' is a computed field" in w for w in warnings_)
 
 
+def test_a_metric_whose_columns_share_a_name_keeps_its_qualifiers():
+    ossie = {
+        "version": "0.2.0.dev0",
+        "name": "m",
+        "datasets": [
+            {"name": name, "source": f"db.s.{name}", "fields": [
+                {"name": "amount",
+                 "expression": {"dialects": [{"dialect": "ANSI_SQL",
+                                              "expression": "amount"}]}},
+            ]}
+            for name in ("orders", "returns")
+        ],
+        "metrics": [{"name": "net", "expression": {"dialects": [
+            {"dialect": "ANSI_SQL",
+             "expression": "SUM(orders.amount) - SUM(returns.amount)"}]}}],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    metric = solid_model_of(solid)["metrics"][0]
+    assert metric["expression"] == "SUM(orders.amount) - SUM(returns.amount)"
+    assert metric["tables"] == ["db.s.orders", "db.s.returns"]
+    assert any("'net': the dataset qualifiers could not be removed safely (ambiguous)"
+               in w for w in warnings_)
+
+
 def test_the_stashed_raw_type_wins_over_the_portable_datatype(from_fixture):
     table = by_name(from_fixture["tables"])["tpcds.public.store_sales"]
     assert by_name(table["facts"])["ss_sales_price"]["type"] == "NUMBER(7,2)"

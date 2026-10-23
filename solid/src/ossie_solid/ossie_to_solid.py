@@ -611,6 +611,13 @@ def _convert_relationships(relationships, by_name):
 
 def _convert_metrics(metrics, by_name, dialect):
     dataset_names = list(by_name)
+    # Each dataset's field names, so unqualifying can tell when a bare name would
+    # belong to more than one of the datasets a metric reads.
+    fields = {
+        name: [f["name"] for f in dataset.get("fields") or []
+               if isinstance(f, dict) and isinstance(f.get("name"), str)]
+        for name, dataset in by_name.items()
+    }
     converted = []
     for metric in metrics:
         if not isinstance(metric, dict):
@@ -656,7 +663,7 @@ def _convert_metrics(metrics, by_name, dialect):
                            f"so its expression was edited in Apache Ossie; the tables "
                            f"were taken from the expression")
             tables = referenced
-        bare, status = unqualify_metric(expression, dialect, dataset_names)
+        bare, status = unqualify_metric(expression, dialect, dataset_names, fields)
         if status in (UNPARSED, AMBIGUOUS):
             warn("metric", f"'{name}': the dataset qualifiers could not be removed "
                            f"safely ({status}), so the expression was left as written; "

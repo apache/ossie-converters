@@ -245,7 +245,11 @@ with its dataset. So:
 
 - **Import** prefixes each bare column with its dataset when `tables[]` names exactly one
   table (`SUM(ss_ext_sales_price)` → `SUM(store_sales.ss_ext_sales_price)`).
-- **Export** strips those qualifiers back out.
+- **Export** strips those qualifiers back out — unless that would leave a bare name more
+  than one of the metric's datasets owns. `SUM(orders.amount) - SUM(returns.amount)`
+  would become `SUM(amount) - SUM(amount)`, and `COUNT(customers.id)` beside
+  `orders.amount` would leave an `id` that `orders` has too. Such an expression is kept
+  as written, with a warning.
 
 Both edits are a **surgical splice**, not a re-render. Each column is located by
 sqlglot's tokenizer, which reports byte offsets and keeps string literals and quoted

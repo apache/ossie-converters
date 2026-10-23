@@ -242,13 +242,20 @@ def qualify_metric(expression, dialect, dataset, columns):
     ), QUALIFIED
 
 
-def unqualify_metric(expression, dialect, datasets):
+def unqualify_metric(expression, dialect, datasets, fields=None):
     """Strip a dataset qualifier off every column in `expression`.
 
     The inverse of `qualify_metric`, used when exporting back to Solid, whose formulas are
     stored bare. `datasets` is the set of dataset names that may legitimately appear as a
     qualifier; any other qualifier -- a genuine table alias an author wrote by hand -- is
     preserved.
+
+    Stripping is only safe while every bare name still means one column. It is not when
+    two datasets the expression reads share a column name: `SUM(orders.amount) -
+    SUM(returns.amount)` would become `SUM(amount) - SUM(amount)`. So the result is
+    "ambiguous", and the text is left as written, when the same name is read from two
+    datasets, or when `fields` -- each dataset's field names -- shows that a stripped
+    name is also a field of another dataset the expression reads.
 
     Returns (expression, status) with the same vocabulary as `qualify_metric`, except that
     a successful edit reports "unqualified".
@@ -292,9 +299,26 @@ def unqualify_metric(expression, dialect, datasets):
         # Delete the qualifier and its dot; `end` is inclusive on a sqlglot token.
         edits.append((token.start, dot.end + 1, ""))
 
-    if found != expected:
+    if found != expected or _names_collide(found, fields):
         return expression, AMBIGUOUS
     return _splice(expression, edits), UNQUALIFIED
+
+
+def _names_collide(references, fields):
+    """True if stripping the qualifiers from `references`, a Counter of (dataset, name),
+    would leave a bare name that more than one of those datasets could own."""
+    readers = {}
+    for dataset, name in references:
+        readers.setdefault(name, set()).add(dataset)
+    if any(len(datasets) > 1 for datasets in readers.values()):
+        return True
+    referenced = {dataset for dataset, _ in references}
+    owned = {d.lower(): {n.lower() for n in names} for d, names in (fields or {}).items()}
+    return any(
+        name in owned.get(other, ())
+        for dataset, name in references
+        for other in referenced - {dataset}
+    )
 
 
 def referenced_datasets(expression, dialect, datasets):
