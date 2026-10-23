@@ -805,27 +805,67 @@ class TestPortableIdentifierQuoting:
             portable = next(e["expression"] for e in out if e["dialect"] == "ANSI_SQL")
             assert portable == word, portable
 
-    def test_the_reserved_set_still_covers_every_word_sqlglot_rejects(self):
-        """`_SQL_RESERVED` is a literal, so it can go stale when sqlglot moves.
-        This re-derives the oracle from the installed sqlglot and fails if a
-        word it now rejects would still be emitted bare -- loudly, at test
-        time, rather than as an expression the validator turns away.
+    @pytest.mark.parametrize(
+        "word",
+        ["CURRENT_DATE", "CURRENT_TIMESTAMP", "SESSION_USER", "LOCALTIME",
+         "current_date"],
+    )
+    def test_a_niladic_function_column_is_quoted(self, word):
+        """`SELECT CURRENT_DATE` is valid SQL everywhere and returns today's
+        date, not the column of that name. Emitted bare, a ThoughtSpot column
+        called `CURRENT_DATE` reports the wrong value and nothing complains --
+        no parser rejects it, so only reading the answer reveals it.
+
+        That makes this the worst of the three classes `_SQL_RESERVED` covers,
+        and the reason the guard below asks whether a word parses *as a
+        column* rather than merely whether it parses.
         """
         sqlglot = pytest.importorskip("sqlglot")
+        from sqlglot import exp
+
+        out = expression_entries(
+            "[T::C]", self._resolver("orders", word),
+            IssueLog(), object_ref="f", kind="field",
+        )
+        portable = next(e["expression"] for e in out if e["dialect"] == "ANSI_SQL")
+        assert portable == f'"{word}"', portable
+        parsed = sqlglot.parse_one(f"SELECT {portable}").expressions[0]
+        assert isinstance(parsed, exp.Column), (
+            f"{portable} parsed as {type(parsed).__name__}, not a column"
+        )
+
+    def test_the_reserved_set_still_covers_every_word_that_is_not_a_column(self):
+        """`_SQL_RESERVED` is a literal, so it can go stale when sqlglot moves.
+        This re-derives the oracle from the installed sqlglot and fails if any
+        word it would emit bare does not actually read as a column reference.
+
+        The oracle is deliberately **"parses as a `Column`"**, not "parses".
+        The first version of this guard asked only whether parsing succeeded,
+        and every niladic function sailed through it while being exactly the
+        bug: `SELECT CURRENT_DATE` parses beautifully, into a `CurrentDate`
+        node. Asking the weaker question is what let that class ship.
+        """
+        sqlglot = pytest.importorskip("sqlglot")
+        from sqlglot import exp
         from sqlglot.tokens import Tokenizer
 
         from ossie_thoughtspot.tml_to_ossie import _sql_identifier
 
-        missed = []
+        missed = {}
         for word in Tokenizer.KEYWORDS:
             if not word.replace("_", "").isalpha():
                 continue
             try:
-                sqlglot.parse_one(f"SELECT {word}")
+                items = sqlglot.parse_one(f"SELECT {word}").expressions
             except Exception:
-                if _sql_identifier(word) == word:
-                    missed.append(word)
+                reads_as = "a parse error"
+            else:
+                if len(items) == 1 and isinstance(items[0], exp.Column):
+                    continue
+                reads_as = type(items[0]).__name__ if items else "nothing"
+            if _sql_identifier(word) == word:
+                missed[word] = reads_as
         assert not missed, (
-            f"sqlglot rejects these as a bare column reference but "
-            f"_SQL_RESERVED does not cover them: {sorted(missed)}"
+            f"_SQL_RESERVED would emit these bare, but each reads as something "
+            f"other than a column: {dict(sorted(missed.items()))}"
         )

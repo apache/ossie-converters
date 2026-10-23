@@ -613,3 +613,107 @@ class TestEveryGroupedAggregateIsRecognisedAsAlreadyAggregated:
                 if entry["dialect"] == "THOUGHTSPOT":
                     return entry["expression"]
         raise AssertionError("no THOUGHTSPOT dialect entry was emitted")
+
+
+class TestTheSumDefaultOnlyAppliesWhereSumMeansSomething:
+    """ThoughtSpot's implicit SUM for a MEASURE column with no `aggregation`
+    is correct for a number and nonsense for anything else: a VARCHAR or DATE
+    column marked MEASURE came out as `sum ( [t::col] )`, which is not a valid
+    metric and which nothing warned about.
+
+    Raised by @jbonofre reviewing apache/ossie#463, as the cost of the default
+    that PR introduced.
+    """
+
+    @staticmethod
+    def _table_with(data_type):
+        def lookup(name):
+            if name != "ORDERS":
+                return None
+            return {"name": "ORDERS", "columns": [
+                {"name": "C", "db_column_name": "C",
+                 "db_column_properties": {"data_type": data_type}},
+            ]}
+        return lookup
+
+    @staticmethod
+    def _convert(lookup, properties, log):
+        return convert_metric(
+            {"name": "C", "column_id": "ORDERS::C", "properties": properties},
+            {}, lookup, _resolve, log,
+        )
+
+    @staticmethod
+    def _thoughtspot(metric):
+        return next(
+            e["expression"] for e in metric["expression"]["dialects"]
+            if e["dialect"] == "THOUGHTSPOT"
+        )
+
+    @pytest.mark.parametrize("data_type", ["INT64", "DOUBLE", "FLOAT"])
+    def test_a_numeric_column_still_gets_the_default(self, data_type):
+        log = IssueLog()
+        metric = self._convert(
+            self._table_with(data_type), {"column_type": "MEASURE"}, log,
+        )
+        assert self._thoughtspot(metric) == "sum ( [ORDERS::C] )"
+        assert not [i for i in log.as_dicts() if "NOT-SUMMABLE" in i["code"]]
+
+    @pytest.mark.parametrize("data_type", ["VARCHAR", "DATE", "BOOL"])
+    def test_a_non_summable_column_declines_the_default_and_says_so(self, data_type):
+        log = IssueLog()
+        metric = self._convert(
+            self._table_with(data_type), {"column_type": "MEASURE"}, log,
+        )
+        assert self._thoughtspot(metric) == "[ORDERS::C]", "SUM was composed anyway"
+        codes = [i["code"] for i in log.as_dicts()]
+        assert "TS-METRIC-AGGREGATION-DEFAULT-NOT-SUMMABLE" in codes, codes
+
+    @pytest.mark.parametrize(
+        "aggregation,emitted",
+        # The emitted spelling is TML's, not the enum's: COUNT_DISTINCT is
+        # written `unique count`. Asserting the literal keeps this test honest
+        # about what actually reaches a document.
+        [("COUNT", "count"), ("COUNT_DISTINCT", "unique count"),
+         ("SUM", "sum"), ("MIN", "min")],
+    )
+    def test_an_explicit_aggregation_is_never_second_guessed(self, aggregation, emitted):
+        # The author said so. `count ( [t::name] )` over a VARCHAR is ordinary,
+        # and even an odd choice is an instruction rather than a default.
+        log = IssueLog()
+        metric = self._convert(
+            self._table_with("VARCHAR"),
+            {"column_type": "MEASURE", "aggregation": aggregation}, log,
+        )
+        assert self._thoughtspot(metric) == f"{emitted} ( [ORDERS::C] )"
+        assert not [i for i in log.as_dicts() if "NOT-SUMMABLE" in i["code"]]
+
+    def test_an_undeclared_type_keeps_the_default(self):
+        """The guard declines only on a type it can READ and knows is not
+        summable. Withholding the default because a column declares no type
+        would reintroduce the raw-per-row bug the default exists to fix -- the
+        default's whole premise is that ThoughtSpot sums when nothing says
+        otherwise, and 'no declared type' is not 'not a number'.
+        """
+        def lookup(name):
+            return {"name": "ORDERS", "columns": [{"name": "C", "db_column_name": "C"}]}
+
+        log = IssueLog()
+        metric = self._convert(lookup, {"column_type": "MEASURE"}, log)
+        assert self._thoughtspot(metric) == "sum ( [ORDERS::C] )"
+        assert not [i for i in log.as_dicts() if "NOT-SUMMABLE" in i["code"]]
+
+    def test_the_decline_does_not_duplicate_the_unmapped_datatype_warning(self):
+        # The guard reads the physical datatype, and so does `_metric_datatype`
+        # right after it. Reading it twice against the real log would report an
+        # unmappable type twice for one column.
+        def lookup(name):
+            return {"name": "ORDERS", "columns": [
+                {"name": "C", "db_column_name": "C",
+                 "db_column_properties": {"data_type": "NOT_A_REAL_TYPE"}},
+            ]}
+
+        log = IssueLog()
+        self._convert(lookup, {"column_type": "MEASURE"}, log)
+        unmapped = [i for i in log.as_dicts() if "DATATYPE-UNMAPPED" in i["code"]]
+        assert len(unmapped) <= 1, unmapped
