@@ -255,10 +255,15 @@ def _json_default(value):
 
 
 def _json_object_hook(data):
-    cls = _JSON_TEMPORAL.get(data.get(_JSON_TAG, ""))
-    if cls is not None and set(data) == {_JSON_TAG, "v"}:
-        return cls.fromisoformat(data["v"])
-    return data
+    tag = data.get(_JSON_TAG)
+    if not isinstance(tag, str) or tag not in _JSON_TEMPORAL or set(data) != {
+            _JSON_TAG, "v"}:
+        return data
+    try:
+        return _JSON_TEMPORAL[tag].fromisoformat(data["v"])
+    except (TypeError, ValueError) as e:
+        raise ConversionError(
+            f"custom_extensions[SOLID] holds a malformed {tag}: {data['v']!r}") from e
 
 
 def read_stash(obj, what="object"):
@@ -292,7 +297,12 @@ def write_stash(obj, data):
         return
     payload = {"_v": STASH_VERSION}
     payload.update(data)
-    blob = json.dumps(payload, ensure_ascii=False, default=_json_default)
+    try:
+        blob = json.dumps(payload, ensure_ascii=False, default=_json_default)
+    except (TypeError, ValueError) as e:
+        # A mapping keyed by something JSON cannot key by, such as a YAML date.
+        raise ConversionError(
+            f"a value cannot be carried in custom_extensions[SOLID]: {e}") from e
     exts = obj.setdefault("custom_extensions", [])
     for ext in exts:
         if ext.get("vendor_name") == VENDOR:
@@ -504,15 +514,19 @@ def unique_name(base, taken):
     return name
 
 
-def clean_text(value):
+def clean_text(value, what=None):
     """Normalize a Solid free-text field: strip trailing whitespace, drop empties.
 
     Solid emits block scalars for descriptions, which leaves a trailing newline, and
     writes `manual_description: ''` for a column whose human description was cleared.
     Both should become "absent" rather than an empty Apache Ossie field. A scalar YAML
     read as something other than a string (an unquoted `2024-01-01`, a number) is kept
-    as its text rather than dropped.
+    as its text rather than dropped; a list or mapping in a text slot raises, naming
+    `what`, rather than vanishing.
     """
+    if isinstance(value, (list, dict)):
+        raise ConversionError(
+            f"{what or 'a text field'} must be text, got a {type(value).__name__}")
     if isinstance(value, (bool, int, float, datetime.date)):
         value = str(value)
     if not isinstance(value, str):

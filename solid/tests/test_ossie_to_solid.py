@@ -133,6 +133,17 @@ def test_a_duplicate_dataset_name_is_rejected():
         convert_ossie_to_solid(yaml.safe_dump(ossie))
 
 
+def test_dataset_names_that_differ_only_in_case_are_rejected():
+    # Stripping `orders.` and `ORDERS.` would otherwise collapse two tables' columns
+    # into one bare name with no warning.
+    ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    duplicate = dict(ossie["datasets"][0], name="STORE_SALES",
+                     source="tpcds.archive.store_sales")
+    ossie["datasets"].append(duplicate)
+    with pytest.raises(ConversionError, match="differ only in case"):
+        convert_ossie_to_solid(yaml.safe_dump(ossie))
+
+
 def test_unique_keys_are_dropped_with_a_warning():
     _, warnings_ = convert_quietly(
         convert_ossie_to_solid, example("tpcds_semantic_model.yaml")
@@ -850,3 +861,81 @@ def test_reading_an_older_spec_still_writes_the_current_one():
     back, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(aged))
     again, _ = convert_quietly(convert_solid_to_ossie, back)
     assert yaml.safe_load(again)["version"] == "0.2.0.dev0"
+
+
+# --- regressions from a review of the round-4 changes ---------------------------------
+
+
+def _metric_fact_edit(edit):
+    """Edit the tpcds expression-only fact `ss_discount_pct` in Apache Ossie, export."""
+    def apply(fields):
+        edit(fields["ss_discount_pct"])
+    _, facts, warnings_ = _role_edit(apply)
+    return facts["ss_discount_pct"], warnings_
+
+
+def test_a_datatype_given_to_a_metric_fact_in_ossie_becomes_its_type():
+    column, _ = _metric_fact_edit(lambda f: f.update(datatype="Float"))
+    assert column["type"] == "FLOAT"
+    assert "expression" in column
+
+
+def test_a_metric_fact_made_a_plain_reference_in_ossie_becomes_a_column():
+    def plain(field):
+        field["expression"]["dialects"][0]["expression"] = "ss_discount_pct"
+    column, warnings_ = _metric_fact_edit(plain)
+    assert "expression" not in column
+    assert any("is now a plain reference to the column" in w for w in warnings_)
+
+
+def test_a_computed_dimension_with_no_type_gets_none_back():
+    solid = yaml.safe_load(fixture("bigquery_solid.yaml"))
+    dimension = solid["semantic_model"]["tables"][0]["dimensions"][-1]
+    assert dimension["name"] == "started_month"
+    del dimension["type"]
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    back, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    restored = by_name(solid_model_of(back)["tables"][0]["dimensions"])["started_month"]
+    assert "type" not in restored
+    assert not any("started_month" in w for w in warnings_)
+
+
+def test_a_quoted_name_with_an_escaped_quote_is_not_a_computed_field():
+    ossie = {"version": "0.2.0.dev0", "name": "m", "datasets": [
+        {"name": "t", "source": "db.s.t", "fields": [
+            {"name": 'a"b', "datatype": "String", "expression": {"dialects": [
+                {"dialect": "SNOWFLAKE", "expression": '"a""b"'}]}}]}]}
+    _, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert not any("computed field" in w for w in warnings_)
+
+
+def test_is_time_is_not_reported_lost_when_only_the_datatype_was_dropped():
+    # The stashed type still implies the datatype, so a re-import restores is_time.
+    def drop_datatypes(fields):
+        for field in fields.values():
+            field.pop("datatype", None)
+    _, _, warnings_ = _role_edit(drop_datatypes)
+    assert not any("dimension.is_time" in w for w in warnings_)
+
+
+def test_a_flipped_flag_that_is_not_true_does_not_flip():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
+    model = yaml.safe_load(ossie)
+    relationship = model["relationships"][0]
+    relationship["custom_extensions"] = [
+        {"vendor_name": "SOLID", "data": '{"_v": 1, "flipped": "no"}'}]
+    solid, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
+    first = solid_model_of(solid)["relationships"][0]
+    source = {d["name"]: d["source"] for d in model["datasets"]}[relationship["from"]]
+    assert first["left_table"] == source
+
+
+@pytest.mark.parametrize("datatype", [["String"], {"name": "String"}])
+def test_a_datatype_of_the_wrong_kind_beside_an_empty_dimension_block_is_rejected(
+        datatype):
+    ossie = {"version": "0.2.0.dev0", "name": "m", "datasets": [
+        {"name": "t", "source": "db.s.t", "fields": [
+            {"name": "a", "dimension": {}, "datatype": datatype,
+             "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "a"}]}}]}]}
+    with pytest.raises(ConversionError, match="datatype must be a string"):
+        convert_ossie_to_solid(yaml.safe_dump(ossie))

@@ -351,8 +351,9 @@ when an input breaks one of these:
 - the input file is not UTF-8 (CLI);
 - a Solid model has no `tables`, or an Apache Ossie model has no `datasets` — the spec
   requires at least one dataset;
-- an Apache Ossie model declares two datasets with the same `name`, which relationships
-  and metrics could then resolve to the wrong table (export);
+- an Apache Ossie model declares two datasets with the same `name`, or names that differ
+  only in case, which relationships and metrics could then resolve to the wrong table
+  (export);
 - a Solid model lists the same table twice, compared ignoring case, for the same reason
   (import);
 - a field or metric expression lists the same dialect twice with different SQL (export);
@@ -413,10 +414,12 @@ both read from the `ossie` submodule.
 `tests/test_cross_vendor.py` covers the case the round-trip tests cannot: an Apache Ossie
 model produced by *another vendor's* converter, which carries no `custom_extensions[SOLID]`
 stash, no `dimension` blocks, usually no `datatype`, and metrics written against bare
-column names. It sweeps every Ossie fixture the other converters in this repository ship,
-asserting that each converts to a well-formed Solid model that re-imports schema-valid,
-and that every field whose `dimension` block or `datatype` settles its role lands in
-`dimensions` or `facts` accordingly.
+column names. It sweeps every Apache Ossie document in the other converters' test data — YAML or
+JSON, at any depth under their test directories — asserting that each converts to a
+well-formed Solid model that re-imports schema-valid, and that every field whose
+`dimension` block or `datatype` settles its role lands in `dimensions` or `facts`
+accordingly. A document with an expression written only in a language that is not SQL
+(Holistics AQL, ThoughtSpot formulas) is checked to raise, as documented.
 That sweep deliberately pins **no** warning counts, because those fixtures belong to other
 converters and each converter's CI is path-filtered to its own directory — a pin here would
 break on a main-branch push from a PR that never ran this suite. The exact interop gaps are

@@ -27,6 +27,7 @@ ConversionError. Any other exception is a bug.
 
 import copy
 import datetime
+import json
 import warnings
 
 import pytest
@@ -70,6 +71,24 @@ def _paths(node, prefix=()):
         yield from _paths(node[0], prefix + (0,))
 
 
+# The same kinds, as JSON can hold them, for values inside a stash, plus the shapes a
+# tagged date takes when it is malformed.
+STASH_REPLACEMENTS = {
+    kind: value for kind, value in REPLACEMENTS.items()
+    if not isinstance(value, datetime.date) and kind != "list of dates"
+} | {
+    "tagged date with a non-string value": {"__ossie_solid__": "date", "v": 5},
+    "tagged date that is not a date": {"__ossie_solid__": "date", "v": "soon"},
+    "tag that is not a string": {"__ossie_solid__": [], "v": "2024-01-01"},
+}
+
+
+def _at(document, path):
+    for key in path:
+        document = document[key]
+    return document
+
+
 def _replaced(document, path, value):
     mutated = copy.deepcopy(document)
     target = mutated
@@ -79,20 +98,44 @@ def _replaced(document, path, value):
     return mutated
 
 
-def _sweep(convert, document):
-    failures = []
+def _mutations(document):
+    """(label, mutated document) for every value replaced by every other kind."""
     for path in _paths(document):
         for kind, value in REPLACEMENTS.items():
-            text = yaml.safe_dump(_replaced(document, path, value), sort_keys=False)
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    convert(text)
-            except ConversionError:
-                pass
-            except Exception as e:  # noqa: BLE001 - any other exception is the bug
-                failures.append(f"{'.'.join(map(str, path))} := {kind}: "
-                                f"{type(e).__name__}: {e}")
+            yield f"{'.'.join(map(str, path))} := {kind}", _replaced(document, path, value)
+
+
+def _stash_mutations(document):
+    """The same, inside each SOLID stash: its `data` is a JSON string, which the plain
+    sweep only ever replaces whole."""
+    for path in _paths(document):
+        if path[-1] != "custom_extensions" or not isinstance(_at(document, path), list):
+            continue
+        for index, ext in enumerate(_at(document, path)):
+            if not (isinstance(ext, dict) and ext.get("vendor_name") == "SOLID"):
+                continue
+            data = json.loads(ext["data"])
+            for inner in _paths(data):
+                for kind, value in STASH_REPLACEMENTS.items():
+                    mutated = copy.deepcopy(document)
+                    _at(mutated, path)[index]["data"] = json.dumps(
+                        _replaced(data, inner, value))
+                    yield (f"{'.'.join(map(str, path))}[{index}].data:"
+                           f"{'.'.join(map(str, inner))} := {kind}"), mutated
+
+
+def _sweep(convert, mutations):
+    failures = []
+    for label, mutated in mutations:
+        text = yaml.safe_dump(mutated, sort_keys=False)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                convert(text)
+        except ConversionError:
+            pass
+        except Exception as e:  # noqa: BLE001 - any other exception is the bug
+            failures.append(f"{label}: {type(e).__name__}: {e}")
     return failures
 
 
@@ -111,12 +154,20 @@ def ossie_document(solid_document):
 
 
 def test_any_malformed_solid_model_imports_or_raises_a_conversion_error(solid_document):
-    failures = _sweep(convert_solid_to_ossie, solid_document)
+    failures = _sweep(convert_solid_to_ossie, _mutations(solid_document))
     assert not failures, "\n".join(failures)
 
 
 def test_any_malformed_ossie_model_exports_or_raises_a_conversion_error(ossie_document):
-    failures = _sweep(convert_ossie_to_solid, ossie_document)
+    failures = _sweep(convert_ossie_to_solid, _mutations(ossie_document))
+    assert not failures, "\n".join(failures)
+
+
+def test_any_malformed_stash_exports_or_raises_a_conversion_error(ossie_document):
+    """A hand-edited stash: valid JSON, with any value inside it of the wrong kind."""
+    mutations = list(_stash_mutations(ossie_document))
+    assert len(mutations) > 100, "the stash sweep found too few stashes to mutate"
+    failures = _sweep(convert_ossie_to_solid, mutations)
     assert not failures, "\n".join(failures)
 
 

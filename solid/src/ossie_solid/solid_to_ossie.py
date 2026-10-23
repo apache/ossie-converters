@@ -155,9 +155,12 @@ def _convert_model(solid, explicit_dialect, model_name):
         solid.get("business_context"), "semantic_model: 'business_context'")
     warn_unknown_keys(
         business, _BUSINESS_CONTEXT_KEYS, "model", "business_context", _SOLID)
-    llm_description = clean_text(solid.get("model_llm_description"))
-    customer_description = clean_text(business.get("model_description"))
-    raw_instructions = clean_text(business.get("custom_instructions"))
+    llm_description = clean_text(
+        solid.get("model_llm_description"), "semantic_model: 'model_llm_description'")
+    customer_description = clean_text(
+        business.get("model_description"), "business_context: 'model_description'")
+    raw_instructions = clean_text(
+        business.get("custom_instructions"), "business_context: 'custom_instructions'")
     # Solid's structured custom instructions, a root-level list. When Solid writes it,
     # it leaves `business_context.custom_instructions` out.
     entries = instruction_entries(
@@ -240,7 +243,7 @@ def _convert_table(table, dialect, taken_names):
     if primary_key:
         dataset["primary_key"] = primary_key
 
-    description = clean_text(table.get("description"))
+    description = clean_text(table.get("description"), f"table '{source}': 'description'")
     if description:
         dataset["description"] = description
     # Solid carries an AI-written `description` and a human-written
@@ -249,7 +252,8 @@ def _convert_table(table, dialect, taken_names):
     # human annotation maps to `ai_context.instructions`. The split is 1:1 in both
     # directions, so neither needs stashing.
     ai_context = build_ai_context(
-        instructions=clean_text(table.get("manual_description")),
+        instructions=clean_text(
+            table.get("manual_description"), f"table '{source}': 'manual_description'"),
         synonyms=string_list(table.get("synonyms"), f"table '{source}': 'synonyms'"),
     )
     if ai_context:
@@ -264,7 +268,7 @@ def _convert_table(table, dialect, taken_names):
         dataset["fields"] = fields
 
     stash = {}
-    quality_rank = clean_text(table.get("quality_rank"))
+    quality_rank = clean_text(table.get("quality_rank"), f"table '{source}': 'quality_rank'")
     if quality_rank:
         stash["quality_rank"] = quality_rank
     indexes = string_list(table.get("indexes"), f"table '{source}': 'indexes'")
@@ -284,7 +288,7 @@ def _split_primary_key(value, what):
     """
     if isinstance(value, list):
         return string_list(value, what)
-    text = clean_text(value)
+    text = clean_text(value, what)
     if not text:
         return []
     return [part.strip() for part in text.split(",") if part.strip()]
@@ -302,18 +306,20 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
         warn("field", f"'{dataset_name}' declares '{raw_name}' more than once; the "
                       f"duplicate was renamed to '{name}'")
 
-    raw_type = clean_text(column.get("type"))
+    raw_type = clean_text(column.get("type"), f"column '{dataset_name}.{raw_name}': 'type'")
     # Solid renders two kinds of fact: a catalog column (which has a `type`) and a
     # table-scoped metric (which has an `expression` and no `type`). The former's
     # expression is just its own name.
-    solid_expression = clean_text(column.get("expression"))
+    solid_expression = clean_text(
+        column.get("expression"), f"column '{dataset_name}.{raw_name}': 'expression'")
     expression = solid_expression or column_reference(raw_name, dialect)
 
     field = {
         "name": name,
         "expression": {"dialects": [{"dialect": dialect, "expression": expression}]},
     }
-    description = clean_text(column.get("description"))
+    description = clean_text(
+        column.get("description"), f"column '{dataset_name}.{raw_name}': 'description'")
     if description:
         field["description"] = description
 
@@ -333,7 +339,9 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
         field["dimension"] = {"is_time": datatype in datatypes.TEMPORAL_DATATYPES}
 
     ai_context = build_ai_context(
-        instructions=clean_text(column.get("manual_description")),
+        instructions=clean_text(
+            column.get("manual_description"),
+            f"column '{dataset_name}.{raw_name}': 'manual_description'"),
         synonyms=string_list(
             column.get("synonyms"), f"column '{dataset_name}.{raw_name}': 'synonyms'"),
     )
@@ -484,7 +492,7 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
             warn("metric", f"'{raw_name}' is declared more than once; the duplicate "
                            f"was renamed to '{name}'")
 
-        expression = clean_text(metric.get("expression"))
+        expression = clean_text(metric.get("expression"), f"metric '{raw_name}': 'expression'")
         if not expression:
             warn("metric", f"'{name}' has no expression and was dropped (an Apache "
                            f"Ossie metric requires one)")
@@ -505,7 +513,7 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
             "name": name,
             "expression": {"dialects": [{"dialect": dialect, "expression": expression}]},
         }
-        description = clean_text(metric.get("description"))
+        description = clean_text(metric.get("description"), f"metric '{raw_name}': 'description'")
         if description:
             converted_metric["description"] = description
         synonyms = string_list(metric.get("synonyms"), f"metric '{raw_name}': 'synonyms'")
