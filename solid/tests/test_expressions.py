@@ -344,3 +344,24 @@ def test_a_column_named_like_a_keyword_is_qualified_or_left_exactly_as_written(
     else:
         assert (qualified, status) == (expression, UNPARSED)
     assert unqualify_metric(qualified, dialect, ["orders"])[0] == expression
+
+
+def test_the_head_of_a_struct_path_is_qualified():
+    assert qualify_metric("SUM(customer.lifetime_value)", "BIGQUERY", "orders",
+                          ["customer", "amount"]) == (
+        "SUM(orders.customer.lifetime_value)", QUALIFIED)
+
+
+def test_a_dataset_qualified_struct_path_unqualifies_to_the_bare_path():
+    fields = {"orders": ["customer", "amount"]}
+    assert unqualify_metric("SUM(orders.customer.lifetime_value)", "BIGQUERY",
+                            ["orders"], fields) == (
+        "SUM(customer.lifetime_value)", UNQUALIFIED)
+
+
+def test_a_schema_qualified_path_whose_middle_is_not_a_field_is_left_alone():
+    # `orders.public.amount`: `public` is not a field of `orders`, so this is not a
+    # dataset qualifier this converter added.
+    fields = {"orders": ["customer", "amount"]}
+    assert unqualify_metric("SUM(orders.public.amount)", "BIGQUERY", ["orders"],
+                            fields) == ("SUM(orders.public.amount)", UNCHANGED)

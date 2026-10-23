@@ -268,3 +268,51 @@ def test_an_empty_description_is_normalized_away():
     restored, _ = convert_quietly(convert_ossie_to_solid, ossie)
     column = solid_model_of(restored)["tables"][0]["dimensions"][0]
     assert "manual_description" not in column
+
+
+STRUCT_COLUMNS = """
+semantic_model:
+  name: shop
+  tables:
+    - name: proj.shop.orders
+      dimensions:
+        - name: customer
+          type: STRUCT<id INT64, tier STRING>
+        - name: device
+          type: STRUCT<category STRING>
+      facts:
+        - name: amount
+          type: FLOAT64
+    - name: proj.shop.customer
+      dimensions:
+        - name: id
+          type: INT64
+  metrics:
+    - name: buyers
+      expression: COUNT(DISTINCT customer.id)
+      tables: [proj.shop.orders]
+    - name: mobile_revenue
+      expression: SUM(CASE WHEN device.category = 'mobile' THEN amount END)
+      tables: [proj.shop.orders]
+"""
+
+
+def test_a_struct_path_is_qualified_at_its_head_and_comes_back_bare():
+    """`customer.id` is a field access into the STRUCT column `customer`, so the dataset
+    qualifier goes in front of the whole path. Left bare, an Apache Ossie reader would
+    take `customer` for a dataset -- here, wrongly, the `customer` table."""
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, STRUCT_COLUMNS)
+    metrics = {m["name"]: m for m in model_of(ossie)["metrics"]}
+    assert metrics["buyers"]["expression"]["dialects"][0]["expression"] == (
+        "COUNT(DISTINCT orders.customer.id)")
+    assert metrics["mobile_revenue"]["expression"]["dialects"][0]["expression"] == (
+        "SUM(CASE WHEN orders.device.category = 'mobile' THEN orders.amount END)")
+    assert warnings_ == []
+
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    restored = {m["name"]: m for m in solid_model_of(solid)["metrics"]}
+    assert restored["buyers"]["expression"] == "COUNT(DISTINCT customer.id)"
+    assert restored["buyers"]["tables"] == ["proj.shop.orders"]
+    assert restored["mobile_revenue"]["expression"] == (
+        "SUM(CASE WHEN device.category = 'mobile' THEN amount END)")
+    assert warnings_ == []
