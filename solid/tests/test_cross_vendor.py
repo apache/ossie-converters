@@ -50,18 +50,33 @@ from conftest import (
 )
 
 from ossie_solid import convert_ossie_to_solid, convert_solid_to_ossie
-from ossie_solid._common import READABLE_OSSIE_VERSIONS
+from ossie_solid._common import (
+    PORTABLE_DIALECTS,
+    READABLE_OSSIE_VERSIONS,
+    SUPPORTED_DIALECTS,
+    ConversionError,
+)
+
+# Directory names that hold another converter's test data; top-level directories that
+# are not another converter (the spec submodule, this one); and build output.
+_TEST_DIRS = {"tests", "test"}
+_NOT_CONVERTERS = {"ossie", "solid"}
+_SKIPPED_DIRS = {".venv", "node_modules", "target", "build"}
 
 
 def _foreign_ossie_fixtures():
-    """Every Apache Ossie document among the other converters' fixtures.
+    """Every Apache Ossie document among the other converters' test data.
 
     Discovered rather than listed, so a fixture that is renamed or removed upstream
-    drops out of the sweep instead of failing it.
+    drops out of the sweep instead of failing it. YAML and JSON both count, at any depth
+    under a converter's test directory (`tests/fixtures/...`, `src/test/resources/...`).
     """
     found = []
-    for path in sorted(CONVERTERS.glob("*/tests/fixtures/*.yaml")):
-        if path.parts[-4] == "solid":
+    for path in sorted(CONVERTERS.glob("*/**/*")):
+        parts = path.relative_to(CONVERTERS).parts
+        if (path.suffix not in (".yaml", ".yml", ".json") or not path.is_file()
+                or parts[0] in _NOT_CONVERTERS or _SKIPPED_DIRS & set(parts)
+                or not _TEST_DIRS & set(parts)):
             continue
         try:
             document = yaml.safe_load(path.read_text())
@@ -83,11 +98,29 @@ FOREIGN = _foreign_ossie_fixtures()
 
 
 def _fixture_id(path):
-    return f"{path.parts[-4]}/{path.name}"
+    return f"{path.relative_to(CONVERTERS).parts[0]}/{path.name}"
+
+
+def _only_non_sql(path):
+    """True if some field or metric in the document is written only in an expression
+    language that is not SQL (HOLISTICS_AQL, THOUGHTSPOT, ...), which export rejects
+    by design rather than handing Solid a formula it cannot run."""
+    document = yaml.safe_load(path.read_text())
+    readable = set(SUPPORTED_DIALECTS) | set(PORTABLE_DIALECTS)
+    objects = [f for d in document["datasets"] for f in d.get("fields") or []]
+    objects += document.get("metrics") or []
+    return any(
+        not {e.get("dialect") for e in o["expression"]["dialects"]} & readable
+        for o in objects
+    )
+
+
+CONVERTIBLE = [p for p in FOREIGN if not _only_non_sql(p)]
+NON_SQL = [p for p in FOREIGN if p not in CONVERTIBLE]
 
 
 @pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
-@pytest.mark.parametrize("path", FOREIGN, ids=_fixture_id)
+@pytest.mark.parametrize("path", CONVERTIBLE, ids=_fixture_id)
 def test_another_vendors_model_converts_to_a_well_formed_solid_model(path):
     """The bar is a Solid model Solid could actually read, not a warning-free one.
 
@@ -113,8 +146,16 @@ def test_another_vendors_model_converts_to_a_well_formed_solid_model(path):
         assert len(keys["left"]) == len(keys["right"])
 
 
+@pytest.mark.skipif(not NON_SQL, reason="no other converter ships a non-SQL expression")
+@pytest.mark.parametrize("path", NON_SQL, ids=_fixture_id)
+def test_a_model_with_an_expression_only_in_a_non_sql_language_is_rejected(path):
+    """As documented: a formula Solid cannot run is not passed into a SQL field."""
+    with pytest.raises(ConversionError, match="has no .* expression"):
+        convert_quietly(convert_ossie_to_solid, path.read_text())
+
+
 @pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
-@pytest.mark.parametrize("path", FOREIGN, ids=_fixture_id)
+@pytest.mark.parametrize("path", CONVERTIBLE, ids=_fixture_id)
 def test_reimporting_another_vendors_model_is_schema_valid(path, assert_valid_ossie):
     """The full hop: their Apache Ossie -> Solid -> Apache Ossie, still valid."""
     solid, _ = convert_quietly(convert_ossie_to_solid, path.read_text())
@@ -155,7 +196,7 @@ def _split_expectations(path):
 
 
 @pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
-@pytest.mark.parametrize("path", FOREIGN, ids=_fixture_id)
+@pytest.mark.parametrize("path", CONVERTIBLE, ids=_fixture_id)
 def test_another_vendors_fields_land_where_their_markings_put_them(path):
     """The fact/dimension split, not just a well-formed result."""
     wrong = [f"{name}: expected in {expected}, got {actual}"
@@ -167,7 +208,7 @@ def test_another_vendors_fields_land_where_their_markings_put_them(path):
 @pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
 def test_the_split_check_actually_covers_fields():
     """Guard against the split check passing because no fixture marks anything."""
-    checked = sum(len(_split_expectations(path)) for path in FOREIGN)
+    checked = sum(len(_split_expectations(path)) for path in CONVERTIBLE)
     assert checked >= 50, f"only {checked} fields carried a block or a datatype"
 
 

@@ -17,6 +17,8 @@
 
 """Solid semantic model -> Apache Ossie."""
 
+import datetime
+
 import pytest
 import yaml
 from conftest import (
@@ -454,3 +456,19 @@ def test_structured_custom_instructions_render_into_the_model_instructions():
     entries = stash_of(model)["custom_instruction_entries"]
     assert [e["title"] for e in entries] == ["Late shipments", "Old fiscal calendar"]
     assert "@<assetlink" in entries[0]["content"]
+
+
+def test_a_mapping_keyed_by_a_yaml_date_is_rejected_cleanly():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["semantic_model"]["example_queries"] = [
+        {"name": "q", "sql": "SELECT 1", "by_day": {datetime.date(2024, 1, 1): 3}}]
+    with pytest.raises(ConversionError, match="cannot be carried in custom_extensions"):
+        convert_solid_to_ossie(yaml.safe_dump(solid))
+
+
+@pytest.mark.parametrize("key", ["description", "manual_description", "type"])
+def test_a_list_or_mapping_in_a_text_slot_is_rejected_rather_than_dropped(key):
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["semantic_model"]["tables"][0]["dimensions"][0][key] = {"name": "DATE"}
+    with pytest.raises(ConversionError, match=f"'{key}' must be text"):
+        convert_solid_to_ossie(yaml.safe_dump(solid))
