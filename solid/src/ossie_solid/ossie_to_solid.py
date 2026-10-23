@@ -739,7 +739,7 @@ def _convert_metrics(metrics, by_name, dialect):
         # separately, so the dataset qualifier Apache Ossie carries is stripped back out.
         referenced = [
             by_name[d]["source"]
-            for d in referenced_datasets(expression, dialect, dataset_names)
+            for d in referenced_datasets(expression, dialect, dataset_names, fields)
         ]
         tables = stash.get("tables")
         if tables is not None:

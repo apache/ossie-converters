@@ -481,6 +481,7 @@ def _covers_primary_key(dataset, columns):
 
 def _convert_metrics(metrics, by_source, datasets, dialect):
     dataset_names = [d["name"] for d in datasets]
+    fields = {d["name"]: [f["name"] for f in d.get("fields") or []] for d in datasets}
     converted, taken = [], set()
     for metric in metrics:
         if not isinstance(metric, dict):
@@ -529,7 +530,8 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
         expected = [d["name"] for d in owners]
         if (unknown
                 or status in (UNPARSED, AMBIGUOUS)
-                or referenced_datasets(expression, dialect, dataset_names) != expected):
+                or referenced_datasets(
+                    expression, dialect, dataset_names, fields) != expected):
             stash["tables"] = tables
         write_stash(converted_metric, stash)
         converted.append(converted_metric)
