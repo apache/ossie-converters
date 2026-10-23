@@ -74,3 +74,7 @@ updates:
       # 2.x/3.x introduced breaking package/API changes; only allow minor/patch updates
       - dependency-name: "com.networknt:json-schema-validator"
         update-types: ["version-update:semver-major"]
+      # salesforce relies on JSqlParser 5.3 AST internals that 5.4 broke (#66);
+      # pin to 5.3 and allow patch updates only.
+      - dependency-name: "com.github.jsqlparser:jsqlparser"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
