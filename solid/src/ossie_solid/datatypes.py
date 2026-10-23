@@ -57,23 +57,33 @@ OSSIE_DATATYPES = frozenset({
     STRING, INTEGER, DECIMAL, FLOAT, BOOLEAN, DATE, TIME, DATE_TIME, DATE_TIME_TZ, OPAQUE,
 })
 
-# Type names that appear in exactly one of the three warehouses Solid exports from, and
-# so identify it. Names shared across warehouses (STRING is both Databricks and
-# BigQuery; STRUCT likewise, since `parse_type` strips the angle-bracket params that
-# would tell them apart; TIMESTAMP_NTZ is both Snowflake and Databricks; BOOLEAN, DATE,
-# FLOAT and DECIMAL are near-universal) are deliberately excluded -- no signal.
+# Type names that, among the three warehouses with an Apache Ossie dialect, only one
+# reports, and so identify it. Names shared across them are deliberately excluded -- no
+# signal: STRING is both Databricks and BigQuery; STRUCT likewise, since `parse_type`
+# strips the angle-bracket params that would tell them apart; TIMESTAMP_NTZ is both
+# Snowflake and Databricks; VARIANT, GEOGRAPHY and GEOMETRY are Databricks types now
+# too, and GEOGRAPHY a BigQuery one; BOOLEAN, DATE, FLOAT and DECIMAL are near-universal.
 _DIALECT_MARKERS = {
     DIALECT_SNOWFLAKE: frozenset(
-        {"NUMBER", "TEXT", "VARIANT", "OBJECT", "TIMESTAMP_LTZ", "TIMESTAMP_TZ",
-         "GEOGRAPHY", "GEOMETRY"}
+        {"NUMBER", "TEXT", "OBJECT", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"}
     ),
     DIALECT_DATABRICKS: frozenset(
         {"LONG", "MAP", "BIGINT", "TINYINT", "SMALLINT", "BYTE", "SHORT", "VOID"}
     ),
     DIALECT_BIGQUERY: frozenset(
-        {"INT64", "FLOAT64", "BOOL", "BIGNUMERIC", "BYTES", "RECORD"}
+        {"INT64", "FLOAT64", "BOOL", "BIGNUMERIC", "BIGDECIMAL", "BYTES", "RECORD"}
     ),
 }
+
+# Type names only warehouses with no Apache Ossie dialect of their own report -- Oracle
+# and SQL Server, both Solid sources. Oracle's NUMBER would otherwise read as Snowflake
+# and SQL Server's BIGINT as Databricks, labelling every expression with a dialect it
+# was not written in, so any of these sends inference to ANSI_SQL with a warning.
+_OTHER_WAREHOUSE_MARKERS = frozenset({
+    "VARCHAR2", "NVARCHAR2", "CLOB", "NCLOB",                    # Oracle
+    "DATETIME2", "DATETIMEOFFSET", "SMALLDATETIME", "UNIQUEIDENTIFIER", "MONEY",
+    "SMALLMONEY", "NTEXT", "BIT",                                 # SQL Server
+})
 
 # Warehouse type -> Apache Ossie datatype, for names that mean the same thing
 # everywhere. Dialect-sensitive names (the TIMESTAMP family, NUMBER/NUMERIC scale) are
@@ -82,6 +92,9 @@ _COMMON_TYPES = {
     # character
     "STRING": STRING, "TEXT": STRING, "VARCHAR": STRING, "CHAR": STRING,
     "CHARACTER": STRING, "NVARCHAR": STRING, "NCHAR": STRING, "STRING_TYPE": STRING,
+    "CHARACTER VARYING": STRING, "CHAR VARYING": STRING, "VARCHAR2": STRING,
+    "NVARCHAR2": STRING, "CLOB": STRING, "NCLOB": STRING, "NTEXT": STRING,
+    "UNIQUEIDENTIFIER": STRING,
     # exact integral
     "INT": INTEGER, "INTEGER": INTEGER, "BIGINT": INTEGER, "SMALLINT": INTEGER,
     "TINYINT": INTEGER, "BYTEINT": INTEGER, "LONG": INTEGER, "SHORT": INTEGER,
@@ -91,7 +104,9 @@ _COMMON_TYPES = {
     "FLOAT": FLOAT, "FLOAT4": FLOAT, "FLOAT8": FLOAT, "FLOAT64": FLOAT,
     "DOUBLE": FLOAT, "DOUBLE PRECISION": FLOAT, "REAL": FLOAT,
     # boolean
-    "BOOLEAN": BOOLEAN, "BOOL": BOOLEAN,
+    "BOOLEAN": BOOLEAN, "BOOL": BOOLEAN, "BIT": BOOLEAN,
+    # exact, fixed-scale money
+    "MONEY": DECIMAL, "SMALLMONEY": DECIMAL,
     # temporal (dialect-independent)
     "DATE": DATE, "TIME": TIME,
     # not representable in the portable vocabulary
@@ -99,11 +114,24 @@ _COMMON_TYPES = {
     "STRUCT": OPAQUE, "RECORD": OPAQUE, "JSON": OPAQUE, "XML": OPAQUE,
     "BINARY": OPAQUE, "VARBINARY": OPAQUE, "BYTES": OPAQUE, "GEOGRAPHY": OPAQUE,
     "GEOMETRY": OPAQUE, "INTERVAL": OPAQUE, "VOID": OPAQUE, "NULL": OPAQUE,
+    "VECTOR": OPAQUE, "RANGE": OPAQUE,
 }
 
 # Exact-scale decimal families. Whether one is Integer or Decimal depends on the scale,
-# which is parsed off the type string when present.
-_DECIMAL_TYPES = frozenset({"NUMBER", "NUMERIC", "DECIMAL", "BIGNUMERIC", "DEC"})
+# which is parsed off the type string when declared and otherwise is the warehouse's
+# default.
+_DECIMAL_TYPES = frozenset(
+    {"NUMBER", "NUMERIC", "DECIMAL", "DEC", "BIGNUMERIC", "BIGDECIMAL"})
+
+# The scale an exact-decimal type has when none is declared. Snowflake's NUMBER, NUMERIC
+# and DECIMAL default to (38,0), Databricks' DECIMAL to (10,0), and the SQL standard to
+# a scale of 0, but BigQuery's NUMERIC and DECIMAL default to (38,9). BigQuery's
+# BIGNUMERIC and BIGDECIMAL, which exist nowhere else, default to a scale of 38. Only an
+# undeclared scale uses these: `NUMERIC(10)` declares a precision and so a scale of 0,
+# in every one of them.
+_DEFAULT_SCALE = {DIALECT_BIGQUERY: 9}
+_BIG_DECIMAL_TYPES = frozenset({"BIGNUMERIC", "BIGDECIMAL"})
+_BIG_DECIMAL_DEFAULT_SCALE = 38
 
 # TIMESTAMP means different things per warehouse: BigQuery's and Databricks' are
 # instants (offset-aware), Snowflake's bare TIMESTAMP is an alias for TIMESTAMP_NTZ.
@@ -118,6 +146,10 @@ _TIMESTAMP_VARIANTS = {
     "TIMESTAMP_NTZ": DATE_TIME,
     "TIMESTAMPNTZ": DATE_TIME,
     "DATETIME": DATE_TIME,
+    "DATETIME2": DATE_TIME,
+    "SMALLDATETIME": DATE_TIME,
+    "DATETIMEOFFSET": DATE_TIME_TZ,
+    "TIMESTAMP WITH LOCAL TIME ZONE": DATE_TIME_TZ,
     "TIMESTAMP_TZ": DATE_TIME_TZ,
     "TIMESTAMPTZ": DATE_TIME_TZ,
     "TIMESTAMP_LTZ": DATE_TIME_TZ,
@@ -129,30 +161,37 @@ _TIMESTAMP_VARIANTS = {
 
 # Apache Ossie datatype -> the type name an export writes back when the original raw
 # string is unavailable (a hand-authored Apache Ossie model with no SOLID stash). Solid
-# never interprets these beyond its fact/dimension split, so a representative name per
-# dialect is enough.
+# reads it as the column's catalog type, so each one is a type of that warehouse that
+# maps back to the same datatype: a Decimal is written with a nonzero scale, since a bare
+# NUMBER or DECIMAL is an integer type in most of them. The one exception is Time on
+# Databricks, which has no time-of-day type; it is written as STRING and reads back as
+# String (see TYPE_ROUND_TRIP_EXCEPTIONS).
 _DATATYPE_TO_RAW = {
     DIALECT_SNOWFLAKE: {
-        STRING: "TEXT", INTEGER: "NUMBER", DECIMAL: "NUMBER", FLOAT: "FLOAT",
+        STRING: "TEXT", INTEGER: "NUMBER", DECIMAL: "NUMBER(38,9)", FLOAT: "FLOAT",
         BOOLEAN: "BOOLEAN", DATE: "DATE", TIME: "TIME", DATE_TIME: "TIMESTAMP_NTZ",
         DATE_TIME_TZ: "TIMESTAMP_TZ", OPAQUE: "VARIANT",
     },
     DIALECT_DATABRICKS: {
-        STRING: "STRING", INTEGER: "LONG", DECIMAL: "DECIMAL", FLOAT: "DOUBLE",
+        STRING: "STRING", INTEGER: "LONG", DECIMAL: "DECIMAL(38,9)", FLOAT: "DOUBLE",
         BOOLEAN: "BOOLEAN", DATE: "DATE", TIME: "STRING", DATE_TIME: "TIMESTAMP_NTZ",
-        DATE_TIME_TZ: "TIMESTAMP", OPAQUE: "STRING",
+        DATE_TIME_TZ: "TIMESTAMP", OPAQUE: "VARIANT",
     },
     DIALECT_BIGQUERY: {
         STRING: "STRING", INTEGER: "INT64", DECIMAL: "NUMERIC", FLOAT: "FLOAT64",
         BOOLEAN: "BOOL", DATE: "DATE", TIME: "TIME", DATE_TIME: "DATETIME",
-        DATE_TIME_TZ: "TIMESTAMP", OPAQUE: "STRING",
+        DATE_TIME_TZ: "TIMESTAMP", OPAQUE: "JSON",
     },
     DIALECT_ANSI: {
-        STRING: "VARCHAR", INTEGER: "INTEGER", DECIMAL: "DECIMAL", FLOAT: "DOUBLE",
+        STRING: "VARCHAR", INTEGER: "INTEGER", DECIMAL: "DECIMAL(38,9)", FLOAT: "DOUBLE",
         BOOLEAN: "BOOLEAN", DATE: "DATE", TIME: "TIME", DATE_TIME: "TIMESTAMP",
-        DATE_TIME_TZ: "TIMESTAMP WITH TIME ZONE", OPAQUE: "VARCHAR",
+        DATE_TIME_TZ: "TIMESTAMP WITH TIME ZONE", OPAQUE: "JSON",
     },
 }
+
+# (dialect, datatype) pairs that do not survive to_raw_type -> to_ossie_datatype, each
+# because the warehouse has no type for it.
+TYPE_ROUND_TRIP_EXCEPTIONS = {(DIALECT_DATABRICKS, TIME): STRING}
 
 # Leading type name, with any parameter list (`NUMBER(38,2)`, `VARCHAR(16777216)`) and
 # any element type (`ARRAY<STRING>`, `MAP<STRING,INT>`) captured separately.
@@ -183,14 +222,17 @@ def infer_dialect(raw_types):
     it copies out of the catalog do identify it. Each distinctive name votes for its
     warehouse; the warehouse with the most votes wins.
 
-    Returns (dialect, confident). `confident` is False when no marker was seen or two
-    warehouses tie, in which case the dialect is ANSI_SQL and the caller should warn.
+    Returns (dialect, confident). `confident` is False when no marker was seen, two
+    warehouses tie, or a type only a warehouse with no Apache Ossie dialect reports is
+    present; the dialect is then ANSI_SQL and the caller should warn.
     """
     votes = dict.fromkeys(_DIALECT_MARKERS, 0)
     for raw in raw_types:
         base, _ = parse_type(raw)
         if not base:
             continue
+        if base in _OTHER_WAREHOUSE_MARKERS:
+            return DIALECT_ANSI, False
         for dialect, markers in _DIALECT_MARKERS.items():
             if base in markers:
                 votes[dialect] += 1
@@ -215,18 +257,32 @@ def to_ossie_datatype(raw, dialect):
     if not base:
         return None
     if base in _DECIMAL_TYPES:
-        # A declared scale of 0 is an integer -- Snowflake stores every integral column
-        # as NUMBER(38,0), so honouring the scale is what keeps counts and ids from
-        # being typed as Decimal. An undeclared scale defaults to 0 in Snowflake and
-        # BigQuery NUMERIC, but Databricks DECIMAL defaults to (10,0) -- also scale 0.
-        if len(params) >= 2:
-            return INTEGER if params[1] == "0" else DECIMAL
-        return INTEGER
+        # A scale of 0 is an integer -- Snowflake stores every integral column as
+        # NUMBER(38,0), so honouring the scale is what keeps counts and ids from being
+        # typed as Decimal.
+        return INTEGER if _decimal_scale(base, params, dialect) == 0 else DECIMAL
+    if base.startswith("INTERVAL"):
+        # `INTERVAL DAY TO SECOND`, `INTERVAL YEAR TO MONTH`: a qualified interval.
+        return OPAQUE
     if base == "TIMESTAMP":
         return _TIMESTAMP_BY_DIALECT.get(dialect, DATE_TIME)
     if base in _TIMESTAMP_VARIANTS:
         return _TIMESTAMP_VARIANTS[base]
     return _COMMON_TYPES.get(base)
+
+
+def _decimal_scale(base, params, dialect):
+    """The scale of an exact-decimal type: declared, else the warehouse default."""
+    if len(params) >= 2:
+        try:
+            return int(params[1])
+        except ValueError:
+            return None
+    if params:
+        return 0
+    if base in _BIG_DECIMAL_TYPES:
+        return _BIG_DECIMAL_DEFAULT_SCALE
+    return _DEFAULT_SCALE.get(dialect, 0)
 
 
 def to_raw_type(datatype, dialect):

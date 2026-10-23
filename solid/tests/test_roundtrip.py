@@ -205,12 +205,22 @@ def test_the_documented_losses_of_an_ossie_export_are_exactly_these():
 
 
 def test_reimporting_that_export_only_loses_the_cross_table_qualifiers():
+    original = model_of(example("tpcds_semantic_model.yaml"))
     solid, _ = convert_quietly(
         convert_ossie_to_solid, example("tpcds_semantic_model.yaml")
     )
-    _, coming = convert_quietly(convert_solid_to_ossie, solid, dialect="ANSI_SQL")
+    ossie, coming = convert_quietly(convert_solid_to_ossie, solid, dialect="ANSI_SQL")
     assert all("spans 2 tables" in w for w in coming), coming
     assert len(coming) == 5
+    # Every field keeps its datatype: the type the export wrote for it reads back as
+    # the same one, rather than a Decimal returning as an Integer.
+    restored = model_of(ossie)
+    for before, after in zip(original["datasets"], restored["datasets"]):
+        types_after = {f["name"]: f.get("datatype") for f in after["fields"]}
+        for field in before["fields"]:
+            if field.get("datatype"):
+                assert types_after[field["name"]] == field["datatype"], (
+                    f"{before['name']}.{field['name']}")
 
 
 def test_a_solid_round_trip_warns_only_about_unqualifiable_metrics():
