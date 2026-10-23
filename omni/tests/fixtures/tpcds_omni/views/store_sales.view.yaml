@@ -32,6 +32,8 @@ dimensions:
     synonyms:
     - product
     - item
+  ss_ticket_number:
+    description: Ticket number identifying the sales transaction
   ss_customer_sk:
     description: Foreign key to customer dimension
     synonyms:
@@ -62,8 +64,6 @@ dimensions:
     synonyms:
     - profit
     - margin
-  ss_ticket_number:
-    hidden: true
 measures:
   total_sales:
     sql: ${ss_ext_sales_price}
