@@ -117,21 +117,20 @@ _COMMON_TYPES = {
     "VECTOR": OPAQUE, "RANGE": OPAQUE,
 }
 
-# Exact-scale decimal families. Whether one is Integer or Decimal depends on the scale,
-# which is parsed off the type string when declared and otherwise is the warehouse's
-# default.
+# Exact-decimal families. One is an Integer only when its scale is known to be 0: a
+# declared scale of 0 (`NUMBER(38,0)`), or a precision alone (`NUMERIC(10)`), which
+# declares a scale of 0 in every warehouse.
+#
+# A bare name is a Decimal -- "exact base-10 with unspecified precision and scale", as
+# the spec defines it -- even where the warehouse's own default scale is 0. Solid copies
+# a column's type from the catalog's DATA_TYPE, which for Snowflake and Databricks never
+# carries the precision or scale (those are separate catalog columns), so a bare NUMBER
+# in a Solid export is as likely NUMBER(38,2) as NUMBER(38,0): every one of the 151
+# NUMBER and DECIMAL columns in the Solid exports this was checked against is bare,
+# including rates and dollar amounts. BigQuery's bare NUMERIC is (38,9) and Oracle's
+# bare NUMBER is a floating decimal, both Decimals anyway.
 _DECIMAL_TYPES = frozenset(
     {"NUMBER", "NUMERIC", "DECIMAL", "DEC", "BIGNUMERIC", "BIGDECIMAL"})
-
-# The scale an exact-decimal type has when none is declared. Snowflake's NUMBER, NUMERIC
-# and DECIMAL default to (38,0), Databricks' DECIMAL to (10,0), and the SQL standard to
-# a scale of 0, but BigQuery's NUMERIC and DECIMAL default to (38,9). BigQuery's
-# BIGNUMERIC and BIGDECIMAL, which exist nowhere else, default to a scale of 38. Only an
-# undeclared scale uses these: `NUMERIC(10)` declares a precision and so a scale of 0,
-# in every one of them.
-_DEFAULT_SCALE = {DIALECT_BIGQUERY: 9}
-_BIG_DECIMAL_TYPES = frozenset({"BIGNUMERIC", "BIGDECIMAL"})
-_BIG_DECIMAL_DEFAULT_SCALE = 38
 
 # TIMESTAMP means different things per warehouse: BigQuery's and Databricks' are
 # instants (offset-aware), Snowflake's bare TIMESTAMP is an alias for TIMESTAMP_NTZ.
@@ -162,13 +161,13 @@ _TIMESTAMP_VARIANTS = {
 # Apache Ossie datatype -> the type name an export writes back when the original raw
 # string is unavailable (a hand-authored Apache Ossie model with no SOLID stash). Solid
 # reads it as the column's catalog type, so each one is a type of that warehouse that
-# maps back to the same datatype: a Decimal is written with a nonzero scale, since a bare
-# NUMBER or DECIMAL is an integer type in most of them. The one exception is Time on
+# maps back to the same datatype, with the scale written out, since a bare NUMBER says
+# nothing about it. The one exception is Time on
 # Databricks, which has no time-of-day type; it is written as STRING and reads back as
 # String (see TYPE_ROUND_TRIP_EXCEPTIONS).
 _DATATYPE_TO_RAW = {
     DIALECT_SNOWFLAKE: {
-        STRING: "TEXT", INTEGER: "NUMBER", DECIMAL: "NUMBER(38,9)", FLOAT: "FLOAT",
+        STRING: "TEXT", INTEGER: "NUMBER(38,0)", DECIMAL: "NUMBER(38,9)", FLOAT: "FLOAT",
         BOOLEAN: "BOOLEAN", DATE: "DATE", TIME: "TIME", DATE_TIME: "TIMESTAMP_NTZ",
         DATE_TIME_TZ: "TIMESTAMP_TZ", OPAQUE: "VARIANT",
     },
@@ -257,10 +256,7 @@ def to_ossie_datatype(raw, dialect):
     if not base:
         return None
     if base in _DECIMAL_TYPES:
-        # A scale of 0 is an integer -- Snowflake stores every integral column as
-        # NUMBER(38,0), so honouring the scale is what keeps counts and ids from being
-        # typed as Decimal.
-        return INTEGER if _decimal_scale(base, params, dialect) == 0 else DECIMAL
+        return INTEGER if _declared_scale(params) == 0 else DECIMAL
     if base.startswith("INTERVAL"):
         # `INTERVAL DAY TO SECOND`, `INTERVAL YEAR TO MONTH`: a qualified interval.
         return OPAQUE
@@ -271,18 +267,14 @@ def to_ossie_datatype(raw, dialect):
     return _COMMON_TYPES.get(base)
 
 
-def _decimal_scale(base, params, dialect):
-    """The scale of an exact-decimal type: declared, else the warehouse default."""
+def _declared_scale(params):
+    """The scale an exact-decimal type declares, or None when it declares none."""
     if len(params) >= 2:
         try:
             return int(params[1])
         except ValueError:
             return None
-    if params:
-        return 0
-    if base in _BIG_DECIMAL_TYPES:
-        return _BIG_DECIMAL_DEFAULT_SCALE
-    return _DEFAULT_SCALE.get(dialect, 0)
+    return 0 if params else None
 
 
 def to_raw_type(datatype, dialect):
@@ -336,7 +328,13 @@ def resolve_dialect(explicit, raw_types, scope="model"):
     if explicit:
         return normalize_dialect(explicit)
     dialect, confident = infer_dialect(raw_types)
-    if not confident:
+    other = sorted({base for base in (parse_type(raw)[0] for raw in raw_types)
+                    if base in _OTHER_WAREHOUSE_MARKERS})
+    if other:
+        warn(scope, f"the column types ({', '.join(other)}) are from a warehouse with no "
+                    f"Apache Ossie dialect of its own, such as Oracle or SQL Server; "
+                    f"using {DIALECT_ANSI}. Pass --dialect to set it explicitly.")
+    elif not confident:
         warn(
             scope,
             "could not infer the source warehouse from the column type vocabulary; "
