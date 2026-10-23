@@ -22,6 +22,7 @@ from itertools import combinations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ossie import (
+    OssieDataType,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
@@ -44,6 +45,7 @@ from metricflow_semantic_interfaces.protocols.measure import (
     Measure,
     MeasureAggregationParameters,
 )
+from metricflow_semantic_interfaces.protocols.meta import SemanticLayerElementConfig
 from metricflow_semantic_interfaces.protocols.metric import Metric
 from metricflow_semantic_interfaces.protocols.semantic_model import SemanticModel
 from metricflow_semantic_interfaces.transformations.convert_count import ConvertCountMetricToSumRule
@@ -52,10 +54,25 @@ from metricflow_semantic_interfaces.transformations.semantic_manifest_transforme
 )
 from metricflow_semantic_interfaces.type_enums import (
     AggregationType,
+    DataType,
     DimensionType,
     EntityType,
     MetricType,
 )
+
+
+_MSI_TO_OSSIE_DATATYPE = {
+    DataType.STRING: OssieDataType.STRING,
+    DataType.INTEGER: OssieDataType.INTEGER,
+    DataType.DECIMAL: OssieDataType.DECIMAL,
+    DataType.FLOAT: OssieDataType.FLOAT,
+    DataType.BOOLEAN: OssieDataType.BOOLEAN,
+    DataType.DATE: OssieDataType.DATE,
+    DataType.TIME: OssieDataType.TIME,
+    DataType.DATETIME: OssieDataType.DATE_TIME,
+    DataType.DATETIME_TZ: OssieDataType.DATE_TIME_TZ,
+    DataType.OPAQUE: OssieDataType.OPAQUE,
+}
 
 
 @dataclass(frozen=True)
@@ -138,11 +155,14 @@ class MSIToOssieConverter:
                     )
                 )
                 continue
+            # Measure annotations declare aggregate result types, including on generated metrics.
+            # Preserve recognized annotations without validating SQL/type compatibility.
             ossie_metrics.append(
                 OssieMetric(
                     name=metric.name,
                     expression=self._make_expression(expr),
                     description=metric.description,
+                    datatype=self._resolve_datatype(metric.datatype, metric.config),
                 )
             )
             if len(manifest.semantic_models) > 1 and self._aggregates_a_constant(metric):
@@ -197,7 +217,29 @@ class MSIToOssieConverter:
             dimension=OssieDimension(is_time=is_time),
             label=dim.label,
             description=dim.description,
+            datatype=self._resolve_datatype(dim.datatype, dim.config),
         )
+
+    @staticmethod
+    def _resolve_datatype(
+        native_datatype: Optional[DataType], config: Optional[SemanticLayerElementConfig]
+    ) -> Optional[OssieDataType]:
+        """Prefer MetricFlow's native datatype, falling back to dbt's meta.ossie extension."""
+        if native_datatype in _MSI_TO_OSSIE_DATATYPE:
+            return _MSI_TO_OSSIE_DATATYPE[native_datatype]
+        elif config is not None:
+            ossie_meta = config.meta.get("ossie")
+            if not isinstance(ossie_meta, dict):
+                return None
+            datatype = ossie_meta.get("datatype")
+            if not isinstance(datatype, str):
+                return None
+            try:
+                return OssieDataType(datatype)
+            except ValueError:
+                return None
+        else:
+            return None
 
     def _convert_entity(self, entity: Entity) -> OssieField:
         expr = entity.expr if entity.expr is not None else entity.name
@@ -207,6 +249,7 @@ class MSIToOssieConverter:
             expression=self._make_expression(expr),
             label=entity.label,
             description=entity.description,
+            datatype=self._resolve_datatype(None, entity.config),
         )
 
     def _convert_measure(self, measure: Measure) -> OssieField:
@@ -217,6 +260,7 @@ class MSIToOssieConverter:
             expression=self._make_expression(expr),
             label=measure.label,
             description=measure.description,
+            datatype=self._resolve_datatype(None, measure.config),
         )
 
     @staticmethod
