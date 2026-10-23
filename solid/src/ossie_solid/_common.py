@@ -22,6 +22,7 @@ here: version constants, the `custom_extensions` stash protocol, YAML I/O, the
 Solid asset-link markup, and small identifier helpers.
 """
 
+import datetime
 import json
 import re
 import warnings
@@ -156,6 +157,37 @@ def require_str(obj, key, what):
     return value
 
 
+# The readers below take the place of `value or []` and `isinstance(...) else {}`. A
+# null still reads as empty -- Solid writes an empty `tables:` or `join_keys.left:` as
+# null -- but a value of the wrong kind raises, where it used to be read as empty (and so
+# dropped silently) or to fail later inside a loop with a Python error.
+
+
+def as_list(value, what):
+    """`value` as a list: [] when absent or null, else it must already be a list."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ConversionError(f"{what} must be a list, got {type(value).__name__}")
+    return value
+
+
+def as_mapping(value, what):
+    """`value` as a dict: {} when absent or null, else it must already be a mapping."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConversionError(f"{what} must be a mapping, got {type(value).__name__}")
+    return value
+
+
+def as_str(value, what):
+    """`value` when it is a string, None when absent or null; anything else raises."""
+    if value is None or isinstance(value, str):
+        return value
+    raise ConversionError(f"{what} must be a string, got {type(value).__name__}")
+
+
 def load_yaml(text):
     """Parse YAML, surfacing a syntax error as a ConversionError so callers (and the
     CLI) get a clean message rather than a raw traceback."""
@@ -173,21 +205,63 @@ def dump_yaml(obj):
     )
 
 
-def read_stash(obj):
+def custom_extensions(obj, what):
+    """The `custom_extensions` entries on an Apache Ossie object, checked for shape.
+
+    Each entry must be a mapping whose `vendor_name` and `data` are strings, as the spec
+    requires; anything else raises rather than failing inside the stash reader.
+    """
+    entries = as_list((obj or {}).get("custom_extensions"), f"{what}: custom_extensions")
+    for ext in entries:
+        if not isinstance(ext, dict):
+            raise ConversionError(
+                f"{what}: each custom_extensions entry must be a mapping, got "
+                f"{type(ext).__name__}")
+        as_str(ext.get("vendor_name"), f"{what}: custom_extensions vendor_name")
+        as_str(ext.get("data"), f"{what}: custom_extensions data")
+    return entries
+
+
+# YAML reads an unquoted `2024-01-01` as a date, which JSON cannot hold. The stash tags
+# dates and datetimes so they come back as the same type and re-dump unquoted, keeping
+# the round trip exact. (Solid's own export quotes every value, so these only arrive in
+# hand-edited YAML.)
+_JSON_TAG = "__ossie_solid__"
+_JSON_TEMPORAL = {"date": datetime.date, "datetime": datetime.datetime}
+
+
+def _json_default(value):
+    for tag, cls in _JSON_TEMPORAL.items():
+        if type(value) is cls:
+            return {_JSON_TAG: tag, "v": value.isoformat()}
+    raise ConversionError(
+        f"a value of type {type(value).__name__} cannot be carried in "
+        f"custom_extensions[SOLID]")
+
+
+def _json_object_hook(data):
+    cls = _JSON_TEMPORAL.get(data.get(_JSON_TAG, ""))
+    if cls is not None and set(data) == {_JSON_TAG, "v"}:
+        return cls.fromisoformat(data["v"])
+    return data
+
+
+def read_stash(obj, what="object"):
     """Return the SOLID stash dict on an Apache Ossie object, or {} if absent.
 
     The `_v` version marker is stripped from the returned dict.
     """
-    for ext in (obj or {}).get("custom_extensions") or []:
+    for ext in custom_extensions(obj, what):
         if ext.get("vendor_name") == VENDOR:
             try:
-                data = json.loads(ext.get("data") or "{}")
-            except json.JSONDecodeError as e:
+                data = json.loads(ext.get("data") or "{}",
+                                  object_hook=_json_object_hook)
+            except ValueError as e:
                 raise ConversionError(
-                    f"SOLID custom_extensions data is not valid JSON: {e}") from e
+                    f"{what}: SOLID custom_extensions data is not valid JSON: {e}") from e
             if not isinstance(data, dict):
                 raise ConversionError(
-                    "SOLID custom_extensions data must be a JSON object")
+                    f"{what}: SOLID custom_extensions data must be a JSON object")
             data.pop("_v", None)
             return data
     return {}
@@ -197,13 +271,13 @@ def write_stash(obj, data):
     """Attach a SOLID `custom_extensions` entry holding `data` (a dict).
 
     No-op when `data` is empty, so an object with nothing Solid-specific to carry stays
-    clean. Merges into an existing SOLID entry if one is already present.
+    clean. An existing SOLID entry is replaced, not merged into.
     """
     if not data:
         return
     payload = {"_v": STASH_VERSION}
     payload.update(data)
-    blob = json.dumps(payload, ensure_ascii=False)
+    blob = json.dumps(payload, ensure_ascii=False, default=_json_default)
     exts = obj.setdefault("custom_extensions", [])
     for ext in exts:
         if ext.get("vendor_name") == VENDOR:
@@ -212,16 +286,14 @@ def write_stash(obj, data):
     exts.append({"vendor_name": VENDOR, "data": blob})
 
 
-def foreign_vendor_extensions(obj):
+def foreign_vendor_extensions(obj, what="object"):
     """Return the non-SOLID custom_extensions on an object.
 
     Solid's YAML has no slot for vendor metadata, so these are dropped on export; the
     caller warns rather than discarding them silently.
     """
     return [
-        ext
-        for ext in (obj or {}).get("custom_extensions") or []
-        if ext.get("vendor_name") != VENDOR
+        ext for ext in custom_extensions(obj, what) if ext.get("vendor_name") != VENDOR
     ]
 
 
@@ -238,8 +310,14 @@ def pick_expression(ossie_expression, dialect, what):
     once. `what` names the field or metric for the error message.
     """
     dialects = {}
-    for entry in (ossie_expression or {}).get("dialects") or []:
-        name, expr = entry.get("dialect"), entry.get("expression")
+    expression = as_mapping(ossie_expression, f"{what}: expression")
+    for entry in as_list(expression.get("dialects"), f"{what}: expression dialects"):
+        if not isinstance(entry, dict):
+            raise ConversionError(
+                f"{what}: each expression dialect entry must be a mapping, got "
+                f"{type(entry).__name__}")
+        name = as_str(entry.get("dialect"), f"{what}: expression dialect")
+        expr = entry.get("expression")
         if name in dialects and dialects[name] != expr:
             raise ConversionError(
                 f"{what} lists the {name} dialect more than once with different "
@@ -278,9 +356,9 @@ def resolve_asset_links(text):
         return text
 
     def _replace(match):
-        attrs = dict(
-            (k.lower(), v) for k, v in _ASSET_LINK_ATTR_RE.findall(match.group(1))
-        )
+        attrs = {
+            k.lower(): v for k, v in _ASSET_LINK_ATTR_RE.findall(match.group(1))
+        }
         return attrs.get("name") or match.group(0)
 
     return _ASSET_LINK_RE.sub(_replace, text)
@@ -371,19 +449,32 @@ def clean_text(value):
 
     Solid emits block scalars for descriptions, which leaves a trailing newline, and
     writes `manual_description: ''` for a column whose human description was cleared.
-    Both should become "absent" rather than an empty Apache Ossie field.
+    Both should become "absent" rather than an empty Apache Ossie field. A scalar YAML
+    read as something other than a string (an unquoted `2024-01-01`, a number) is kept
+    as its text rather than dropped.
     """
+    if isinstance(value, (bool, int, float, datetime.date)):
+        value = str(value)
     if not isinstance(value, str):
         return None
     stripped = value.strip()
     return stripped or None
 
 
-def string_list(value):
-    """Coerce a Solid list field to a list of non-empty strings, or [] if absent."""
-    if not isinstance(value, list):
-        return []
-    return [str(v).strip() for v in value if v is not None and str(v).strip()]
+def string_list(value, what):
+    """Coerce a list field to a list of non-empty strings, or [] if absent or null.
+
+    Scalar items are read as text; a value that is not a list, or an item that is itself
+    a list or mapping, raises rather than being dropped or stringified.
+    """
+    items = []
+    for item in as_list(value, what):
+        if isinstance(item, (list, dict)):
+            raise ConversionError(
+                f"{what} must hold plain values, got a {type(item).__name__}")
+        if item is not None and str(item).strip():
+            items.append(str(item).strip())
+    return items
 
 
 def build_ai_context(instructions=None, synonyms=None, examples=None):
@@ -401,18 +492,19 @@ def build_ai_context(instructions=None, synonyms=None, examples=None):
     return ctx or None
 
 
-def ai_context_parts(ai_context):
+def ai_context_parts(ai_context, what):
     """Split an Apache Ossie `ai_context` into (instructions, synonyms, examples).
 
     The spec allows `ai_context` to be a bare string; that form carries instructions
-    only. Anything else (a list, a number) yields all-empty parts.
+    only. Anything other than a string or a mapping raises.
     """
+    if ai_context is None:
+        return None, [], []
     if isinstance(ai_context, str):
         return clean_text(ai_context), [], []
-    if isinstance(ai_context, dict):
-        return (
-            clean_text(ai_context.get("instructions")),
-            string_list(ai_context.get("synonyms")),
-            string_list(ai_context.get("examples")),
-        )
-    return None, [], []
+    context = as_mapping(ai_context, f"{what}: ai_context")
+    return (
+        clean_text(as_str(context.get("instructions"), f"{what}: ai_context.instructions")),
+        string_list(context.get("synonyms"), f"{what}: ai_context.synonyms"),
+        string_list(context.get("examples"), f"{what}: ai_context.examples"),
+    )

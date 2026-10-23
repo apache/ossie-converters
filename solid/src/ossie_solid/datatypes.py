@@ -53,6 +53,9 @@ DATE_TIME_TZ = "DateTimeTz"
 OPAQUE = "Opaque"
 
 TEMPORAL_DATATYPES = frozenset({DATE, TIME, DATE_TIME, DATE_TIME_TZ})
+OSSIE_DATATYPES = frozenset({
+    STRING, INTEGER, DECIMAL, FLOAT, BOOLEAN, DATE, TIME, DATE_TIME, DATE_TIME_TZ, OPAQUE,
+})
 
 # Type names that appear in exactly one of the three warehouses Solid exports from, and
 # so identify it. Names shared across warehouses (STRING is both Databricks and
