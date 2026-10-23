@@ -27,10 +27,11 @@ from conftest import (
     field_of,
     fixture,
     model_of,
+    solid_model_of,
     stash_of,
 )
 
-from ossie_solid import ConversionError, convert_solid_to_ossie
+from ossie_solid import ConversionError, convert_ossie_to_solid, convert_solid_to_ossie
 
 
 @pytest.fixture(scope="module")
@@ -382,3 +383,45 @@ def test_malformed_yaml_is_rejected_cleanly():
 def test_a_missing_semantic_model_key_is_rejected():
     with pytest.raises(ConversionError, match="missing the top-level"):
         convert_solid_to_ossie("tables: []\n")
+
+
+RESERVED_NAMES = """
+semantic_model:
+  name: shop
+  tables:
+    - name: db.s.order
+      dimensions:
+        - name: group
+          type: TEXT
+      facts:
+        - name: amount
+          type: NUMBER(38,2)
+  metrics:
+    - name: revenue
+      expression: SUM(amount)
+      tables:
+        - db.s.order
+"""
+
+
+@pytest.mark.parametrize(
+    ("dialect", "field", "metric"),
+    [
+        ("SNOWFLAKE", '"group"', 'SUM("order".amount)'),
+        ("DATABRICKS", "`group`", "SUM(`order`.amount)"),
+        ("BIGQUERY", "`group`", "SUM(`order`.amount)"),
+        ("ANSI_SQL", '"group"', 'SUM("order".amount)'),
+    ],
+)
+def test_a_reserved_column_or_dataset_name_is_quoted_in_every_dialect(
+        dialect, field, metric):
+    ossie, _ = convert_quietly(convert_solid_to_ossie, RESERVED_NAMES, dialect=dialect)
+    model = model_of(ossie)
+    assert expression_of(field_of(model, "order", "group")) == field
+    assert expression_of(model["metrics"][0]) == metric
+
+    # And the quoted qualifier comes back off on export.
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    restored = solid_model_of(solid)["metrics"][0]
+    assert (restored["expression"], restored["tables"]) == ("SUM(amount)", ["db.s.order"])
+    assert warnings_ == []

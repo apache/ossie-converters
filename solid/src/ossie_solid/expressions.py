@@ -44,6 +44,7 @@ disagreement the expression is left exactly as written -- an unqualified metric 
 smaller problem than a corrupted one.
 """
 
+import re
 from collections import Counter
 
 import sqlglot
@@ -51,7 +52,15 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.tokens import TokenType
 
-from ._common import SQLGLOT_DIALECTS
+from . import _reserved_words
+from ._common import (
+    DIALECT_ANSI,
+    DIALECT_BIGQUERY,
+    DIALECT_DATABRICKS,
+    DIALECT_OSSIE_SQL,
+    DIALECT_SNOWFLAKE,
+    SQLGLOT_DIALECTS,
+)
 
 # Token types that can carry an identifier: an unquoted name, or a quoted one whose
 # offsets span the quote characters as well.
@@ -96,24 +105,43 @@ def _unquote(text):
     return text.strip().strip('"`[]')
 
 
+# Reserved words per dialect (see _reserved_words for where each list comes from).
+_RESERVED = {
+    DIALECT_SNOWFLAKE: _reserved_words.SNOWFLAKE,
+    DIALECT_DATABRICKS: _reserved_words.DATABRICKS,
+    DIALECT_BIGQUERY: _reserved_words.BIGQUERY,
+    DIALECT_ANSI: _reserved_words.ANSI_SQL,
+    DIALECT_OSSIE_SQL: _reserved_words.ANSI_SQL,
+}
+
+# The shape of a name that needs no quoting. Snowflake also allows `$` after the first
+# character.
+_REGULAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_REGULAR_NAME_BY_DIALECT = {DIALECT_SNOWFLAKE: re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")}
+
+
+def needs_quoting(name, dialect):
+    """True if `name` cannot be written bare in `dialect`: it is not a regular
+    identifier, or it is a reserved word there."""
+    pattern = _REGULAR_NAME_BY_DIALECT.get(dialect, _REGULAR_NAME)
+    if not pattern.fullmatch(name):
+        return True
+    return name.upper() in _RESERVED.get(dialect, _reserved_words.ANSI_SQL)
+
+
 def column_reference(name, dialect):
-    """Render a column name as an Apache Ossie field expression.
+    """Render a column or dataset name as an identifier in `dialect`.
 
     A Solid field's expression is just its own column, so the usual result is the bare
-    name. A name that is not a plain identifier -- one with spaces, or one that collides
-    with a reserved word -- is quoted with the target dialect's rules so the expression
-    stays valid SQL.
+    name. A name that is not a regular identifier, or is a reserved word in the dialect,
+    is quoted with that dialect's rules so the expression stays valid SQL. The name is
+    kept in the case Solid reports it, which is the case the catalog stores it in, so
+    on Snowflake a quoted `"ORDER"` still matches its column.
     """
     if not isinstance(name, str) or not name.strip():
         return name
-    bare = exp.to_identifier(name, quoted=False)
-    if bare is not None:
-        rendered = bare.sql(dialect=_read(dialect))
-        parsed = _parse(rendered, dialect)
-        # The bare form is usable only if it reads back as the same single column; a
-        # reserved word parses as some other node type, or not at all.
-        if isinstance(parsed, exp.Column) and parsed.name == name and not parsed.table:
-            return rendered
+    if not needs_quoting(name, dialect):
+        return name
     quoted = exp.to_identifier(name, quoted=True)
     return quoted.sql(dialect=_read(dialect)) if quoted is not None else name
 

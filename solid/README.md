@@ -160,7 +160,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 |---|---|---|
 | `fields[]` | `dimensions[]` + `facts[]` | Solid splits columns two ways; Apache Ossie has one list. See [Dimensions and facts](#dimensions-and-facts). |
 | `dimension.is_time` | — | Set explicitly on import from the resolved `datatype`, rather than left to the spec's default, so a consumer that does not implement the default still reads the same role. |
-| `expression.dialects[]` | the column's own name | A Solid column's expression is a bare reference to itself; a name needing quoting is quoted for the resolved dialect. |
+| `expression.dialects[]` | the column's own name | A Solid column's expression is a bare reference to itself. See [Identifier quoting](#identifier-quoting). |
 | `datatype` | `type` | See [Data types](#data-types). |
 | `description` | `description` | |
 | `ai_context.instructions` | `manual_description` | |
@@ -266,6 +266,22 @@ warning is emitted. An unqualified metric is a far smaller problem than a corrup
 table, and the alias-to-table binding lives in `metric.column_ids`, which its YAML export
 does not carry. Those metrics keep their bare column names, keep `tables[]` in the stash,
 and emit a warning.
+
+## Identifier quoting
+
+A column name, or a dataset name used as a metric qualifier, is written bare unless it
+is not a regular identifier (`odd name`) or is a reserved word in the resolved dialect,
+in which case it is quoted with that dialect's rules: `"order"` on Snowflake and
+`ANSI_SQL`, `` `order` `` on Databricks and BigQuery. The reserved words come from each
+warehouse's documentation, since sqlglot reads `order` and `group` back as ordinary
+columns; Snowflake's list is also the one solid-server uses.
+
+On Snowflake a quoted name is case-sensitive, so quoting is kept to the documented
+reserved words, and the name keeps the case Solid reports. Solid reports names as the
+catalog stores them, upper case for a column created unquoted, so a reserved one is
+written `"ORDER"` and matches it, while `COMMENT`, which Snowflake does not reserve,
+stays bare. Databricks and BigQuery match a quoted name case-insensitively, so their
+lists also take in the SQL standard's reserved words.
 
 ## Data types
 
