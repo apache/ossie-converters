@@ -18,12 +18,29 @@
 # A small Solid export whose type vocabulary is Databricks': LONG, STRING, DOUBLE, MAP.
 # Used to check that dialect inference resolves DATABRICKS from types alone, and that
 # TIMESTAMP is read as an instant here (unlike Snowflake, where it is not).
+# Its custom instructions use Solid's structured form, a root-level list, in the shape
+# solid-server's export template writes; the second entry is disabled.
 semantic_model:
   name: 'orders_analytics'
 
   business_context:
     business_questions:
       - 'How many orders shipped late last month?'
+
+  custom_instructions:
+    - title: 'Late shipments'
+      is_enabled: true
+      condition: |
+        The question asks about late or delayed orders.
+      content: |
+        An order is late when @<assetlink id='00000000-0000-4000-8000-000000000001' type='column' name='orders.status'> is not 'shipped' two days after it was placed.
+      associated_assets:
+        - type: 'table'
+          name: 'main.sales.orders'
+    - title: 'Old fiscal calendar'
+      is_enabled: false
+      content: |
+        Fiscal years start in July.
 
   model_llm_description: |
     Order fulfilment analytics over the warehouse order stream.

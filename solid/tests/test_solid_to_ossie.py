@@ -425,3 +425,32 @@ def test_a_reserved_column_or_dataset_name_is_quoted_in_every_dialect(
     restored = solid_model_of(solid)["metrics"][0]
     assert (restored["expression"], restored["tables"]) == ("SUM(amount)", ["db.s.order"])
     assert warnings_ == []
+
+
+def test_keys_solids_export_does_not_write_are_dropped_with_a_warning():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["semantic_model"]["owner"] = "data team"
+    solid["semantic_model"]["tables"][0]["dimensions"][0]["pii"] = True
+    _, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert any("semantic_model: 'owner' is not part of a Solid semantic model" in w
+               for w in warnings_)
+    assert any("column 'orders.order_id': 'pii' is not part of" in w for w in warnings_)
+
+
+def test_structured_custom_instructions_render_into_the_model_instructions():
+    """Solid's root-level instruction entries reach an Apache Ossie consumer as text:
+    each enabled one with its title, condition and assets, asset links resolved. A
+    disabled entry is not in force, so it is not rendered, but the stash keeps every
+    entry for the way back."""
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("databricks_solid.yaml"))
+    model = model_of(ossie)
+    assert model["ai_context"]["instructions"] == (
+        "Late shipments:\n"
+        "Applies when: The question asks about late or delayed orders.\n"
+        "Applies to: main.sales.orders\n"
+        "An order is late when orders.status is not 'shipped' two days after it was "
+        "placed."
+    )
+    entries = stash_of(model)["custom_instruction_entries"]
+    assert [e["title"] for e in entries] == ["Late shipments", "Old fiscal calendar"]
+    assert "@<assetlink" in entries[0]["content"]

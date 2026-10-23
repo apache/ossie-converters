@@ -64,6 +64,29 @@ def test_key_order_matches_solids_own_export_template(from_fixture):
     ]
 
 
+def test_structured_custom_instructions_take_solids_place_in_the_key_order():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("databricks_solid.yaml"))
+    solid, _ = convert_quietly(convert_ossie_to_solid, ossie)
+    model = solid_model_of(solid)
+    assert list(model)[:4] == [
+        "name", "business_context", "custom_instructions", "model_llm_description"]
+    # Solid writes the structured list instead of the free text, never both.
+    assert "custom_instructions" not in model["business_context"]
+
+
+def test_edited_instructions_replace_the_structured_entries_with_a_warning():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("databricks_solid.yaml"))
+    model = yaml.safe_load(ossie)
+    model["ai_context"]["instructions"] = "Late means not shipped within two days."
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
+    restored = solid_model_of(solid)
+    assert "custom_instructions" not in restored
+    assert restored["business_context"]["custom_instructions"] == (
+        "Late means not shipped within two days.")
+    assert any("structured custom instructions recorded at import were not restored"
+               in w for w in warnings_)
+
+
 def test_table_key_order_matches_solids_own_export_template(from_fixture):
     assert list(by_name(from_fixture["tables"])["tpcds.public.store_sales"]) == [
         "name",
@@ -533,16 +556,46 @@ def test_an_edited_metric_is_not_bound_to_its_stashed_tables():
 # --- input validation --------------------------------------------------------------
 
 
-def test_a_wrong_spec_version_is_rejected():
+def test_an_unknown_spec_version_is_read_with_a_warning():
+    # Rejecting every version but the known ones would make every document fail the
+    # day the spec releases one.
     ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
-    ossie["version"] = "0.1.0"
-    with pytest.raises(ConversionError, match="Unsupported Apache Ossie version"):
+    ossie["version"] = "0.2.0"
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert solid_model_of(solid)["tables"]
+    assert any("declares Apache Ossie v0.2.0, which this converter does not know" in w
+               for w in warnings_)
+
+
+def test_a_document_with_no_version_is_rejected():
+    ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    del ossie["version"]
+    with pytest.raises(ConversionError, match="missing required 'version'"):
         convert_ossie_to_solid(yaml.safe_dump(ossie))
 
 
 def test_a_solid_document_is_rejected():
-    with pytest.raises(ConversionError, match="Unsupported Apache Ossie version"):
+    with pytest.raises(ConversionError, match="Did you mean `ossie-solid import`"):
         convert_ossie_to_solid(fixture("tpcds_solid.yaml"))
+
+
+def test_keys_outside_the_spec_are_dropped_with_a_warning():
+    ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    ossie["datasets"][0]["fields"][0]["grain"] = "day"
+    ossie["metrics"][0]["ai_context"] = {"instructions": "Exclude refunds.",
+                                         "owner": "finance"}
+    _, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert any("'grain' is not part of Apache Ossie" in w for w in warnings_)
+    assert any("ai_context.owner has no Solid equivalent" in w for w in warnings_)
+    assert any("ai_context.instructions has no Solid equivalent" in w for w in warnings_)
+
+
+def test_model_level_synonyms_are_dropped_with_a_warning():
+    ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    ossie["ai_context"]["synonyms"] = ["retail"]
+    _, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert any("ai_context.synonyms has no Solid equivalent at the model level" in w
+               for w in warnings_)
 
 
 def _wrapped(document, extra_models=()):

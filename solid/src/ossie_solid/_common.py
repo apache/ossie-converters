@@ -36,8 +36,9 @@ import yaml
 # `core-spec/` whenever the spec version moves.
 OSSIE_VERSION = "0.2.0.dev0"
 
-# Spec versions an Apache Ossie document may declare and still be read (see
-# convert_ossie_to_solid). Output is always written as OSSIE_VERSION.
+# Spec versions this converter knows. A document declaring another is still read, as
+# OSSIE_VERSION, with a warning (see convert_ossie_to_solid). Output is always written as
+# OSSIE_VERSION.
 #
 # 0.1.1 is the only *released* spec version, so it is what models in the wild declare.
 # It differs from 0.2.0.dev0 in one structural way and a few additive ones. The
@@ -129,6 +130,20 @@ class ConversionError(Exception):
 def warn(scope, message):
     """Emit a conversion warning. The CLI surfaces these on stderr."""
     warnings.warn(f"[{scope}] {message}", stacklevel=2)
+
+
+def warn_unknown_keys(obj, known, scope, label, format_name):
+    """Warn about keys of `obj` outside `known`, which the conversion does not read.
+
+    A key a later version of either format adds would otherwise vanish without a word,
+    as Solid's structured `custom_instructions` once did.
+    """
+    extra = [str(key) for key in obj if key not in known]
+    if extra:
+        names = ", ".join(f"'{key}'" for key in extra)
+        verb = "is" if len(extra) == 1 else "are"
+        warn(scope, f"{label}: {names} {verb} not part of {format_name} as this converter "
+                    f"reads it, so {'it was' if len(extra) == 1 else 'they were'} dropped")
 
 
 def require(obj, key, what):
@@ -364,6 +379,51 @@ def resolve_asset_links(text):
     return _ASSET_LINK_RE.sub(_replace, text)
 
 
+def instruction_entries(value, what):
+    """Solid's structured custom instructions, checked for shape: a list of mappings."""
+    entries = as_list(value, what)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ConversionError(
+                f"{what}: each entry must be a mapping, got {type(entry).__name__}")
+        as_list(entry.get("associated_assets"), f"{what}: associated_assets")
+    return entries
+
+
+def render_custom_instructions(text, entries):
+    """Solid's custom instructions as the one text an Apache Ossie consumer reads.
+
+    Solid holds free text in `business_context.custom_instructions` and, in its
+    structured form, a root-level list of titled entries, each enabled or not and
+    optionally scoped by a condition and to catalog assets. The free text comes first,
+    then each enabled entry; a disabled one is not in force, so it is not rendered.
+    Asset-link markup is resolved to display names, as Solid does before the text reaches
+    an LLM. Returns None when nothing is in force.
+    """
+    parts = [resolve_asset_links(text)] if text else []
+    for entry in entries:
+        content = clean_text(entry.get("content"))
+        if entry.get("is_enabled") is False or not content:
+            continue
+        lines = []
+        title = clean_text(entry.get("title"))
+        if title:
+            lines.append(f"{title}:")
+        condition = clean_text(entry.get("condition"))
+        if condition:
+            lines.append(f"Applies when: {resolve_asset_links(condition)}")
+        assets = [
+            clean_text(asset.get("name"))
+            for asset in entry.get("associated_assets") or []
+            if isinstance(asset, dict) and clean_text(asset.get("name"))
+        ]
+        if assets:
+            lines.append(f"Applies to: {', '.join(assets)}")
+        lines.append(resolve_asset_links(content))
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts) or None
+
+
 def has_asset_links(text):
     """True if `text` carries Solid asset-link markup."""
     return isinstance(text, str) and bool(_ASSET_LINK_RE.search(text))
@@ -503,6 +563,12 @@ def ai_context_parts(ai_context, what):
     if isinstance(ai_context, str):
         return clean_text(ai_context), [], []
     context = as_mapping(ai_context, f"{what}: ai_context")
+    # The spec lets an ai_context carry keys of a tool's own; Solid has no slot for them.
+    scope, _, label = what.partition(" ")
+    for key in context:
+        if key not in ("instructions", "synonyms", "examples"):
+            warn(scope, f"{label or 'the model'}: ai_context.{key} has no Solid "
+                        f"equivalent and was dropped")
     return (
         clean_text(as_str(context.get("instructions"), f"{what}: ai_context.instructions")),
         string_list(context.get("synonyms"), f"{what}: ai_context.synonyms"),
