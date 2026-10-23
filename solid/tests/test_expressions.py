@@ -288,3 +288,29 @@ def test_solids_snowflake_list_is_complete():
     assert len(SNOWFLAKE) == 92
     assert {"ORDER", "GROUP", "TABLE", "QUALIFY", "MINUS"} <= SNOWFLAKE
     assert not {"COMMENT", "LIMIT", "DATE", "NAME", "VALUE"} & SNOWFLAKE
+
+
+def test_unqualifying_two_datasets_columns_of_one_name_is_ambiguous():
+    # Stripped, both would read `amount`: the formula would be ambiguous in Solid, or
+    # always zero.
+    expression = "SUM(orders.amount) - SUM(returns.amount)"
+    assert unqualify_metric(expression, "SNOWFLAKE", ["orders", "returns"]) == (
+        expression, AMBIGUOUS)
+
+
+def test_unqualifying_a_name_another_read_dataset_also_has_is_ambiguous():
+    # No two references collide in the text, but `id` is a column of both datasets the
+    # metric reads, so a bare `id` would not say which.
+    expression = "SUM(orders.amount) / COUNT(customers.id)"
+    fields = {"orders": ["amount", "id"], "customers": ["id", "name"]}
+    assert unqualify_metric(
+        expression, "SNOWFLAKE", ["orders", "customers"], fields) == (
+        expression, AMBIGUOUS)
+
+
+def test_a_name_only_a_dataset_the_metric_does_not_read_has_is_no_collision():
+    fields = {"orders": ["amount"], "customers": ["cid"], "returns": ["amount"]}
+    assert unqualify_metric(
+        "SUM(orders.amount) / COUNT(customers.cid)", "SNOWFLAKE",
+        ["orders", "customers", "returns"], fields,
+    ) == ("SUM(amount) / COUNT(cid)", UNQUALIFIED)
