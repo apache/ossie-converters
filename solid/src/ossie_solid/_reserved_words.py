@@ -25,9 +25,10 @@ How wide each list is follows from what quoting costs in that dialect:
 
 - **Snowflake** and the **SQL standard** fold an unquoted name to upper case and match a
   quoted one exactly, so quoting a name that did not need it can stop it matching its
-  column. Those two lists are therefore exactly the documented reserved words, no more.
-  (Solid reports names in the case the catalog stores them, so a reserved name it does
-  quote, `"ORDER"`, still matches.)
+  column. Snowflake's list is therefore exactly its documented reserved words; the
+  `ANSI_SQL` one is the narrower set common engines also reserve (see below), rather
+  than every word SQL:2016 reserves. (Solid reports names in the case the catalog stores
+  them, so a reserved name it does quote, `"ORDER"`, still matches.)
 - **Databricks** and **BigQuery** match a backtick-quoted name case-insensitively, so
   needless quoting is harmless there, and their lists also take in the SQL standard's.
 

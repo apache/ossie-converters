@@ -166,6 +166,17 @@ def column_reference(name, dialect):
     return quoted.sql(dialect=_read(dialect)) if quoted is not None else name
 
 
+def is_column_reference(expression, name, dialect):
+    """True if `expression` is nothing but a reference to the column `name`, bare or
+    quoted the dialect's way (`"a""b"` is the column a"b on Snowflake)."""
+    text = expression.strip()
+    if text.strip('"`[]').lower() == name.strip().lower():
+        return True
+    tree = _parse(text, dialect)
+    return (isinstance(tree, exp.Column) and not tree.table
+            and tree.name.lower() == name.strip().lower())
+
+
 def _bare_columns(tree, known):
     """Count, per name, the bare column references the AST reports.
 

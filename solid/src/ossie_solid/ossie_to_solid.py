@@ -58,7 +58,13 @@ from ._common import (
     warn,
     warn_unknown_keys,
 )
-from .expressions import AMBIGUOUS, UNPARSED, referenced_datasets, unqualify_metric
+from .expressions import (
+    AMBIGUOUS,
+    UNPARSED,
+    is_column_reference,
+    referenced_datasets,
+    unqualify_metric,
+)
 
 # The properties of each Apache Ossie object (core-spec/ossie-schema.json). The schema
 # closes every object but `ai_context`, so anything else is a property of a spec
@@ -158,7 +164,7 @@ def _convert_model(ossie, explicit_dialect, model_name):
     resolved_dialect = _resolve_dialect(explicit_dialect, stash, ossie)
     _warn_foreign_extensions(ossie, "model", ossie.get("name"))
 
-    by_name = {}
+    by_name, by_folded_name = {}, {}
     for dataset in datasets:
         if not isinstance(dataset, dict):
             raise ConversionError("Each entry of 'datasets' must be a mapping")
@@ -169,7 +175,16 @@ def _convert_model(ossie, explicit_dialect, model_name):
             raise ConversionError(
                 f"Apache Ossie model declares dataset '{name}' more than once; dataset "
                 f"names must be unique")
+        if name.lower() in by_folded_name:
+            # A metric names its datasets as SQL qualifiers, which match ignoring case
+            # unless quoted, so `orders.amount` and `ORDERS.amount` could not be told
+            # apart. Import keeps dataset names unique ignoring case for the same reason.
+            raise ConversionError(
+                f"Apache Ossie model declares datasets '{by_folded_name[name.lower()]}' "
+                f"and '{name}', which differ only in case; metric expressions could not "
+                f"tell them apart")
         by_name[name] = dataset
+        by_folded_name[name.lower()] = name
     # Whether the producer marks its dimensions explicitly, putting a `dimension` block
     # on fields that are not time dimensions too. GoodData, OrionBelt and Cube do; Omni
     # and Microsoft mark only time fields. It only settles a field that has neither a
@@ -186,7 +201,7 @@ def _convert_model(ossie, explicit_dialect, model_name):
         warn("model", "ai_context.synonyms has no Solid equivalent at the model level "
                       "and was dropped")
     llm_description, model_description = _model_descriptions(
-        stash, clean_text(ossie.get("description")))
+        stash, clean_text(ossie.get("description"), "model: description"))
     business_context = {}
     if examples:
         business_context["business_questions"] = examples
@@ -367,7 +382,7 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     # `source`; the Apache Ossie dataset name is a local alias with no Solid slot.
     table = {"name": require_str(dataset, "source", f"dataset '{name}'")}
 
-    description = clean_text(dataset.get("description"))
+    description = clean_text(dataset.get("description"), f"dataset '{name}': description")
     if description:
         table["description"] = description
     instructions, synonyms, examples = ai_context_parts(
@@ -431,9 +446,17 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     raw_type = recorded_type or datatypes.to_raw_type(datatype, dialect)
     role = _field_role(field, stash, datatype, raw_type, marks_dimensions,
                        f"{dataset_name}.{name}")
+    computed = not is_column_reference(expression, solid_name, dialect)
+    if role == METRIC and not computed:
+        warn("field", f"'{dataset_name}.{name}' was a table-scoped metric in Solid, but "
+                      f"its expression is now a plain reference to the column, so it is "
+                      f"exported as a column")
+        role = FACT
     is_dimension = role == DIMENSION
-    computed = _is_computed(expression, solid_name)
-    _warn_time_role(field, datatype, f"{dataset_name}.{name}")
+    # A dropped `datatype` with a stashed type still implies the same one.
+    implied = datatype or (datatypes.to_ossie_datatype(recorded_type, recorded_dialect)
+                           if recorded_type else None)
+    _warn_time_role(field, implied, f"{dataset_name}.{name}")
 
     column = {"name": solid_name}
     # A Solid fact may be a table-scoped metric instead of a catalog column, in which
@@ -442,18 +465,20 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     is_metric_fact = role == METRIC or (
         role == FACT and stash.get("role") is None and raw_type is None and computed)
     if is_metric_fact:
-        # Only a fact Solid itself typed keeps a type; a metric has no catalog type to
-        # derive one from.
-        if stash.get("type") and raw_type:
+        # A metric has no catalog type to derive one from, so it keeps one only if
+        # Solid typed it or a datatype was given to it in Apache Ossie.
+        if raw_type and (stash.get("type") or datatype):
             column["type"] = raw_type
     elif raw_type:
         column["type"] = raw_type
-    else:
+    elif not (is_dimension and stash.get("computed") is True):
+        # A computed dimension that had no type in Solid gets none back.
         warn("field", f"'{dataset_name}.{name}' has no datatype; Solid's 'type' was "
                       f"left empty")
         column["type"] = ""
 
-    description = clean_text(field.get("description"))
+    description = clean_text(
+        field.get("description"), f"field '{dataset_name}.{name}': description")
     if description:
         column["description"] = description
     instructions, synonyms, examples = ai_context_parts(
@@ -519,7 +544,8 @@ def _is_time(field):
     is_time = (_dimension_block(field) or {}).get("is_time")
     if is_time is not None:
         return is_time is True
-    return field.get("datatype") in datatypes.TEMPORAL_DATATYPES
+    datatype = field.get("datatype")
+    return isinstance(datatype, str) and datatype in datatypes.TEMPORAL_DATATYPES
 
 
 def _field_role(field, stash, datatype, raw_type, marks_dimensions, label):
@@ -552,11 +578,6 @@ def _field_role(field, stash, datatype, raw_type, marks_dimensions, label):
     if datatype is not None:
         return FACT if datatypes.is_solid_fact_type(raw_type) else DIMENSION
     return FACT if marks_dimensions else DIMENSION
-
-
-def _is_computed(expression, name):
-    """True if a field's expression is something other than a plain reference to itself."""
-    return expression.strip().strip('"`[]').lower() != name.strip().lower()
 
 
 def _declared_datatype(field, label):
@@ -601,11 +622,14 @@ def _solid_name(name, stash, scope, label):
     restored while the object still carries the name import gave it; a name changed
     again in Apache Ossie is kept.
     """
-    renamed = stash.get("renamed")
-    if not isinstance(renamed, dict) or not clean_text(renamed.get("from")):
+    if stash.get("renamed") is None:
         return name
-    if renamed.get("to") == name:
-        return renamed["from"]
+    renamed = as_mapping(stash["renamed"], f"{label}: stashed renamed")
+    original = as_str(renamed.get("from"), f"{label}: stashed renamed.from")
+    if not clean_text(original):
+        return name
+    if as_str(renamed.get("to"), f"{label}: stashed renamed.to") == name:
+        return original
     warn(scope, f"'{label}' was renamed in Apache Ossie; the new name was kept rather "
                 f"than Solid's original '{renamed['from']}'")
     return name
@@ -661,7 +685,7 @@ def _convert_relationships(relationships, by_name):
                  f"{'have' if len(dropped) > 1 else 'has'} no Solid equivalent -- a "
                  f"Solid relationship carries only its tables and join keys -- and "
                  f"{'were' if len(dropped) > 1 else 'was'} dropped")
-        if stash.get("flipped"):
+        if stash.get("flipped") is True:
             # Import flipped this pair to put the many side on `from`; restore the
             # left/right order Solid wrote.
             left, right = target, source
@@ -718,11 +742,11 @@ def _convert_metrics(metrics, by_name, dialect):
             for d in referenced_datasets(expression, dialect, dataset_names)
         ]
         tables = stash.get("tables")
+        if tables is not None:
+            tables = string_list(tables, f"metric '{name}': stashed tables")
         if tables is None:
             tables = referenced
-        elif not ({t.lower() for t in referenced}
-                  <= {t.lower() for t in string_list(
-                      tables, f"metric '{name}': stashed tables")}):
+        elif not ({t.lower() for t in referenced} <= {t.lower() for t in tables}):
             # Import stashes `tables` only for an expression that does not name them
             # all, so the stash may list more than the expression reads, never other
             # tables. An expression reading one the stash lacks was edited in Apache
@@ -743,7 +767,7 @@ def _convert_metrics(metrics, by_name, dialect):
                            f"resolve its columns")
 
         solid_metric = {"name": solid_name}
-        description = clean_text(metric.get("description"))
+        description = clean_text(metric.get("description"), f"metric '{name}': description")
         if description:
             solid_metric["description"] = description
         solid_metric["expression"] = bare
