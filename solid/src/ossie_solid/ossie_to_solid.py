@@ -47,16 +47,41 @@ from ._common import (
     clean_text,
     dump_yaml,
     foreign_vendor_extensions,
+    instruction_entries,
     load_yaml,
     pick_expression,
     read_stash,
     readable_dialects,
+    render_custom_instructions,
     require_str,
-    resolve_asset_links,
     string_list,
     warn,
+    warn_unknown_keys,
 )
 from .expressions import AMBIGUOUS, UNPARSED, referenced_datasets, unqualify_metric
+
+# The properties of each Apache Ossie object (core-spec/ossie-schema.json). The schema
+# closes every object but `ai_context`, so anything else is a property of a spec
+# version this converter does not know, and is reported rather than dropped silently.
+_MODEL_KEYS = frozenset({
+    "name", "description", "ai_context", "datasets", "relationships", "metrics",
+    "custom_extensions",
+})
+_DATASET_KEYS = frozenset({
+    "name", "source", "primary_key", "unique_keys", "description", "ai_context",
+    "fields", "custom_extensions",
+})
+_FIELD_KEYS = frozenset({
+    "name", "expression", "dimension", "label", "description", "datatype", "ai_context",
+    "custom_extensions",
+})
+_RELATIONSHIP_KEYS = frozenset({
+    "name", "from", "to", "from_columns", "to_columns", "ai_context", "custom_extensions",
+})
+_METRIC_KEYS = frozenset({
+    "name", "expression", "description", "datatype", "ai_context", "custom_extensions",
+})
+_OSSIE = f"Apache Ossie v{OSSIE_VERSION}"
 
 
 def convert_ossie_to_solid(ossie_yaml_str, dialect=None, model_name=None):
@@ -71,13 +96,22 @@ def convert_ossie_to_solid(ossie_yaml_str, dialect=None, model_name=None):
         raise ConversionError(
             "Invalid Apache Ossie model: expected a mapping at the root")
 
-    version = str(document.get("version", ""))
+    if document.get("version") is None or not str(document["version"]).strip():
+        if isinstance(document.get("semantic_model"), dict):
+            raise ConversionError(
+                "This looks like a Solid semantic model, not an Apache Ossie document. "
+                "Did you mean `ossie-solid import`?")
+        raise ConversionError("Apache Ossie document is missing required 'version'")
+    version = str(document["version"]).strip()
     if version not in READABLE_OSSIE_VERSIONS:
-        raise ConversionError(
-            f"Unsupported Apache Ossie version '{version}'. This converter reads "
-            f"{', '.join('v' + v for v in READABLE_OSSIE_VERSIONS)}."
-        )
-    if version != OSSIE_VERSION:
+        # Read rather than rejected: a spec release would otherwise make every document
+        # fail. A real incompatibility still surfaces as a ConversionError or a warning
+        # when the content is read.
+        warn("model", f"the document declares Apache Ossie v{version}, which this "
+                      f"converter does not know; it reads "
+                      f"{' and '.join('v' + v for v in READABLE_OSSIE_VERSIONS)}, and "
+                      f"read this one as v{OSSIE_VERSION}")
+    elif version != OSSIE_VERSION:
         note = OSSIE_VERSION_NOTES.get(version)
         warn("model", f"the document declares Apache Ossie v{version}, not the current "
                       f"v{OSSIE_VERSION}"
@@ -95,7 +129,9 @@ def _document_model(document):
     `semantic_model` list instead; that shape is still read, with a warning.
     """
     if "semantic_model" not in document:
-        return {k: v for k, v in document.items() if k != "version"}
+        model = {k: v for k, v in document.items() if k != "version"}
+        warn_unknown_keys(model, _MODEL_KEYS, "model", "the document", _OSSIE)
+        return model
 
     models = document["semantic_model"]
     if not isinstance(models, list) or not models:
@@ -109,6 +145,7 @@ def _document_model(document):
     if len(models) > 1:
         warn("model", f"the document holds {len(models)} semantic models but Solid's "
                       f"format holds one; only '{models[0].get('name')}' was converted")
+    warn_unknown_keys(models[0], _MODEL_KEYS, "model", "the model", _OSSIE)
     return models[0]
 
 
@@ -144,7 +181,10 @@ def _convert_model(ossie, explicit_dialect, model_name):
         for field in as_list(dataset.get("fields"), f"dataset '{dataset['name']}': fields")
     )
 
-    instructions, _, examples = ai_context_parts(ossie.get("ai_context"), "model")
+    instructions, synonyms, examples = ai_context_parts(ossie.get("ai_context"), "model")
+    if synonyms:
+        warn("model", "ai_context.synonyms has no Solid equivalent at the model level "
+                      "and was dropped")
     llm_description, model_description = _model_descriptions(
         stash, clean_text(ossie.get("description")))
     business_context = {}
@@ -152,12 +192,14 @@ def _convert_model(ossie, explicit_dialect, model_name):
         business_context["business_questions"] = examples
     if model_description:
         business_context["model_description"] = model_description
-    custom_instructions = _custom_instructions(stash, instructions)
+    custom_instructions, entries = _custom_instructions(stash, instructions)
     if custom_instructions:
         business_context["custom_instructions"] = custom_instructions
 
     solid = {"name": model_name or require_str(ossie, "name", "Apache Ossie model")}
     solid["business_context"] = business_context
+    if entries:
+        solid["custom_instructions"] = entries
     if llm_description:
         solid["model_llm_description"] = llm_description
 
@@ -221,24 +263,31 @@ def _model_descriptions(stash, description):
 
 
 def _custom_instructions(stash, instructions):
-    """Solid's `custom_instructions`: the stashed asset-link markup while it still
-    resolves to `ai_context.instructions`, else the instructions as they now stand.
+    """Solid's (`business_context.custom_instructions`, root `custom_instructions`
+    entries): what import stashed, while it still renders to `ai_context.instructions`,
+    else the instructions as they now stand.
 
-    Import resolves Solid's `@<assetlink ...>` markup to display names for the Apache
-    Ossie consumer and stashes the tagged original, so a re-import into Solid keeps its
-    catalog references live.
+    Import renders Solid's free-text instructions and its enabled structured entries
+    into one text, resolving `@<assetlink ...>` markup to display names for the Apache
+    Ossie consumer, and stashes the originals, so a re-import into Solid keeps its
+    catalog references live and its entries structured.
     """
     stashed = clean_text(stash.get("custom_instructions"))
-    if not stashed or clean_text(resolve_asset_links(stashed)) == instructions:
-        return stashed or instructions
+    entries = instruction_entries(
+        stash.get("custom_instruction_entries"), "model: stashed custom instructions")
+    if not stashed and not entries:
+        return instructions, None
+    if clean_text(render_custom_instructions(stashed, entries)) == instructions:
+        return stashed, entries or None
+    lost = ("structured custom instructions recorded at import" if entries else
+            "Solid asset links in the original instructions")
     if instructions:
-        warn("model", "ai_context.instructions was edited in Apache Ossie; the edited "
-                      "text was used, so the Solid asset links in the original "
-                      "instructions were not restored")
+        warn("model", f"ai_context.instructions was edited in Apache Ossie; the edited "
+                      f"text was used, so the {lost} were not restored")
     else:
         warn("model", "ai_context.instructions was removed in Apache Ossie, so Solid's "
                       "custom_instructions were left out")
-    return instructions
+    return instructions, None
 
 
 def _resolve_dialect(explicit, stash, ossie):
@@ -310,6 +359,7 @@ def _warn_foreign_extensions(obj, scope, name):
 
 def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     name = require_str(dataset, "name", "dataset")
+    warn_unknown_keys(dataset, _DATASET_KEYS, "dataset", f"'{name}'", _OSSIE)
     stash = read_stash(dataset, f"dataset '{name}'")
     _warn_foreign_extensions(dataset, "dataset", name)
 
@@ -360,6 +410,7 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
 
 def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensions):
     name = require_str(field, "name", f"field in '{dataset_name}'")
+    warn_unknown_keys(field, _FIELD_KEYS, "field", f"'{dataset_name}.{name}'", _OSSIE)
     stash = read_stash(field, f"field '{dataset_name}.{name}'")
     _warn_foreign_extensions(field, "field", f"{dataset_name}.{name}")
     solid_name = _solid_name(name, stash, "field", f"{dataset_name}.{name}")
@@ -382,6 +433,7 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
                        f"{dataset_name}.{name}")
     is_dimension = role == DIMENSION
     computed = _is_computed(expression, solid_name)
+    _warn_time_role(field, datatype, f"{dataset_name}.{name}")
 
     column = {"name": solid_name}
     # A Solid fact may be a table-scoped metric instead of a catalog column, in which
@@ -444,6 +496,21 @@ def _dimension_block(field):
     if field.get("dimension") is None:
         return None
     return as_mapping(field["dimension"], f"Field '{field.get('name')}': dimension")
+
+
+def _warn_time_role(field, datatype, label):
+    """Report an explicit `is_time` that differs from what the datatype implies.
+
+    Solid has no time-dimension marker, so a re-import derives `is_time` from the
+    datatype again; an explicit one that says otherwise -- an Integer year grain marked
+    as time, an audit timestamp opted out -- is lost, and says so.
+    """
+    block = _dimension_block(field)
+    is_time = block.get("is_time") if block else None
+    if is_time is None or is_time is (datatype in datatypes.TEMPORAL_DATATYPES):
+        return
+    warn("field", f"'{label}': dimension.is_time: {str(is_time).lower()} has no Solid "
+                  f"equivalent and was dropped; a re-import derives it from the datatype")
 
 
 def _is_time(field):
@@ -550,6 +617,8 @@ def _convert_relationships(relationships, by_name):
         if not isinstance(relationship, dict):
             raise ConversionError("Each entry of 'relationships' must be a mapping")
         name = relationship.get("name") or "<unnamed>"
+        warn_unknown_keys(
+            relationship, _RELATIONSHIP_KEYS, "relationship", f"'{name}'", _OSSIE)
         source = require_str(relationship, "from", f"relationship '{name}'")
         target = require_str(relationship, "to", f"relationship '{name}'")
         for end in (source, target):
@@ -623,6 +692,7 @@ def _convert_metrics(metrics, by_name, dialect):
         if not isinstance(metric, dict):
             raise ConversionError("Each entry of 'metrics' must be a mapping")
         name = require_str(metric, "name", "metric")
+        warn_unknown_keys(metric, _METRIC_KEYS, "metric", f"'{name}'", _OSSIE)
         stash = read_stash(metric, f"metric '{name}'")
         _warn_foreign_extensions(metric, "metric", name)
         solid_name = _solid_name(name, stash, "metric", name)
@@ -677,7 +747,11 @@ def _convert_metrics(metrics, by_name, dialect):
         if description:
             solid_metric["description"] = description
         solid_metric["expression"] = bare
-        _, synonyms, examples = ai_context_parts(metric.get("ai_context"), f"metric '{name}'")
+        instructions, synonyms, examples = ai_context_parts(
+            metric.get("ai_context"), f"metric '{name}'")
+        if instructions:
+            warn("metric", f"'{name}': ai_context.instructions has no Solid equivalent "
+                           f"and was dropped")
         if synonyms:
             solid_metric["synonyms"] = synonyms
         if examples:

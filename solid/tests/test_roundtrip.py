@@ -201,7 +201,10 @@ def test_the_documented_losses_of_an_ossie_export_are_exactly_these():
     assert sum("datatype 'Decimal' has no Solid equivalent" in w for w in going) == 7
     assert sum("datatype 'Integer' has no Solid equivalent" in w for w in going) == 1
     assert sum("ai_context.synonyms has no Solid equivalent" in w for w in going) == 4
-    assert len(going) == 17
+    # The spec's own examples of an explicit time role -- an Integer year, a String
+    # quarter name, an untyped month -- have nowhere to land in Solid either.
+    assert sum("dimension.is_time: true has no Solid equivalent" in w for w in going) == 3
+    assert len(going) == 20
 
 
 def test_reimporting_that_export_only_loses_the_cross_table_qualifiers():
