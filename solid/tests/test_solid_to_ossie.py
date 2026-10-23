@@ -409,7 +409,7 @@ semantic_model:
 @pytest.mark.parametrize(
     ("dialect", "field", "metric"),
     [
-        ("SNOWFLAKE", '"group"', 'SUM("order".amount)'),
+        ("SNOWFLAKE", '"GROUP"', 'SUM("ORDER".amount)'),
         ("DATABRICKS", "`group`", "SUM(`order`.amount)"),
         ("BIGQUERY", "`group`", "SUM(`order`.amount)"),
         ("ANSI_SQL", '"group"', 'SUM("order".amount)'),

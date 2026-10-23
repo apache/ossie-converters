@@ -285,14 +285,18 @@ is not a regular identifier (`odd name`) or is a reserved word in the resolved d
 in which case it is quoted with that dialect's rules: `"order"` on Snowflake and
 `ANSI_SQL`, `` `order` `` on Databricks and BigQuery. The reserved words come from each
 warehouse's documentation, since sqlglot reads `order` and `group` back as ordinary
-columns; Snowflake's list is also the one solid-server uses.
+columns; Snowflake's is solid-server's list less the `SHOW`-only words.
 
-On Snowflake a quoted name is case-sensitive, so quoting is kept to the documented
-reserved words, and the name keeps the case Solid reports. Solid reports names as the
-catalog stores them, upper case for a column created unquoted, so a reserved one is
-written `"ORDER"` and matches it, while `COMMENT`, which Snowflake does not reserve,
-stays bare. Databricks and BigQuery match a quoted name case-insensitively, so their
-lists also take in the SQL standard's reserved words.
+On Snowflake a quoted name is case-sensitive while a bare one folds to upper case. So
+quoting is kept to the words Snowflake's documentation says cannot be a column or a
+table alias (not the eight it restricts only in `SHOW` commands, such as `ACCOUNT` and
+`SCHEMA`), and a reserved name is quoted in upper case: `order` and `ORDER` are both
+written `"ORDER"`, the column the name would mean written bare, as every other name in
+the model and Solid's own formulas are. `COMMENT`, which Snowflake does not reserve,
+stays bare. Solid reports names as the catalog stores them, upper case for a column
+created unquoted, so for its own exports this is the name exactly as reported. Databricks
+and BigQuery match a quoted name case-insensitively, so their lists also take in the SQL
+standard's reserved words.
 
 ## Data types
 
