@@ -154,14 +154,20 @@ def column_reference(name, dialect):
 
     A Solid field's expression is just its own column, so the usual result is the bare
     name. A name that is not a regular identifier, or is a reserved word in the dialect,
-    is quoted with that dialect's rules so the expression stays valid SQL. The name is
-    kept in the case Solid reports it, which is the case the catalog stores it in, so
-    on Snowflake a quoted `"ORDER"` still matches its column.
+    is quoted with that dialect's rules so the expression stays valid SQL.
+
+    On Snowflake a quoted name matches exactly while a bare one folds to upper case, so
+    a reserved word is quoted in upper case: `order` becomes `"ORDER"`, the column it
+    would name if it could be written bare, as every other name in the model is, and as
+    Solid's own formulas are. A name that is not a regular identifier has no bare form
+    to follow, and keeps its case.
     """
     if not isinstance(name, str) or not name.strip():
         return name
     if not needs_quoting(name, dialect):
         return name
+    if dialect == DIALECT_SNOWFLAKE and _REGULAR_NAME_BY_DIALECT[dialect].fullmatch(name):
+        name = name.upper()
     quoted = exp.to_identifier(name, quoted=True)
     return quoted.sql(dialect=_read(dialect)) if quoted is not None else name
 
