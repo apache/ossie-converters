@@ -85,8 +85,7 @@ def records() -> dict[str, dict]:
     R["count_filtered"] = _record("preferred_customer_count", {
         "formula": "COUNT(*)", "aggregation": {"type": "count"},
         "source": _rowset(T["customer"], "C_PREFERRED_CUST_FLAG = 'Y'"),
-        "grain": "customer", "population": "Customers flagged as preferred",
-        "extensions": {"realbench_e6": {"time": "point-in-time snapshot", "rule": "Filters on C_PREFERRED_CUST_FLAG = 'Y'", "witness_ok": True}}},
+        "grain": "customer", "population": "Customers flagged as preferred"},
         description="Count of customers whose preferred flag is set")
     R["count_distinct_filtered"] = _record("book_manufacturer_count", {
         "formula": "COUNT(DISTINCT I_MANUFACT_ID)", "aggregation": {"type": "count_distinct"},
@@ -108,8 +107,6 @@ def records() -> dict[str, dict]:
         "grain": "aggregate over entire filtered date range",
         "population": "Store returns with a reason of 'defective' or 'changed_mind'",
         "exclusions": ["returns with other reasons are excluded from the denominator"],
-        "extensions": {"realbench_e6": {"rule": "Uses NULLIF to guard divide-by-zero; only two reasons count",
-                                         "time": "point-in-time window filter on SR_RETURNED_DATE", "witness_ok": True}},
         "examples": [{"sql": ("SELECT ROUND(COUNT(CASE WHEN SR_RETURN_REASON='defective' THEN 1 END)*100.0"
                               "/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END),0),1) AS defective_pct "
                               f"FROM {T['returns']} WHERE SR_RETURNED_DATE >= '2026-04-01' AND SR_RETURNED_DATE < '2026-07-01'"),
@@ -169,14 +166,14 @@ def records() -> dict[str, dict]:
              _dim("state", "state", description="Store state."), _dim("segment", "segment", description="Store size segment."),
              _dim("lifecycle_stage", "lifecycle_stage", description="Opened, mature or closing."),
              _dim("milestone", "milestone", description="Latest milestone reached.")]
-    R["c360_bare_ratio_dims"] = _record("Active shoppers change vs 60-90 days ago", {
+    R["bare_columns_ratio_dims"] = _record("Active shoppers change vs 60-90 days ago", {
         "formula": "100.0 * (SUM(active_shoppers) - SUM(shoppers_90d)) / NULLIF(SUM(shoppers_90d), 0)",
         "aggregation": {"type": "ratio", "reaggregation": "none", "null_handling": "ignore", "zero_denominator": "null"},
         "output": {"alias": "active_shoppers_change_pct", "datatype": "decimal", "unit": "percent"},
         "source": {"table": T["monthly"], "alias": "store_monthly_snapshot"},
         "dimensions": dims6, "grain": "store", "population": "Stores with a monthly snapshot"},
         description="Percentage change in active shoppers against the value 60 to 90 days ago", source_id="warehouse-tables/active_shoppers_change")
-    R["c360_mandatory_filter"] = _record("Open returns", {
+    R["mandatory_filter_time_dim"] = _record("Open returns", {
         "formula": "COUNT(DISTINCT sr_ticket_number)", "aggregation": {"type": "count_distinct", "reaggregation": "none"},
         "output": {"alias": "open_returns", "datatype": "integer", "unit": "returns"},
         "source": {"table": T["returns"], "alias": "store_returns", "timeframe_column": "sr_returned_date"},
@@ -186,7 +183,7 @@ def records() -> dict[str, dict]:
                        _dim("sr_return_status", "sr_return_status", description="open, closed or void.")],
         "grain": "return ticket", "population": "Store returns that are not void"},
         description="Number of distinct return tickets, excluding voided returns", source_id="warehouse-tables/open_returns")
-    R["c360_join_clause_time"] = _record("Sales to active customers", {
+    R["declared_join_clause"] = _record("Sales to active customers", {
         "formula": "COUNT(*)", "aggregation": {"type": "count", "reaggregation": "sum"},
         "output": {"alias": "sales_to_active_customers", "datatype": "integer", "unit": "sales"},
         "source": {"table": T["sales"], "alias": "store_sales", "timeframe_column": "ss_sold_date"},
@@ -200,7 +197,7 @@ def records() -> dict[str, dict]:
 
     # --- a metric-builder producer: columns qualified by table name, FROM fragments, {{params}} ----
     S, I = T["sales"], T["item"]
-    R["studio_qualified_fragment_join"] = _record("Store Sale Errors", {
+    R["fragment_join_qualified"] = _record("Store Sale Errors", {
         "formula": f"SUM(CASE WHEN {S}.SS_IS_VOID = TRUE THEN 1 ELSE 0 END)",
         "aggregation": {"type": "sum", "reaggregation": "sum"},
         "output": {"alias": "Store Sale Errors", "datatype": "integer", "unit": "sales"},
@@ -222,7 +219,7 @@ def records() -> dict[str, dict]:
         description="Store sales that were voided: the reliability signal store managers act on", display_name="Store Sale Errors",
         source_id="metric:builder:0001")
     V = T["survey"]
-    R["studio_bound_param"] = _record("CSAT", {
+    R["bound_placeholder_param"] = _record("CSAT", {
         "formula": f"ROUND(COUNT(CASE WHEN {V}.SCORE = 'good' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN {V}.SCORE IN ('good', 'bad') THEN 1 END), 0), 1)",
         "aggregation": {"type": "ratio", "reaggregation": "none", "zero_denominator": "null"},
         "output": {"alias": "CSAT", "datatype": "decimal", "unit": "percent"},
@@ -237,7 +234,7 @@ def records() -> dict[str, dict]:
                       "sql": f"SELECT ROUND(COUNT(CASE WHEN SCORE = 'good' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) FROM {V} WHERE SCORE IN ('good','bad') AND CHANNEL = 'store' AND ANSWERED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)",
                       "source": "metric_builder"}]},
         description="Share of good scores among all good or bad survey answers", display_name="CSAT", source_id="metric:builder:0002")
-    R["studio_account_param_as_dimension"] = _record("Resolved Returns", {
+    R["account_param_as_dimension"] = _record("Resolved Returns", {
         "formula": f"COUNT_IF(({T['returns']}.SR_RESOLVED_AT IS NOT NULL OR LOWER({T['returns']}.SR_RETURN_STATUS) IN ('resolved', 'closed')))",
         "aggregation": {"type": "count", "reaggregation": "sum"},
         "output": {"alias": "Resolved Returns", "datatype": "integer", "unit": "returns"},

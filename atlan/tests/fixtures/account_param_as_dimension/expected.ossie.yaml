@@ -16,7 +16,7 @@
 # under the License.
 
 version: 0.2.0.dev0
-name: studio_account_param_as_dimension
+name: account_param_as_dimension
 description: a per-account parameter with no default becomes a dimension on that column
 datasets:
 - name: store_returns

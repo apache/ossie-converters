@@ -16,7 +16,7 @@
 # under the License.
 
 version: 0.2.0.dev0
-name: studio_qualified_fragment_join
+name: fragment_join_qualified
 description: source.sql is a FROM fragment with a LEFT JOIN, columns are fully qualified by table name,
   and there are example questions
 datasets:

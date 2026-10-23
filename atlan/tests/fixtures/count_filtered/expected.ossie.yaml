@@ -40,14 +40,11 @@ metrics:
   datatype: Integer
   description: Count of customers whose preferred flag is set
   ai_context:
-    instructions: 'Grain: customer. Counts: Customers flagged as preferred. Time: point-in-time snapshot.
-      Rule: Filters on C_PREFERRED_CUST_FLAG = ''Y''.'
+    instructions: 'Grain: customer. Counts: Customers flagged as preferred.'
   custom_extensions:
   - vendor_name: ATLAN
     data: '{"registry": {"id": "metric_synth_preferred_customer_count", "definition_version": 1}, "agent_context":
-      {"grain": "customer", "population": "Customers flagged as preferred", "time_rule": "point-in-time
-      snapshot", "analyst_rule": "Filters on C_PREFERRED_CUST_FLAG = ''Y''", "sql_dialect": "snowflake",
-      "trust": {"score": null, "witnessed": true}}}'
+      {"grain": "customer", "population": "Customers flagged as preferred", "sql_dialect": "snowflake"}}'
 custom_extensions:
 - vendor_name: ATLAN
   data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

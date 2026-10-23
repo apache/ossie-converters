@@ -64,14 +64,14 @@ CASES = {
     "ratio_round_window": "ROUND ratio and a count from one query; its fixed date range is named in the instructions only",
     "refused_list_aggregate": "ARRAY_AGG returns a list: refused",
     "refused_bind_placeholder": "a ? parameter with no name or default: refused",
-    "c360_bare_ratio_dims": "a ratio over bare column names with six dimensions; the display-style name is slugged",
-    "c360_mandatory_filter": "COUNT DISTINCT with a mandatory filter and a time dimension",
-    "c360_join_clause_time": "a declared join whose sql is a full `JOIN table alias ON ...`, plus a time column",
-    "studio_qualified_fragment_join": "source.sql is a FROM fragment with a LEFT JOIN, columns are fully "
+    "bare_columns_ratio_dims": "a ratio over bare column names with six dimensions; the display-style name is slugged",
+    "mandatory_filter_time_dim": "COUNT DISTINCT with a mandatory filter and a time dimension",
+    "declared_join_clause": "a declared join whose sql is a full `JOIN table alias ON ...`, plus a time column",
+    "fragment_join_qualified": "source.sql is a FROM fragment with a LEFT JOIN, columns are fully "
                                       "qualified by table name, and there are example questions",
-    "studio_bound_param": "a {{window_days}} placeholder bound to its declared default; a ROUND ratio",
+    "bound_placeholder_param": "a {{window_days}} placeholder bound to its declared default; a ROUND ratio",
     "refused_non_sql_dialect": "dialect promql: no SQL, no Ossie expression",
-    "studio_account_param_as_dimension": "a per-account parameter with no default becomes a dimension on that column",
+    "account_param_as_dimension": "a per-account parameter with no default becomes a dimension on that column",
     "refused_window_cte": "a trailing average over a CTE: Ossie has no window field, so refused",
     "refused_row_listing": "a row lookup, not a measure: refused",
 }

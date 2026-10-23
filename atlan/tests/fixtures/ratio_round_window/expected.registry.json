@@ -23,6 +23,10 @@
    },
    "joins": [],
    "dimensions": [],
+   "filters": [
+    "STORE_RETURNS.SR_RETURNED_DATE >= '2026-04-01'",
+    "STORE_RETURNS.SR_RETURNED_DATE < '2026-07-01'"
+   ],
    "examples": [
     {
      "sql": "SELECT ROUND(COUNT(CASE WHEN SR_RETURN_REASON='defective' THEN 1 END)*100.0/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END),0),1) AS defective_pct FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_RETURNED_DATE >= '2026-04-01' AND SR_RETURNED_DATE < '2026-07-01'",
@@ -60,6 +64,10 @@
    },
    "joins": [],
    "dimensions": [],
+   "filters": [
+    "STORE_RETURNS.SR_RETURNED_DATE >= '2026-04-01'",
+    "STORE_RETURNS.SR_RETURNED_DATE < '2026-07-01'"
+   ],
    "examples": [],
    "grain": "aggregate over entire filtered date range",
    "population": "Store returns with a reason of 'defective' or 'changed_mind'",

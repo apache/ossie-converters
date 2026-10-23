@@ -16,7 +16,7 @@
 # under the License.
 
 version: 0.2.0.dev0
-name: c360_join_clause_time
+name: declared_join_clause
 description: a declared join whose sql is a full `JOIN table alias ON ...`, plus a time column
 datasets:
 - name: store_sales

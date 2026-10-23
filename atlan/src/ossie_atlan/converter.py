@@ -40,20 +40,25 @@ Naming rules (deterministic, so forward(reverse(x)) compares cleanly):
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import json
 import re
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+from sqlglot.tokens import Tokenizer
 
 DIALECT = "snowflake"
 OSSIE_DIALECT = "OSSIE_SQL_2026"
 DTYPE = {"string": "String", "integer": "Integer", "decimal": "Decimal", "boolean": "Boolean",
          "date": "Date", "timestamp": "DateTime"}
 DTYPE_BACK = {v: k for k, v in DTYPE.items()}
+# a dataset named like one of these would not re-parse as `name.column`
 KEYWORDS = {"user", "order", "group", "select", "table", "from", "where", "join", "case", "end",
-            "date", "time", "timestamp", "values", "key", "index"}
+            "date", "time", "timestamp", "values", "key", "index"} | \
+    {k.lower() for k in Tokenizer.KEYWORDS if k.replace("_", "").isalpha()}
 TIME_KINDS = {"time", "date", "timestamp"}
 
 
@@ -66,11 +71,10 @@ def _expr(text: str) -> dict:
 
 # Labels for ai_context.instructions, in order. Generated from agent_context (the structured
 # copy), because Cube, ThoughtSpot, Omni and Power BI carry a metric's instructions into their
-# own AI field and read nothing in the ATLAN extension (research/downstream/readers).
+# own AI field and read nothing in the ATLAN extension.
 INSTRUCTION_LABELS = [("grain", "Grain"), ("population", "Counts"), ("exclusions", "Excludes"),
                       ("unit", "Unit"), ("reaggregation", "Re-aggregation"),
                       ("null_handling", "Nulls"), ("replaced_by", "Replaced by"),
-                      ("time_rule", "Time"), ("analyst_rule", "Rule"),
                       ("window", "Date range fixed in the source query, not applied by this metric")]
 
 
@@ -80,15 +84,16 @@ def instructions(ctx: dict) -> str:
         v = ctx.get(key)
         if v in (None, "", [], {}):
             continue
-        lines.append(f"{label}: {'; '.join(v) if isinstance(v, list) else v}.")
+        sep = " AND " if key == "window" else "; "
+        lines.append(f"{label}: {sep.join(v) if isinstance(v, list) else v}.")
     return " ".join(lines)
 
 
 def field_note(ext: dict) -> str:
     """A dimension's values, value meanings and filter form as one string for the field's
     ai_context: as a string it reaches Snowflake (description), Databricks (comment), Cube,
-    ThoughtSpot, Omni, Power BI and Honeydew (research/downstream/readers). The ATLAN copy on the
-    field stays the structured, editable one."""
+    ThoughtSpot, Omni, Power BI and Honeydew. The ATLAN copy on the field stays the structured,
+    editable one."""
     parts = []
     if ext.get("values"):
         more = ", more exist" if ext.get("values_truncated") else ""
@@ -130,8 +135,12 @@ class _Model:
     """Datasets and fields for one registry record, keyed by the record's SQL aliases."""
 
     def __init__(self, d: dict):
-        self.alias_table = {d["source"]["alias"]: norm_table(d["source"].get("table") or d["source"]["entity"])}
+        if not (d["source"].get("table") or d["source"].get("entity")):
+            raise NotConvertible("source names no table")
+        self.alias_table = {d["source"].get("alias") or "m": norm_table(d["source"].get("table") or d["source"]["entity"])}
         for j in d.get("joins") or []:
+            if not j.get("to") or not j.get("name"):
+                raise NotConvertible("a join has no target table or no alias")
             self.alias_table[j["name"]] = norm_table(j["to"])
         taken: set[str] = set()
         self.alias_ds: dict[str, str] = {}
@@ -143,9 +152,9 @@ class _Model:
             self.alias_ds[alias] = name
         self.fields: dict[str, list[dict]] = {n: [] for n in self.alias_ds.values()}
         self.by_sql: dict[tuple[str, str], str] = {}     # (dataset, column sql) -> field name
-        self.base = d["source"]["alias"]
-        # a column may be qualified by the table's name instead of its alias
-        # (e.g. a join on a key column of a wide table): the first alias registered for that table wins
+        self.base = d["source"].get("alias") or "m"
+        # a column may be qualified by the table's name instead of its alias: the first alias
+        # registered for that table wins
         self.table_alias: dict[str, str] = {}
         self.short_alias: dict[str, str | None] = {}
         for alias, table in self.alias_table.items():
@@ -216,8 +225,8 @@ class _Model:
         for c in list(tree.find_all(exp.Column)):
             alias = self.alias_of(c)
             if alias is None:
-                continue
-            fname = self.field(alias, exp.column(c.name))
+                raise NotConvertible(f"column {c.sql(dialect=DIALECT)} reads a table the metric does not declare")
+            fname = self.field(alias, exp.column(c.name, quoted=c.this.quoted))   # "MyCol" stays "MyCol"
             new = exp.column(fname, table=self.alias_ds[alias])
             if c is tree:                                 # the whole text is one column
                 tree = new
@@ -245,34 +254,39 @@ DATE_LIT = re.compile(r"^\d{4}-\d{2}-\d{2}")
 RELATIVE = (exp.CurrentDate, exp.CurrentTimestamp)
 
 
-def _absolute_window(pred: str, params: list[dict]) -> bool:
-    """A filter that pins a column to fixed dates ('2026-03-18', or a date parameter): an
-    analyst's one-off window, not part of the metric. Windows relative to the current date
-    (last 30 days) stay in the metric."""
+RANGE = (exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Between)
+
+
+def _date_token(node: exp.Expression, date_params: set[str]) -> bool:
+    return any((isinstance(x, exp.Literal) and x.is_string and DATE_LIT.match(x.this))
+               or (isinstance(x, exp.Placeholder) and x.name in date_params)
+               for x in node.find_all(exp.Literal, exp.Placeholder))
+
+
+def split_window(pred: str, params: list[dict]) -> tuple[list[str], list[str]]:
+    """A filter's conjuncts split into (window, kept). A window conjunct is a range comparison
+    (>=, <, BETWEEN) of a column against a fixed date ('2026-03-18', or a date parameter): an
+    analyst's one-off range, parked in agent_context.window and named in the instructions, not
+    applied by the metric. Everything else, including an equality to one date and a range
+    relative to the current date, is part of the metric and stays in it."""
     tree = sqlglot.parse_one(pred, read=DIALECT)
-    if tree.find(*RELATIVE) or re.search(r"\b(GETDATE|SYSDATE|NOW)\s*\(", pred, re.I):
-        return False
+    conjuncts = list(tree.flatten()) if isinstance(tree, exp.And) else [tree]
     date_params = {p["name"] for p in params if p.get("datatype") in ("date", "timestamp")}
-    if any(f":{n}" in pred for n in date_params):
-        return True
-    return any(isinstance(l, exp.Literal) and l.is_string and DATE_LIT.match(l.this)
-               for cmp in tree.find_all(exp.GT, exp.GTE, exp.LT, exp.LTE, exp.EQ, exp.Between)
-               for l in cmp.find_all(exp.Literal))
-
-
-def window_of(art: dict) -> list[str]:
-    """The record's fixed date range as predicates on Ossie fields with parameter defaults bound.
-    Not written into the Ossie file (decision of 2026-10-22: the range is the analyst's, not the
-    metric's); the equivalence and dbt checks apply it at query time to compare like with like."""
-    art = copy.deepcopy(art)
-    if re.match(r"\s*(WITH|SELECT)\b", art["metadata"]["definition"]["formula"], re.I):
-        art = split_query(art)[0]                    # the WHERE of a whole query becomes filters
-    d = art["metadata"]["definition"]
-    _normalize_source(d)
-    m = _Model(d)
-    plist = d["source"].get("parameters") or []
-    params = {p["name"]: _literal(p) for p in plist if p.get("default") is not None}
-    return [m.rewrite(f, params) for f in d.get("filters") or [] if _absolute_window(f, plist)]
+    window, kept = [], []
+    for c in conjuncts:
+        is_window = False
+        if isinstance(c, RANGE) and not c.find(*RELATIVE) and not re.search(r"\b(GETDATE|SYSDATE|NOW)\s*\(", c.sql(), re.I):
+            if isinstance(c, exp.Between):
+                sides = [c.this, c.args["low"], c.args["high"]]
+                is_window = (c.this.find(exp.Column) is not None and not _date_token(c.this, date_params)
+                             and all(_date_token(x, date_params) and not x.find(exp.Column) for x in sides[1:]))
+            else:
+                a, b = c.left, c.right
+                col_side = [x for x in (a, b) if x.find(exp.Column) is not None and not _date_token(x, date_params)]
+                date_side = [x for x in (a, b) if _date_token(x, date_params) and x.find(exp.Column) is None]
+                is_window = len(col_side) == 1 and len(date_side) == 1
+        (window if is_window else kept).append(c.sql(dialect=DIALECT))
+    return window, kept
 
 
 def _join_predicate(j: dict, m: "_Model") -> exp.Expression:
@@ -293,8 +307,13 @@ def _wrap_aggregates(sql: str, predicate: str) -> str:
     """Every aggregate f(x) becomes f(CASE WHEN predicate THEN x END); COUNT(*) counts 1."""
     tree = sqlglot.parse_one(sql, read=DIALECT)
     cond = sqlglot.parse_one(predicate, read=DIALECT)
+    if tree.find(exp.WithinGroup):
+        raise NotConvertible("a filter cannot be folded into an ordered-set aggregate (WITHIN GROUP)")
     for agg in list(tree.find_all(exp.AggFunc)):
         arg = agg.this
+        others = [v for k, v in agg.args.items() if k != "this" and isinstance(v, exp.Expression)]
+        if any(o.find(exp.Column) for o in others):      # MIN_BY(value, order): the order side would stay unfiltered
+            raise NotConvertible(f"a filter cannot be folded into {agg.sql_name()}: it reads more than one column")
         distinct = isinstance(arg, exp.Distinct)
         if distinct and len(arg.expressions) > 1:          # COUNT(DISTINCT a, b): wrap every column
             arg.set("expressions", [exp.Case(ifs=[exp.If(this=cond.copy(), true=e.copy())]) for e in arg.expressions])
@@ -324,11 +343,6 @@ def _get(d: dict, path: str):
 
 def _semantics(d: dict) -> dict:
     out = {k: _get(d, p) for k, p in SEMANTICS.items()}
-    e6 = (d.get("extensions") or {}).get("realbench_e6") or {}     # one producer's extension: time rule, analyst rule
-    if e6.get("time") not in (None, "none"):
-        out["time_rule"] = e6["time"]
-    if e6.get("rule"):
-        out["analyst_rule"] = e6["rule"]
     return {k: v for k, v in out.items() if v not in (None, "", [], {})}
 
 
@@ -440,7 +454,8 @@ def split_query(art: dict) -> list[dict]:
     for g in group:                                 # GROUP BY 1, 2 -> the select items
         if isinstance(g, exp.Literal) and g.is_int:
             continue
-        if not any(inner.sql() == g.sql() for _, inner in dims):
+        if not any(inner.sql() == g.sql() or (isinstance(g, exp.Column) and not g.table and g.name == n)
+                   for n, inner in dims):                # GROUP BY <select alias> is that select item
             dims.append((g.alias_or_name if isinstance(g, exp.Column) else _slug(g.sql()), g))
     for _, inner in dims + outs:                    # unqualified columns belong to the base table
         for c in inner.find_all(exp.Column):
@@ -468,6 +483,9 @@ def split_query(art: dict) -> list[dict]:
         rd["formula"] = inner.sql(dialect=DIALECT)
         rd["source"] = {**rd["source"], "alias": base_alias, "table": table(src), "sql": None,
                         "entity": table(src)}
+        orig = d.get("source", {}).get("alias")      # structured filters may still use the record's alias
+        if orig and orig != base_alias and orig not in {j["name"] for j in joins}:
+            rd["source"]["_aliases"] = {**(rd["source"].get("_aliases") or {}), orig: base_alias}
         rd["joins"] = joins
         rd["filters"] = filters + list(d.get("filters") or [])
         rd["dimensions"] = [{"name": _slug(n), "sql": x.sql(dialect=DIALECT), "datatype": "unknown",
@@ -488,7 +506,7 @@ TEMPLATE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 
 # Registry `dialect` values whose formula is SQL. Anything else (promql, mixpanel, slack ...) has
-# no Ossie expression. Parsing is still done as Snowflake: see the dialect note in the README.
+# no Ossie expression.
 SQL_DIALECTS = {"snowflake", "ansi", "ansi_sql", "sql", "postgres", "postgresql", "bigquery", "duckdb",
                 "databricks", "spark", "redshift", "mysql", "tsql", "mssql", "trino", "presto", "athena",
                 "clickhouse", "oracle", "sqlite"}
@@ -506,18 +524,31 @@ PARSE_DIALECT = {"snowflake": "snowflake", "athena": "athena", "trino": "trino",
                  "oracle": "oracle", "sqlite": "sqlite", "ansi": "snowflake", "ansi_sql": "snowflake", "sql": "snowflake"}
 
 
+@contextlib.contextmanager
+def _parsing(dialect: str | None):
+    """Parse and write SQL in this registry dialect for the duration of one conversion."""
+    global DIALECT
+    saved, DIALECT = DIALECT, PARSE_DIALECT.get((dialect or "").lower(), "snowflake")
+    try:
+        yield
+    finally:
+        DIALECT = saved
+
+
 def convert(art: dict) -> list[tuple[dict, list[dict], list[dict]]]:
     """Any registry metric -> list of (metric, datasets, relationships). Steps 0 to 6."""
-    d = art["metadata"]["definition"]
+    d = (art.get("metadata") or {}).get("definition") if isinstance(art, dict) else None
+    if not isinstance(d, dict) or not art.get("name") or not art.get("id"):
+        raise NotConvertible("record has no name, id or metadata.definition")
+    if not isinstance(d.get("formula"), str) or not d["formula"].strip():
+        raise NotConvertible("formula is empty")
+    if not isinstance(d.get("source"), dict):
+        raise NotConvertible("definition has no source")
     dialect = (d.get("dialect") or "").lower()
     if dialect and dialect not in SQL_DIALECTS:
         raise NotConvertible(f"dialect {dialect!r} is not SQL, so the formula has no Ossie expression")
-    global DIALECT
-    saved, DIALECT = DIALECT, PARSE_DIALECT.get(dialect, "snowflake")
-    try:
+    with _parsing(dialect):
         return _convert(art)
-    finally:
-        DIALECT = saved
 
 
 def _convert(art: dict) -> list[tuple[dict, list[dict], list[dict]]]:
@@ -547,24 +578,11 @@ def _convert(art: dict) -> list[tuple[dict, list[dict], list[dict]]]:
         raise NotConvertible(f"formula does not parse: {str(e).splitlines()[0][:80]}") from None
 
 
-def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
-    art = copy.deepcopy(art)
-    d = art["metadata"]["definition"]
-    if re.match(r"\s*(WITH|SELECT)\b", d["formula"], re.I):
-        raise NotConvertible("whole-query formula: run split_query() first (convert() does)")
-    _normalize_source(d)
-    top = sqlglot.parse_one(d["formula"], read=DIALECT)
-    if isinstance(top, (exp.Predicate, exp.Not, exp.And, exp.Or)):
-        raise NotConvertible("formula is a yes/no test over an aggregate, not a measure")
-    if not top.find(exp.AggFunc):
-        refs = {c.name.lower() for c in top.find_all(exp.Column)} & {x.lower() for x in d.get("depends_on") or []}
-        if refs:
-            raise NotConvertible("formula is built from other metrics (" + ", ".join(sorted(refs)) + "); "
-                                 "Ossie does not define metric references")
-        raise NotConvertible("no aggregate output (a row listing, not a measure)")
-    m = _Model(d)
-    # a parameter with no default that only picks one value of a column (`col = :p`, the
-    # per-account metrics) becomes a dimension on that column (decision of 2026-10-22)
+def _params_to_dimensions(d: dict) -> list[str]:
+    """A parameter with no default that only picks one value of a column (`col = :p`, the
+    per-account metrics) becomes a dimension on that column; the filter that used it is removed
+    and returned. A no-default parameter used any other way is NotConvertible."""
+    removed = []
     for p in list(d["source"].get("parameters") or []):
         if p.get("default") is not None:
             continue
@@ -579,14 +597,55 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         if hit:
             key, f, col = hit
             d[key] = [x for x in d[key] if x != f]
+            removed.append(f)
             if not any(sqlglot.parse_one(x["sql"], read=DIALECT) == col for x in d.get("dimensions") or []):
                 d.setdefault("dimensions", []).append({"name": col.name.lower(), "kind": "categorical",
                                                        "sql": col.sql(dialect=DIALECT),
                                                        "datatype": p.get("datatype") or "string"})
             d["source"]["parameters"] = [x for x in d["source"]["parameters"] if x is not p]
+            still = [t for t in (d.get("formula"), *(d.get("filters") or []), *(d.get("mandatory_filters") or []))
+                     if t and re.search(rf"(?<![A-Za-z0-9_]):{re.escape(p['name'])}(?![A-Za-z0-9_])", t)]
+            if still:
+                raise NotConvertible(f"parameter {p['name']!r} has no default and is used beyond "
+                                     f"`{col.sql(dialect=DIALECT)} = :{p['name']}`")
+    return removed
+
+
+def unfolded_filters(art: dict) -> list[str]:
+    """The record's filters that are NOT folded into the Ossie expression: fixed date windows and
+    the per-account parameter filters. A write-back that rewrites the formula keeps these."""
+    art = copy.deepcopy(art)
+    d = art["metadata"]["definition"]
+    with _parsing(d.get("dialect")):
+        if re.match(r"\s*(WITH|SELECT)\b", d["formula"], re.I):
+            d = split_query(art)[0]["metadata"]["definition"]
+        _normalize_source(d)
+        removed = _params_to_dimensions(d)
+        plist = d["source"].get("parameters") or []
+        window = [w for f in d.get("filters") or [] for w in split_window(f, plist)[0]]
+    return removed + window
+
+
+def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
+    art = copy.deepcopy(art)
+    d = art["metadata"]["definition"]
+    if re.match(r"\s*(WITH|SELECT)\b", d["formula"], re.I):
+        raise NotConvertible("whole-query formula: run split_query() first (convert() does)")
+    _normalize_source(d)
+    top = sqlglot.parse_one(d["formula"], read=DIALECT)
+    if isinstance(top, (exp.Predicate, exp.Not, exp.And, exp.Or)):
+        raise NotConvertible("formula is a yes/no test over an aggregate, not a measure")
+    refs = {c.name.lower() for c in top.find_all(exp.Column)} & {x.lower() for x in d.get("depends_on") or []}
+    if refs:
+        raise NotConvertible("formula is built from other metrics (" + ", ".join(sorted(refs)) + "); "
+                             "Ossie does not define metric references")
+    if not top.find(exp.AggFunc):
+        raise NotConvertible("no aggregate output (a row listing, not a measure)")
+    m = _Model(d)
+    _params_to_dimensions(d)
     if any("cardinality assumed" in (j.get("origin") or "") for j in d.get("joins") or []):
         raise NotConvertible("join read from SQL with no declared cardinality; only declared "
-                             "many_to_one joins are written (decision of 2026-10-22)")
+                             "many_to_one joins are written")
     params = {p["name"]: _literal(p) for p in d["source"].get("parameters") or []}
 
     # relationships: ON clause of each join -> key fields on both sides
@@ -601,6 +660,9 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         for e in eqs:
             sides = [e.left, e.right]
             owners = [{m.alias_of(c) for c in s.find_all(exp.Column)} for s in sides]
+            if not owners[0] or not owners[1]:
+                raise NotConvertible(f"join {j['name']!r}: `{e.sql(dialect=DIALECT)}` is not a key equality; "
+                                     "only key equalities have an Ossie form")
             if None in owners[0] | owners[1]:
                 raise NotConvertible(f"join {j['name']!r}: its ON clause names a table the metric does not declare")
             owner_ds = [{m.alias_ds[a] for a in o} for o in owners]
@@ -651,8 +713,12 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
     # the metric: filters rewritten and moved inside every aggregate
     mand = [m.rewrite(f, params) for f in d.get("mandatory_filters") or []]
     plist = d["source"].get("parameters") or []
-    window = [f for f in d.get("filters") or [] if _absolute_window(f, plist)]
-    filt = [m.rewrite(f, params) for f in d.get("filters") or [] if f not in window]
+    window, kept = [], []
+    for f in d.get("filters") or []:
+        w, k = split_window(f, plist)
+        window += w
+        kept += k
+    filt = [m.rewrite(f, params) for f in kept]
     pred = " AND ".join(f"({p})" for p in mand + filt)
     expr = m.rewrite(d["formula"], params)
     if pred:
@@ -661,7 +727,7 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         raise NotConvertible("formula has an unbound positional parameter (?) with no name or default")
     if sqlglot.parse_one(expr, read=DIALECT).find(exp.ArrayAgg, exp.ArrayUniqueAgg, exp.ObjectAgg, exp.GroupConcat):
         raise NotConvertible("aggregate returns a list, not a number (ARRAY_AGG, LISTAGG, OBJECT_AGG)")
-    if sqlglot.parse_one(expr, read=DIALECT).find(exp.Select, exp.Exists):
+    if sqlglot.parse_one(expr, read=DIALECT).find(exp.Select, exp.Exists, exp.Window):
         raise NotConvertible("formula uses a subquery or window function")
     if not sqlglot.parse_one(expr, read=DIALECT).find(exp.AggFunc):
         raise NotConvertible("aggregate function not in Ossie's portable SQL")
@@ -670,12 +736,12 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
     # a registry name may be a display string ("MAU change vs 60-90 days ago"); Ossie and every
     # tool want an identifier. The registry id in the extension still maps it back.
     metric = {"name": _ident(art["name"]), "expression": _expr(expr)}
-    if d["output"].get("datatype") in DTYPE:
+    if (d.get("output") or {}).get("datatype") in DTYPE:
         metric["datatype"] = DTYPE[d["output"]["datatype"]]
-    metric["description"] = art["description"]
+    metric["description"] = art.get("description") or ""
     qs = [e["question"] for e in d.get("examples") or [] if e.get("question")]
     ai = {}
-    text = instructions({**_semantics(d), **({"window": " AND ".join(window)} if window else {})})
+    text = instructions({**_semantics(d), **({"window": window} if window else {})})
     if text:
         ai["instructions"] = text
     if qs:
@@ -683,7 +749,9 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
     if ai:
         metric["ai_context"] = ai
     prov = d.get("provenance") or {}
-    ctx = {**_semantics(d), "sql_dialect": d["dialect"]}
+    ctx = {**_semantics(d), "sql_dialect": d.get("dialect") or "snowflake"}
+    if window:
+        ctx["window"] = window                        # parked, not applied: see split_window
     if dim_refs:
         ctx["dimensions"] = dim_refs                  # this metric's group-by fields
     if rels:
@@ -695,18 +763,16 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
     if d.get("depends_on"):
         ctx["depends_on"] = [_ident(x) for x in d["depends_on"]]   # the Ossie names of those metrics
     # example and verified SQL are the heaviest text; a query split into several metrics carries
-    # them on its first part only (decision of 2026-10-22; the parts share the registry id)
+    # them on its first part only (the parts share the registry id)
     exs = [{"sql": e["sql"]} for e in d.get("examples") or [] if e.get("sql")]   # results are not carried
     if exs and not art.get("_sibling"):
         ctx["examples"] = exs
     if prov.get("observed_sql") and not art.get("_sibling") and (not exs or prov["observed_sql"] != exs[0].get("sql")):
         ctx["verified_sql"] = prov["observed_sql"]
-    e6 = (d.get("extensions") or {}).get("realbench_e6") or {}
-    trust = {"score": prov.get("trust_score"), "witnessed": e6.get("witness_ok")}
-    if any(v is not None for v in trust.values()):
-        ctx["trust"] = trust
+    if prov.get("trust_score") is not None:
+        ctx["trust"] = {"score": prov["trust_score"]}
     metric["custom_extensions"] = [{"vendor_name": "ATLAN", "data": {
-        "registry": {"id": art["id"], "definition_version": d["version"],
+        "registry": {"id": art["id"], "definition_version": d.get("version"),
                      **({"output_column": art["output_column"]} if art.get("output_column") else {})},
         "agent_context": ctx}}]
     datasets = []
@@ -735,6 +801,8 @@ def _conflict(ds: dict, rels: dict, owner: dict, m: dict, dsl: list[dict], rl: l
         have = ds.get(d["name"])
         if have is None:
             continue
+        if have.get("source") != d.get("source"):
+            return f"dataset {d['name']}: {have.get('source')} and {d.get('source')} share a name"
         for f in d.get("fields", []):
             g = next((x for x in have.get("fields", []) if x["name"] == f["name"]), None)
             if g is None:
@@ -763,19 +831,21 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
     the same name are shared (they are dataset-level); what is per metric stays on the metric.
     Two metrics may describe a shared field in different words (the first wording is kept and
     noted); if they define it differently (expression, type, time role) the document cannot hold
-    both: on_conflict="raise" raises ValueError, "skip" leaves the later metric out and records
-    why in registry.merge_notes. The registry workspace is model-level: one ATLAN extension."""
+    both: on_conflict="raise" raises ValueError, "skip" leaves the later metric out. What was
+    left out or reworded is returned under the private key `_merge_notes` as (kind, metric,
+    detail) tuples, kind "left_out" or "prose"; export() drops it, so the document never carries
+    diagnostics. The registry workspace is model-level: one ATLAN extension."""
     ds: dict[str, dict] = {}
     rels: dict[str, dict] = {}
     metrics = []
-    notes: list[str] = []
+    notes: list[tuple[str, str, str]] = []
     owner: dict[tuple[str, str], str] = {}        # (dataset, field) -> first metric that defined it
     for m, dsl, rl in parts:
         why = _conflict(ds, rels, owner, m, dsl, rl)
         if why:
             if on_conflict != "skip":
                 raise ValueError(why)
-            notes.append(f"left out {m['name']}: {why}")
+            notes.append(("left_out", m["name"], why))
             continue
         metrics.append(m)
         owner.setdefault("_metrics", set()).add(m["name"])
@@ -796,8 +866,8 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
                     if k == "custom_extensions":
                         continue
                     if k in g and g[k] != v:               # prose only (checked above): first wording wins
-                        notes.append(f"{d['name']}.{f['name']}: {k} differs between {owner[(d['name'], f['name'])]} "
-                                     f"and {m['name']}; kept the first")
+                        notes.append(("prose", m["name"], f"{d['name']}.{f['name']}: {k} differs from "
+                                      f"{owner[(d['name'], f['name'])]}; kept the first"))
                         continue
                     g.setdefault(k, v)
                 for x in f.get("custom_extensions") or []:
@@ -821,18 +891,17 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
     if rels:
         doc["relationships"] = list(rels.values())
     doc["metrics"] = metrics
-    if workspace_id or notes:
-        reg = {"workspace_id": workspace_id} if workspace_id else {}
-        if notes:
-            reg["merge_notes"] = notes
-        doc["custom_extensions"] = [{"vendor_name": "ATLAN", "data": {"registry": reg}}]
+    if workspace_id:
+        doc["custom_extensions"] = [{"vendor_name": "ATLAN", "data": {"registry": {"workspace_id": workspace_id}}}]
+    if notes:
+        doc["_merge_notes"] = notes
     return doc
 
 
 def export(doc: dict) -> dict:
-    """The strict Ossie 0.2.0.dev0 form: every ATLAN extension's data as a JSON string."""
-    import json
-    out = json.loads(json.dumps(doc))
+    """The strict Ossie 0.2.0.dev0 form: every ATLAN extension's data as a JSON string; private
+    keys (`_merge_notes`) dropped."""
+    out = json.loads(json.dumps({k: v for k, v in doc.items() if not k.startswith("_")}))
     holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", [])] \
         + out.get("relationships", []) + out["metrics"]
     for h in holders:
@@ -847,9 +916,20 @@ def _registry_of(m: dict) -> dict:
                  if x["vendor_name"] == "ATLAN"), {})
 
 
-def _agent_context(m: dict) -> dict:
+def agent_context(m: dict) -> dict:
+    """The ATLAN agent_context block of an Ossie metric ({} when there is none)."""
     return next((x["data"].get("agent_context") or {} for x in m.get("custom_extensions") or []
                  if x["vendor_name"] == "ATLAN"), {})
+
+
+_agent_context = agent_context
+
+
+def _metric(doc: dict, name: str) -> dict:
+    m = next((x for x in doc.get("metrics") or [] if x.get("name") == name), None)
+    if m is None:
+        raise LookupError(f"no metric named {name!r} in the document")
+    return m
 
 
 # ---------- Ossie -> Atlan
@@ -877,7 +957,7 @@ def _reverse_parts(doc: dict, m: dict) -> dict:
     own agent_context (relationships / dimensions / timeframe_field); a metric without it (new,
     authored in Ossie) uses the relationships among the datasets its expression reads."""
     ctx = _agent_context(m)
-    ds = {d["name"]: d for d in doc["datasets"]}
+    ds = {d["name"]: d for d in doc.get("datasets") or []}
     from_registry = any(x["vendor_name"] == "ATLAN" and "registry" in x["data"]
                         for x in m.get("custom_extensions") or [])
     names = ctx.get("relationships", [] if from_registry else None)   # converted: absent = none
@@ -900,22 +980,37 @@ def _reverse_parts(doc: dict, m: dict) -> dict:
                                  f"{'no dataset' if not homes else 'several datasets'} define it")
         c.set("table", exp.to_identifier(homes[0]))
     expr_text = tree0.sql(dialect=DIALECT)
-    used = set(re.findall(r"\b([a-z_][a-z0-9_]*)\.(?:[a-z_]|\*)", expr_text)) & set(ds)
+    used = {c.table for c in tree0.find_all(exp.Column) if c.table in ds}
     targets = {r["to"] for r in rels}
-    base = next((n for n in ds if n in used and n not in targets), next(iter(used), None))
+    base = next((n for n in ds if n in used and n not in targets), next(iter(sorted(used)), None))
     if base is None:
         raise NotConvertible("the expression reads no dataset column, so there is no source table to rebuild")
-    keep = {base} | {n for r in rels for n in (r["from"], r["to"])}
-    rels = [r for r in rels if r["from"] in keep and r["to"] in keep]
+    # the joins: relationships reachable from the base, many side to one side
+    reached, chain = {base}, []
+    while True:
+        step = [r for r in rels if r["from"] in reached and r["to"] not in reached]
+        if not step:
+            break
+        chain += step
+        reached |= {r["to"] for r in step}
+    stray = used - reached
+    if stray:
+        raise NotConvertible(f"the expression reads {', '.join(sorted(stray))} with no relationship from {base}")
+    rels = chain
+    for n in reached | used:
+        if not ds[n].get("source"):
+            raise NotConvertible(f"dataset {n!r} has no source table")
     alias = {base: "m"}
     for i, r in enumerate(rels):
         alias.setdefault(r["to"], f"t{i + 1}")
-    for n in ds:
-        alias.setdefault(n, f"x_{n}")
 
     def field_sql(dname, fname):
+        if fname == "*":                                  # COUNT(dataset.*)
+            return exp.Column(this=exp.Star(), table=exp.to_identifier(alias[dname]))
         f = next((f for f in ds[dname].get("fields", []) if f["name"] == fname), None)
-        node = sqlglot.parse_one(f["expression"]["dialects"][0]["expression"] if f else fname.upper(), read=DIALECT)
+        # a column no field declares (files from dbt's converter write SUM(orders.amount) over
+        # physical columns) is read as that column of the dataset's source table, as written
+        node = sqlglot.parse_one(f["expression"]["dialects"][0]["expression"], read=DIALECT) if f else exp.column(fname)
         for c in ([node] if isinstance(node, exp.Column) else list(node.find_all(exp.Column))):
             c.set("table", exp.to_identifier(alias[dname]))
         return node
@@ -951,36 +1046,49 @@ def write_back(doc: dict, metric_name: str, record: dict, registry_version: int 
     returns a patch for the registry: {} when nothing an editor can change differs, else
     {"expected_version", "new_version", "set": {registry field: new value}}. Raises Conflict when
     the registry's current definition version is not the one the Ossie file was built from."""
-    m = next(x for x in doc["metrics"] if x["name"] == metric_name)
-    reg = next(x["data"]["registry"] for x in m["custom_extensions"] if x["vendor_name"] == "ATLAN")
+    m = _metric(doc, metric_name)
+    reg = _registry_of(m)
+    if reg.get("id") != record.get("id"):
+        raise NotWritable(f"{metric_name!r} was made from registry metric {reg.get('id')!r}, not {record.get('id')!r}")
     current = registry_version if registry_version is not None else record["metadata"]["definition"]["version"]
     if current != reg["definition_version"]:
         raise Conflict(f"registry is at definition version {current}, Ossie file was built from "
                        f"{reg['definition_version']}")
     converted = convert(record)
-    # a split metric is matched by the output column it came from, so a renamed part is still found
+    # a split metric is matched by the output column it came from, a single metric by the
+    # registry id already checked above: a renamed metric is still found
     key = reg.get("output_column")
-    parts = {(_registry_of(x[0]).get("output_column") if key else x[0]["name"]): x for x in converted}
-    if (key or metric_name) not in parts:
-        raise NotWritable(f"{metric_name!r} is not produced by registry metric {record['name']!r}")
-    fm, fds, frels = parts[key or metric_name]
+    if key:
+        part = next((x for x in converted if _registry_of(x[0]).get("output_column") == key), None)
+        if part is None:
+            raise NotWritable(f"{metric_name!r} is not produced by registry metric {record['name']!r}")
+    else:
+        part = converted[0]
+    fm, fds, frels = part
     fdoc = {"datasets": fds, "relationships": frels, "metrics": [fm]}
     split = len(converted) > 1 or bool(key)
-    mine, theirs = _reverse_parts(doc, m), _reverse_parts(fdoc, fm)
+    with _parsing(record["metadata"]["definition"].get("dialect")):
+        mine, theirs = _reverse_parts(doc, m), _reverse_parts(fdoc, fm)
     patch = {}
     if m["name"] != fm["name"]:
         patch["name"] = m["name"]
     if m.get("description") != fm.get("description"):
-        patch["description"] = m.get("description")
+        desc = m.get("description") or ""
+        if split:                                     # the generated "This part: ..." sentence is not registry text
+            base_desc = (record.get("description") or "").rstrip(".")
+            suffix = fm["description"][len(base_desc):]      # ". This part: <col> = <aggregate>."
+            desc = desc.replace(suffix, "").strip()
+        if desc != (record.get("description") or ""):
+            patch["description"] = desc
     said = (m.get("ai_context") or {}).get("instructions")
     if "instructions" in (m.get("ai_context") or {}) and said != (fm.get("ai_context") or {}).get("instructions"):
         raise NotWritable("ai_context.instructions is generated from agent_context; edit the "
                           "agent_context keys (grain, population, ...) instead")
     if m.get("datatype") != fm.get("datatype"):
         patch["output.datatype"] = DTYPE_BACK.get(m.get("datatype"), "unknown")
-    if m["expression"] != fm["expression"]:
-        patch["formula"] = mine["formula"]          # filters are now inside it
-        patch["filters"] = []
+    if mine["formula"] != theirs["formula"]:
+        patch["formula"] = mine["formula"]          # the folded filters are now inside it
+        patch["filters"] = unfolded_filters(record)   # the windows and parameter picks were never folded
         patch["mandatory_filters"] = []
     q_now = (m.get("ai_context") or {}).get("examples") or []
     if q_now != (fm.get("ai_context") or {}).get("examples", []):
@@ -1015,10 +1123,11 @@ def _zip_longest(qs: list, exs: list) -> list[tuple]:
 def to_registry(doc: dict, metric_name: str) -> dict:
     """New-metric case (no registry id): rebuild a registry definition from Ossie alone.
     Filters stay inside the formula (Ossie cannot say which CASE WHEN was a filter)."""
-    m = next(x for x in doc["metrics"] if x["name"] == metric_name)
-    parts = _reverse_parts(doc, m)
-    ext = next((x["data"] for x in m.get("custom_extensions") or [] if x["vendor_name"] == "ATLAN"), {})
-    dialect = (ext.get("agent_context") or {}).get("sql_dialect", "snowflake")
+    m = _metric(doc, metric_name)
+    ctx0 = _agent_context(m)
+    dialect = ctx0.get("sql_dialect", "snowflake")
+    with _parsing(dialect):
+        parts = _reverse_parts(doc, m)
     qs = (m.get("ai_context") or {}).get("examples") or []
     ctx = _agent_context(m)
     sem = {}
@@ -1039,6 +1148,7 @@ def to_registry(doc: dict, metric_name: str) -> dict:
                    "parameters": parts["parameters"],
                    **({"timeframe_column": parts["timeframe_column"]} if parts["timeframe_column"] else {})},
         "joins": parts["joins"], "dimensions": parts["dimensions"],
+        **({"filters": list(ctx.get("window"))} if ctx.get("window") else {}),   # parked, see split_window
         # questions from Ossie's own slot, SQL from the Atlan block; paired by position
         "examples": [{**({"question": q} if q else {}), "sql": e.get("sql", ""), "source": "ossie"}
                      for q, e in _zip_longest(qs, ctx.get("examples") or [])],

@@ -19,7 +19,7 @@
 
     ossie-atlan import -i RECORDS.json [-o model.yaml] [--name MODEL] [--workspace WS] [--metric NAME ...]
     ossie-atlan export -i model.yaml --metric NAME [-o definition.json]
-    ossie-atlan write-back -i model.yaml --metric NAME --record RECORD.json
+    ossie-atlan write-back -i model.yaml --metric NAME --record RECORD.json [--registry-version N]
 
 `import` converts registry metric records (one record, a list, or a registry export
 `{"artifacts": [...]}`) into one Ossie document; with no `-o` the YAML goes to stdout. Every
@@ -68,6 +68,7 @@ def _build_parser():
     wb.add_argument("-i", "--input", required=True, help="Ossie YAML file")
     wb.add_argument("--metric", required=True, help="Ossie metric name")
     wb.add_argument("--record", required=True, help="the registry record the file was made from")
+    wb.add_argument("--registry-version", type=int, help="the registry's current definition version, when known")
     return p
 
 
@@ -78,8 +79,10 @@ def main(argv=None) -> int:
             recs = [r for r in _records(args.input) if (not args.metric or r["name"] in args.metric)
                     and (not args.workspace or r.get("workspace_id") == args.workspace)]
             doc, issues = convert_registry_to_ossie(recs, name=args.name)
-            for issue in issues:
-                print(issue, file=sys.stderr)
+            if issues:
+                print(f"{len(issues)} conversion issue(s):", file=sys.stderr)
+                for issue in issues:
+                    print(f"  {issue}", file=sys.stderr)
             if not doc["metrics"]:
                 print("nothing to write: no record converted", file=sys.stderr)
                 return 1
@@ -89,15 +92,21 @@ def main(argv=None) -> int:
                   f"{len(issues)} issues", file=sys.stderr)
             return 0
         doc = yaml.safe_load(Path(args.input).read_text())
+        if not isinstance(doc, dict) or "datasets" not in doc or "metrics" not in doc:
+            raise ConversionError(f"{args.input} is not an Ossie document (no datasets/metrics)")
         if args.command == "export":
             out = json.dumps(convert_ossie_to_registry(doc, args.metric), indent=1, ensure_ascii=False)
             Path(args.output).write_text(out + "\n") if args.output else print(out)
             return 0
         rec = _records(args.record)[0]
-        print(json.dumps(write_back(doc, args.metric, rec), indent=1, ensure_ascii=False))
+        print(json.dumps(write_back(doc, args.metric, rec, args.registry_version), indent=1, ensure_ascii=False))
         return 0
     except (ConversionError, NotConvertible, NotWritable, Conflict) as e:
         print(f"error: {e}", file=sys.stderr)
+        return 1
+    except (KeyError, TypeError, AttributeError) as e:          # a file that is not what the verb expects
+        print(f"error: input is not {'registry records' if args.command == 'import' else 'an Ossie document'} "
+              f"({type(e).__name__}: {e})", file=sys.stderr)
         return 1
 
 

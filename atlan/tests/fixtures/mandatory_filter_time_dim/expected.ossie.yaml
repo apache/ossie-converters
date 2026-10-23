@@ -16,7 +16,7 @@
 # under the License.
 
 version: 0.2.0.dev0
-name: c360_mandatory_filter
+name: mandatory_filter_time_dim
 description: COUNT DISTINCT with a mandatory filter and a time dimension
 datasets:
 - name: store_returns

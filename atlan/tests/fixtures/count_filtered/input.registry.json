@@ -33,13 +33,7 @@
    "provenance": {
     "source": "synthetic"
    },
-   "extensions": {
-    "realbench_e6": {
-     "time": "point-in-time snapshot",
-     "rule": "Filters on C_PREFERRED_CUST_FLAG = 'Y'",
-     "witness_ok": true
-    }
-   },
+   "extensions": {},
    "formula": "COUNT(*)",
    "source": {
     "sql": "SELECT * FROM TPCDS.PUBLIC.CUSTOMER WHERE C_PREFERRED_CUST_FLAG = 'Y'",

@@ -29,8 +29,10 @@ from __future__ import annotations
 
 from . import converter as _c
 from ._common import ConversionError, load
-from .converter import NotConvertible, NotWritable, Conflict, export
+from .converter import Conflict, NotConvertible, NotWritable, agent_context, export
 from .converter_issues import ConverterIssue, IssueLog, IssueType
+
+OSSIE_VERSION = "0.2.0.dev0"
 
 
 def convert_registry_to_ossie(records: list[dict], name: str = "atlan_registry",
@@ -40,40 +42,43 @@ def convert_registry_to_ossie(records: list[dict], name: str = "atlan_registry",
     Each record converts on its own; one that Ossie cannot express becomes a
     METRIC_NOT_CONVERTIBLE issue and the rest still convert. Records of one workspace share
     datasets and fields; two records that define one name differently raise a MERGE_CONFLICT
-    and the later one is left out.
+    and the later one is left out. Records of several workspaces cannot share a file, since
+    the workspace is model-level: that is a ConversionError.
     """
     issues, parts = IssueLog(), []
     for r in records:
         try:
             parts += _c.convert(r)
         except NotConvertible as e:
-            issues.add(IssueType.METRIC_NOT_CONVERTIBLE, r.get("name", "?"), str(e))
+            issues.add(IssueType.METRIC_NOT_CONVERTIBLE, (r.get("name") if isinstance(r, dict) else None) or "?", str(e))
+    ws = {r.get("workspace_id") for r in records if isinstance(r, dict)} - {None}
+    if len(ws) > 1:
+        raise ConversionError(f"records of {len(ws)} workspaces in one file; convert one workspace at a time")
     if not parts:
-        return {"version": "0.2.0.dev0", "name": name, "datasets": [], "metrics": []}, issues
-    ws = {r.get("workspace_id") for r in records} - {None}
-    merged = _c.merge(parts, name=name, description=description,
-                      workspace_id=ws.pop() if len(ws) == 1 else None, on_conflict="skip")
-    for note in _registry_block(merged).get("merge_notes", []):
-        kind = IssueType.MERGE_CONFLICT if note.startswith("left out") else IssueType.PROSE_DIFFERENCE_KEPT_FIRST
-        issues.add(kind, note.split(":", 1)[0], note)
+        return {"version": OSSIE_VERSION, "name": name, "datasets": [], "metrics": []}, issues
+    merged = _c.merge(parts, name=name, description=description, workspace_id=ws.pop() if ws else None,
+                      on_conflict="skip")
+    for kind, metric, why in merged.pop("_merge_notes", []):
+        issues.add(IssueType.MERGE_CONFLICT if kind == "left_out" else IssueType.PROSE_DIFFERENCE_KEPT_FIRST, metric, why)
     return export(merged), issues
 
 
 def convert_ossie_to_registry(doc: dict, metric: str) -> dict:
     """One Ossie metric -> a registry definition (the new-metric case: no registry id yet)."""
-    return _c.to_registry(load(doc), metric)
+    try:
+        return _c.to_registry(load(doc), metric)
+    except (LookupError, TypeError) as e:
+        raise ConversionError(str(e)) from None
 
 
-def write_back(doc: dict, metric: str, record: dict) -> dict:
-    """The registry patch an edited Ossie file implies for an existing record ({} if unchanged)."""
-    return _c.write_back(load(doc), metric, record)
-
-
-def _registry_block(merged: dict) -> dict:
-    for x in merged.get("custom_extensions") or []:
-        if x.get("vendor_name") == "ATLAN":
-            return x["data"].get("registry") or {}
-    return {}
+def write_back(doc: dict, metric: str, record: dict, registry_version: int | None = None) -> dict:
+    """The registry patch an edited Ossie file implies for an existing record ({} if unchanged).
+    `registry_version` is the registry's current definition version when known; a file built
+    from another version is a Conflict."""
+    try:
+        return _c.write_back(load(doc), metric, record, registry_version)
+    except (LookupError, TypeError) as e:
+        raise ConversionError(str(e)) from None
 
 
 __all__ = [
@@ -84,6 +89,7 @@ __all__ = [
     "IssueType",
     "NotConvertible",
     "NotWritable",
+    "agent_context",
     "convert_ossie_to_registry",
     "convert_registry_to_ossie",
     "write_back",

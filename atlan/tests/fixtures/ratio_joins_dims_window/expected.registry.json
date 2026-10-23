@@ -82,6 +82,10 @@
      "description": "Customer segment."
     }
    ],
+   "filters": [
+    "m.SS_SOLD_TIMESTAMP >= :start_date",
+    "m.SS_SOLD_TIMESTAMP < DATEADD(DAY, 1, :end_date)"
+   ],
    "examples": [
     {
      "question": "Which stores have the most sales per shopper this quarter?",

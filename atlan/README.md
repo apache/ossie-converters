@@ -99,13 +99,21 @@ for issue in issues:
 | `grain`, `population`, `exclusions`, `output.unit`, `aggregation.reaggregation`, `aggregation.null_handling` | `metrics[].ai_context.instructions` (generated sentence) **and** `custom_extensions[ATLAN].agent_context.<key>` (the value) |
 | `examples[].question` | `metrics[].ai_context.examples` |
 | `examples[].sql`, `dialect`, `source.parameters`, `depends_on`, `provenance.trust_score`, which fields are this metric's dimensions and time field | `custom_extensions[ATLAN].agent_context` |
+| a fixed date range in `filters` (`d >= '2026-04-01'`, `d < :end_date`) | `custom_extensions[ATLAN].agent_context.window` (parked as registry text, one predicate per conjunct) + a sentence in `ai_context.instructions`; **not** applied by the expression |
 | `id`, `definition.version` | `custom_extensions[ATLAN].registry` (the reference used to map back) |
 | `workspace_id` | `custom_extensions[ATLAN].registry.workspace_id` on the semantic model |
 
 Not carried, on purpose: `display_name` (the registry holds it under the id we carry),
-`artifact_status`, owner, source lineage, `search_text`, the registry's audit fields. A fixed
-date range in a formula (`WHERE d >= '2026-04-01'`) is not a structured key anywhere in
-Ossie: it is named in the instructions, and the metric expression carries no window.
+`artifact_status`, owner, source lineage, `search_text`, producer `extensions`, the registry's
+audit fields.
+
+A fixed date range is an analyst's one-off window, not part of the metric, so the Ossie
+expression does not apply it; nothing is lost, because the range is parked in
+`agent_context.window`, restored as `filters` by `export`, and kept by a write-back that
+rewrites the formula. Only a range comparison of a column against a fixed date (`>=`, `<`,
+`BETWEEN`, a date literal or a date parameter) counts as a window: an equality to one date, a
+range relative to the current date, and any other predicate in the same filter string stay in
+the metric.
 
 The extension data is written as a JSON string (strict 0.2.0 form), so every other converter
 reads the file.
@@ -124,6 +132,9 @@ consumer could run, so the record becomes an issue instead:
 - a metric defined in terms of other metrics (Ossie defines no metric references)
 - a non-SQL dialect (`promql`, and anything `sqlglot` cannot read)
 - a `source.alias` that names a joined table (a self-join the author did not mean)
+- a column whose qualifier is no declared table, or a join condition that is not a key equality
+- a filter over `MIN_BY`/`MAX_BY` or a `WITHIN GROUP` aggregate (folding the filter into one
+  argument would leave the ranking column unfiltered)
 
 ## Conversion issues
 

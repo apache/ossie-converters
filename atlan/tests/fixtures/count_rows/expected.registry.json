@@ -6,7 +6,7 @@
    "spec_version": "1.0-draft.4",
    "version": 1,
    "dialect": "snowflake",
-   "formula": "COUNT(*)",
+   "formula": "COUNT(m.*)",
    "aggregation": {
     "type": "custom"
    },

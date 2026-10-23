@@ -26,7 +26,7 @@ import pytest
 import yaml
 
 import _golden as golden
-from ossie_atlan import IssueType, cli, convert_ossie_to_registry, convert_registry_to_ossie, load
+from ossie_atlan import ConversionError, IssueType, cli, convert_ossie_to_registry, convert_registry_to_ossie, load
 from ossie_atlan import converter as A
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -90,7 +90,7 @@ def test_rebuilt_definition_validates_against_the_registry_schema(name):
     """Ossie -> registry output is a valid metric definition under the registry's own kind schema."""
     jsonschema = pytest.importorskip("jsonschema")
     kind = json.loads((HERE / "fixtures" / "metric_kind.json").read_text())
-    v = jsonschema.Draft202012Validator(kind["manifest"]["properties"]["definition"])
+    v = jsonschema.Draft202012Validator(kind)
     back = json.loads((golden.FIXTURES / name / "expected.registry.json").read_text())
     for metric, rec in back.items():
         assert not list(v.iter_errors(rec["definition"])), metric
@@ -129,7 +129,7 @@ def test_split_query_carries_example_sql_on_its_first_part_only():
 
 
 def test_account_parameter_becomes_a_dimension():
-    m = _ossie_yaml("studio_account_param_as_dimension")["metrics"][0]
+    m = _ossie_yaml("account_param_as_dimension")["metrics"][0]
     dims = json.loads(m["custom_extensions"][0]["data"])["agent_context"]["dimensions"]
     assert any(x.endswith(".store") for x in dims)
     assert ":store_sk" not in m["expression"]["dialects"][0]["expression"]
@@ -140,10 +140,12 @@ def test_reverse_restores_parameters_and_the_window_is_text_only():
     structured key anywhere in Ossie, only a sentence in the instructions."""
     doc = _ossie_yaml("ratio_joins_dims_window")
     m0 = load(doc)["metrics"][0]
-    assert "time_window" not in A._agent_context(m0)
+    assert A.agent_context(m0)["window"] == ["m.SS_SOLD_TIMESTAMP >= :start_date", "m.SS_SOLD_TIMESTAMP < DATEADD(DAY, 1, :end_date)"]
+    assert ":start_date" not in m0["expression"]["dialects"][0]["expression"]
     assert "Date range fixed in the source query" in m0["ai_context"]["instructions"]
     rec = convert_ossie_to_registry(doc, "sales_per_shopper")
     assert [p["name"] for p in rec["definition"]["source"]["parameters"]] == ["start_date", "end_date"]
+    assert rec["definition"]["filters"] == A.agent_context(m0)["window"]      # restored as a registry filter
 
 
 def test_all_cases_import_as_one_file_with_one_issue_per_refusal():
@@ -154,7 +156,8 @@ def test_all_cases_import_as_one_file_with_one_issue_per_refusal():
     # two cases define one name two ways (store_sales.sale_date with two expressions; customer
     # with two keys): one file cannot carry both, so the later record is left out with an issue
     conflicts = issues.of_type(IssueType.MERGE_CONFLICT)
-    assert {c.detail.split(":")[0] for c in conflicts} == {"left out sales_to_active_customers", "left out store_sale_errors"}
+    assert {c.element_name for c in conflicts} == {"sales_to_active_customers", "store_sale_errors"}
+    assert "_merge_notes" not in doc and "merge_notes" not in json.dumps(doc)
     assert len(doc["metrics"]) == sum(len(_ossie_yaml(n)["metrics"]) for n in OK) - len(conflicts)
 
 
@@ -166,7 +169,19 @@ def test_cli_import_export_write_back(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "[METRIC_NOT_CONVERTIBLE] customer_id_by_email" in err and "1 Ossie metrics from 2" in err
     assert cli.main(["export", "-i", str(out), "--metric", "preferred_customer_count"]) == 0
-    assert json.loads(capsys.readouterr().out)["definition"]["formula"]
+    assert json.loads(capsys.readouterr().out)["definition"]["formula"] == \
+        "COUNT(CASE WHEN (m.C_PREFERRED_CUST_FLAG = 'Y') THEN 1 END)"
+    assert cli.main(["export", "-i", str(out), "--metric", "nope"]) == 1
+    assert "no metric named 'nope'" in capsys.readouterr().err
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([{"name": "x"}]))
+    assert cli.main(["import", "-i", str(bad)]) == 1
+    assert "METRIC_NOT_CONVERTIBLE] x: record has no name, id or metadata.definition" in capsys.readouterr().err
+    bad.write_text("{\"foo\": 1}")
+    assert cli.main(["export", "-i", str(bad), "--metric", "x"]) == 1
+    assert "not an Ossie document" in capsys.readouterr().err
+    with pytest.raises(ConversionError, match="no metric named"):
+        convert_ossie_to_registry(yaml.safe_load(out.read_text()), "nope")
     one = tmp_path / "one.json"
     one.write_text(json.dumps(_input("count_filtered")))
     assert cli.main(["write-back", "-i", str(out), "--metric", "preferred_customer_count", "--record", str(one)]) == 0

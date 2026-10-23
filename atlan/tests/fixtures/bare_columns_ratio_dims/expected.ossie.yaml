@@ -16,7 +16,7 @@
 # under the License.
 
 version: 0.2.0.dev0
-name: c360_bare_ratio_dims
+name: bare_columns_ratio_dims
 description: a ratio over bare column names with six dimensions; the display-style name is slugged
 datasets:
 - name: store_monthly_snapshot

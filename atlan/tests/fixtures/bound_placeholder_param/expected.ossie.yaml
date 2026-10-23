@@ -16,7 +16,7 @@
 # under the License.
 
 version: 0.2.0.dev0
-name: studio_bound_param
+name: bound_placeholder_param
 description: a {{window_days}} placeholder bound to its declared default; a ROUND ratio
 datasets:
 - name: customer_survey
