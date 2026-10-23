@@ -241,11 +241,12 @@ def to_raw_type(datatype, dialect):
     return table.get(datatype)
 
 
-# Solid splits a table's columns into `facts` and `dimensions` by data type, using a
-# lowercase prefix match against this set (see semantic_layer_data_types.py in
-# solid-server). Mirrored here so an export of a hand-authored Apache Ossie model --
-# where no field carries the `dimension` block that records the original split -- lands
-# columns in the same bucket Solid would have chosen.
+# Solid splits a table's columns into `facts` and `dimensions` partly by data type, using
+# a lowercase prefix match against this set (see semantic_layer_data_types.py in
+# solid-server). Mirrored here so a field with nothing else to go on lands in the list
+# Solid's type rule would choose (see ossie_to_solid._field_role). Being a prefix match,
+# it makes BIGINT and SMALLINT dimensions and INTERVAL a fact, as it does in Solid. Solid
+# also weighs column names and cardinality, which an offline converter cannot see.
 _SOLID_FACT_TYPE_PREFIXES = (
     "decimal", "double", "int", "float", "number", "numeric", "real", "tiny", "long",
 )

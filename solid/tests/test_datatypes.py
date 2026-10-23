@@ -206,6 +206,13 @@ def test_portable_datatypes_map_back_to_a_representative_warehouse_type(
         ("DATE", False),
         ("BOOLEAN", False),
         (None, False),
+        # solid-server matches with `startswith`, so these land where Solid puts them,
+        # which is not where their names suggest. Mirrored, not corrected: the point is
+        # to put a column in the list Solid itself would.
+        ("BIGINT", False),
+        ("SMALLINT", False),
+        ("BIGNUMERIC", False),
+        ("INTERVAL", True),
     ],
 )
 def test_solids_own_fact_type_rule_is_mirrored(raw, expected):
