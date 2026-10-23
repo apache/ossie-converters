@@ -400,6 +400,11 @@ naming that gap.
   no information, so the converter drops it rather than round-tripping the emptiness.
 - **Leading and trailing whitespace on free text is trimmed.** solid-server writes
   descriptions as block scalars, which end in a newline; the text inside is unchanged.
+- **Hand-edited spellings Solid's own export never writes come back in the form it
+  does write.** A metric formula that qualifies its columns with its own table
+  (`SUM(orders.amount)` on `orders`) comes back bare, as solid-server strips such
+  qualifiers when a formula is saved; a composite primary key written `'id,amount'`
+  comes back joined with `", "`.
 - **`unique_keys` cannot survive an export.** Solid's YAML has no unique-key field; a
   single unique key identical to the primary key is dropped silently, any other is
   dropped with a warning.
