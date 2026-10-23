@@ -151,6 +151,7 @@ class Dataset(OssieObject):
     description: str | None = None
     ai_context: AiContext | None = None
     fields: list[DatasetField] = Field(default_factory=list)
+    metrics: list[Metric] = Field(default_factory=list)
     custom_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
