@@ -31,13 +31,13 @@ import re
 import warnings
 
 from ._common import (
-    ConversionError,
     DEFAULT_TIMEFRAMES,
     MODEL_FILE,
     OSSIE_VERSION,
     REL_MANY_TO_ONE,
     REL_ONE_TO_MANY,
     RELATIONSHIPS_FILE,
+    ConversionError,
     dump_yaml,
     foreign_vendor_extensions,
     instructions_of,
@@ -187,14 +187,24 @@ def _convert_model(model, explicit_base_view, dialect):
                 view_names[_pick_base_view(name, datasets, relationships, base_hint)])
         return base_cache[0]
 
-    # Measures (from Ossie metrics) attach to views.
+    # Model metrics derive their view; dataset metrics always belong to their
+    # dataset, including COUNT(*) and expressions with only bare field names.
     measures_by_view = {}
-    for metric in model.get("metrics", []) or []:
+    metric_sources = [(None, m) for m in model.get("metrics", []) or []]
+    for ds_name, ds in datasets.items():
+        metric_sources.extend((view_names[ds_name], m)
+                              for m in ds.get("metrics", []) or [])
+    for own_view, metric in metric_sources:
         placed = _convert_metric(metric, resolve_base, view_names, dims_by_view,
-                                 dialect)
+                                 dialect, own_view)
         if placed is None:
             continue
         target_view, mname, measure = placed
+        if own_view and mname.lower() in {
+                n.lower() for n in dims_by_view[own_view]["names"]}:
+            raise ConversionError(
+                f"Dataset '{own_view}': metric '{mname}' collides with a field; "
+                "field and metric names must be unique")
         target = measures_by_view.setdefault(target_view, {})
         if mname.lower() in {m.lower() for m in target}:
             raise ConversionError(
@@ -286,6 +296,7 @@ def _convert_dataset(ds, vname, view_names, dialect):
 
     dimensions = {}
     col_to_dim = {}
+    field_to_dim = {}
     taken = set()
     for field in ds.get("fields", []) or []:
         fname = require_str(field, "name", f"{scope}: field")
@@ -299,6 +310,7 @@ def _convert_dataset(ds, vname, view_names, dialect):
             continue
         dim = _convert_field(field, dname, expr, fscope)
         dimensions[dname] = dim
+        field_to_dim[fname] = dname
         if is_simple_identifier(expr):
             col_to_dim[expr.strip()] = dname
 
@@ -346,7 +358,9 @@ def _convert_dataset(ds, vname, view_names, dialect):
         view["dimensions"] = dimensions
     if foreign_vendor_extensions(ds):
         _warn(scope, "foreign-vendor custom_extensions dropped")
-    return view, {"cols": col_to_dim, "names": set(dimensions)}
+    return view, {"cols": col_to_dim, "names": set(dimensions),
+                  "fields": field_to_dim,
+                  "declared": {f["name"] for f in ds.get("fields", []) or []}}
 
 
 def _convert_field(field, dname, expr, fscope):
@@ -524,7 +538,50 @@ def _build_topic(model, base_vname, view_names, relationships):
     return topic
 
 
-def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect):
+def _dataset_metric_expression(expr, dims, scope):
+    """Bind unqualified declared fields to Omni dimensions, not source columns.
+
+    Preserve SQL strings/comments and leave function names alone. Quoted field
+    names are resolved before sanitization just like their unquoted counterparts.
+    """
+    identifier = r'(?:"(?:""|[^"])*"|[A-Za-z_]\w*)'
+    trivia = r"(?:\s|--[^\n]*|/\*.*?\*/)*"
+    tokens = re.compile(
+        r"'(?:''|[^'])*'|--[^\n]*|/\*.*?\*/|(?<![\w.$])(?P<name>"
+        + identifier + r"(?:" + trivia + r"\." + trivia + identifier + r")*)",
+        re.DOTALL)
+    keywords = {"ALL", "AND", "AS", "BETWEEN", "CASE", "DISTINCT", "ELSE", "END",
+                "FALSE", "IN", "IS", "LIKE", "NOT", "NULL", "OR", "THEN", "TRUE", "WHEN"}
+
+    def replace(match):
+        name = match.group("name")
+        if name is None:
+            return match.group(0)
+        if re.match(trivia + r"\(", expr[match.end():], re.DOTALL):
+            return name  # SUM(amount) is a function call, even with a field named SUM.
+        if re.search(r"(?:\bAS|::)" + trivia + r"$", expr[:match.start()],
+                     re.IGNORECASE | re.DOTALL):
+            return name  # CAST(value AS type) / value::type: this is a type, not a field.
+        if not re.fullmatch(identifier, name):
+            raise ConversionError(
+                f"{scope}: dataset-scoped metrics require unqualified fields "
+                "of their own dataset")
+        quoted = name.startswith('"')
+        if quoted:
+            name = name[1:-1].replace('""', '"')
+        elif name.upper() in keywords:
+            return name
+        if name in dims["fields"]:
+            return "${" + dims["fields"][name] + "}"
+        if name in dims["declared"]:
+            raise ConversionError(f"{scope}: field '{name}' has no usable expression")
+        return match.group(0)
+
+    return tokens.sub(replace, expr)
+
+
+def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect,
+                    own_view=None):
     """Map one Ossie metric to an Omni measure. Returns (view_name, measure_name,
     measure_dict), or None when the metric has no usable expression."""
     mname_raw = require_str(metric, "name", "metric")
@@ -540,13 +597,15 @@ def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect):
         # re-inject the natively-mapped properties.
         measure = dict(stash["measure"])
         _apply_metric_metadata(metric, measure)
-        return stash.get("view") or resolve_base(), mname, measure
+        return own_view or stash.get("view") or resolve_base(), mname, measure
 
     expr = pick_expression(metric.get("expression"), dialect)
     if expr is None:
         _warn(scope, "no usable ANSI_SQL (or preferred-dialect) expression; "
                      "dropping metric")
         return None
+    if own_view:
+        expr = _dataset_metric_expression(expr, dims_by_view[own_view], scope)
 
     sanitized_views = set(view_names.values())
     referenced = {
@@ -597,7 +656,7 @@ def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect):
                          f"raw-SQL measure on the base view -- verify the join path")
 
     # Stashed placement (from import) wins; else the derived view; else base.
-    target = stash.get("view") or target or resolve_base()
+    target = own_view or stash.get("view") or target or resolve_base()
     _apply_metric_metadata(metric, measure)
     if foreign_vendor_extensions(metric):
         _warn(scope, "foreign-vendor custom_extensions dropped")
