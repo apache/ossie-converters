@@ -248,7 +248,10 @@ before saving. Apache Ossie expects a metric to be self-contained, qualifying ea
 with its dataset. So:
 
 - **Import** prefixes each bare column with its dataset when `tables[]` names exactly one
-  table (`SUM(ss_ext_sales_price)` → `SUM(store_sales.ss_ext_sales_price)`).
+  table (`SUM(ss_ext_sales_price)` → `SUM(store_sales.ss_ext_sales_price)`). A path into a
+  STRUCT column is qualified at its head — `COUNT(DISTINCT customer.id)` becomes
+  `COUNT(DISTINCT orders.customer.id)` when `customer` is a column of `orders` — since
+  left as it was, an Apache Ossie reader would take `customer` for a dataset.
 - **Export** strips those qualifiers back out — unless that would leave a bare name more
   than one of the metric's datasets owns. `SUM(orders.amount) - SUM(returns.amount)`
   would become `SUM(amount) - SUM(amount)`, and `COUNT(customers.id)` beside

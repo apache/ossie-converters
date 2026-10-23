@@ -177,32 +177,38 @@ def is_column_reference(expression, name, dialect):
             and tree.name.lower() == name.strip().lower())
 
 
-def _bare_columns(tree, known):
-    """Count, per name, the bare column references the AST reports.
+def _path(column):
+    """A column reference's dotted path, lower-cased: `a.b.c` -> ["a", "b", "c"]."""
+    return [part.name.lower() for part in column.parts]
 
-    Only names in `known` are counted, since only those are candidates for qualification.
+
+def _bare_columns(tree, known):
+    """Count, per name, the column references the AST reports that start with a column
+    in `known`: a bare column, or the head of a struct path (`customer.id`, where
+    `customer` is a STRUCT column). Solid stores formulas against bare names, so a path
+    that starts with one of the table's columns is a field access into it, and the
+    dataset qualifier belongs in front of the whole path.
     """
     counts = Counter()
     for column in tree.find_all(exp.Column):
-        if column.table:
-            continue
-        name = column.name.lower()
-        if name in known:
-            counts[name] += 1
+        head = _path(column)[0]
+        if head in known:
+            counts[head] += 1
     return counts
 
 
-def _qualified_columns(tree, known):
-    """Count, per (qualifier, name), the column references already qualified by a name in
-    `known`. A three-part reference (`db.table.column`) is excluded: its qualifier is a
-    schema, not a dataset."""
+def _qualified_columns(tree, known, owned):
+    """Count, per (qualifier, name), the column references qualified by a dataset in
+    `known`: `orders.amount`, and `orders.customer.id` when `customer` is a field of
+    `orders` (`owned` maps each dataset to its field names). Any other longer path
+    (`db.table.column`) starts with a schema, not a dataset, and is left out."""
     counts = Counter()
     for column in tree.find_all(exp.Column):
-        table = column.args.get("table")
-        if table is None or column.args.get("db"):
+        path = _path(column)
+        if len(path) < 2 or path[0] not in known:
             continue
-        if column.table.lower() in known:
-            counts[(column.table.lower(), column.name.lower())] += 1
+        if len(path) == 2 or path[1] in owned.get(path[0], ()):
+            counts[(path[0], path[1])] += 1
     return counts
 
 
@@ -254,12 +260,12 @@ def qualify_metric(expression, dialect, dataset, columns):
             continue
         previous = tokens[index - 1] if index else None
         following = tokens[index + 1] if index + 1 < len(tokens) else None
-        # Already qualified (`t.col`), itself a qualifier (`col.x`), or a function call
-        # (`col(...)`) -- none of these is a bare column reference.
+        # Already qualified (`t.col`), or a function call (`col(...)`) -- neither is a
+        # reference to the column. One followed by a dot (`col.x`) is the head of a
+        # struct path, and is qualified like a bare column.
         if previous is not None and previous.token_type is TokenType.DOT:
             continue
-        if following is not None and following.token_type in (
-                TokenType.DOT, TokenType.L_PAREN):
+        if following is not None and following.token_type is TokenType.L_PAREN:
             continue
         targets.append(token)
 
@@ -302,7 +308,8 @@ def unqualify_metric(expression, dialect, datasets, fields=None):
     if tree is None or tokens is None:
         return expression, UNPARSED
 
-    expected = _qualified_columns(tree, known)
+    owned = {d.lower(): {n.lower() for n in names} for d, names in (fields or {}).items()}
+    expected = _qualified_columns(tree, known, owned)
     if not expected:
         return expression, UNCHANGED
 
@@ -319,23 +326,26 @@ def unqualify_metric(expression, dialect, datasets, fields=None):
         if name is None or not _is_name_token(name):
             continue
         previous = tokens[index - 1] if index else None
-        # `db.table.column`: the leading name is a schema, so the middle one is not a
-        # dataset qualifier this converter added.
+        # Inside a longer path, so not its leading qualifier.
         if previous is not None and previous.token_type is TokenType.DOT:
             continue
+        qualifier, field = _unquote(token.text).lower(), _unquote(name.text).lower()
         after = tokens[index + 3] if index + 3 < len(tokens) else None
-        if after is not None and after.token_type is TokenType.DOT:
+        # A longer path is `dataset.struct.member` only when the middle name is one of
+        # the dataset's fields; otherwise (`db.table.column`) it starts with a schema.
+        if (after is not None and after.token_type is TokenType.DOT
+                and field not in owned.get(qualifier, ())):
             continue
-        found[(_unquote(token.text).lower(), _unquote(name.text).lower())] += 1
+        found[(qualifier, field)] += 1
         # Delete the qualifier and its dot; `end` is inclusive on a sqlglot token.
         edits.append((token.start, dot.end + 1, ""))
 
-    if found != expected or _names_collide(found, fields):
+    if found != expected or _names_collide(found, owned):
         return expression, AMBIGUOUS
     return _splice(expression, edits), UNQUALIFIED
 
 
-def _names_collide(references, fields):
+def _names_collide(references, owned):
     """True if stripping the qualifiers from `references`, a Counter of (dataset, name),
     would leave a bare name that more than one of those datasets could own."""
     readers = {}
@@ -344,7 +354,6 @@ def _names_collide(references, fields):
     if any(len(datasets) > 1 for datasets in readers.values()):
         return True
     referenced = {dataset for dataset, _ in references}
-    owned = {d.lower(): {n.lower() for n in names} for d, names in (fields or {}).items()}
     return any(
         name in owned.get(other, ())
         for dataset, name in references
@@ -352,18 +361,19 @@ def _names_collide(references, fields):
     )
 
 
-def referenced_datasets(expression, dialect, datasets):
+def referenced_datasets(expression, dialect, datasets, fields=None):
     """Return the dataset names a metric expression qualifies columns with.
 
     Used on export to reconstruct Solid's `metrics[].tables` when an Apache Ossie model
     carries no SOLID stash. Order follows `datasets`, so the result is deterministic.
+    `fields` maps each dataset to its field names, so `orders.customer.id` counts as
+    reading `orders` when `customer` is one of its fields.
     """
     tree = _parse(expression, dialect)
     if tree is None:
         return []
-    seen = set()
-    for column in tree.find_all(exp.Column):
-        if column.table and not column.args.get("db"):
-            seen.add(column.table.lower())
+    known = {d.lower() for d in datasets}
+    owned = {d.lower(): {n.lower() for n in names} for d, names in (fields or {}).items()}
+    seen = {qualifier for qualifier, _ in _qualified_columns(tree, known, owned)}
     return [d for d in datasets if d.lower() in seen]
 
