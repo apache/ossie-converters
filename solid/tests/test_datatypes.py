@@ -118,6 +118,17 @@ def test_an_unrecognizable_vocabulary_falls_back_to_ansi_with_a_warning():
     assert stash_of(model_of(ossie))["dialect"] == "ANSI_SQL"
 
 
+def test_an_oracle_model_falls_back_to_ansi_naming_why():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    for table in solid["semantic_model"]["tables"]:
+        for column in table["dimensions"] + table["facts"]:
+            column["type"] = "NUMBER" if column["name"].endswith("_id") else "VARCHAR2(30)"
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert any("(VARCHAR2) are from a warehouse with no Apache Ossie dialect" in w
+               for w in warnings_)
+    assert stash_of(model_of(ossie))["dialect"] == "ANSI_SQL"
+
+
 def test_an_explicit_dialect_suppresses_inference():
     ossie, warnings_ = convert_quietly(
         convert_solid_to_ossie, fixture("databricks_solid.yaml"), dialect="ANSI_SQL"
@@ -141,7 +152,6 @@ def test_dialect_names_are_normalized_case_insensitively():
         # A declared scale of zero is an integer, which is how Snowflake stores ids.
         ("NUMBER(38,0)", "SNOWFLAKE", "Integer"),
         ("NUMBER(7,2)", "SNOWFLAKE", "Decimal"),
-        ("NUMBER", "SNOWFLAKE", "Integer"),
         ("NUMERIC(10,4)", "BIGQUERY", "Decimal"),
         ("BIGNUMERIC(40,0)", "BIGQUERY", "Integer"),
         # A precision with no scale declares a scale of 0, in every warehouse.
@@ -188,24 +198,32 @@ def test_warehouse_types_map_onto_the_portable_datatypes(raw, dialect, expected)
     assert to_ossie_datatype(raw, dialect) == expected
 
 
-# A bare exact-decimal type takes its warehouse's default scale: (38,0) on Snowflake,
-# (10,0) on Databricks, 0 in the SQL standard, but (38,9) on BigQuery. BIGNUMERIC and
-# BIGDECIMAL exist only on BigQuery, with a default scale of 38.
-DEFAULT_SCALE_CASES = {
-    "SNOWFLAKE": {"NUMBER": "Integer", "NUMERIC": "Integer", "DECIMAL": "Integer"},
-    "DATABRICKS": {"DECIMAL": "Integer", "DEC": "Integer", "NUMERIC": "Integer"},
-    "BIGQUERY": {"NUMERIC": "Decimal", "DECIMAL": "Decimal", "BIGNUMERIC": "Decimal",
-                 "BIGDECIMAL": "Decimal"},
-    "ANSI_SQL": {"NUMERIC": "Integer", "DECIMAL": "Integer"},
-}
+# The exact-decimal names each warehouse reports, bare.
+BARE_DECIMAL_CASES = [
+    ("SNOWFLAKE", "NUMBER"), ("SNOWFLAKE", "NUMERIC"), ("SNOWFLAKE", "DECIMAL"),
+    ("DATABRICKS", "DECIMAL"), ("DATABRICKS", "DEC"), ("DATABRICKS", "NUMERIC"),
+    ("BIGQUERY", "NUMERIC"), ("BIGQUERY", "DECIMAL"), ("BIGQUERY", "BIGNUMERIC"),
+    ("BIGQUERY", "BIGDECIMAL"),
+    # Oracle's bare NUMBER, read as ANSI_SQL, is a floating decimal.
+    ("ANSI_SQL", "NUMBER"), ("ANSI_SQL", "NUMERIC"), ("ANSI_SQL", "DECIMAL"),
+]
 
 
-@pytest.mark.parametrize(
-    ("dialect", "raw", "expected"),
-    [(d, raw, dt) for d, cases in DEFAULT_SCALE_CASES.items() for raw, dt in cases.items()],
-)
-def test_a_bare_decimal_type_takes_its_warehouses_default_scale(dialect, raw, expected):
-    assert to_ossie_datatype(raw, dialect) == expected
+@pytest.mark.parametrize(("dialect", "raw"), BARE_DECIMAL_CASES)
+def test_a_bare_decimal_type_is_a_decimal_in_every_dialect(dialect, raw):
+    """A bare name says nothing about the scale, which is what the spec's Decimal
+    means. Snowflake's own default is (38,0), but Solid copies the catalog's DATA_TYPE,
+    which never carries the scale on Snowflake or Databricks: every NUMBER and DECIMAL
+    column in the real Solid exports this was checked against is bare, rates and dollar
+    amounts included, so reading them as Integer would type money as whole numbers."""
+    assert to_ossie_datatype(raw, dialect) == "Decimal"
+
+
+@pytest.mark.parametrize(("dialect", "raw"), BARE_DECIMAL_CASES)
+def test_a_declared_scale_of_zero_is_an_integer_in_every_dialect(dialect, raw):
+    assert to_ossie_datatype(f"{raw}(38,0)", dialect) == "Integer"
+    assert to_ossie_datatype(f"{raw}(18)", dialect) == "Integer"
+    assert to_ossie_datatype(f"{raw}(38,2)", dialect) == "Decimal"
 
 
 @pytest.mark.parametrize("dialect", SUPPORTED_DIALECTS)
@@ -240,6 +258,7 @@ def test_an_unmappable_type_omits_the_datatype_and_warns():
         ("String", "ANSI_SQL", "VARCHAR"),
         ("Integer", "BIGQUERY", "INT64"),
         # Scaled, because a bare NUMBER or DECIMAL is an integer type.
+        ("Integer", "SNOWFLAKE", "NUMBER(38,0)"),
         ("Decimal", "SNOWFLAKE", "NUMBER(38,9)"),
         ("Decimal", "DATABRICKS", "DECIMAL(38,9)"),
         ("Decimal", "BIGQUERY", "NUMERIC"),
