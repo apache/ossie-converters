@@ -217,7 +217,74 @@ def test_no_datasets_are_reported_for_a_bare_expression():
         ("odd name", "SNOWFLAKE", '"odd name"'),
         ("odd name", "DATABRICKS", "`odd name`"),
         ("select", "SNOWFLAKE", '"select"'),
+        # Reserved words sqlglot reads back as ordinary columns, so a parse round trip
+        # never caught them.
+        ("order", "SNOWFLAKE", '"order"'),
+        ("group", "DATABRICKS", "`group`"),
+        ("limit", "ANSI_SQL", '"limit"'),
+        ("table", "BIGQUERY", "`table`"),
+        # Snowflake reserves fewer words than the standard; LIMIT is not one of them.
+        ("limit", "SNOWFLAKE", "limit"),
+        ("a$b", "SNOWFLAKE", "a$b"),
+        ("a$b", "ANSI_SQL", '"a$b"'),
     ],
 )
 def test_a_column_name_renders_as_a_valid_reference(name, dialect, expected):
     assert column_reference(name, dialect) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        # Solid reports Snowflake names as INFORMATION_SCHEMA stores them, upper case
+        # for any column created unquoted. A reserved one is quoted in that case, which
+        # is exactly the column's name.
+        ("ORDER", '"ORDER"'),
+        # A quoted name is case-sensitive on Snowflake, so a name that is not reserved
+        # there is never quoted: `"comment"` would not match a column named COMMENT.
+        ("COMMENT", "COMMENT"),
+        ("comment", "comment"),
+        ("ACCOUNT_ID", "ACCOUNT_ID"),
+    ],
+)
+def test_snowflake_quotes_only_reserved_names_and_keeps_their_case(name, expected):
+    assert column_reference(name, "SNOWFLAKE") == expected
+
+
+@pytest.mark.parametrize("dialect", ["SNOWFLAKE", "DATABRICKS", "BIGQUERY", "ANSI_SQL"])
+def test_every_reserved_word_is_quoted_and_reads_back_as_its_column(dialect):
+    """Each listed word is quoted, and the quoted form is a valid column reference to
+    exactly that name in the dialect."""
+    import sqlglot
+    from sqlglot import exp
+
+    from ossie_solid.expressions import _RESERVED, _read
+
+    for word in sorted(_RESERVED[dialect]):
+        rendered = column_reference(word.lower(), dialect)
+        assert rendered != word.lower(), word
+        parsed = sqlglot.parse_one(f"SELECT {rendered} FROM t", read=_read(dialect))
+        (column,) = parsed.expressions
+        assert isinstance(column, exp.Column) and column.name == word.lower(), word
+
+
+def test_bigquerys_list_covers_the_one_sqlglot_ships():
+    """sqlglot keeps BigQuery's documented reserved words for its own generator; a word
+    added there and missing here means this list went stale."""
+    from sqlglot.dialects.bigquery import BigQuery
+
+    from ossie_solid._reserved_words import BIGQUERY
+
+    missing = {w.upper() for w in BigQuery.Generator.RESERVED_KEYWORDS} - BIGQUERY
+    assert not missing, sorted(missing)
+
+
+def test_solids_snowflake_list_is_complete():
+    """The Snowflake list is copied from Snowflake's documentation, which is also
+    solid-server's SNOWFLAKE_RESERVED_WORDS_SET; it must not grow past it, since a quoted
+    name is case-sensitive there."""
+    from ossie_solid._reserved_words import SNOWFLAKE
+
+    assert len(SNOWFLAKE) == 92
+    assert {"ORDER", "GROUP", "TABLE", "QUALIFY", "MINUS"} <= SNOWFLAKE
+    assert not {"COMMENT", "LIMIT", "DATE", "NAME", "VALUE"} & SNOWFLAKE
