@@ -30,6 +30,13 @@ datasets:
         expression: SR_RETURN_REASON
       - dialect: ANSI_SQL
         expression: SR_RETURN_REASON
+  - name: sr_returned_date
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_RETURNED_DATE
+      - dialect: ANSI_SQL
+        expression: SR_RETURNED_DATE
 metrics:
 - name: defective_return_pct_defective_pct
   expression:
@@ -50,15 +57,15 @@ metrics:
   ai_context:
     instructions: 'Grain: aggregate over entire filtered date range. Counts: Store returns with a reason
       of ''defective'' or ''changed_mind''. Excludes: returns with other reasons are excluded from the
-      denominator. Date range fixed in the source query, not applied by this metric: STORE_RETURNS.SR_RETURNED_DATE
-      >= ''2026-04-01'' AND STORE_RETURNS.SR_RETURNED_DATE < ''2026-07-01''.'
+      denominator. Date range fixed in the source query, not applied by this metric: store_returns.sr_returned_date
+      >= ''2026-04-01'' AND store_returns.sr_returned_date < ''2026-07-01''.'
   custom_extensions:
   - vendor_name: ATLAN
     data: '{"registry": {"id": "metric_synth_defective_return_pct", "definition_version": 1, "output_column":
       "defective_pct"}, "agent_context": {"grain": "aggregate over entire filtered date range", "population":
       "Store returns with a reason of ''defective'' or ''changed_mind''", "exclusions": ["returns with
-      other reasons are excluded from the denominator"], "sql_dialect": "snowflake", "window": ["STORE_RETURNS.SR_RETURNED_DATE
-      >= ''2026-04-01''", "STORE_RETURNS.SR_RETURNED_DATE < ''2026-07-01''"], "examples": [{"sql": "SELECT
+      other reasons are excluded from the denominator"], "sql_dialect": "snowflake", "window": ["store_returns.sr_returned_date
+      >= ''2026-04-01''", "store_returns.sr_returned_date < ''2026-07-01''"], "examples": [{"sql": "SELECT
       ROUND(COUNT(CASE WHEN SR_RETURN_REASON=''defective'' THEN 1 END)*100.0/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON
       IN (''defective'',''changed_mind'') THEN 1 END),0),1) AS defective_pct FROM TPCDS.PUBLIC.STORE_RETURNS
       WHERE SR_RETURNED_DATE >= ''2026-04-01'' AND SR_RETURNED_DATE < ''2026-07-01''"}], "trust": {"score":
@@ -79,15 +86,15 @@ metrics:
   ai_context:
     instructions: 'Grain: aggregate over entire filtered date range. Counts: Store returns with a reason
       of ''defective'' or ''changed_mind''. Excludes: returns with other reasons are excluded from the
-      denominator. Date range fixed in the source query, not applied by this metric: STORE_RETURNS.SR_RETURNED_DATE
-      >= ''2026-04-01'' AND STORE_RETURNS.SR_RETURNED_DATE < ''2026-07-01''.'
+      denominator. Date range fixed in the source query, not applied by this metric: store_returns.sr_returned_date
+      >= ''2026-04-01'' AND store_returns.sr_returned_date < ''2026-07-01''.'
   custom_extensions:
   - vendor_name: ATLAN
     data: '{"registry": {"id": "metric_synth_defective_return_pct", "definition_version": 1, "output_column":
       "classified_returns"}, "agent_context": {"grain": "aggregate over entire filtered date range", "population":
       "Store returns with a reason of ''defective'' or ''changed_mind''", "exclusions": ["returns with
-      other reasons are excluded from the denominator"], "sql_dialect": "snowflake", "window": ["STORE_RETURNS.SR_RETURNED_DATE
-      >= ''2026-04-01''", "STORE_RETURNS.SR_RETURNED_DATE < ''2026-07-01''"], "trust": {"score": 7.5}}}'
+      other reasons are excluded from the denominator"], "sql_dialect": "snowflake", "window": ["store_returns.sr_returned_date
+      >= ''2026-04-01''", "store_returns.sr_returned_date < ''2026-07-01''"], "trust": {"score": 7.5}}}'
 custom_extensions:
 - vendor_name: ATLAN
   data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

@@ -22,7 +22,7 @@
     "table": "TPCDS.PUBLIC.STORE_RETURNS",
     "sql": null,
     "parameters": [],
-    "timeframe_column": "SR_RETURNED_DATE"
+    "timeframe_column": "m.SR_RETURNED_DATE"
    },
    "joins": [],
    "dimensions": [

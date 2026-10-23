@@ -140,12 +140,14 @@ def test_reverse_restores_parameters_and_the_window_is_text_only():
     structured key anywhere in Ossie, only a sentence in the instructions."""
     doc = _ossie_yaml("ratio_joins_dims_window")
     m0 = load(doc)["metrics"][0]
-    assert A.agent_context(m0)["window"] == ["m.SS_SOLD_TIMESTAMP >= :start_date", "m.SS_SOLD_TIMESTAMP < DATEADD(DAY, 1, :end_date)"]
+    assert A.agent_context(m0)["window"] == ["store_sales.ss_sold_timestamp >= :start_date",
+                                             "store_sales.ss_sold_timestamp < DATEADD(DAY, 1, :end_date)"]
     assert ":start_date" not in m0["expression"]["dialects"][0]["expression"]
     assert "Date range fixed in the source query" in m0["ai_context"]["instructions"]
     rec = convert_ossie_to_registry(doc, "sales_per_shopper")
     assert [p["name"] for p in rec["definition"]["source"]["parameters"]] == ["start_date", "end_date"]
-    assert rec["definition"]["filters"] == A.agent_context(m0)["window"]      # restored as a registry filter
+    assert rec["definition"]["filters"] == ["m.SS_SOLD_TIMESTAMP >= :start_date",
+                                            "m.SS_SOLD_TIMESTAMP < DATEADD(DAY, 1, :end_date)"]   # restored, in the record's aliases
 
 
 def test_all_cases_import_as_one_file_with_one_issue_per_refusal():

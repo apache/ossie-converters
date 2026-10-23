@@ -34,7 +34,7 @@
       "default": "2026-06-16"
      }
     ],
-    "timeframe_column": "SS_SOLD_TIMESTAMP"
+    "timeframe_column": "m.SS_SOLD_TIMESTAMP"
    },
    "joins": [
     {

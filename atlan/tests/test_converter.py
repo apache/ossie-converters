@@ -62,6 +62,7 @@ def _one(rec):
     (f"SELECT COUNT(*) FROM {TABLE} WHERE C_CUSTOMER_ID = {{customer_id}}", "template"),
     ("SUM(m.C_BALANCE) OVER (PARTITION BY m.C_BIRTH_COUNTRY)", "window function"),
     ("SUM(x.C_BALANCE)", "reads a table the metric does not declare"),
+    (f"SELECT C_BIRTH_COUNTRY, COUNT(*) AS n FROM {TABLE} GROUP BY 1 ORDER BY 2 DESC LIMIT 5", "LIMIT"),
 ])
 def test_shapes_that_would_change_the_number_are_refused(formula, reason):
     with pytest.raises(A.NotConvertible, match=re.escape(reason)):
@@ -81,6 +82,9 @@ def test_filter_cannot_fold_into_an_aggregate_that_ranks_by_a_second_column():
 
 def test_a_metric_built_from_other_metrics_is_refused_even_under_an_aggregate():
     rec = _rec("SUM(returned_sales) / NULLIF(SUM(store_sales_count), 0)", depends_on=["returned_sales", "store_sales_count"])
+    with pytest.raises(A.NotConvertible, match="built from other metrics"):
+        A.convert(rec)
+    rec = _rec("SUM(returned_sales)", depends_on=["Returned Sales"])        # depends_on holds display names
     with pytest.raises(A.NotConvertible, match="built from other metrics"):
         A.convert(rec)
     rec = _rec("returned_sales / NULLIF(store_sales_count, 0)", depends_on=["returned_sales", "store_sales_count"])
@@ -122,8 +126,8 @@ def test_business_predicate_next_to_a_date_range_is_kept_and_the_range_is_parked
     rec = _rec("COUNT(*)", filters=["m.C_FIRST_SALES_DATE >= '2026-01-01' AND m.C_PREFERRED_CUST_FLAG = 'Y'"])
     (m, _, _), = A.convert(rec)
     assert m["expression"]["dialects"][0]["expression"] == "COUNT(CASE WHEN (customer.c_preferred_cust_flag = 'Y') THEN 1 END)"
-    assert A.agent_context(m)["window"] == ["m.C_FIRST_SALES_DATE >= '2026-01-01'"]
-    assert "m.C_FIRST_SALES_DATE >= '2026-01-01'" in m["ai_context"]["instructions"]
+    assert A.agent_context(m)["window"] == ["customer.c_first_sales_date >= '2026-01-01'"]
+    assert "customer.c_first_sales_date >= '2026-01-01'" in m["ai_context"]["instructions"]
 
 
 @pytest.mark.parametrize("pred", [
@@ -337,3 +341,115 @@ def test_reverse_reads_the_core_spec_tpcds_example():
             outcomes[m["name"]] = str(e)[:40]
     ok = [k for k, o in outcomes.items() if o == "ok"]
     assert len(ok) >= len(outcomes) // 2, outcomes
+
+
+# ---- round two: shapes found by a second adversarial pass
+
+def test_date_looking_string_literal_is_not_a_window():
+    e, _, _ = _one(_rec("COUNT(*)", filters=["m.ORDER_CODE >= '2026-01-15-A'"]))
+    assert e == "COUNT(CASE WHEN (customer.order_code >= '2026-01-15-A') THEN 1 END)"
+
+
+def test_parenthesised_conjunction_is_split_like_a_bare_one():
+    (m, _, _), = A.convert(_rec("COUNT(*)", filters=["((m.A = 1) AND (m.D >= '2026-01-01'))"]))
+    assert A.agent_context(m)["window"] == ["customer.d >= '2026-01-01'"]
+    assert m["expression"]["dialects"][0]["expression"] == "COUNT(CASE WHEN (customer.a = 1) THEN 1 END)"
+
+
+def test_count_dataset_star_round_trips():
+    e, ds, _ = _one(_rec("COUNT(m.*)"))
+    assert e == "COUNT(customer.*)" and not ds[0].get("fields")
+    rec = _rec("COUNT(*)")
+    back = convert_ossie_to_registry(_doc(rec), rec["name"])["definition"]
+    assert back["formula"] == "COUNT(m.*)"
+    (m, _, _), = A.convert({**rec, "metadata": {"definition": {**rec["metadata"]["definition"], "formula": back["formula"]}}})
+    assert m["expression"]["dialects"][0]["expression"] == "COUNT(customer.*)"
+
+
+def test_table_name_case_follows_the_dialect():
+    rec = _rec("COUNT(*)", dialect="bigquery")
+    rec["metadata"]["definition"]["source"].update({"table": "my_proj.my_dataset.my_table", "entity": "my_proj.my_dataset.my_table"})
+    assert _one(rec)[1][0]["source"] == "my_proj.my_dataset.my_table"
+    rec = _rec("COUNT(*)")
+    rec["metadata"]["definition"]["source"].update({"table": 'tpcds.public."Customer"', "entity": 'tpcds.public."Customer"'})
+    assert _one(rec)[1][0]["source"] == 'TPCDS.PUBLIC."Customer"'
+
+
+def test_placeholder_inside_a_string_literal_is_refused():
+    rec = _rec("COUNT(*)", [{"name": "tag", "datatype": "string", "default": "promo"}], filters=["m.TAG = '{{tag}}'"])
+    with pytest.raises(A.NotConvertible, match="inside a string literal"):
+        A.convert(rec)
+
+
+def test_qualified_timeframe_column_is_one_field():
+    rec = _rec("COUNT(*)", dimensions=[{"name": "day", "kind": "time", "sql": "m.C_D", "datatype": "date"}])
+    rec["metadata"]["definition"]["source"]["timeframe_column"] = f"{TABLE}.C_D"
+    (m, ds, _), = A.convert(rec)
+    assert A.agent_context(m)["timeframe_field"] == "customer.day" and [f["name"] for f in ds[0]["fields"]] == ["day"]
+
+
+def test_bare_dimension_with_required_join_lands_on_the_joined_table():
+    rec = _rec("COUNT(*)", joins=[{"name": "s", "to": "TPCDS.PUBLIC.STORE", "cardinality": "many_to_one",
+                                  "sql": "s.S_STORE_SK = m.C_STORE_SK"}],
+               dimensions=[{"name": "state", "kind": "categorical", "sql": "S_STATE", "datatype": "string", "required_join": "s"}])
+    (m, _, _), = A.convert(rec)
+    assert A.agent_context(m)["dimensions"] == ["store.state"]
+
+
+def test_write_back_keeps_a_jinja_parameter_pick_and_speaks_the_record_aliases():
+    rec = json.loads((golden.FIXTURES / "account_param_as_dimension" / "input.registry.json").read_text())
+    doc = A.merge(A.convert(rec))
+    m = doc["metrics"][0]
+    for dl in m["expression"]["dialects"]:
+        dl["expression"] = "2 * " + dl["expression"]
+    patch = write_back(doc, m["name"], rec)["set"]
+    assert patch["filters"] == ["TPCDS.PUBLIC.STORE_RETURNS.SR_STORE_SK = :store_sk"]
+    rec = _rec("COUNT(*)", filters=["sr.SR_STATUS <> 'void'", "sr.SR_D >= '2026-01-01'"])
+    rec["metadata"]["definition"]["source"]["alias"] = "sr"
+    doc = _doc(rec)
+    for dl in doc["metrics"][0]["expression"]["dialects"]:
+        dl["expression"] = "2 * " + dl["expression"]
+    patch = write_back(doc, doc["metrics"][0]["name"], rec)["set"]
+    assert patch["formula"] == "2 * COUNT(CASE WHEN (sr.SR_STATUS <> 'void') THEN 1 END)"
+    assert patch["filters"] == ["sr.SR_D >= '2026-01-01'"]
+
+
+def test_expression_edit_on_a_row_set_or_whole_query_record_moves_the_source_too():
+    rec = json.loads((golden.FIXTURES / "count_filtered" / "input.registry.json").read_text())   # source.sql with a WHERE
+    doc = _doc(rec)
+    for dl in doc["metrics"][0]["expression"]["dialects"]:
+        dl["expression"] = "COUNT(customer.*)"                                  # the editor removed the filter
+    patch = write_back(doc, doc["metrics"][0]["name"], rec)["set"]
+    assert patch["formula"] == "COUNT(m.*)" and patch["source.sql"] is None and patch["source.table"] == "TPCDS.PUBLIC.CUSTOMER"
+    rec = _rec(f"SELECT C_BIRTH_COUNTRY, COUNT(*) AS n FROM {TABLE} s WHERE s.C_F = 'Y' GROUP BY 1")
+    doc = _doc(rec)
+    for dl in doc["metrics"][0]["expression"]["dialects"]:
+        dl["expression"] = "2 * " + dl["expression"]
+    patch = write_back(doc, doc["metrics"][0]["name"], rec)["set"]
+    assert [d["sql"] for d in patch["dimensions"]] == ["s.C_BIRTH_COUNTRY"] and patch["source.alias"] == "s"
+
+
+def test_deleting_the_datatype_in_ossie_is_no_patch():
+    rec = _rec("COUNT(*)")
+    doc = _doc(rec)
+    doc["metrics"][0].pop("datatype", None)
+    assert write_back(doc, doc["metrics"][0]["name"], rec) == {}
+
+
+def test_reverse_picks_the_portable_dialect_entry_and_the_root_dataset():
+    rec = _rec("COUNT(*)")
+    doc = _doc(rec)
+    doc["metrics"][0]["expression"]["dialects"].insert(0, {"dialect": "BIGQUERY", "expression": "COUNT(DISTINCT `x y`)"})
+    assert convert_ossie_to_registry(doc, rec["name"])["definition"]["formula"] == "COUNT(m.*)"
+    rec = _rec("COUNT(DISTINCT c.C_CUSTOMER_SK)", joins=[{"name": "c", "to": "TPCDS.PUBLIC.CUSTOMER", "cardinality": "many_to_one",
+                                                          "sql": "c.C_CUSTOMER_SK = m.SS_CUSTOMER_SK"}])
+    rec["metadata"]["definition"]["source"].update({"table": "TPCDS.PUBLIC.STORE_SALES", "entity": "TPCDS.PUBLIC.STORE_SALES"})
+    back = convert_ossie_to_registry(_doc(rec), rec["name"])["definition"]       # reads only the joined table
+    assert back["source"]["table"] == "TPCDS.PUBLIC.STORE_SALES" and back["formula"] == "COUNT(DISTINCT t1.C_CUSTOMER_SK)"
+    assert back["joins"][0]["sql"] == "m.SS_CUSTOMER_SK = t1.C_CUSTOMER_SK"
+
+
+def test_example_questions_keep_their_sql():
+    rec = _rec("COUNT(*)", examples=[{"question": "Q-A"}, {"question": "Q-B", "sql": "SELECT 'B'"}])
+    back = convert_ossie_to_registry(_doc(rec), rec["name"])["definition"]["examples"]
+    assert [(e.get("question"), e["sql"]) for e in back] == [("Q-B", "SELECT 'B'"), ("Q-A", "")]

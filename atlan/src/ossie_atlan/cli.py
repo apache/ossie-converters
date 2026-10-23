@@ -76,7 +76,7 @@ def main(argv=None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.command == "import":
-            recs = [r for r in _records(args.input) if (not args.metric or r["name"] in args.metric)
+            recs = [r for r in _records(args.input) if (not args.metric or (isinstance(r, dict) and r.get("name") in args.metric))
                     and (not args.workspace or r.get("workspace_id") == args.workspace)]
             doc, issues = convert_registry_to_ossie(recs, name=args.name)
             if issues:
@@ -98,13 +98,19 @@ def main(argv=None) -> int:
             out = json.dumps(convert_ossie_to_registry(doc, args.metric), indent=1, ensure_ascii=False)
             Path(args.output).write_text(out + "\n") if args.output else print(out)
             return 0
-        rec = _records(args.record)[0]
+        recs = _records(args.record)
+        if not recs:
+            raise ConversionError(f"{args.record} holds no registry record")
+        rec = recs[0]
         print(json.dumps(write_back(doc, args.metric, rec, args.registry_version), indent=1, ensure_ascii=False))
         return 0
     except (ConversionError, NotConvertible, NotWritable, Conflict) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    except (KeyError, TypeError, AttributeError) as e:          # a file that is not what the verb expects
+    except (OSError, json.JSONDecodeError, yaml.YAMLError) as e:   # unreadable file
+        print(f"error: cannot read input ({type(e).__name__}: {str(e).splitlines()[0]})", file=sys.stderr)
+        return 1
+    except (KeyError, TypeError, AttributeError, IndexError) as e:   # a file that is not what the verb expects
         print(f"error: input is not {'registry records' if args.command == 'import' else 'an Ossie document'} "
               f"({type(e).__name__}: {e})", file=sys.stderr)
         return 1

@@ -24,8 +24,8 @@
    "joins": [],
    "dimensions": [],
    "filters": [
-    "STORE_RETURNS.SR_RETURNED_DATE >= '2026-04-01'",
-    "STORE_RETURNS.SR_RETURNED_DATE < '2026-07-01'"
+    "m.SR_RETURNED_DATE >= '2026-04-01'",
+    "m.SR_RETURNED_DATE < '2026-07-01'"
    ],
    "examples": [
     {
@@ -65,8 +65,8 @@
    "joins": [],
    "dimensions": [],
    "filters": [
-    "STORE_RETURNS.SR_RETURNED_DATE >= '2026-04-01'",
-    "STORE_RETURNS.SR_RETURNED_DATE < '2026-07-01'"
+    "m.SR_RETURNED_DATE >= '2026-04-01'",
+    "m.SR_RETURNED_DATE < '2026-07-01'"
    ],
    "examples": [],
    "grain": "aggregate over entire filtered date range",

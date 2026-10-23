@@ -98,8 +98,8 @@ for issue in issues:
 | `description` | `metrics[].description` |
 | `grain`, `population`, `exclusions`, `output.unit`, `aggregation.reaggregation`, `aggregation.null_handling` | `metrics[].ai_context.instructions` (generated sentence) **and** `custom_extensions[ATLAN].agent_context.<key>` (the value) |
 | `examples[].question` | `metrics[].ai_context.examples` |
-| `examples[].sql`, `dialect`, `source.parameters`, `depends_on`, `provenance.trust_score`, which fields are this metric's dimensions and time field | `custom_extensions[ATLAN].agent_context` |
-| a fixed date range in `filters` (`d >= '2026-04-01'`, `d < :end_date`) | `custom_extensions[ATLAN].agent_context.window` (parked as registry text, one predicate per conjunct) + a sentence in `ai_context.instructions`; **not** applied by the expression |
+| `examples[].sql` (with its question, so the pair survives), `provenance.observed_sql`, `dialect`, `source.parameters`, `depends_on`, `provenance.trust_score`, which fields are this metric's dimensions and time field | `custom_extensions[ATLAN].agent_context` (`examples`, `verified_sql`, `sql_dialect`, `parameters`, `depends_on`, `trust`, `dimensions`, `relationships`, `timeframe_field`) |
+| a fixed date range in `filters` (`d >= '2026-04-01'`, `d < :end_date`) | `custom_extensions[ATLAN].agent_context.window` (parked, one predicate per conjunct, in `dataset.field` names with `:parameter` placeholders kept) + a sentence in `ai_context.instructions`; **not** applied by the expression |
 | `id`, `definition.version` | `custom_extensions[ATLAN].registry` (the reference used to map back) |
 | `workspace_id` | `custom_extensions[ATLAN].registry.workspace_id` on the semantic model |
 
@@ -125,13 +125,17 @@ consumer could run, so the record becomes an issue instead:
 
 - a join read from the SQL with no declared cardinality (the registry's `joins[]` must say
   `many_to_one`; a LEFT JOIN in a formula is not enough)
-- a CTE, window function, `QUALIFY`, `HAVING`, `DISTINCT` on the row set, or a subquery
+- a CTE, window function, `QUALIFY`, `HAVING`, `DISTINCT` on the row set, `LIMIT`/`OFFSET` (a
+  top-N population is a different number), or a subquery
 - a row listing (no aggregate output) or a list-valued aggregate (`ARRAY_AGG`, `LISTAGG`)
 - a `?` or `{template}` placeholder with no declared parameter, or a parameter with no default
   that does more than pick one value of a column (that case becomes a dimension)
 - a metric defined in terms of other metrics (Ossie defines no metric references)
-- a non-SQL dialect (`promql`, and anything `sqlglot` cannot read)
-- a `source.alias` that names a joined table (a self-join the author did not mean)
+- a `dialect` outside the converter's SQL list (`snowflake`, `bigquery`, `databricks`, `postgres`,
+  `duckdb`, `redshift`, `mysql`, `tsql`, `trino`, `presto`, `athena`, `clickhouse`, `oracle`,
+  `sqlite`, `spark`; `promql` and the like have no SQL)
+- a `source.alias` that names a joined table (a self-join the author did not mean), or a
+  `{{parameter}}` inside a string literal
 - a column whose qualifier is no declared table, or a join condition that is not a key equality
 - a filter over `MIN_BY`/`MAX_BY` or a `WITHIN GROUP` aggregate (folding the filter into one
   argument would leave the ranking column unfiltered)

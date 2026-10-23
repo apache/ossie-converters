@@ -22,7 +22,7 @@
     "table": "TPCDS.PUBLIC.STORE_SALES",
     "sql": null,
     "parameters": [],
-    "timeframe_column": "SS_SOLD_DATE"
+    "timeframe_column": "m.SS_SOLD_DATE"
    },
    "joins": [
     {

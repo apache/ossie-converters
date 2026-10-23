@@ -41,8 +41,9 @@ dependencies = [
     # A registry metric is a SQL formula, often a whole query. sqlglot parses it in the record's
     # declared dialect, splits a query into one metric per aggregate output, folds WHERE into
     # the aggregates and rewrites columns to dataset.field. Already a runtime dependency of
-    # the dbt, Cube and NVIDIA Auto Ontology converters.
-    "sqlglot>=20.0",
+    # the dbt, Cube and NVIDIA Auto Ontology converters. 28 is the floor the tests pass at
+    # (older releases parse Snowflake aggregates differently).
+    "sqlglot>=28.0",
 ]
 
 [dependency-groups]

@@ -125,9 +125,10 @@ metrics:
       "population": "Store sales, one row per sale, attributed to the store and carrying the channel and
       item tags", "unit": "sales", "reaggregation": "sum", "sql_dialect": "snowflake", "dimensions": ["store_sales.sale_date",
       "store_sales.store", "store_sales.channel", "item.seasonal"], "relationships": ["store_sales_to_item"],
-      "depends_on": ["store_sales"], "examples": [{"sql": "SELECT DATE_TRUNC(''MONTH'', SS_SOLD_TIMESTAMP)
-      AS month, SS_STORE_SK, SUM(CASE WHEN SS_IS_VOID = TRUE THEN 1 ELSE 0 END) FROM TPCDS.PUBLIC.STORE_SALES
-      GROUP BY 1, 2"}]}}'
+      "depends_on": ["store_sales"], "examples": [{"question": "How are voided sales trending month by
+      month per store, broken down by channel and whether the item is seasonal?", "sql": "SELECT DATE_TRUNC(''MONTH'',
+      SS_SOLD_TIMESTAMP) AS month, SS_STORE_SK, SUM(CASE WHEN SS_IS_VOID = TRUE THEN 1 ELSE 0 END) FROM
+      TPCDS.PUBLIC.STORE_SALES GROUP BY 1, 2"}]}}'
 custom_extensions:
 - vendor_name: ATLAN
   data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

@@ -23,7 +23,8 @@ The converter reads metric records as the registry API returns them (`GET
 /artifacts/metric/<id>`, or a list under `{"artifacts": [...]}`). The authoritative shape is
 the registry's metric kind, metric spec `1.0-draft.4`; the JSON Schema of its `definition`
 is in [`../tests/fixtures/metric_kind.json`](../tests/fixtures/metric_kind.json)
-(`manifest.properties.definition`). A complete record is
+(the `definition` sub-schema of the registry's metric kind, contributed by Atlan under the
+Apache License 2.0). A complete record is
 [`../tests/fixtures/ratio_joins_dims_window/input.registry.json`](../tests/fixtures/ratio_joins_dims_window/input.registry.json).
 
 ## Artifact fields (set by the registry)
@@ -56,17 +57,19 @@ is in [`../tests/fixtures/metric_kind.json`](../tests/fixtures/metric_kind.json)
 | `source.timeframe_column` | the metric's time column | a time field; `agent_context.timeframe_field` |
 | `source.parameters[]` | `{name, datatype, default}`; referenced as `:name` or `{{name}}` | bound to the default; a no-default parameter that picks one value of a column becomes a dimension; otherwise refused |
 | `joins[]` | `{name, to, sql, cardinality, origin}`; `sql` is an ON predicate or a full `JOIN t a ON ...` | a relationship; `cardinality: many_to_one` is required |
-| `dimensions[]` | `{name, kind, sql, datatype, description, values, value_map, filter_form, required_join}` | fields with `dimension.is_time`; values and map as the field's `ai_context` |
+| `dimensions[]` | `{name, kind, sql, datatype, description, values, value_map, filter_form, required_join}` | fields with `dimension.is_time`; values and map as the field's `ai_context`; a bare column with `required_join` is read on that joined table |
 | `filters[]` | predicates every query applies | folded into every aggregate as `CASE WHEN`; a range comparison against a fixed date is parked in `agent_context.window` instead (see README) |
 | `mandatory_filters[]` | predicates that define the metric (cannot be removed) | same, folded in |
 | `grain`, `population`, `exclusions[]` | what one row is, which rows count, which are excluded | `agent_context` keys + a generated instructions sentence |
 | `examples[]` | `{question, sql, source}` | questions to `ai_context.examples`; SQL to `agent_context.examples` (first part of a split query only) |
 | `depends_on[]` | names of metrics this one is built from | carried, slugged; a formula built from other metrics is refused |
-| `provenance` | `{source, trust_score, ...}` | `agent_context.trust` |
+| `provenance` | `{source, trust_score, observed_sql, ...}` | `agent_context.trust`; `observed_sql` to `agent_context.verified_sql` when it is not already an example |
 | `extensions` | producer-specific blocks | not carried |
 
 Everything the converter writes back is one of: `name`, `description`, `output.datatype`,
 `examples[].question`, `grain`, `population`, `exclusions`, `output.unit`,
 `aggregation.reaggregation`, `aggregation.null_handling`, and (for a metric with one part)
 `formula`, `filters` (the parked window and parameter picks), `mandatory_filters`,
-`dimensions`, `joins`.
+`dimensions`, `joins`, and `source.table` / `source.alias` / `source.sql` when the record's
+formula was a whole query or its source a filtered row set (the structure then moves into the
+new formula). Patches use the record's own aliases.

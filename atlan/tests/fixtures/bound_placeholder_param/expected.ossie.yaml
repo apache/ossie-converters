@@ -78,9 +78,9 @@ metrics:
       "TPCDS.PUBLIC.CUSTOMER_SURVEY.SURVEY_ID", "population": "Survey answers with a good or bad score",
       "unit": "percent", "reaggregation": "none", "sql_dialect": "snowflake", "dimensions": ["customer_survey.answer_date"],
       "parameters": [{"name": "window_days", "datatype": "integer", "default": 30}], "depends_on": ["csat_responses"],
-      "examples": [{"sql": "SELECT ROUND(COUNT(CASE WHEN SCORE = ''good'' THEN 1 END) * 100.0 / NULLIF(COUNT(*),
-      0), 1) FROM TPCDS.PUBLIC.CUSTOMER_SURVEY WHERE SCORE IN (''good'',''bad'') AND CHANNEL = ''store''
-      AND ANSWERED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)"}]}}'
+      "examples": [{"question": "What is the CSAT for store surveys over the last 30 days?", "sql": "SELECT
+      ROUND(COUNT(CASE WHEN SCORE = ''good'' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) FROM TPCDS.PUBLIC.CUSTOMER_SURVEY
+      WHERE SCORE IN (''good'',''bad'') AND CHANNEL = ''store'' AND ANSWERED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)"}]}}'
 custom_extensions:
 - vendor_name: ATLAN
   data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

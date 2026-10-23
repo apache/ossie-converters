@@ -85,8 +85,9 @@ metrics:
       {"grain": "TPCDS.PUBLIC.STORE_RETURNS.SR_TICKET_NUMBER", "population": "Returns that reached a resolved
       or closed state", "unit": "returns", "reaggregation": "sum", "sql_dialect": "snowflake", "dimensions":
       ["store_returns.store", "store_returns.return_date"], "parameters": [{"name": "window_days", "datatype":
-      "integer", "default": 30}], "examples": [{"sql": "SELECT COUNT(*) FROM TPCDS.PUBLIC.STORE_RETURNS
-      WHERE SR_STORE_SK = 42 AND SR_RESOLVED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)"}]}}'
+      "integer", "default": 30}], "examples": [{"question": "How many returns did store 42 resolve in
+      the last 30 days?", "sql": "SELECT COUNT(*) FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_STORE_SK =
+      42 AND SR_RESOLVED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)"}]}}'
 custom_extensions:
 - vendor_name: ATLAN
   data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

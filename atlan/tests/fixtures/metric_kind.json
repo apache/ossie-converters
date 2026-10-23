@@ -1,7 +1,7 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
  "title": "Atlan metric registry: metric definition (metric spec 1.0-draft.4)",
- "description": "Typed pilot definition stored as one JSON object. SQL/evidence are not searchable.",
+ "description": "The metric definition, one JSON object.",
  "additionalProperties": false,
  "properties": {
   "aggregation": {
@@ -154,7 +154,7 @@
      "result": {
       "additionalProperties": false,
       "default": null,
-      "description": "Optional producer-supplied execution evidence; never attested by the gateway.",
+      "description": "Optional producer-supplied execution evidence; never set by the registry.",
       "properties": {
        "columns": {
         "description": "Declared result columns, in row order.",
@@ -489,7 +489,7 @@
    "type": "object"
   },
   "spec_version": {
-   "description": "Contract version; this pilot accepts only 1.0-draft.4.",
+   "description": "Contract version; the registry accepts only 1.0-draft.4.",
    "type": "string"
   },
   "version": {
