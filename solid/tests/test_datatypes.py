@@ -22,7 +22,10 @@ import yaml
 from conftest import convert_quietly, field_of, fixture, model_of, stash_of
 
 from ossie_solid import ConversionError, convert_solid_to_ossie
+from ossie_solid._common import SUPPORTED_DIALECTS
 from ossie_solid.datatypes import (
+    OSSIE_DATATYPES,
+    TYPE_ROUND_TRIP_EXCEPTIONS,
     infer_dialect,
     is_solid_fact_type,
     normalize_dialect,
@@ -65,6 +68,14 @@ def test_a_raw_type_splits_into_a_base_name_and_parameters(raw, base, params):
         ([], "ANSI_SQL"),
         # A tie between two vocabularies is not a decision.
         (["NUMBER", "INT64"], "ANSI_SQL"),
+        # GEOGRAPHY is BigQuery's too, and VARIANT Databricks', so neither says Snowflake.
+        (["STRING", "GEOGRAPHY", "DATE"], "ANSI_SQL"),
+        (["STRING", "VARIANT"], "ANSI_SQL"),
+        (["BIGDECIMAL", "STRING"], "BIGQUERY"),
+        # Oracle and SQL Server are Solid sources with no Apache Ossie dialect. Oracle's
+        # NUMBER would otherwise vote Snowflake, and SQL Server's BIGINT Databricks.
+        (["NUMBER", "VARCHAR2", "DATE"], "ANSI_SQL"),
+        (["BIGINT", "NVARCHAR", "DATETIME2"], "ANSI_SQL"),
     ],
 )
 def test_the_warehouse_is_inferred_from_its_distinctive_type_names(types, expected):
@@ -132,6 +143,10 @@ def test_dialect_names_are_normalized_case_insensitively():
         ("NUMBER(7,2)", "SNOWFLAKE", "Decimal"),
         ("NUMBER", "SNOWFLAKE", "Integer"),
         ("NUMERIC(10,4)", "BIGQUERY", "Decimal"),
+        ("BIGNUMERIC(40,0)", "BIGQUERY", "Integer"),
+        # A precision with no scale declares a scale of 0, in every warehouse.
+        ("NUMERIC(10)", "BIGQUERY", "Integer"),
+        ("NUMBER(10)", "SNOWFLAKE", "Integer"),
         ("TEXT", "SNOWFLAKE", "String"),
         ("STRING", "DATABRICKS", "String"),
         ("LONG", "DATABRICKS", "Integer"),
@@ -153,6 +168,16 @@ def test_dialect_names_are_normalized_case_insensitively():
         ("VARIANT", "SNOWFLAKE", "Opaque"),
         ("MAP<STRING, STRING>", "DATABRICKS", "Opaque"),
         ("ARRAY", "SNOWFLAKE", "Opaque"),
+        ("INTERVAL DAY TO SECOND", "DATABRICKS", "Opaque"),
+        ("INTERVAL YEAR TO MONTH", "BIGQUERY", "Opaque"),
+        ("VECTOR(FLOAT, 256)", "SNOWFLAKE", "Opaque"),
+        ("RANGE<DATE>", "BIGQUERY", "Opaque"),
+        ("CHARACTER VARYING(10)", "ANSI_SQL", "String"),
+        # Oracle and SQL Server, read as ANSI_SQL.
+        ("VARCHAR2(100)", "ANSI_SQL", "String"),
+        ("DATETIME2", "ANSI_SQL", "DateTime"),
+        ("DATETIMEOFFSET", "ANSI_SQL", "DateTimeTz"),
+        ("MONEY", "ANSI_SQL", "Decimal"),
         # Unknown: the spec says to omit datatype rather than guess.
         ("SOMETHING_ELSE", "SNOWFLAKE", None),
         ("", "SNOWFLAKE", None),
@@ -161,6 +186,38 @@ def test_dialect_names_are_normalized_case_insensitively():
 )
 def test_warehouse_types_map_onto_the_portable_datatypes(raw, dialect, expected):
     assert to_ossie_datatype(raw, dialect) == expected
+
+
+# A bare exact-decimal type takes its warehouse's default scale: (38,0) on Snowflake,
+# (10,0) on Databricks, 0 in the SQL standard, but (38,9) on BigQuery. BIGNUMERIC and
+# BIGDECIMAL exist only on BigQuery, with a default scale of 38.
+DEFAULT_SCALE_CASES = {
+    "SNOWFLAKE": {"NUMBER": "Integer", "NUMERIC": "Integer", "DECIMAL": "Integer"},
+    "DATABRICKS": {"DECIMAL": "Integer", "DEC": "Integer", "NUMERIC": "Integer"},
+    "BIGQUERY": {"NUMERIC": "Decimal", "DECIMAL": "Decimal", "BIGNUMERIC": "Decimal",
+                 "BIGDECIMAL": "Decimal"},
+    "ANSI_SQL": {"NUMERIC": "Integer", "DECIMAL": "Integer"},
+}
+
+
+@pytest.mark.parametrize(
+    ("dialect", "raw", "expected"),
+    [(d, raw, dt) for d, cases in DEFAULT_SCALE_CASES.items() for raw, dt in cases.items()],
+)
+def test_a_bare_decimal_type_takes_its_warehouses_default_scale(dialect, raw, expected):
+    assert to_ossie_datatype(raw, dialect) == expected
+
+
+@pytest.mark.parametrize("dialect", SUPPORTED_DIALECTS)
+@pytest.mark.parametrize("datatype", sorted(OSSIE_DATATYPES))
+def test_every_datatype_survives_the_type_written_for_it(dialect, datatype):
+    """An export with no stash writes a warehouse type for each datatype, and Solid
+    reads that back as the column's catalog type. It has to mean the same datatype, or
+    a re-import changes the model: a money column written as a bare DECIMAL comes back
+    as an Integer. The exceptions are types the warehouse does not have."""
+    raw = to_raw_type(datatype, dialect)
+    expected = TYPE_ROUND_TRIP_EXCEPTIONS.get((dialect, datatype), datatype)
+    assert to_ossie_datatype(raw, dialect) == expected, raw
 
 
 def test_an_unmappable_type_omits_the_datatype_and_warns():
@@ -182,6 +239,11 @@ def test_an_unmappable_type_omits_the_datatype_and_warns():
         ("String", "BIGQUERY", "STRING"),
         ("String", "ANSI_SQL", "VARCHAR"),
         ("Integer", "BIGQUERY", "INT64"),
+        # Scaled, because a bare NUMBER or DECIMAL is an integer type.
+        ("Decimal", "SNOWFLAKE", "NUMBER(38,9)"),
+        ("Decimal", "DATABRICKS", "DECIMAL(38,9)"),
+        ("Decimal", "BIGQUERY", "NUMERIC"),
+        ("Decimal", "ANSI_SQL", "DECIMAL(38,9)"),
         ("Float", "DATABRICKS", "DOUBLE"),
         ("DateTimeTz", "SNOWFLAKE", "TIMESTAMP_TZ"),
         (None, "SNOWFLAKE", None),

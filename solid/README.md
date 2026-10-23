@@ -93,11 +93,20 @@ this order:
 
 1. **`--dialect`**, when given. Always wins.
 2. **Inference from the column type vocabulary.** Solid copies each column's `type` out
-   of the catalog verbatim, so the names identify the warehouse: `NUMBER`/`TEXT`/
-   `VARIANT` mean Snowflake, `LONG`/`MAP`/`BIGINT` mean Databricks, `INT64`/`FLOAT64`/
-   `BOOL` mean BigQuery. Only names unique to one warehouse vote; shared ones
-   (`STRING`, `BOOLEAN`, `DATE`, `TIMESTAMP_NTZ`) are ignored.
-3. **`ANSI_SQL`**, with a warning, when nothing votes or two warehouses tie.
+   of the catalog, so among the warehouses with an Apache Ossie dialect the names
+   identify it: `NUMBER`/`TEXT` mean Snowflake, `LONG`/`MAP`/`BIGINT` mean Databricks,
+   `INT64`/`FLOAT64`/`BOOL` mean BigQuery. Only names one of the three alone reports
+   vote; shared ones (`STRING`, `BOOLEAN`, `DATE`, `TIMESTAMP_NTZ`, `VARIANT`,
+   `GEOGRAPHY`) are ignored.
+3. **`ANSI_SQL`**, with a warning, when nothing votes, two warehouses tie, or a type name
+   only Oracle or SQL Server reports (`VARCHAR2`, `DATETIME2`, `UNIQUEIDENTIFIER` …)
+   appears.
+
+Solid also reads from warehouses Apache Ossie has no dialect for — Oracle, SQL Server,
+Teradata, Starburst, Fabric, Athena and Vertica. Oracle and SQL Server are recognized
+and fall back to `ANSI_SQL`; for the others inference may pick a dialect whose type
+names they share (Starburst's `BIGINT` reads as Databricks), so pass `--dialect
+ANSI_SQL` explicitly.
 
 The resolved dialect is recorded in `custom_extensions[SOLID]`, so an export reads
 expressions back in the dialect they were written in without being told again.
@@ -271,21 +280,38 @@ not know it may drop it.
 
 | Warehouse type | Apache Ossie `datatype` |
 |---|---|
-| `STRING`, `TEXT`, `VARCHAR`, `CHAR` | `String` |
+| `STRING`, `TEXT`, `VARCHAR`, `CHAR`, `CHARACTER VARYING`, `VARCHAR2` | `String` |
 | `INT`, `BIGINT`, `LONG`, `INT64`, `TINYINT` | `Integer` |
-| `NUMBER(p,0)`, `NUMERIC(p,0)`, `DECIMAL(p,0)` | `Integer` |
-| `NUMBER(p,s>0)`, `NUMERIC`, `DECIMAL`, `BIGNUMERIC` | `Decimal` |
+| `NUMBER`, `NUMERIC`, `DECIMAL`, `DEC`, `BIGNUMERIC`, `BIGDECIMAL` | `Integer` when the scale is 0, else `Decimal` — see below |
 | `FLOAT`, `FLOAT64`, `DOUBLE`, `REAL` | `Float` |
-| `BOOLEAN`, `BOOL` | `Boolean` |
+| `BOOLEAN`, `BOOL`, `BIT` | `Boolean` |
 | `DATE` / `TIME` | `Date` / `Time` |
-| `TIMESTAMP_NTZ`, `DATETIME` | `DateTime` |
-| `TIMESTAMP_TZ`, `TIMESTAMP_LTZ` | `DateTimeTz` |
+| `TIMESTAMP_NTZ`, `DATETIME`, `DATETIME2` | `DateTime` |
+| `TIMESTAMP_TZ`, `TIMESTAMP_LTZ`, `DATETIMEOFFSET` | `DateTimeTz` |
 | `TIMESTAMP` | `DateTime` on Snowflake, `DateTimeTz` on Databricks and BigQuery |
-| `VARIANT`, `OBJECT`, `ARRAY`, `MAP`, `STRUCT`, `BINARY`, `GEOGRAPHY` | `Opaque` |
+| `VARIANT`, `OBJECT`, `ARRAY`, `MAP`, `STRUCT`, `BINARY`, `GEOGRAPHY`, `INTERVAL …` | `Opaque` |
 | anything else | omitted, with a warning |
 
-A declared scale of `0` is read as an integer, which is what keeps Snowflake ids and
-counts — stored as `NUMBER(38,0)` — from being typed `Decimal`.
+**An exact-decimal type is an integer when its scale is 0.** A declared scale is read
+off the type (`NUMBER(7,2)` is `Decimal`); a precision alone declares a scale of 0
+(`NUMERIC(10)` is `Integer`). With neither, the warehouse's default applies:
+
+| Dialect | Bare `NUMBER` / `NUMERIC` / `DECIMAL` | Bare `BIGNUMERIC` / `BIGDECIMAL` |
+|---|---|---|
+| `SNOWFLAKE` | `(38,0)` → `Integer` | — |
+| `DATABRICKS` | `(10,0)` → `Integer` | — |
+| `BIGQUERY` | `(38,9)` → `Decimal` | scale 38 → `Decimal` |
+| `ANSI_SQL` | scale 0 → `Integer` | scale 38 → `Decimal` |
+
+Honouring the scale is what keeps Snowflake ids and counts — stored as `NUMBER(38,0)` —
+from being typed `Decimal`.
+
+**Going the other way**, a field with no stashed type is written as a type of the
+resolved warehouse that reads back as the same `datatype`, since Solid takes it as the
+column's catalog type. A `Decimal` gets a scale — `NUMBER(38,9)`, `DECIMAL(38,9)`, or
+BigQuery's `NUMERIC` — because a bare `NUMBER` or `DECIMAL` is an integer type. The one
+type that does not survive is `Time` on Databricks, which has no time-of-day type: it is
+written as `STRING`. An unknown `datatype` name is ignored with a warning.
 
 ## Requirements
 
