@@ -45,10 +45,10 @@ class OntologyModel:
     def base_model(self):
         return self._delegate
 
-    def Concept(self, name, extends = None):
+    def Concept(self, name, extends = None, identity_includes_type = False):
         if extends is None:
             extends = []
-        c = self._delegate.Concept(name, extends=extends)
+        c = self._delegate.Concept(name, extends=extends, identity_includes_type=identity_includes_type)
         key = self._concept_key(c)
         self._concept[key] = c
         self._properties[key] = []
