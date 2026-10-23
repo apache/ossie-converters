@@ -38,14 +38,37 @@ from ._common import (
     dataset_name_for,
     dump_yaml,
     has_asset_links,
+    instruction_entries,
     load_yaml,
+    render_custom_instructions,
     require_str,
-    resolve_asset_links,
     string_list,
     unique_name,
     warn,
+    warn_unknown_keys,
     write_stash,
 )
+
+# Every key solid-server's YAML export writes, per object (see
+# semantic_layer_yaml_export_template.py). Anything else is reported, not dropped
+# silently.
+_MODEL_KEYS = frozenset({
+    "name", "business_context", "custom_instructions", "model_llm_description",
+    "tables", "metrics", "relationships", "example_queries", "benchmark_questions",
+})
+_BUSINESS_CONTEXT_KEYS = frozenset(
+    {"business_questions", "model_description", "custom_instructions"})
+_TABLE_KEYS = frozenset({
+    "name", "description", "manual_description", "synonyms", "primary_key",
+    "quality_rank", "indexes", "dimensions", "facts",
+})
+_COLUMN_KEYS = frozenset({
+    "name", "type", "description", "manual_description", "synonyms", "sample_values",
+    "expression",
+})
+_METRIC_KEYS = frozenset({"name", "description", "expression", "synonyms", "tables"})
+_RELATIONSHIP_KEYS = frozenset({"left_table", "right_table", "join_keys"})
+_SOLID = "a Solid semantic model"
 from .expressions import (
     AMBIGUOUS,
     UNCHANGED,
@@ -83,12 +106,14 @@ def convert_solid_to_ossie(solid_yaml_str, dialect=None, model_name=None):
                               "'semantic_model' key")
     if not isinstance(solid, dict):
         raise ConversionError("'semantic_model' must be a mapping")
+    warn_unknown_keys(document, {"semantic_model"}, "model", "the document", _SOLID)
 
     model = _convert_model(solid, dialect, model_name)
     return dump_yaml({"version": OSSIE_VERSION, **model})
 
 
 def _convert_model(solid, explicit_dialect, model_name):
+    warn_unknown_keys(solid, _MODEL_KEYS, "model", "semantic_model", _SOLID)
     tables = as_list(solid.get("tables"), "semantic_model: 'tables'")
     if not tables:
         # Apache Ossie requires at least one dataset (schema: datasets.minItems = 1).
@@ -128,9 +153,15 @@ def _convert_model(solid, explicit_dialect, model_name):
 
     business = as_mapping(
         solid.get("business_context"), "semantic_model: 'business_context'")
+    warn_unknown_keys(
+        business, _BUSINESS_CONTEXT_KEYS, "model", "business_context", _SOLID)
     llm_description = clean_text(solid.get("model_llm_description"))
     customer_description = clean_text(business.get("model_description"))
     raw_instructions = clean_text(business.get("custom_instructions"))
+    # Solid's structured custom instructions, a root-level list. When Solid writes it,
+    # it leaves `business_context.custom_instructions` out.
+    entries = instruction_entries(
+        solid.get("custom_instructions"), "semantic_model: 'custom_instructions'")
 
     model = {"name": model_name or require_str(solid, "name", "semantic_model")}
     description = llm_description or customer_description
@@ -139,8 +170,8 @@ def _convert_model(solid, explicit_dialect, model_name):
     ai_context = build_ai_context(
         # Solid resolves its asset-link markup to plain display names before the text
         # reaches an LLM; do the same for the Apache Ossie consumer, keeping the tagged
-        # original in the stash.
-        instructions=resolve_asset_links(raw_instructions) if raw_instructions else None,
+        # original and the structured entries in the stash.
+        instructions=render_custom_instructions(raw_instructions, entries),
         examples=string_list(business.get("business_questions"),
                              "business_context: 'business_questions'"),
     )
@@ -161,7 +192,9 @@ def _convert_model(solid, explicit_dialect, model_name):
         stash["model_llm_description"] = llm_description
     if customer_description:
         stash["model_description"] = customer_description
-    if raw_instructions and has_asset_links(raw_instructions):
+    if entries:
+        stash["custom_instruction_entries"] = entries
+    if raw_instructions and (entries or has_asset_links(raw_instructions)):
         stash["custom_instructions"] = raw_instructions
     for key in ("example_queries", "benchmark_questions"):
         value = solid.get(key)
@@ -198,6 +231,7 @@ def _convert_table(table, dialect, taken_names):
         raise ConversionError("Each entry of 'tables' must be a mapping")
     source = require_str(table, "name", "table")
     name = dataset_name_for(source, taken_names)
+    warn_unknown_keys(table, _TABLE_KEYS, "dataset", f"table '{source}'", _SOLID)
 
     dataset = {"name": name, "source": source}
 
@@ -261,6 +295,8 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
         raise ConversionError(
             f"Dataset '{dataset_name}': each column entry must be a mapping")
     raw_name = require_str(column, "name", f"column in '{dataset_name}'")
+    warn_unknown_keys(
+        column, _COLUMN_KEYS, "field", f"column '{dataset_name}.{raw_name}'", _SOLID)
     name = unique_name(raw_name, taken)
     if name != raw_name:
         warn("field", f"'{dataset_name}' declares '{raw_name}' more than once; the "
@@ -339,6 +375,8 @@ def _convert_relationships(relationships, by_source):
             raise ConversionError("Each entry of 'relationships' must be a mapping")
         left_source = require_str(relationship, "left_table", "relationship")
         right_source = require_str(relationship, "right_table", "relationship")
+        warn_unknown_keys(relationship, _RELATIONSHIP_KEYS, "relationship",
+                          f"relationship '{left_source}' -> '{right_source}'", _SOLID)
         left = by_source.get(left_source.lower())
         right = by_source.get(right_source.lower())
         if left is None or right is None:
@@ -350,6 +388,8 @@ def _convert_relationships(relationships, by_source):
 
         what = f"relationship '{left_source}' -> '{right_source}'"
         join_keys = as_mapping(relationship.get("join_keys"), f"{what}: 'join_keys'")
+        warn_unknown_keys(join_keys, {"left", "right"}, "relationship",
+                          f"{what} join_keys", _SOLID)
         left_columns = string_list(join_keys.get("left"), f"{what}: 'join_keys.left'")
         right_columns = string_list(join_keys.get("right"), f"{what}: 'join_keys.right'")
         if not left_columns or not right_columns:
@@ -438,6 +478,7 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
         if not isinstance(metric, dict):
             raise ConversionError("Each entry of 'metrics' must be a mapping")
         raw_name = require_str(metric, "name", "metric")
+        warn_unknown_keys(metric, _METRIC_KEYS, "metric", f"metric '{raw_name}'", _SOLID)
         name = unique_name(raw_name, taken)
         if name != raw_name:
             warn("metric", f"'{raw_name}' is declared more than once; the duplicate "

@@ -35,15 +35,19 @@ catalog and consumed by its text-to-SQL agents. Its export is the YAML you get f
 layer version.
 
 On **export** (Apache Ossie → Solid), Apache Ossie constructs with no Solid slot —
-`unique_keys`, field `label`, computed fields, metric `datatype`, relationship
-`ai_context`, foreign-vendor `custom_extensions`, `ai_context.examples` below the model
-level — are **dropped with a warning**. On
-**import** (Solid → Apache Ossie), Solid-only features are instead **preserved** in
-`custom_extensions[SOLID]`. Where a stashed value stands in for an Apache Ossie field,
-export uses it only while that field still holds what import wrote there: **an edit made
-in Apache Ossie wins**, with a warning. Any input that breaks a [requirement](#requirements)
-**raises a `ConversionError`** — the converter never silently drops a field or produces
-an invalid result.
+`unique_keys`, field `label`, computed fields, an explicit `dimension.is_time` the
+datatype does not imply, metric `datatype` and `ai_context.instructions`, relationship
+`ai_context`, foreign-vendor `custom_extensions`, model-level `ai_context.synonyms`,
+`ai_context.examples` below the model level, and any key outside the spec — are
+**dropped with a warning**. On **import** (Solid → Apache Ossie), Solid-only features are
+instead **preserved** in `custom_extensions[SOLID]`, and a key Solid's export does not
+write is reported. Where a stashed value stands in for an Apache Ossie field, export
+uses it only while that field still holds what import wrote there: **an edit made in
+Apache Ossie wins**, with a warning. Any input that breaks a
+[requirement](#requirements) **raises a `ConversionError`** — the converter never drops
+information silently or produces an invalid result. (A dataset's or relationship's
+`name` only identifies it within Apache Ossie; Solid has no slot for either, and import
+derives them again.)
 
 ## Installation
 
@@ -138,9 +142,9 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 |---|---|---|
 | `name` (at the document root) | `semantic_model.name` | Both formats hold one model per document. Export also reads the legacy layout that wraps models in a `semantic_model` list (Apache Ossie `0.1.1`), with a warning, and warns if that list holds more than one model. |
 | `description` | `model_llm_description` | Import falls back to `business_context.model_description` when the model has no LLM description, and stashes both. An edit made in Apache Ossie replaces whichever one `description` was written from. |
-| `ai_context.instructions` | `business_context.custom_instructions` | Import resolves Solid's `@<assetlink …>` markup to the display names it carries and keeps the tagged original in the stash, so an export restores the live catalog references. If the instructions were edited in Apache Ossie, the edited text is used instead. |
+| `ai_context.instructions` | `business_context.custom_instructions` and the root `custom_instructions` list | Solid holds free text in `business_context` and, in its structured form, a list of titled entries, each enabled or not and optionally scoped by a condition and to catalog assets. Import renders the free text and then each enabled entry (title, condition, assets, content) into one text, resolving Solid's `@<assetlink …>` markup to the display names it carries, and stashes the originals, so an export restores both and the live catalog references. If the instructions were edited in Apache Ossie, the edited text is used instead, as free text. |
 | `ai_context.examples` | `business_context.business_questions` | |
-| `custom_extensions[SOLID]` | `business_context.model_description`, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. |
+| `custom_extensions[SOLID]` | `business_context.model_description`, the `custom_instructions` entries, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. |
 
 ### Datasets
 
@@ -209,7 +213,7 @@ column the catalog has. A field renamed again in Apache Ossie keeps its new name
 | `from_columns` / `to_columns` | `join_keys.left` / `join_keys.right` | Positional; import rejects a length mismatch. |
 | `name` | — | Solid relationships are unnamed. Import generates `{from}_to_{to}`, suffixed if that collides. |
 | `ai_context` | — | A Solid relationship is a table pair and its join keys, with no free text. Export warns — except for the one-to-one note import itself writes, which is this converter's own marker and means nothing to Solid. |
-| `custom_extensions[SOLID]` | — | Records the original left/right orientation and position, so an export reproduces Solid's ordering. |
+| `custom_extensions[SOLID]` | — | Records when import flipped a pair to put the many side on `from`, so an export restores Solid's left/right orientation. Relationships keep their list position in both directions. |
 
 ### Metrics
 
@@ -338,7 +342,7 @@ written as `STRING`. An unknown `datatype` name is ignored with a warning.
 Conversion raises a `ConversionError` (rather than guessing or emitting something invalid)
 when an input breaks one of these:
 
-- the Apache Ossie `version` is neither `0.2.0.dev0` nor `0.1.1` (export) — see
+- an Apache Ossie document has no `version` (export) — see
   [Spec versions](#spec-versions);
 - the input YAML is malformed, or its root is not a mapping;
 - a value has the wrong YAML kind — a scalar where a list or mapping belongs, a list
@@ -366,7 +370,10 @@ when an input breaks one of these:
 ## Spec versions
 
 Output is always written as **`0.2.0.dev0`**, the current draft. On export, a document
-declaring either `0.2.0.dev0` or **`0.1.1`** is read; anything else raises.
+declaring `0.2.0.dev0` or **`0.1.1`** is read as such. A document declaring any other
+version is read as `0.2.0.dev0`, with a warning, rather than rejected, so a spec release
+does not make every document fail; a real incompatibility still surfaces when the content
+is read.
 
 `0.1.1` is accepted because it is the only *released* spec version, so it is what models
 in the wild declare. It differs from `0.2.0.dev0` in one structural way: a `0.1.1`
@@ -384,6 +391,8 @@ naming that gap.
 - **An empty description is normalized away.** solid-server renders a whitespace-only
   `manual_description` as an empty block scalar, which parses back as `''`. That carries
   no information, so the converter drops it rather than round-tripping the emptiness.
+- **Leading and trailing whitespace on free text is trimmed.** solid-server writes
+  descriptions as block scalars, which end in a newline; the text inside is unchanged.
 - **`unique_keys` cannot survive an export.** Solid's YAML has no unique-key field; a
   single unique key identical to the primary key is dropped silently, any other is
   dropped with a warning.
