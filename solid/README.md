@@ -306,7 +306,7 @@ not know it may drop it.
 |---|---|
 | `STRING`, `TEXT`, `VARCHAR`, `CHAR`, `CHARACTER VARYING`, `VARCHAR2` | `String` |
 | `INT`, `BIGINT`, `LONG`, `INT64`, `TINYINT` | `Integer` |
-| `NUMBER`, `NUMERIC`, `DECIMAL`, `DEC`, `BIGNUMERIC`, `BIGDECIMAL` | `Integer` when the scale is 0, else `Decimal` — see below |
+| `NUMBER`, `NUMERIC`, `DECIMAL`, `DEC`, `BIGNUMERIC`, `BIGDECIMAL` | `Integer` when the declared scale is 0, else `Decimal` — see below |
 | `FLOAT`, `FLOAT64`, `DOUBLE`, `REAL` | `Float` |
 | `BOOLEAN`, `BOOL`, `BIT` | `Boolean` |
 | `DATE` / `TIME` | `Date` / `Time` |
@@ -316,24 +316,23 @@ not know it may drop it.
 | `VARIANT`, `OBJECT`, `ARRAY`, `MAP`, `STRUCT`, `BINARY`, `GEOGRAPHY`, `INTERVAL …` | `Opaque` |
 | anything else | omitted, with a warning |
 
-**An exact-decimal type is an integer when its scale is 0.** A declared scale is read
-off the type (`NUMBER(7,2)` is `Decimal`); a precision alone declares a scale of 0
-(`NUMERIC(10)` is `Integer`). With neither, the warehouse's default applies:
-
-| Dialect | Bare `NUMBER` / `NUMERIC` / `DECIMAL` | Bare `BIGNUMERIC` / `BIGDECIMAL` |
-|---|---|---|
-| `SNOWFLAKE` | `(38,0)` → `Integer` | — |
-| `DATABRICKS` | `(10,0)` → `Integer` | — |
-| `BIGQUERY` | `(38,9)` → `Decimal` | scale 38 → `Decimal` |
-| `ANSI_SQL` | scale 0 → `Integer` | scale 38 → `Decimal` |
-
-Honouring the scale is what keeps Snowflake ids and counts — stored as `NUMBER(38,0)` —
-from being typed `Decimal`.
+**An exact-decimal type is an `Integer` only when its scale is known to be 0** — a
+declared scale of 0 (`NUMBER(38,0)`), or a precision alone (`NUMERIC(10)`), which
+declares a scale of 0 in every warehouse. A bare `NUMBER`, `NUMERIC` or `DECIMAL` is a
+`Decimal`, which the spec defines as exact base-10 with unspecified precision and scale,
+in every dialect, even where the warehouse's own default scale is 0. Solid copies a
+column's type from the catalog's `DATA_TYPE`, which on Snowflake and Databricks never
+carries the precision or scale, so a bare `NUMBER` in a Solid export is as likely
+`NUMBER(38,2)` as `NUMBER(38,0)`: in the real Solid exports this was checked against,
+every `NUMBER` and `DECIMAL` column is bare, rates and dollar amounts included. (BigQuery's
+bare `NUMERIC` is `(38,9)` and Oracle's bare `NUMBER` a floating decimal, so they are
+`Decimal` either way.)
 
 **Going the other way**, a field with no stashed type is written as a type of the
 resolved warehouse that reads back as the same `datatype`, since Solid takes it as the
-column's catalog type. A `Decimal` gets a scale — `NUMBER(38,9)`, `DECIMAL(38,9)`, or
-BigQuery's `NUMERIC` — because a bare `NUMBER` or `DECIMAL` is an integer type. The one
+column's catalog type. Exact numerics get their scale written out — `NUMBER(38,0)` for an
+`Integer` on Snowflake, `NUMBER(38,9)` or `DECIMAL(38,9)` for a `Decimal` — rather than
+relying on a warehouse default. The one
 type that does not survive is `Time` on Databricks, which has no time-of-day type: it is
 written as `STRING`. An unknown `datatype` name is ignored with a warning.
 
