@@ -314,3 +314,33 @@ def test_a_name_only_a_dataset_the_metric_does_not_read_has_is_no_collision():
         "SUM(orders.amount) / COUNT(customers.cid)", "SNOWFLAKE",
         ["orders", "customers", "returns"], fields,
     ) == ("SUM(amount) / COUNT(cid)", UNQUALIFIED)
+
+
+# Names sqlglot tokenizes as keywords, though they are ordinary table and column names.
+KEYWORD_NAMES = ["date", "time", "comment", "index", "first", "range", "timestamp",
+                 "filter", "format", "partition", "session", "view", "schema", "rows",
+                 "year", "value", "name", "level", "role", "position", "order", "limit"]
+DIALECTS = ["SNOWFLAKE", "DATABRICKS", "BIGQUERY", "ANSI_SQL"]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("name", KEYWORD_NAMES)
+def test_a_dataset_named_like_a_keyword_qualifies_and_unqualifies(name, dialect):
+    qualified, status = qualify_metric("SUM(amount)", dialect, name, ["amount"])
+    assert status == QUALIFIED
+    assert unqualify_metric(qualified, dialect, [name]) == ("SUM(amount)", UNQUALIFIED)
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("name", KEYWORD_NAMES)
+def test_a_column_named_like_a_keyword_is_qualified_or_left_exactly_as_written(
+        name, dialect):
+    """Qualified when the formula parses; a formula that uses a reserved word bare is
+    not valid SQL in the first place, and is left alone."""
+    expression = f"COUNT(DISTINCT {name})"
+    qualified, status = qualify_metric(expression, dialect, "orders", [name])
+    if status == QUALIFIED:
+        assert qualified == f"COUNT(DISTINCT orders.{name})"
+    else:
+        assert (qualified, status) == (expression, UNPARSED)
+    assert unqualify_metric(qualified, dialect, ["orders"])[0] == expression

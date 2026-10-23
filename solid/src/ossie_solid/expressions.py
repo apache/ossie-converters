@@ -62,9 +62,29 @@ from ._common import (
     SQLGLOT_DIALECTS,
 )
 
-# Token types that can carry an identifier: an unquoted name, or a quoted one whose
+# Token types that always carry an identifier: an unquoted name, or a quoted one whose
 # offsets span the quote characters as well.
 _NAME_TOKENS = (TokenType.VAR, TokenType.IDENTIFIER)
+
+# Token types whose text is a value, never a name.
+_LITERAL_TOKENS = frozenset(
+    t for t in TokenType if t.name.endswith("STRING") or t.name == "NUMBER")
+
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+
+
+def _is_name_token(token):
+    """True if `token` could be a column or dataset name.
+
+    sqlglot tokenizes many ordinary names as keywords -- a column called `date`,
+    `comment` or `first`, a table called `session` -- even where the parser goes on to
+    read them as columns, so a keyword token spelled like a name counts too. The AST
+    cross-check in the callers decides whether each match really is a column, and
+    leaves the text alone when it is not.
+    """
+    if token.token_type in _NAME_TOKENS:
+        return True
+    return token.token_type not in _LITERAL_TOKENS and bool(_WORD.fullmatch(token.text))
 
 # Conversion outcomes, returned alongside the expression.
 QUALIFIED = "qualified"
@@ -217,7 +237,7 @@ def qualify_metric(expression, dialect, dataset, columns):
 
     targets = []
     for index, token in enumerate(tokens):
-        if token.token_type not in _NAME_TOKENS:
+        if not _is_name_token(token):
             continue
         if _unquote(token.text).lower() not in known:
             continue
@@ -277,7 +297,7 @@ def unqualify_metric(expression, dialect, datasets, fields=None):
 
     edits, found = [], Counter()
     for index, token in enumerate(tokens):
-        if token.token_type not in _NAME_TOKENS:
+        if not _is_name_token(token):
             continue
         if _unquote(token.text).lower() not in known:
             continue
@@ -285,7 +305,7 @@ def unqualify_metric(expression, dialect, datasets, fields=None):
         name = tokens[index + 2] if index + 2 < len(tokens) else None
         if dot is None or dot.token_type is not TokenType.DOT:
             continue
-        if name is None or name.token_type not in _NAME_TOKENS:
+        if name is None or not _is_name_token(name):
             continue
         previous = tokens[index - 1] if index else None
         # `db.table.column`: the leading name is a schema, so the middle one is not a
