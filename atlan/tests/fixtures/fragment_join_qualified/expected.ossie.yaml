@@ -1,0 +1,134 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 0.2.0.dev0
+name: fragment_join_qualified
+description: source.sql is a FROM fragment with a LEFT JOIN, columns are fully qualified by table name,
+  and there are example questions
+datasets:
+- name: store_sales
+  source: TPCDS.PUBLIC.STORE_SALES
+  fields:
+  - name: ss_item_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_ITEM_SK
+      - dialect: ANSI_SQL
+        expression: SS_ITEM_SK
+  - name: sale_date
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_SOLD_TIMESTAMP
+      - dialect: ANSI_SQL
+        expression: SS_SOLD_TIMESTAMP
+    dimension:
+      is_time: true
+    datatype: Date
+    description: When the sale happened.
+  - name: store
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_STORE_SK
+      - dialect: ANSI_SQL
+        expression: SS_STORE_SK
+    dimension:
+      is_time: false
+    datatype: String
+    description: The store the sale belongs to.
+  - name: channel
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: INITCAP(SS_CHANNEL)
+      - dialect: ANSI_SQL
+        expression: INITCAP(SS_CHANNEL)
+    dimension:
+      is_time: false
+    datatype: String
+    description: Sales channel.
+  - name: ss_is_void
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_IS_VOID
+      - dialect: ANSI_SQL
+        expression: SS_IS_VOID
+- name: item
+  source: TPCDS.PUBLIC.ITEM
+  primary_key:
+  - i_item_sk
+  fields:
+  - name: i_item_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: I_ITEM_SK
+      - dialect: ANSI_SQL
+        expression: I_ITEM_SK
+  - name: seasonal
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: CASE WHEN I_ITEM_TAGS LIKE '%Seasonal%' THEN 'Yes' ELSE 'No' END
+      - dialect: ANSI_SQL
+        expression: CASE WHEN I_ITEM_TAGS LIKE '%Seasonal%' THEN 'Yes' ELSE 'No' END
+    dimension:
+      is_time: false
+    datatype: String
+    description: Whether the item is tagged seasonal.
+relationships:
+- name: store_sales_to_item
+  from: store_sales
+  to: item
+  from_columns:
+  - ss_item_sk
+  to_columns:
+  - i_item_sk
+metrics:
+- name: store_sale_errors
+  expression:
+    dialects:
+    - dialect: OSSIE_SQL_2026
+      expression: SUM(CASE WHEN store_sales.ss_is_void = TRUE THEN 1 ELSE 0 END)
+    - dialect: ANSI_SQL
+      expression: SUM(CASE WHEN store_sales.ss_is_void = TRUE THEN 1 ELSE 0 END)
+  datatype: Integer
+  description: 'Store sales that were voided: the reliability signal store managers act on'
+  ai_context:
+    instructions: 'Grain: TPCDS.PUBLIC.STORE_SALES.SS_STORE_SK, TPCDS.PUBLIC.STORE_SALES.SS_CUSTOMER_SK,
+      TPCDS.PUBLIC.STORE_SALES.SS_SOLD_TIMESTAMP. Counts: Store sales, one row per sale, attributed to
+      the store and carrying the channel and item tags. Unit: sales. Re-aggregation: sum.'
+    examples:
+    - How are voided sales trending month by month per store, broken down by channel and whether the item
+      is seasonal?
+  custom_extensions:
+  - vendor_name: ATLAN
+    data: '{"registry": {"id": "metric_synth_store_sale_errors", "definition_version": 1}, "agent_context":
+      {"grain": "TPCDS.PUBLIC.STORE_SALES.SS_STORE_SK, TPCDS.PUBLIC.STORE_SALES.SS_CUSTOMER_SK, TPCDS.PUBLIC.STORE_SALES.SS_SOLD_TIMESTAMP",
+      "population": "Store sales, one row per sale, attributed to the store and carrying the channel and
+      item tags", "unit": "sales", "reaggregation": "sum", "sql_dialect": "snowflake", "dimensions": ["store_sales.sale_date",
+      "store_sales.store", "store_sales.channel", "item.seasonal"], "relationships": ["store_sales_to_item"],
+      "depends_on": ["store_sales"], "examples": [{"question": "How are voided sales trending month by
+      month per store, broken down by channel and whether the item is seasonal?", "sql": "SELECT DATE_TRUNC(''MONTH'',
+      SS_SOLD_TIMESTAMP) AS month, SS_STORE_SK, SUM(CASE WHEN SS_IS_VOID = TRUE THEN 1 ELSE 0 END) FROM
+      TPCDS.PUBLIC.STORE_SALES GROUP BY 1, 2"}]}}'
+custom_extensions:
+- vendor_name: ATLAN
+  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

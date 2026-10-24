@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_weekly_returns_trailing_avg",
+ "kind": "metric",
+ "app": "metric",
+ "name": "weekly_returns_trailing_avg",
+ "display_name": "Weekly Returns Trailing Avg",
+ "description": "Weekly returns with a four-week trailing average",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:weekly_returns_trailing_avg",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "weekly_returns_trailing_avg",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "week",
+   "population": "Store returns in the last 16 weeks",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "WITH weekly AS (SELECT DATE_TRUNC('week', SR_RETURNED_DATE) AS week_start, COUNT(*) AS returns FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_RETURNED_DATE >= DATEADD('week', -16, CURRENT_DATE) GROUP BY 1), with_avg AS (SELECT week_start, returns, ROUND(AVG(returns) OVER (ORDER BY week_start ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING), 1) AS avg_4w FROM weekly) SELECT week_start AS \"Week\", returns AS \"Returns\", avg_4w AS \"4W Trailing Avg\" FROM with_avg ORDER BY week_start",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

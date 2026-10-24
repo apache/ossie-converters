@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_checkout_latency_p95",
+ "kind": "metric",
+ "app": "metric",
+ "name": "checkout_latency_p95",
+ "display_name": "Checkout Latency P95",
+ "description": "95th percentile checkout latency",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "git",
+ "source_id": "operations/checkout_latency_p95",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "promql",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "checkout_latency_p95",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "5-minute windows",
+   "population": "Checkout requests in production",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "histogram_quantile(0.95, sum(rate(checkout_latency_seconds_bucket{cluster=\"prod\"}[5m])) by (le))",
+   "source": {
+    "sql": null,
+    "table": "prod/checkout",
+    "alias": "m",
+    "entity": "signals.metrics",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}
