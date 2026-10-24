@@ -188,18 +188,18 @@ def write_report(report, output):
         "",
         "## Case details",
         "",
-        "| Tier | Source | Target | Result | Warns | Foreign | Native gate | Reason / evidence |",
+        "| Tier | Source | Target | Result | Issues | Foreign | Native gate | Reason / evidence |",
         "|---|---|---|---|---:|---:|---|---|",
     ]
     for case in report["cases"]:
-        warnings = case["diagnostics"]
+        issues = case["diagnostics"]
         reason = _cell(case["reason"])
         evidence = _link(
             Path(case["output"]).parent / f"tier-{case['tier']}.json", output
         )
         lines.append(
             f"| {case['tier']} | {case['source']} | {case['target']} | {case['grade']} | "
-            f"{len(warnings)} | {sum(x['foreign_extension'] for x in warnings)} | "
+            f"{len(issues)} | {sum(x['foreign_extension'] for x in issues)} | "
             f"{case['native_gate']['grade']} | {reason} {evidence} |"
         )
     if report.get("regressions"):

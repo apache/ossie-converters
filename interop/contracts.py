@@ -88,7 +88,15 @@ def _expression(sql, dialect, dataset, metric):
     if any(isinstance(node, exp.Query) for node in tree.walk()):
         raise ValueError("queries are outside the expression assertion scope")
     for column in tree.find_all(exp.Column):
-        if len(column.parts) > 2 or column.table not in ("", dataset):
+        qualifier = column.args.get("table")
+        # Ownership follows the same identifier rules as expression comparison:
+        # unquoted spellings are case-insensitive; quoted names must match exactly.
+        owned = qualifier is None or (
+            qualifier.name == dataset
+            if qualifier.args.get("quoted")
+            else qualifier.name.lower() == dataset.lower()
+        )
+        if len(column.parts) > 2 or not owned:
             raise ValueError(f"unexpected dataset qualifier: {column.sql()}")
         column.set("table", exp.to_identifier(dataset) if metric else None)
     return tree.sql(dialect="databricks", normalize=True)

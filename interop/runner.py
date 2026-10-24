@@ -34,7 +34,7 @@ from .checks import (
     meaningful_ossie,
     native_content,
 )
-from .execution import diagnostics, run_command, succeeded
+from .execution import diagnostics, has_degradation, run_command, succeeded
 from .manifest import Manifest, expand
 
 
@@ -238,7 +238,7 @@ class Runner:
                 return result, None
         data = self.validate(result, target)
         if data is not None and (
-            result["diagnostics"] or result["validation"]["warnings"]
+            has_degradation(result["diagnostics"]) or result["validation"]["warnings"]
         ):
             result.update(
                 grade="LOSSY",
@@ -333,7 +333,7 @@ class Runner:
                 grade="EMPTY", reason="export produced no meaningful native members"
             )
             return result
-        if result["diagnostics"]:
+        if has_degradation(result["diagnostics"]):
             result.update(
                 grade="LOSSY", reason="export reported degradation; see diagnostics"
             )
@@ -396,7 +396,7 @@ class Runner:
         if (
             changes["removed"]
             or changes["added"]
-            or result["diagnostics"]
+            or has_degradation(result["diagnostics"])
             or result["validation"]["warnings"]
         ):
             result.update(

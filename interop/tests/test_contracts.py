@@ -125,6 +125,46 @@ def test_returned_dialect_labels_and_self_qualification_may_normalize(dialect):
     assert check_document(data, "dialect", regression(name).assertions)["grade"] == "OK"
 
 
+@pytest.mark.parametrize(
+    "dialect", ["ANSI_SQL", "OSSIE_SQL_2026", "DATABRICKS", "SNOWFLAKE"]
+)
+@pytest.mark.parametrize("qualifier", ["ORDERS", "OrDeRs", '"orders"'])
+def test_self_qualifier_ownership_normalizes_unquoted_case(dialect, qualifier):
+    if dialect == "DATABRICKS":
+        qualifier = qualifier.replace('"', "`")
+    name = "dialect-databricks-only"
+    data = document(name)
+    data["metrics"][0]["expression"]["dialects"][0].update(
+        dialect=dialect, expression=f"SUM({qualifier}.AMOUNT)"
+    )
+    data["datasets"][0]["fields"][2]["expression"]["dialects"][0].update(
+        dialect=dialect, expression=f"{qualifier}.AMOUNT * 0.9"
+    )
+    assert check_document(data, "dialect", regression(name).assertions)["grade"] == "OK"
+
+
+@pytest.mark.parametrize(
+    "dialect", ["ANSI_SQL", "OSSIE_SQL_2026", "DATABRICKS", "SNOWFLAKE"]
+)
+@pytest.mark.parametrize(
+    "qualifier", ['"ORDERS"', '"OrDeRs"', "customers", "analytics.orders"]
+)
+def test_qualifier_case_normalization_cannot_hide_other_owners(dialect, qualifier):
+    if dialect == "DATABRICKS":
+        qualifier = qualifier.replace('"', "`")
+    name = "dialect-databricks-only"
+    data = document(name)
+    data["metrics"][0]["expression"]["dialects"][0].update(
+        dialect=dialect, expression=f"SUM({qualifier}.amount)"
+    )
+    result = check_document(data, "dialect", regression(name).assertions)
+    assert result["grade"] == "FAIL"
+    assert any(
+        "unexpected dataset qualifier" in (check["error"] or "")
+        for check in result["checks"]
+    )
+
+
 def test_input_with_an_accidental_ansi_fallback_cannot_claim_dialect_only_coverage():
     name = "dialect-databricks-only"
     data = document(name)

@@ -17,6 +17,7 @@
 
 """Subprocess isolation and diagnostic normalization; never execute through a shell."""
 
+import json
 import os
 from pathlib import Path
 import re
@@ -78,12 +79,110 @@ def succeeded(result):
     return result["error"] is None and result["returncode"] == 0
 
 
+def _diagnostic(converter, message, code=None, **details):
+    return {
+        **details,
+        "converter": converter,
+        "code": code,
+        "message": message,
+        "foreign_extension": bool(
+            re.search(
+                r"foreign.*(?:extension|vendor)|(?:extension|vendor).*foreign|"
+                r"(?:unknown|unsupported|ignor\w*|dropp\w*).*custom_extensions?|"
+                r"custom_extensions?.*(?:unknown|unsupported|ignor\w*|dropp\w*)",
+                message,
+                re.I,
+            )
+        ),
+    }
+
+
+def _thoughtspot_issues(text, converter):
+    """Decode complete JSON arrays, leaving unrelated stderr for the fallback."""
+    found, remainder, end = [], [], 0
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"(?m)^[ \t]*\[", text):
+        start = match.end() - 1
+        if start < end:
+            continue
+        try:
+            issues, stop = decoder.raw_decode(text, start)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(issues, list) or any(
+            not isinstance(issue, dict)
+            or not isinstance(issue.get("message"), str)
+            or issue.get("severity") not in ("INFO", "WARNING", "ERROR")
+            for issue in issues
+        ):
+            continue
+        remainder.append(text[end:start])
+        # Keep every issue property (including object_ref/remedy and future keys).
+        found.extend(
+            {**issue, **_diagnostic(converter, issue["message"], issue.get("code"))}
+            for issue in issues
+        )
+        end = stop
+    remainder.append(text[end:])
+    return found, "\n".join(remainder)
+
+
+def has_degradation(issues):
+    # Informational issues remain evidence without turning a successful stage LOSSY.
+    return any(issue.get("severity", "WARNING") != "INFO" for issue in issues)
+
+
 def diagnostics(result, converter):
-    """Keep stage provenance; foreign-extension counts are a conservative heuristic."""
+    """One complete issue per converter diagnostic, with a text fallback."""
     text = Path(result["stderr"]).read_text(encoding="utf-8", errors="replace")
     found = []
+    if converter == "thoughtspot":
+        found, text = _thoughtspot_issues(text, converter)
     notices = False
+    block_indent = None
+    previous_indent = None
     for line in text.splitlines():
+        if converter == "orionbelt":
+            # CLI conversion warnings and validation warnings are separate blocks.
+            if re.fullmatch(r"Conversion warnings:|Warnings: *[0-9]+", line.strip()):
+                block_indent = len(line) - len(line.lstrip())
+                previous_indent = None
+                continue
+            if block_indent is not None:
+                indent = len(line) - len(line.lstrip())
+                if not line.strip():
+                    continue
+                if indent == block_indent + 2 and line.lstrip().startswith("- "):
+                    found.append(
+                        _diagnostic(converter, line.lstrip()[2:], severity="WARNING")
+                    )
+                    previous_indent = indent
+                    continue
+                if previous_indent is not None and indent > previous_indent:
+                    found[-1]["message"] += "\n" + line.strip()
+                    # A continuation can itself explain extension loss.
+                    found[-1] = _diagnostic(
+                        converter,
+                        **{
+                            key: value
+                            for key, value in found[-1].items()
+                            if key not in ("converter", "foreign_extension")
+                        },
+                    )
+                    continue
+                block_indent = previous_indent = None
+        if converter == "microsoft":
+            scoped = re.match(r"^\[([^\]]+)\]\s+(.+)", line)
+            if scoped:
+                found.append(
+                    _diagnostic(
+                        converter,
+                        line.strip(),
+                        scope=scoped.group(1),
+                        severity="WARNING",
+                    )
+                )
+                continue
         if line.startswith("Conversion notices ("):
             notices = True
             continue
@@ -93,25 +192,19 @@ def diagnostics(result, converter):
         warning = re.search(r"\bwarn(?:ing)?s?\b|\b\w+Warning:", line, re.I)
         if not (code or warning or (notices and line.startswith("  "))):
             continue
-        message = line.strip()
         typed_warning = re.match(r"\s*\[WARNING\]\s+([A-Z_]+):", line)
         found.append(
-            {
-                "converter": converter,
-                "code": typed_warning.group(1)
+            _diagnostic(
+                converter,
+                line.strip(),
+                code=typed_warning.group(1)
                 if typed_warning
                 else code.group(1)
                 if code
                 else None,
-                "message": message,
-                "foreign_extension": bool(
-                    re.search(
-                        r"foreign.*(?:extension|vendor)|(?:extension|vendor).*foreign|"
-                        r"(?:unknown|unsupported|ignor\w*|dropp\w*).*custom_extensions?",
-                        message,
-                        re.I,
-                    )
-                ),
-            }
+                severity=code.group(1)
+                if code and code.group(1) in ("INFO", "WARNING", "ERROR")
+                else "WARNING",
+            )
         )
     return found

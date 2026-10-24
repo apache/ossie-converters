@@ -18,6 +18,7 @@
 """Regression tests for the hub's trust boundaries, not converter implementations."""
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -481,3 +482,54 @@ def test_java_version_is_checked_before_maven_build(matrix, monkeypatch):
     result = runner.prepare(converter("java", toolchain="maven"))
     assert result["grade"] == "SKIP"
     assert "Java 21+" in result["reason"]
+
+
+@pytest.mark.parametrize(
+    "name,message,expected",
+    [
+        ("microsoft", "[dataset 'orders'] Power BI has no composite key", "LOSSY"),
+        (
+            "orionbelt",
+            "Conversion warnings:\n  - metric revenue is not queryable",
+            "LOSSY",
+        ),
+        (
+            "thoughtspot",
+            '[{"code":"TS-LOSS","severity":"WARNING","message":"metric dropped","object_ref":"metric:revenue","remedy":null}]',
+            "LOSSY",
+        ),
+        (
+            "thoughtspot",
+            '[{"code":"TS-INFO","severity":"INFO","message":"expression rendered"}]',
+            "OK",
+        ),
+    ],
+)
+def test_converter_specific_issues_control_export_grading(
+    matrix, name, message, expected
+):
+    converter, run, path = matrix
+    script = path / "emit_native.py"
+    script.write_text(
+        "import json, pathlib, sys\n"
+        f"sys.stderr.write({message!r})\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(dict(source='db.schema.orders', dimensions=[dict(name='id', expr='id')])))\n"
+    )
+    target = replace(
+        converter(name), export_command=[sys.executable, str(script), "{output}"]
+    )
+    runner, report = run([converter("alpha"), target])
+    exports = [
+        case
+        for case in report["cases"]
+        if case["tier"] == "A" and case["target"] == name
+    ]
+    assert exports and all(case["grade"] == expected for case in exports)
+    assert all(len(case["diagnostics"]) == 1 for case in exports)
+    returned = next(
+        case
+        for case in report["cases"]
+        if case["tier"] == "B" and case["target"] == name
+    )
+    assert returned["grade"] == expected
+    assert exit_code(report) == 0

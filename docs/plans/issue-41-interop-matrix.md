@@ -218,6 +218,23 @@ to control the cost of the pairwise matrix.
 - Inspected dbt's CLI and diagnostics; no full dbt interop run was performed.
 - A full matrix has not been run. Maven was unavailable in the analysis session.
 
+## PR review follow-up
+
+PR #16 merged as `51f810e`; the interop branch has been merged with current
+`main` (`62a3066`) without conflicts. The Cube CLI registration remains compatible.
+Both Copilot findings are addressed: unquoted SQL qualifiers normalize case before
+ownership checks while quoted identifiers retain case sensitivity, and complete
+Microsoft/OrionBelt/ThoughtSpot diagnostics are retained. Informational issues stay
+visible without making a stage LOSSY; the report column is now named Issues.
+
+All 242 tests passed with integration enabled. The full updated matrix completed
+630 cases with no harness errors and report-only exit 0: 62 OK, 231 LOSSY, 89 FAIL,
+3 EMPTY, and 245 SKIP. Both Cube -> Databricks -> Cube regressions passed, and all
+700 report evidence links resolve. Lint, formatting, and the license audit passed.
+Evidence: `interop/.runs/pr-62-review-fixes/report.md`. The optional Codex CLI review
+could not run because its configured model is unavailable; direct inspection and
+regression tests were used. GitHub-hosted CI still requires maintainer approval.
+
 ## Guidance for a later session
 
 Implementation entry point: [interop/README.md](../../interop/README.md).

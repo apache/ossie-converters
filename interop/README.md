@@ -287,10 +287,15 @@ final native model, return-export logs, and an optional native compiler result.
 A regression's `OK` means those binding assertions passed; other model losses
 and conversion warnings remain visible separately.
 
-Warning counts are normalized from Cube issue lines, dbt typed warnings, and
-Databricks notices. Foreign-extension counts are a conservative text heuristic,
-not an exact measure of extension loss. Source diagnostics stay on source rows;
-they are not counted against every downstream exporter.
+Diagnostic counts retain one complete issue per Microsoft scoped message,
+OrionBelt warning-block entry, and ThoughtSpot JSON issue (including its severity,
+object reference, and remedy). Cube issue lines, dbt typed warnings, Databricks
+notices, and generic Python warnings also remain supported. Informational issues
+are retained without making a stage `LOSSY`; warning/error diagnostics indicate
+degradation. The report's `Issues` column includes informational issues.
+Foreign-extension counts are a conservative text heuristic, not an exact measure
+of extension loss. Source diagnostics stay on source rows; they are not counted
+against every downstream exporter.
 
 ## Manifest
 
