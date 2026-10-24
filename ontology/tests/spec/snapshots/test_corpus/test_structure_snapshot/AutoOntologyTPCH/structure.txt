@@ -1,0 +1,107 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: tpch_ontology
+version: 0.2.0.dev0
+description: Business concepts of the tpch semantic model
+
+ontology requires:
+
+concepts:
+  Customer (ENTITY_TYPE)
+    identify_by: Customer.customer_key
+  Nation (ENTITY_TYPE)
+    identify_by: Nation.nation_key
+  Order (ENTITY_TYPE)
+    identify_by: Order.order_key
+  OrderLineItem (ENTITY_TYPE)
+    identify_by: OrderLineItem.line_number, OrderLineItem.order
+  Part (ENTITY_TYPE)
+    identify_by: Part.part_key
+  PartSupplier (ENTITY_TYPE)
+    identify_by: PartSupplier.part, PartSupplier.supplier
+  Region (ENTITY_TYPE)
+    identify_by: Region.region_key
+  Supplier (ENTITY_TYPE)
+    identify_by: Supplier.supplier_key
+
+relationships:
+  Customer.account_balance [MANY_TO_ONE]: Customer -> Decimal
+  Customer.address [MANY_TO_ONE]: Customer -> String
+  Customer.comment [MANY_TO_ONE]: Customer -> String
+  Customer.customer_key [ONE_TO_ONE]: Customer -> Integer
+  Customer.customer_name [MANY_TO_ONE]: Customer -> String
+  Customer.market_segment [MANY_TO_ONE]: Customer -> String
+  Customer.nation [MANY_TO_ONE]: Customer -> Nation
+  Customer.phone_number [MANY_TO_ONE]: Customer -> String
+  Nation.nation_comment [MANY_TO_ONE]: Nation -> String
+  Nation.nation_key [ONE_TO_ONE]: Nation -> Integer
+  Nation.nation_name [MANY_TO_ONE]: Nation -> String
+  Nation.region [MANY_TO_ONE]: Nation -> Region
+  Order.clerk [MANY_TO_ONE]: Order -> String
+  Order.comment [MANY_TO_ONE]: Order -> String
+  Order.customer [MANY_TO_ONE]: Order -> Customer
+  Order.order_date [MANY_TO_ONE]: Order -> Date
+  Order.order_key [ONE_TO_ONE]: Order -> Integer
+  Order.order_priority [MANY_TO_ONE]: Order -> String
+  Order.order_status [MANY_TO_ONE]: Order -> String
+  Order.ship_priority [MANY_TO_ONE]: Order -> Integer
+  Order.total_price [MANY_TO_ONE]: Order -> Decimal
+  OrderLineItem.comment [MANY_TO_ONE]: OrderLineItem -> String
+  OrderLineItem.commit_date [MANY_TO_ONE]: OrderLineItem -> Date
+  OrderLineItem.discount_rate [MANY_TO_ONE]: OrderLineItem -> Decimal
+  OrderLineItem.extended_price [MANY_TO_ONE]: OrderLineItem -> Decimal
+  OrderLineItem.line_number [MANY_TO_ONE]: OrderLineItem -> Integer
+  OrderLineItem.line_status [MANY_TO_ONE]: OrderLineItem -> String
+  OrderLineItem.missing_line_status [MANY_TO_ONE]: OrderLineItem -> Boolean
+  OrderLineItem.missing_return_flag [MANY_TO_ONE]: OrderLineItem -> Boolean
+  OrderLineItem.missing_shipping_instructions [MANY_TO_ONE]: OrderLineItem -> Boolean
+  OrderLineItem.order [MANY_TO_ONE]: OrderLineItem -> Order
+  OrderLineItem.part [MANY_TO_ONE]: OrderLineItem -> Part
+  OrderLineItem.part_supplier [MANY_TO_ONE]: OrderLineItem -> PartSupplier
+  OrderLineItem.quantity [MANY_TO_ONE]: OrderLineItem -> Decimal
+  OrderLineItem.receipt_date [MANY_TO_ONE]: OrderLineItem -> Date
+  OrderLineItem.return_flag [MANY_TO_ONE]: OrderLineItem -> String
+  OrderLineItem.ship_date [MANY_TO_ONE]: OrderLineItem -> Date
+  OrderLineItem.ship_mode [MANY_TO_ONE]: OrderLineItem -> String
+  OrderLineItem.shipping_instructions [MANY_TO_ONE]: OrderLineItem -> String
+  OrderLineItem.supplier [MANY_TO_ONE]: OrderLineItem -> Supplier
+  OrderLineItem.tax_rate [MANY_TO_ONE]: OrderLineItem -> Decimal
+  Part.brand [MANY_TO_ONE]: Part -> String
+  Part.comment [MANY_TO_ONE]: Part -> String
+  Part.container [MANY_TO_ONE]: Part -> String
+  Part.manufacturer [MANY_TO_ONE]: Part -> String
+  Part.part_key [ONE_TO_ONE]: Part -> Integer
+  Part.part_name [MANY_TO_ONE]: Part -> String
+  Part.part_type [MANY_TO_ONE]: Part -> String
+  Part.retail_price [MANY_TO_ONE]: Part -> Decimal
+  Part.size [MANY_TO_ONE]: Part -> Integer
+  PartSupplier.available_quantity [MANY_TO_ONE]: PartSupplier -> Integer
+  PartSupplier.comment [MANY_TO_ONE]: PartSupplier -> String
+  PartSupplier.part [MANY_TO_ONE]: PartSupplier -> Part
+  PartSupplier.supplier [MANY_TO_ONE]: PartSupplier -> Supplier
+  PartSupplier.supply_cost [MANY_TO_ONE]: PartSupplier -> Decimal
+  Region.comment [MANY_TO_ONE]: Region -> String
+  Region.region_key [ONE_TO_ONE]: Region -> Integer
+  Region.region_name [MANY_TO_ONE]: Region -> String
+  Supplier.account_balance [MANY_TO_ONE]: Supplier -> Decimal
+  Supplier.address [MANY_TO_ONE]: Supplier -> String
+  Supplier.comment [MANY_TO_ONE]: Supplier -> String
+  Supplier.nation [MANY_TO_ONE]: Supplier -> Nation
+  Supplier.phone_number [MANY_TO_ONE]: Supplier -> String
+  Supplier.supplier_key [ONE_TO_ONE]: Supplier -> Integer
+  Supplier.supplier_name [MANY_TO_ONE]: Supplier -> String
