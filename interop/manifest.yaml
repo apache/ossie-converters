@@ -1,0 +1,268 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 1
+canonical:
+  tpcds: ossie/examples/tpcds_semantic_model.yaml
+  flights: ossie/examples/flights.semantic_model.yaml
+converters:
+  cube:
+    cwd: cube
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-cube, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-cube, export, -i, '{input}', -o, '{output}']
+    native_format: cube
+    output: directory
+    fixtures:
+      tpcds: cube/tests/fixtures/tpcds_cube
+      metric-bindings: interop/fixtures/cube/metric_bindings
+    native_gate:
+      requires_env: OSSIE_CUBE_REPO
+      command: [node, '{root}/cube/tools/cube_compile.js', '{files}']
+  databricks:
+    cwd: databricks/java
+    toolchain: maven
+    prepare: [mvn, -B, -DskipTests, package]
+    import: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, import, '{input}', -o, '{output}']
+    export: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, export, '{input}', -o, '{output}']
+    native_format: databricks
+    output: file
+    fixtures:
+      tpcds: databricks/java/src/test/resources/ossie_tpcds_metric_view.yaml
+  dbt:
+    cwd: dbt
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-dbt, msi-to-ossie, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-dbt, ossie-to-msi, -i, '{input}', -o, '{output}']
+    native_format: dbt
+    output: file
+    fixtures:
+      orders: interop/fixtures/dbt/semantic_manifest.json
+  gooddata:
+    cwd: gooddata
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, python, '{root}/interop/adapters.py', gooddata, import, '{input}', '{output}']
+    export: [uv, run, --no-sync, python, '{root}/interop/adapters.py', gooddata, export, '{input}', '{output}']
+    native_format: gooddata
+    output: file
+    fixtures:
+      tpcds: gooddata/tests/fixtures/gooddata_tpcds.json
+  hex:
+    cwd: hex
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: null
+    export: [uv, run, --no-sync, ossie-hex, export, -i, '{input}', -o, '{output}']
+    native_format: hex
+    output: directory
+    fixtures: {}
+    import_skip: No native-to-Ossie importer is implemented in this converter.
+  holistics:
+    cwd: holistics
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-holistics, to-ossie, '{input}', -o, '{output}', --sql-dialect, BIGQUERY]
+    export: [uv, run, --no-sync, ossie-holistics, to-aml, '{input}', -o, '{output}', --sql-dialect, BIGQUERY, --data-source-name,
+      interop_warehouse]
+    native_format: holistics
+    output: directory
+    fixtures:
+      ecommerce: holistics/tests/fixtures/ecommerce/ecommerce.dataset.aml.json
+    roundtrip_skip: Export emits AML source; re-import requires Holistics compilation to compiled dataset JSON, unavailable
+      in the file runner.
+  honeydew:
+    cwd: honeydew
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-honeydew, honeydew-to-ossie, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-honeydew, ossie-to-honeydew, -i, '{input}', -o, '{output}']
+    native_format: honeydew
+    output: directory
+    fixtures:
+      orders: interop/fixtures/honeydew/orders
+  microsoft:
+    cwd: microsoft
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-microsoft, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-microsoft, export, -i, '{input}', -o, '{output}']
+    native_format: microsoft
+    output: file
+    fixtures:
+      sales: microsoft/tests/fixtures/sales_model.bim
+  nvidia:
+    cwd: nvidia
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-nvidia-auto-ontology, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-nvidia-auto-ontology, export, -i, '{input}', -o, '{output}']
+    native_format: nvidia
+    output: file
+    fixtures:
+      sales: nvidia/tests/fixtures/sales.auto_ontology.yaml
+  omni:
+    cwd: omni
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-omni, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-omni, export, -i, '{input}', -o, '{output}']
+    native_format: omni
+    output: directory
+    fixtures:
+      tpcds: omni/tests/fixtures/tpcds_omni
+  ontology:
+    cwd: ontology
+    skip: Converts Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
+  orionbelt:
+    cwd: orionbelt
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-orionbelt, obml-to-ossie, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-orionbelt, ossie-to-obml, -i, '{input}', -o, '{output}']
+    native_format: orionbelt
+    output: file
+    fixtures:
+      tpcds: orionbelt/tests/fixtures/tpcds_as_obml.yaml
+  polaris:
+    cwd: polaris
+    skip: Requires a provisioned Polaris REST catalog; the file matrix does not create or modify live catalogs.
+  salesforce:
+    import_requires_files: [salesforce/src/main/resources/schemas/salesforce-semantic-model-schema.json]
+    cwd: salesforce
+    toolchain: maven
+    prepare: [mvn, -B, -DskipTests, package]
+    import: [python3, '{root}/interop/adapters.py', salesforce, import, '{input}', '{output}']
+    export: [python3, '{root}/interop/adapters.py', salesforce, export, '{input}', '{output}']
+    native_format: salesforce
+    output: file
+    fixtures:
+      orders: salesforce/src/test/resources/examples/salesforceToOssie.json
+  sigma:
+    cwd: sigma
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-sigma, sigma-to-ossie, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-sigma, ossie-to-sigma, -i, '{input}', -o, '{output}']
+    native_format: sigma
+    output: file
+    fixtures:
+      sales: sigma/tests/fixtures/fixtureA_sigma.json
+  snowflake:
+    cwd: snowflake
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: null
+    export: [uv, run, --no-sync, ossie-snowflake, -i, '{input}', -o, '{output}']
+    native_format: snowflake
+    output: file
+    fixtures: {}
+    import_skip: No native-to-Ossie importer is implemented in this converter.
+  thoughtspot:
+    cwd: thoughtspot
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, python, '{root}/interop/adapters.py', thoughtspot, import, '{input}', '{output}']
+    export: [uv, run, --no-sync, ossie-thoughtspot, to-tml, '{input}', -o, '{output}']
+    native_format: thoughtspot
+    output: directory
+    fixtures:
+      tpcds: thoughtspot/tests/fixtures/tpcds
+  wisdom:
+    cwd: wisdom
+    toolchain: uv
+    prepare: [uv, run, --no-project, --with-editable, ., python, -c, pass]
+    import: [uv, run, --no-project, --with-editable, ., ossie-wisdom, wisdom-to-ossie, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-project, --with-editable, ., ossie-wisdom, ossie-to-wisdom, -i, '{input}', -o, '{output}']
+    native_format: wisdom
+    output: file
+    fixtures:
+      sales: wisdom/tests/fixtures/sample_export.json
+  wisdom-semantic-view:
+    cwd: wisdom-semantic-view
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, python, '{root}/interop/adapters.py', wisdom-semantic-view, import, '{input}', '{output}']
+    export: [uv, run, --no-sync, python, '{root}/interop/adapters.py', wisdom-semantic-view, export, '{input}', '{output}']
+    native_format: semantic-view
+    output: file
+    fixtures:
+      finance: wisdom-semantic-view/tests/fixtures/finance/snowflake/cfo_cockpit.before.yaml
+regressions:
+  cube-databricks-tpcds:
+    source: cube
+    fixture: tpcds
+    via: databricks
+    expectations: interop/fixtures/bindings/tpcds.yaml
+  cube-databricks-metric-bindings:
+    source: cube
+    fixture: metric-bindings
+    via: databricks
+    expectations: interop/fixtures/bindings/sales.yaml
+document_regressions:
+  dialect-databricks-only:
+    category: dialect
+    input: interop/fixtures/contracts/dialect-databricks-only/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/dialect-databricks-only/expectations.yaml
+  dialect-snowflake-only:
+    category: dialect
+    input: interop/fixtures/contracts/dialect-snowflake-only/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/dialect-snowflake-only/expectations.yaml
+  dialect-ossie-sql-2026-only:
+    category: dialect
+    input: interop/fixtures/contracts/dialect-ossie-sql-2026-only/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/dialect-ossie-sql-2026-only/expectations.yaml
+  keys-single:
+    category: keys
+    input: interop/fixtures/contracts/keys-single/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/keys-single/expectations.yaml
+  keys-composite:
+    category: keys
+    input: interop/fixtures/contracts/keys-composite/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/keys-composite/expectations.yaml
+  keys-unique-only:
+    category: keys
+    input: interop/fixtures/contracts/keys-unique-only/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/keys-unique-only/expectations.yaml
+  keys-joined:
+    category: keys
+    input: interop/fixtures/contracts/keys-joined/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/keys-joined/expectations.yaml
+  source-two-part:
+    category: sources
+    input: interop/fixtures/contracts/source-two-part/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/source-two-part/expectations.yaml
+  source-three-part:
+    category: sources
+    input: interop/fixtures/contracts/source-three-part/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/source-three-part/expectations.yaml
+  source-quoted-parts:
+    category: sources
+    input: interop/fixtures/contracts/source-quoted-parts/input.yaml
+    targets: [cube, databricks, dbt]
+    expectations: interop/fixtures/contracts/source-quoted-parts/expectations.yaml
