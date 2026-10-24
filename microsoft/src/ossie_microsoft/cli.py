@@ -104,8 +104,8 @@ def _build_parser():
         "--translate-dax",
         action="store_true",
         default=False,
-        help="translate single-column aggregate DAX measures to OSSIE_SQL_2026 where "
-        "unambiguous, keeping the original DAX as a fallback (default: off, keep DAX only)",
+        help="translate DAX measures to OSSIE_SQL_2026 where the translation is exact "
+        "(see _dax_to_sql), keeping the original DAX as a fallback (default: off, keep DAX only)",
     )
 
     exp = sub.add_parser(

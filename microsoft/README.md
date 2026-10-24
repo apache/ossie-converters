@@ -126,6 +126,7 @@ in the Power BI stash for round trip, but not represented in the Apache Ossie do
 | --- | --- |
 | `--strict` | exit non-zero if anything could not be converted faithfully |
 | `-q`, `--quiet` | suppress the report |
+| `--translate-dax` | `import` only: also translate DAX measures to `OSSIE_SQL_2026` where the translation is exact (off by default) |
 
 `--strict` is the useful mode in a pipeline that must not silently degrade a model. The
 output file is still written, so a failing run can be inspected. Both flags are accepted
@@ -201,6 +202,8 @@ expressions and retains their original dialect and text in annotations.
 Concretely:
 
 - A Power BI measure becomes a metric with a `DAX` dialect expression, not a SQL one.
+  With the opt-in `--translate-dax`, a measure whose translation is exact also gets an
+  `OSSIE_SQL_2026` expression, with the DAX kept beside it (see below).
 - On export, a metric becomes a measure from `DAX` or a supported SQL-to-DAX
   translation. Untranslatable SQL gets a warning and an annotated `BLANK()` measure.
 - A field expression becomes a TMSL `sourceColumn` only when it is a plain column
@@ -384,6 +387,28 @@ A calculated *field* whose expression is not already DAX is only translated for
 unambiguous string concatenation. Other expressions become annotated `BLANK()`
 columns. These placeholders are **not correct computed values**: review converter
 warnings and supply a DAX expression before using the exported model for analysis.
+
+### DAX measures (opt-in `--translate-dax`)
+
+By default an imported measure keeps only its DAX. With `--translate-dax`, the import
+also translates a measure to `OSSIE_SQL_2026` when the translation is exact, and keeps
+the original DAX as a second dialect, so nothing is lost and Power BI export still uses
+the DAX. A measure that cannot be translated exactly stays DAX only, with a warning that
+names the reason.
+
+Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
+`Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
+`BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
+other measures; and `VAR` / `RETURN`. Every other DAX function is refused with a reason
+from a per-function registry, for example:
+
+```
+[table 'Sales' measure 'YTD'] DAX measure kept as-is; not translated to OSSIE_SQL_2026
+(TOTALYTD needs window measures (time intelligence), which the Apache Ossie
+specification does not define yet)
+```
+
+`_dax_to_sql.py` documents each rule and each refusal.
 
 ## Testing
 

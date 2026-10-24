@@ -111,8 +111,8 @@ def convert_semantic_model_to_ossie(semantic_model: dict | str, translate_dax: b
         semantic_model: A ``model.bim`` document, either parsed (a TMSL mapping) or as
             JSON text, or a single TMDL document as text. TMDL input requires the
             optional ``tom`` extra.
-        translate_dax: When true, DAX measures whose single-column aggregate has an
-            unambiguous ``OSSIE_SQL_2026`` form are translated, with the original DAX
+        translate_dax: When true, DAX measures with an exact ``OSSIE_SQL_2026`` form
+            (see ``_dax_to_sql``) are translated, with the original DAX
             kept as a fallback dialect; measures that cannot be translated safely are
             kept as DAX with a diagnostic. Off by default, so the default output is
             unchanged.
@@ -149,8 +149,8 @@ def _as_tmsl(semantic_model):
 def build_ossie_document(bim_file, translate_dax=False):
     """Convert a parsed ``model.bim`` document into an Apache Ossie document (dict).
 
-    When ``translate_dax`` is true, single-column aggregate measures are translated
-    to ``OSSIE_SQL_2026`` where unambiguous (see ``_dax_to_sql``); otherwise every
+    When ``translate_dax`` is true, measures are translated to ``OSSIE_SQL_2026``
+    where the translation is exact (see ``_dax_to_sql``); otherwise every
     measure is kept as DAX, which is the default.
     """
     if not isinstance(bim_file, dict):
@@ -531,18 +531,20 @@ def _build_field_resolver(datasets):
     return resolve
 
 
-def _measure_expression(dax_expression, scope, translate_dax, resolve_field):
+def _measure_expression(dax_expression, scope, translate_dax, resolve_field, measures=None):
     """Build a metric's expression from a DAX measure body.
 
     By default, and whenever a measure cannot be translated safely, the DAX is kept
     verbatim as the sole dialect. When translation is on and succeeds, the metric
     carries ``OSSIE_SQL_2026`` as the primary dialect with the original DAX kept as a
     fallback, so no information is lost and a reader that trusts only DAX still has it.
+    ``measures`` maps the model's measure names to their DAX, so a reference to another
+    measure can be expanded.
     """
     if not translate_dax or resolve_field is None:
         return make_expression(dax_expression, DIALECT_DAX)
 
-    sql, reason = translate_measure(dax_expression, resolve_field)
+    sql, reason = translate_measure(dax_expression, resolve_field, measures)
     if sql is None:
         warn(scope, f"DAX measure kept as-is; not translated to OSSIE_SQL_2026 ({reason})")
         return make_expression(dax_expression, DIALECT_DAX)
@@ -555,10 +557,22 @@ def _measure_expression(dax_expression, scope, translate_dax, resolve_field):
     }
 
 
+def _measure_bodies(tables):
+    """Map every measure name in ``tables`` to its DAX, for expanding measure references."""
+    bodies = {}
+    for table in tables:
+        for measure in table.get("measures") or []:
+            if isinstance(measure, dict) and measure.get("name"):
+                expression = measure.get("expression")
+                bodies[measure["name"]] = text(expression) if expression is not None else ""
+    return bodies
+
+
 def _convert_metrics(tables, translate_dax=False, resolve_field=None):
     metrics = []
     excluded = []
     seen = set()
+    measures = _measure_bodies(tables) if translate_dax else None
     for table in tables:
         for index, measure in enumerate(table.get("measures") or []):
             if not isinstance(measure, dict) or not measure.get("name"):
@@ -593,7 +607,7 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
             metric = {
                 "name": name,
                 "expression": _measure_expression(
-                    expression, scope, translate_dax, resolve_field
+                    expression, scope, translate_dax, resolve_field, measures
                 ),
             }
             if measure.get("description"):
