@@ -32,9 +32,14 @@ Usage (CLI):
 """
 
 import dataclasses
+import functools
+import re
+
+import sqlglot
 
 from ._common import (
     AGG_TO_RESULT_DATATYPE,
+    BACKTICK_DIALECTS,
     CALCULATED_MEASURE_TYPES,
     DATATYPE_TO_DIM_TYPE,
     DEFAULT_DATATYPE_FOR_CUBE_TYPE,
@@ -58,6 +63,7 @@ from ._common import (
     parse_source,
     pick_expression,
     primary_key_operand,
+    requalify_self_refs,
     read_stash,
     DOTTED_REF_RE,
     lookup_map,
@@ -74,7 +80,8 @@ from ._common import (
     view_file,
 )
 from .converter_issues import IssueLog, IssueType
-from .expressions import (aggregate_spans, qualify_bare_columns,
+from .expressions import (UnattributableSQL, aggregate_spans, native_tokens,
+                          parse as parse_expression, qualify_bare_columns,
                           replace_bare_identifiers, unqualified_column_names,
                           unsplittable_aggregate_datasets)
 
@@ -1089,15 +1096,16 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             _place(measures_by_cube, target, measure, name)
             continue
 
-        expr, used = pick_expression(metric.get("expression"), dialect)
+        expr, expression_dialect = pick_expression(metric.get("expression"), dialect)
         if expr is None:
             issues.add(IssueType.NO_USABLE_DIALECT, scope,
                        "no ANSI_SQL expression and no warehouse dialect Cube could "
                        "pass through; metric dropped")
             continue
-        _report_dialect_fallback(issues, scope, used, dialect)
+        _report_dialect_fallback(issues, scope, expression_dialect, dialect)
 
-        missing = _references_a_dropped_field(expr, tables, cube_names, plan)
+        missing = _references_a_dropped_field(
+            expr, tables, cube_names, plan, expression_dialect)
         if missing:
             # The field has no expression in a usable dialect, so Cube gets no
             # dimension for it -- and a measure referencing one it did not get is a
@@ -1107,7 +1115,7 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
                        f"expression in a usable dialect and so becomes no Cube "
                        f"dimension; the metric is dropped with it")
             continue
-        dropped_refs = refs.dropped_references(expr)
+        dropped_refs = refs.dropped_references(expr, expression_dialect)
         if dropped_refs:
             # Same reasoning one level up: the referenced *metric* produces no
             # measure, so a `{name}` reference to it is a model Cube refuses.
@@ -1116,7 +1124,7 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
                        f"which drop for want of a usable dialect and so become no "
                        f"Cube measure; the metric is dropped with them")
             continue
-        referenced = tables.datasets_in(expr)
+        referenced = refs.datasets_pointed_at(expr, expression_dialect)
         target = refs.cube_of_metric(mname_raw)
 
         if len(referenced) > 1:
@@ -1133,8 +1141,9 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
 
         spans = []
         if not stash.get("sql"):
-            spans = aggregate_spans(expr)
-            _report_unsplittable_aggregates(issues, scope, expr, target, tables)
+            spans = aggregate_spans(expr, expression_dialect)
+            _report_unsplittable_aggregates(
+                issues, scope, expr, target, tables, expression_dialect)
         # Decompose only when some aggregate belongs on another cube than the
         # public measure's. That is where splitting buys correctness: each part is
         # corrected for row multiplication on its own cube. A composite whose
@@ -1148,16 +1157,17 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
         # `SUM(users.ltv) + orders.amount` names two datasets, which puts the measure
         # on the base cube, and the sum over `users` was then corrected on `orders`.
         decomposed = any(
-            _span_target(refs, expr[s:e], target) != target for s, e in spans)
+            _span_target(refs, expr[s:e], target, expression_dialect) != target for s, e in spans)
         if decomposed:
             public_sql = _decompose_measure(
                 expr, spans, mname, target, measures_by_cube, plan,
-                name, reserved, refs)
+                name, reserved, refs, expression_dialect=expression_dialect)
             measure = {"name": mname, "sql": public_sql, "type": "number"}
         else:
             measure = _measure_from_expression(
-                expr, target, mname, stash, plan, refs)
-        _apply_measure_metadata(metric, measure, stash, used,
+                expr, target, mname, stash, plan, refs,
+                expression_dialect=expression_dialect)
+        _apply_measure_metadata(metric, measure, stash, expression_dialect,
                                 decomposed=decomposed)
         # Cube-only keys import found on the measure (`format`, `drill_members`,
         # `public`, ...) ride flat in the stash -- the same protocol dimensions
@@ -1198,6 +1208,39 @@ def _pinned_cube(stash, metric_name, known_cubes, issues):
     return None
 
 
+@functools.lru_cache(maxsize=256)
+def _native_columns(text, source_dialect):
+    """Columns requiring native parsing before portable reference rewriting."""
+    if source_dialect not in BACKTICK_DIALECTS:
+        return ()
+    tree = parse_expression(text, source_dialect)
+    return tuple(tree.find_all(sqlglot.exp.Column)) if tree is not None else ()
+
+
+def _mask_native_literals(text, source_dialect, substitutions):
+    """Hide native literals and comments from portable identifier rewrites."""
+    try:
+        tokens = native_tokens(text, source_dialect)
+    except UnattributableSQL:
+        # Export retains its existing opaque fallback for unparseable SQL.
+        return text
+    spans, cursor = [], 0
+    for token in tokens:
+        if text[cursor:token.start].strip():
+            spans.append((cursor, token.start, False))
+        if token.token_type.name.endswith("STRING"):
+            spans.append((token.start, token.end + 1, True))
+        cursor = token.end + 1
+    if text[cursor:].strip():
+        spans.append((cursor, len(text), False))
+    for start, end, literal in reversed(spans):
+        name = f"__ossie_literal_{len(substitutions)}__"
+        marker = f"'{name}'" if literal else f"/*{name}*/"
+        substitutions[marker] = escape_braces_for_cube(text[start:end])
+        text = text[:start] + marker + text[end:]
+    return text
+
+
 class _MetricReferences:
     """The namespace a model-level expression's bare identifiers resolve in.
 
@@ -1230,15 +1273,16 @@ class _MetricReferences:
         self._model_name = model_name
         self._field_owners = field_owners  # match key -> {cubes declaring the field}
         self._index = {}     # match key -> canonical key
+        self._native_masks = {}  # (text, target, dialect) -> native reference masks
         self._details = {}   # canonical key -> {measure, stash_cube, expr, cube}
         for metric in (model.get("metrics") or []):
             raw = metric.get("name")
             if not isinstance(raw, str):
                 continue
             stash = read_stash(metric)
-            expr = None
+            expr, expression_dialect = None, None
             if "measure" not in stash:
-                expr, _ = pick_expression(metric.get("expression"), dialect)
+                expr, expression_dialect = pick_expression(metric.get("expression"), dialect)
             canonical = normalize_identifier(raw)
             for key in match_keys(raw):
                 self._index.setdefault(key, canonical)
@@ -1250,11 +1294,12 @@ class _MetricReferences:
                 # None means no usable dialect; a verbatim-restored measure has no
                 # expression to scan but still exists to be referenced.
                 "expr": expr,
+                "dialect": expression_dialect,
                 "verbatim": "measure" in stash,
                 "cube": None,
             }
 
-    def _referenced_in(self, text):
+    def _referenced_in(self, text, source_dialect=None):
         """{bare identifier -> canonical metric key} for `text`'s metric references.
 
         Parser-based: only names sqlglot reads as unqualified columns count, so a
@@ -1263,13 +1308,13 @@ class _MetricReferences:
         as the raw SQL they already were.
         """
         found = {}
-        for name in (unqualified_column_names(text) or ()):
+        for name in (unqualified_column_names(text, source_dialect) or ()):
             canonical = resolve_identifier(self._index, name)
             if canonical is not None:
                 found[name] = canonical
         return found
 
-    def _fields_in(self, text):
+    def _fields_in(self, text, source_dialect=None):
         """{bare identifier -> the sole dataset declaring it} for `text`.
 
         The metric namespace wins -- a name that resolves as a metric is never
@@ -1277,7 +1322,7 @@ class _MetricReferences:
         on several datasets is left as the raw SQL it was.
         """
         found = {}
-        for name in (unqualified_column_names(text) or ()):
+        for name in (unqualified_column_names(text, source_dialect) or ()):
             if resolve_identifier(self._index, name) is not None:
                 continue
             owners = None
@@ -1289,20 +1334,105 @@ class _MetricReferences:
                 found[name] = next(iter(owners))
         return found
 
-    def datasets_pointed_at(self, text):
+    def datasets_pointed_at(self, text, source_dialect=None):
         """Every dataset `text` reads: dotted references plus attributed fields.
 
         What decides which cube an aggregate lands on when a metric is decomposed
         -- so an unqualified source column places its aggregate on the dataset
         that declares it, not on whichever cube the rest of the expression named.
         """
-        return (set(self._tables.datasets_in(text))
-                | set(self._fields_in(text).values()))
+        native = {resolve_identifier(self._tables.datasets, c.parts[0].name)
+                  for c in _native_columns(text, source_dialect)
+                  if len(c.parts) > 1}
+        native.discard(None)
+        return (set(self._tables.datasets_in(text)) | native
+                | set(self._fields_in(text, source_dialect).values()))
 
-    def dropped_references(self, expr):
+    def _native_reference_masks(self, text, target, source_dialect):
+        """Bridge backtick identifiers to Cube references without changing literals.
+
+        The portable reference regex intentionally treats backticks as opaque.
+        Native column nodes provide the exact spans and decoded identifier names
+        needed to resolve those references, including columns absent from fields.
+        """
+        key = (text, target, source_dialect)
+        if key in self._native_masks:
+            return self._native_masks[key]
+        out = {}
+        columns = _native_columns(text, source_dialect)
+        tokens = native_tokens(text, source_dialect) if columns else []
+        for column in columns:
+            parts = column.parts
+            if len(parts) < 2:
+                continue
+            cube = resolve_identifier(self._tables.datasets, parts[0].name)
+            if cube is None:
+                continue
+            start, end = parts[0].meta.get("start"), parts[-1].meta.get("end")
+            tail_start = parts[1].meta.get("start")
+            tail = None
+            if not all(isinstance(i, int) for i in (start, end, tail_start)):
+                # BigQuery synthesizes identifiers for quoted dotted paths,
+                # discarding positions even on an unquoted prefix. Correlate the
+                # decoded path with its original contiguous identifier tokens.
+                wanted = [p.name for p in parts]
+                def names(token):
+                    return (token.text.split(".") if source_dialect == "BIGQUERY"
+                            and token.token_type is sqlglot.TokenType.IDENTIFIER
+                            else [token.text])
+                for i, token in enumerate(tokens):
+                    if i and tokens[i - 1].text == ".":
+                        continue  # the middle of a longer path
+                    found, last = names(token), i
+                    while last + 2 < len(tokens) and tokens[last + 1].text == ".":
+                        last += 2
+                        found += names(tokens[last])
+                    # Only a run holding a quoted dotted identifier lost its positions;
+                    # an unquoted spelling of the same path is another column node.
+                    if found != wanted or all(
+                            len(names(t)) == 1 for t in tokens[i:last + 1:2]):
+                        continue
+                    start, end = token.start, tokens[last].end
+                    if len(names(token)) == 1:
+                        tail_start = tokens[i + 2].start
+                    else:
+                        # The head shares its token with the tail's first parts.
+                        tail = ".".join(sqlglot.exp.Identifier(
+                            this=p.name, quoted=True).sql(dialect="bigquery")
+                            for p in parts[1:])
+                    break
+            if not isinstance(start, int) or not isinstance(end, int):
+                continue
+            if tail is None:
+                if not isinstance(tail_start, int):
+                    continue
+                tail = text[tail_start:end + 1]
+            raw = text[start:end + 1]
+            if raw in out:
+                continue
+            own = cube == target
+            alias = "CUBE" if own else cube
+            replacement = "{" + alias + "}." + escape_braces_for_cube(tail)
+            if len(parts) == 2:
+                name = parts[1].name
+                inline = resolve_identifier(self._tables.for_cube(cube, "inline_sql"), name)
+                member = resolve_identifier(self._tables.for_cube(
+                    cube, "references" if own else "columns"), name)
+                canonical = resolve_identifier(self._tables.for_cube(cube, "columns"), name)
+                if inline is not None:
+                    replacement = str(inline) if own else requalify_self_refs(inline, cube)
+                elif member is not None:
+                    replacement = "{" + alias + "." + member + "}"
+                elif own and canonical is not None:
+                    replacement = "{CUBE}." + canonical
+            out[raw] = (f"__ossie_nref_{len(out)}__", replacement)
+        self._native_masks[key] = out
+        return out
+
+    def dropped_references(self, expr, source_dialect=None):
         """Names of referenced metrics that produce no measure, transitively."""
         return {self._details[key]["name"]
-                for key in self._referenced_in(expr).values()
+                for key in self._referenced_in(expr, source_dialect).values()
                 if self._drops(key, ())}
 
     def _drops(self, key, visiting):
@@ -1314,7 +1444,7 @@ class _MetricReferences:
         if detail["expr"] is None:
             return True
         return any(self._drops(ref, visiting + (key,))
-                   for ref in self._referenced_in(detail["expr"]).values())
+                   for ref in self._referenced_in(detail["expr"], detail["dialect"]).values())
 
     def cube_of_metric(self, written_name):
         key = resolve_identifier(self._index, written_name)
@@ -1328,8 +1458,8 @@ class _MetricReferences:
             self._cycle(visiting + (key,))
         cube = detail["stash_cube"]
         if not cube and detail["expr"] is not None:
-            pointed = self.datasets_pointed_at(detail["expr"])
-            for ref in set(self._referenced_in(detail["expr"]).values()):
+            pointed = self.datasets_pointed_at(detail["expr"], detail["dialect"])
+            for ref in set(self._referenced_in(detail["expr"], detail["dialect"]).values()):
                 pointed.add(self._cube_of(ref, visiting + (key,)))
             cube = next(iter(pointed)) if len(pointed) == 1 else None
         detail["cube"] = cube or self._resolve_base()
@@ -1341,7 +1471,7 @@ class _MetricReferences:
             f"Model '{self._model_name}': metric reference cycle: {named}. Cube "
             f"refuses cyclic member references; break the cycle in the Ossie model.")
 
-    def to_cube_sql(self, text, target, context=None):
+    def to_cube_sql(self, text, target, context=None, source_dialect=None):
         """`ossie_expr_to_cube_sql`, with metric references rendered as measures.
 
         Each referenced name is masked with a sentinel identifier first, so the
@@ -1368,10 +1498,10 @@ class _MetricReferences:
         """
         whole = context if context is not None else text
         attributed = {name: f"{cube}.{name}"
-                      for name, cube in self._fields_in(whole).items()}
+                      for name, cube in self._fields_in(whole, source_dialect).items()}
         masks, substitutions = {}, {}
         for i, (written, key) in enumerate(
-                sorted(self._referenced_in(whole).items())):
+                sorted(self._referenced_in(whole, source_dialect).items())):
             sentinel = f"__ossie_mref_{i}__"
             masks[written] = sentinel
             detail = self._details[key]
@@ -1380,7 +1510,24 @@ class _MetricReferences:
                 "{" + detail["measure"] + "}" if cube == target
                 else "{" + cube + "." + detail["measure"] + "}")
 
+        native = self._native_reference_masks(whole, target, source_dialect)
+        native_pattern = (re.compile("|".join(map(re.escape, sorted(native, key=len,
+                                                                  reverse=True))))
+                          if native else None)
+
         def convert(fragment):
+            if native_pattern:
+                # Token starts exclude text inside native (including raw/triple)
+                # literals, even if it contains an otherwise identical reference.
+                starts = {t.start for t in native_tokens(fragment, source_dialect)}
+                def replace(match):
+                    if match.start() not in starts:
+                        return match.group(0)
+                    sentinel, replacement = native[match.group(0)]
+                    substitutions[sentinel] = replacement
+                    return sentinel
+                fragment = native_pattern.sub(replace, fragment)
+            fragment = _mask_native_literals(fragment, source_dialect, substitutions)
             fragment = replace_bare_identifiers(fragment, attributed)
             fragment = replace_bare_identifiers(fragment, masks)
             return ossie_expr_to_cube_sql(fragment, target, self._tables)
@@ -1391,15 +1538,18 @@ class _MetricReferences:
         # qualification every other generated member SQL does. The names are taken
         # from the converted whole and only *applied* to the fragment, which is the
         # part `qualify_bare_columns` cannot do for itself.
-        names = unqualified_column_names(out if context is None else convert(whole))
+        names = unqualified_column_names(
+            out if context is None else convert(whole), source_dialect)
         out = replace_bare_identifiers(
             out, {name: "{CUBE}." + name for name in names or ()})
-        for sentinel, replacement in substitutions.items():
-            out = out.replace(sentinel, replacement)
+        if substitutions:
+            # One pass keeps restored literal data from being rewritten again.
+            pattern = "|".join(map(re.escape, sorted(substitutions, key=len, reverse=True)))
+            out = re.sub(pattern, lambda match: substitutions[match.group(0)], out)
         return out
 
 
-def _references_a_dropped_field(expr, tables, cube_names, plan):
+def _references_a_dropped_field(expr, tables, cube_names, plan, source_dialect=None):
     """`dataset.field` references in `expr` naming a field that becomes no dimension."""
     by_cube_name = {cname: ds_name for ds_name, cname in cube_names.items()}
     canonical = tables.datasets
@@ -1422,10 +1572,20 @@ def _references_a_dropped_field(expr, tables, cube_names, plan):
             fname = resolve_identifier(dropped_norm.get(cname) or {}, field)
             if fname is not None:
                 missing.add(f"'{by_cube_name.get(cname, cname)}.{fname}'")
+    for column in _native_columns(expr, source_dialect):
+        if len(column.parts) != 2:
+            continue
+        cube = resolve_identifier(canonical, column.parts[0].name)
+        if cube is None:
+            continue
+        field = resolve_identifier(dropped_norm.get(cube) or {}, column.name)
+        if field is not None:
+            missing.add(f"'{by_cube_name.get(cube, cube)}.{field}'")
     return missing
 
 
-def _report_unsplittable_aggregates(issues, scope, expr, target, tables):
+def _report_unsplittable_aggregates(issues, scope, expr, target, tables,
+                                    source_dialect=None):
     """Report an aggregate that has to stay on `target` while reading another dataset.
 
     Decomposition exists so each aggregate lands on the cube its operand reads and
@@ -1440,7 +1600,7 @@ def _report_unsplittable_aggregates(issues, scope, expr, target, tables):
     per-measure correction cannot cover.
     """
     stranded = {resolve_identifier(tables.datasets, name) or name
-                for name in unsplittable_aggregate_datasets(expr)}
+                for name in unsplittable_aggregate_datasets(expr, source_dialect)}
     stranded.discard(target)
     if not stranded:
         return
@@ -1453,15 +1613,15 @@ def _report_unsplittable_aggregates(issues, scope, expr, target, tables):
         f"verify the value if a join fans {named} out")
 
 
-def _span_target(refs, piece, fallback):
+def _span_target(refs, piece, fallback, source_dialect=None):
     """The cube one aggregate span belongs on: the sole dataset its operand
     reads (dotted or attributed), else the public measure's own cube."""
-    pointed = refs.datasets_pointed_at(piece)
+    pointed = refs.datasets_pointed_at(piece, source_dialect)
     return next(iter(pointed)) if len(pointed) == 1 else fallback
 
 
 def _decompose_measure(expr, spans, mname, fallback, measures_by_cube, plan,
-                       model_name, reserved, refs):
+                       model_name, reserved, refs, *, expression_dialect=None):
     """Emit one `public: false` measure per aggregate; return the sql referencing them.
 
     Cube corrects for row multiplication per measure, keyed on the cube that measure
@@ -1485,7 +1645,7 @@ def _decompose_measure(expr, spans, mname, fallback, measures_by_cube, plan,
         piece = expr[start:end]
         # Each aggregate lands on the cube its own operand references -- an
         # unqualified column included, when exactly one dataset declares it.
-        part_target = _span_target(refs, piece, fallback)
+        part_target = _span_target(refs, piece, fallback, expression_dialect)
 
         index += 1
         part_name = f"{mname}_part_{index}"
@@ -1495,18 +1655,25 @@ def _decompose_measure(expr, spans, mname, fallback, measures_by_cube, plan,
         taken.add(part_name.lower())
 
         part = _measure_from_expression(
-            piece, part_target, part_name, {}, plan, refs)
+            piece, part_target, part_name, {}, plan, refs,
+            expression_dialect=expression_dialect)
         part["public"] = False
         part["meta"] = {"ossie": {"part_of": mname}}
+        if expression_dialect and expression_dialect != DIALECT_ANSI:
+            # A bare count has no SQL carrying its native string casts. Keep
+            # provenance on hidden parts too, so default reimport can rebuild it.
+            part["meta"]["ossie"]["dialect"] = expression_dialect
         _place(measures_by_cube, part_target, part, model_name)
 
-        out.append(refs.to_cube_sql(expr[cursor:start], fallback, context=expr))
+        out.append(refs.to_cube_sql(expr[cursor:start], fallback, context=expr,
+                                    source_dialect=expression_dialect))
         # `{CUBE.x}` for a part on the same cube as the public measure: an explicit
         # name pins the reference to this cube and breaks if it is extended.
         qualifier = "CUBE" if part_target == fallback else part_target
         out.append("{" + f"{qualifier}.{part_name}" + "}")
         cursor = end
-    out.append(refs.to_cube_sql(expr[cursor:], fallback, context=expr))
+    out.append(refs.to_cube_sql(expr[cursor:], fallback, context=expr,
+                                source_dialect=expression_dialect))
     return "".join(out)
 
 
@@ -1535,7 +1702,8 @@ def _reference_tables(plan, cube_names):
         inline_sql_by_cube={c: p.inline_sql for c, p in plan.items()})
 
 
-def _measure_from_expression(expr, target, mname, stash, plan, refs):
+def _measure_from_expression(expr, target, mname, stash, plan, refs, *,
+                             expression_dialect=None):
     """Turn an Ossie metric expression back into a structured Cube measure.
 
     `COUNT(DISTINCT <the cube's primary key>)` is Cube's bare `type: count` --
@@ -1554,7 +1722,10 @@ def _measure_from_expression(expr, target, mname, stash, plan, refs):
     """
     measure = {"name": mname}
     key = list(plan[target].primary_key) if target in plan else []
-    pk_operand = primary_key_operand(target, key) if key else None
+    # The picked expression's label, not the export's preferred warehouse, decides the
+    # key casts: only the matching canonical key collapses to Cube's bare count.
+    pk_operand = (primary_key_operand(target, key, source_dialect=expression_dialect)
+                  if key else None)
     mtype, operand, filters = classify_metric_expression(expr, pk_operand)
     declared = stash.get("type")
     if declared:
@@ -1572,7 +1743,8 @@ def _measure_from_expression(expr, target, mname, stash, plan, refs):
     else:
         stashed_sql = stash.get("sql")
         measure["sql"] = (stashed_sql if stashed_sql is not None
-                          else refs.to_cube_sql(operand, target, context=expr))
+                          else refs.to_cube_sql(operand, target, context=expr,
+                                                source_dialect=expression_dialect))
         measure["type"] = mtype
     if stash.get("filters"):
         # The original spellings, recorded because regeneration would not
@@ -1580,7 +1752,8 @@ def _measure_from_expression(expr, target, mname, stash, plan, refs):
         measure["filters"] = stash["filters"]
     elif filters:
         measure["filters"] = [
-            {"sql": refs.to_cube_sql(f, target, context=expr)} for f in filters]
+            {"sql": refs.to_cube_sql(f, target, context=expr,
+                                     source_dialect=expression_dialect)} for f in filters]
     return measure
 
 

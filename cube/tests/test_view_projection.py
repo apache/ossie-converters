@@ -34,7 +34,7 @@ from ossie_cube import (
     convert_ossie_to_cube,
 )
 from ossie_cube._common import dump_yaml, load_yaml
-from ossie_cube.cube_to_osi import _WINDOWING_KEYS
+from ossie_cube.cube_to_ossie import _WINDOWING_KEYS
 from ossie_cube.view_projection import _MULTI_STAGE_SHAPES
 
 _MODEL = """

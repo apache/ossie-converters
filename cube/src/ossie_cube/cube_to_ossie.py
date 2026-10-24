@@ -81,9 +81,13 @@ from .converter_issues import IssueLog, IssueType
 from .expressions import (
     has_top_level_operator,
     qualify_bare_columns,
+    qualify_column_paths,
     unqualified_column_names,
     unsafe_aggregate_datasets,
+    unsafe_aggregate_heads,
+    UnattributableSQL,
 )
+from .import_dialect import validate_imported_expressions, validate_source_dialect
 
 # Cube keys the converter maps natively at the cube level; everything else is
 # stashed verbatim in the dataset's `cube_extras` and restored on export.
@@ -116,13 +120,19 @@ _RELATIONSHIP_ALIASES = {
     "one_to_one": "one_to_one",
 }
 
-def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False):
+def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False,
+                         *, source_dialect=None):
     """Convert Cube model files ({relative filename: YAML str}) to Ossie YAML.
 
     Returns (ossie_yaml_str, IssueLog). `model_name` overrides the Ossie model
     name (default: the mapped view's name, else 'cube_model'). `view` names the
     view whose name/description/AI context map onto the Ossie model when the
     directory holds more than one.
+
+    `source_dialect` selects ANSI_SQL, SNOWFLAKE, DATABRICKS or BIGQUERY for SQL
+    parsing and generated expression labels, and validates emitted SQL before
+    returning. None preserves the legacy permissive ANSI_SQL import. Original
+    Ossie expressions restored from meta.ossie keep their own dialect declarations.
 
     A metric whose value a static Ossie expression cannot keep correct under row
     multiplication is converted with a FANOUT_UNSAFE_METRIC issue; `strict_fanout`
@@ -131,6 +141,7 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
     if not isinstance(files, dict) or not files:
         raise ConversionError("expected a non-empty mapping of {filename: YAML}")
 
+    validate_source_dialect(source_dialect)
     strict = {IssueType.FANOUT_UNSAFE_METRIC} if strict_fanout else set()
     issues = IssueLog(strict_types=frozenset(strict))
 
@@ -138,12 +149,14 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
     if not cubes:
         raise ConversionError(_no_cubes_message(views))
     model = _build_model(cubes, cube_paths, views, view_paths, extra_files,
-                         model_name, view, issues)
+                         model_name, view, issues, source_dialect)
+    if source_dialect is not None:
+        validate_imported_expressions(model)
     return dump_yaml({"version": OSSIE_VERSION, **model}), issues
 
 
 def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
-                 view, issues):
+                 view, issues, source_dialect=None):
     """The Ossie model (a dict, without `version`) for the collected Cube model.
 
     Split from `convert_cube_to_ossie` so view projection can run the same import over
@@ -196,11 +209,12 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
                      for cname, cube in cubes.items()}
 
     metrics, extra_measures = _convert_measures(
-        cubes, pk_by_cube, plain_by_cube, fanned_out, relationships, issues)
+        cubes, pk_by_cube, plain_by_cube, fanned_out, relationships, issues,
+        source_dialect)
 
     model["datasets"] = [
         _convert_cube(cname, cube, plain_by_cube[cname], extra_joins.get(cname),
-                      extra_measures.get(cname), issues)
+                      extra_measures.get(cname), issues, source_dialect)
         for cname, cube in cubes.items()
     ]
     if metrics:
@@ -499,6 +513,15 @@ def parked_of(meta):
     return unescape_braces_from_cube(meta.get("ossie") or {})
 
 
+def measure_dialect(measure, source_dialect):
+    """The dialect a previous export parked on `measure`, else `source_dialect`.
+
+    A bare count has no SQL carrying its key casts, so the parked label must still
+    pick them when the next import omits --source-dialect.
+    """
+    return parked_of(measure.get("meta")).get("dialect") or source_dialect
+
+
 def _meta_without_ai_context(meta):
     """The part of a Cube `meta` with no Ossie home, for the stash.
 
@@ -670,7 +693,8 @@ def _yields_a_same_named_field(dim):
                 or dim.get("sub_query"))
 
 
-def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues):
+def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
+                  source_dialect=None):
     """Build one Ossie dataset from a Cube cube."""
     scope = f"cube '{cname}'"
     ds = {"name": cname}
@@ -738,7 +762,8 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues):
                        "preserved in custom_extensions only")
             extra_dimensions.append({"index": index, "dimension": dim})
             continue
-        fields.extend(_convert_dimension(cname, dname, dim, plain, issues))
+        fields.extend(_convert_dimension(
+            cname, dname, dim, plain, issues, source_dialect))
     if fields:
         ds["fields"] = fields
     if extra_dimensions:
@@ -785,7 +810,7 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues):
     return ds
 
 
-def _convert_dimension(cname, dname, dim, plain, issues):
+def _convert_dimension(cname, dname, dim, plain, issues, source_dialect=None):
     """Build the Ossie field(s) for one Cube dimension.
 
     Returns a list because a `type: geo` dimension carries two SQL expressions
@@ -794,7 +819,7 @@ def _convert_dimension(cname, dname, dim, plain, issues):
     """
     dtype = snake(dim.get("type") or "string")
     if dtype == "geo":
-        return _convert_geo_dimension(cname, dname, dim, issues)
+        return _convert_geo_dimension(cname, dname, dim, issues, source_dialect)
 
     stash = {}
     sql = dim.get("sql")
@@ -809,7 +834,8 @@ def _convert_dimension(cname, dname, dim, plain, issues):
         field = {
             "name": dname,
             "expression": {
-                "dialects": [{"dialect": DIALECT_ANSI, "expression": expr}]},
+                "dialects": [{"dialect": source_dialect or DIALECT_ANSI,
+                              "expression": expr}]},
         }
         built = _finish_dimension_field(cname, dname, dim, field, stash, issues)
         return [built] if built is not None else []
@@ -835,7 +861,8 @@ def _convert_dimension(cname, dname, dim, plain, issues):
 
     field = {
         "name": dname,
-        "expression": {"dialects": [{"dialect": DIALECT_ANSI, "expression": expr}]},
+        "expression": {"dialects": [{"dialect": source_dialect or DIALECT_ANSI,
+                                     "expression": expr}]},
     }
     built = _finish_dimension_field(cname, dname, dim, field, stash, issues)
     return [built] if built is not None else []
@@ -980,7 +1007,7 @@ def _restore_expression(target, parked):
         target["expression"]["dialects"][0]["dialect"] = parked["dialect"]
 
 
-def _convert_geo_dimension(cname, dname, dim, issues):
+def _convert_geo_dimension(cname, dname, dim, issues, source_dialect=None):
     """Split a `type: geo` dimension into a latitude and a longitude field.
 
     The reconstruction data rides on the latitude half (`geo.host` holds the
@@ -1025,7 +1052,8 @@ def _convert_geo_dimension(cname, dname, dim, issues):
         field = {
             "name": f"{dname}_{part}",
             "expression": {
-                "dialects": [{"dialect": DIALECT_ANSI, "expression": expr}]
+                "dialects": [{"dialect": source_dialect or DIALECT_ANSI,
+                              "expression": expr}]
             },
             "datatype": "Float",
             # A coordinate is a dimension like any other; this path builds its fields
@@ -1360,10 +1388,11 @@ class _MeasureResolver:
     reject a legitimate model to guard against a hand-written pathological one.
     """
 
-    def __init__(self, cubes, pk_by_cube, issues, qualify=True):
+    def __init__(self, cubes, pk_by_cube, issues, qualify=True, source_dialect=None):
         # `qualify=False` is for SQL whose columns are already qualified -- view
         # projection's -- where the portable grammar's reading of a bare name (`day` in
         # `DATEDIFF(day, a, b)`) is not to be trusted.
+        self.source_dialect = source_dialect
         self._qualify = qualify
         self._pk = pk_by_cube
         self._issues = issues
@@ -1495,7 +1524,8 @@ class _MeasureResolver:
                 IssueType.PARKED_IN_META)
         if mtype == "count" and sql is None:
             return primary_key_count_expression(
-                cname, self._pk.get(cname) or [], filter_exprs)
+                cname, self._pk.get(cname) or [], filter_exprs,
+                measure_dialect(measure, self.source_dialect))
         if sql is None:
             raise ConversionError(
                 f"measure '{scope}': type '{mtype}' requires 'sql'")
@@ -1553,8 +1583,20 @@ class _MeasureResolver:
         a column reads as `dataset.column` here, unlike in a dataset-scoped field
         expression.
         """
+        if self._qualify:
+            if self.source_dialect is None:
+                sql = qualify_bare_columns(sql)
+            else:
+                try:
+                    sql = qualify_column_paths(
+                        sql, cname, self._cube_names, self.source_dialect)
+                except UnattributableSQL as exc:
+                    scope = ".".join(stack[-1]) if stack else cname
+                    raise ConversionError(
+                        f"measure '{scope}' ({self.source_dialect}): cannot attribute "
+                        f"SQL columns in {sql!r}: {exc}") from None
         out, _ = cube_sql_to_ossie(
-            qualify_bare_columns(sql) if self._qualify else sql, cname,
+            sql, cname,
             resolve_ref=lambda body: self._resolve(body, cname, stack, inline_refs),
             self_prefix=cname, cube_names=self._cube_names)
         return out
@@ -1627,14 +1669,18 @@ _WINDOWING_KEYS = (
 )
 
 
-def _fanout_unsafe_datasets(expr, own_cube, dataset_names):
+def _fanout_unsafe_datasets(expr, own_cube, dataset_names, source_dialect=None):
     """Datasets read by an aggregate in `expr` that duplicate rows would inflate.
 
     Per aggregate, because a single expression can mix safe and unsafe ones over
     different datasets. An aggregate naming no dataset is read as being over the cube the
     measure is declared on.
     """
-    analysed = unsafe_aggregate_datasets(expr)
+    # Explicit imports qualify every raw path with its dataset. For a struct path
+    # such as users.payload.balance the head, rather than the penultimate part,
+    # owns the aggregate.
+    analysed = (unsafe_aggregate_heads(expr, source_dialect)
+                if source_dialect is not None else unsafe_aggregate_datasets(expr))
     if analysed is None:
         # Unparseable, so nothing can be attributed: assume every dataset it names.
         return referenced_datasets(expr, dataset_names) or {own_cube}
@@ -1744,10 +1790,10 @@ class _MeasureContext:
         return next(iter(pointed)) if len(pointed) == 1 else self.base_cube
 
 
-def _pk_operand_of(cname, pk_by_cube):
+def _pk_operand_of(cname, pk_by_cube, source_dialect=None):
     """The scalar expression standing for a cube's primary key, or None without one."""
     key = pk_by_cube.get(cname) or []
-    return primary_key_operand(cname, key) if key else None
+    return primary_key_operand(cname, key, source_dialect=source_dialect) if key else None
 
 
 def _base_cube_of(cubes, relationships):
@@ -1847,7 +1893,7 @@ def _metric_names_of(resolver, decomposed):
 
 
 def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationships,
-                      issues):
+                      issues, source_dialect=None):
     """Hoist every cube's measures into Ossie model-level metrics.
 
     A metric name is the measure name when globally unique, else
@@ -1860,7 +1906,8 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
     otherwise vanish. They ride on the owning dataset's stash with their positions,
     the same protocol unconvertible joins use.
     """
-    resolver = _MeasureResolver(cubes, pk_by_cube, issues)
+    resolver = _MeasureResolver(cubes, pk_by_cube, issues,
+                                source_dialect=source_dialect)
     member_names = _member_names_of(cubes)
     decomposed = _decomposed_measure_names(cubes)
     metric_names = _metric_names_of(resolver, decomposed)
@@ -1948,14 +1995,15 @@ def _convert_measure(cname, mname, metric_name, measure, context):
     # while `users` is the fanned-out side.
     for dataset in sorted(
             _fanout_unsafe_datasets(resolver.inlined(cname, mname), cname,
-                                    context.dataset_names)):
+                                    context.dataset_names, resolver.source_dialect)):
         if dataset not in context.fanned_out:
             continue
         _report_fanout(issues, scope, dataset, context.fanned_out[dataset])
 
     metric = {
         "name": metric_name,
-        "expression": {"dialects": [{"dialect": DIALECT_ANSI, "expression": expr}]},
+        "expression": {"dialects": [{"dialect": resolver.source_dialect or DIALECT_ANSI,
+                                     "expression": expr}]},
     }
     _restore_expression(metric, parked_of(measure.get("meta")))
     # A datatype parked by a previous export wins: Cube has no field for a measure's
@@ -1990,7 +2038,9 @@ def _convert_measure(cname, mname, metric_name, measure, context):
         pass
     else:
         predicted, _, predicted_filters = classify_metric_expression(
-            expr, _pk_operand_of(cname, context.pk_by_cube))
+            expr, _pk_operand_of(
+                cname, context.pk_by_cube,
+                measure_dialect(measure, resolver.source_dialect)))
         if predicted != mtype:
             # Regeneration would classify the expression as another Cube type that
             # computes the same value -- a `type: number` measure whose sql is a

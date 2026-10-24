@@ -581,7 +581,7 @@ class TestConvertDataset:
             "name": "my_table",
             "source": "db.schema.tbl",
             "primary_key": ["id"],
-            "unique_keys": [["id"]],
+            "unique_keys": [["code"]],
             "description": "A table",
             "ai_context": {"synonyms": ["tbl"]},
             "fields": [
@@ -619,7 +619,7 @@ class TestConvertDataset:
             "table": "TBL",
         }
         assert result["primary_key"] == {"columns": ["id"]}
-        assert result["unique_keys"] == [{"columns": ["id"]}]
+        assert result["unique_keys"] == [{"columns": ["code"]}]
         assert result["description"] == "A table"
         assert result["synonyms"] == ["tbl"]
         assert len(result["dimensions"]) == 1
@@ -628,6 +628,34 @@ class TestConvertDataset:
         assert result["time_dimensions"][0]["name"] == "created_at"
         assert len(result["facts"]) == 1
         assert result["facts"][0]["name"] == "amount"
+
+    def test_unique_key_equal_to_primary_key_is_dropped(self):
+        ds = {
+            "name": "customer",
+            "primary_key": ["c_customer_sk"],
+            "unique_keys": [["c_customer_sk"], ["c_customer_id"]],
+        }
+        result = _convert_dataset(ds)
+        assert result["primary_key"] == {"columns": ["c_customer_sk"]}
+        assert result["unique_keys"] == [{"columns": ["c_customer_id"]}]
+
+    def test_only_unique_key_equal_to_primary_key_omits_unique_keys(self):
+        ds = {
+            "name": "store_sales",
+            "primary_key": ["ss_item_sk", "ss_ticket_number"],
+            "unique_keys": [["ss_item_sk", "ss_ticket_number"]],
+        }
+        result = _convert_dataset(ds)
+        assert result["primary_key"] == {
+            "columns": ["ss_item_sk", "ss_ticket_number"]
+        }
+        assert "unique_keys" not in result
+
+    def test_unique_keys_kept_without_primary_key(self):
+        ds = {"name": "t", "unique_keys": [["id"], ["code"]]}
+        result = _convert_dataset(ds)
+        assert "primary_key" not in result
+        assert result["unique_keys"] == [{"columns": ["id"]}, {"columns": ["code"]}]
 
     @pytest.mark.parametrize(
         ("dimension", "datatype", "bucket", "snowflake_datatype"),

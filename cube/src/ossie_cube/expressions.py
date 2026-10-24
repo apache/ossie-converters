@@ -39,8 +39,10 @@ import re
 
 import sqlglot
 import sqlglot.expressions as exp
+from sqlglot.tokens import TokenType
 
-from ._common import quoted_char_mask, sub_outside_quotes
+from ._common import (DIALECT_ANSI, SQL_DIALECT_READERS, quoted_char_mask,
+                      sub_outside_quotes)
 
 # sqlglot node types for the aggregates this converter maps to a Cube measure type.
 # `Count` covers COUNT / COUNT(DISTINCT x); ApproxDistinct covers
@@ -50,25 +52,26 @@ _AGGREGATE_NODES = (
 )
 
 
-def parse(expr):
+def parse(expr, source_dialect=None):
     """Parse an Ossie expression, or None when sqlglot cannot.
 
     An unparseable expression is not an error: the converter falls back to treating
     it as one opaque calculated measure, which is what it did for everything before.
     """
     try:
-        return sqlglot.parse_one(str(expr).strip())
+        return sqlglot.parse_one(str(expr).strip(),
+                                 read=SQL_DIALECT_READERS.get(source_dialect))
     except Exception:
         return None
 
 
-def is_single_aggregate(expr):
+def is_single_aggregate(expr, source_dialect=None):
     """True if the whole expression is exactly one aggregate call.
 
     Those already map to a structured Cube measure (`type: sum` + `sql`), so they
     are never decomposed.
     """
-    tree = parse(expr)
+    tree = parse(expr, source_dialect)
     return tree is not None and isinstance(tree, _AGGREGATE_NODES)
 
 
@@ -88,7 +91,7 @@ _WITHIN_GROUP_RE = re.compile(r"\s*WITHIN\s+GROUP\s*\(", re.IGNORECASE)
 _OVER_RE = re.compile(r"\s*OVER\b", re.IGNORECASE)
 
 
-def aggregate_spans(expr):
+def aggregate_spans(expr, source_dialect=None):
     """The outermost aggregate calls in `expr`, as (start, end) offsets.
 
     Offsets index the original string so a caller can substitute each span in place.
@@ -107,17 +110,31 @@ def aggregate_spans(expr):
     into the literal.
     """
     text = str(expr)
-    if parse(text) is None or is_single_aggregate(text):
+    if parse(text, source_dialect) is None or is_single_aggregate(text, source_dialect):
         return []
-    return _scan_aggregates(text)
+    return _scan_aggregates(text, source_dialect)
 
 
-def _scan_aggregates(text):
+def _expression_quote_mask(text, source_dialect):
+    """Protect native literals, quoted identifiers and comments during scanning."""
+    if source_dialect is None:
+        return quoted_char_mask(text)
+    mask = [True] * len(text)
+    for token in native_tokens(text, source_dialect):
+        raw = text[token.start:token.end + 1]
+        if token.token_type.name.endswith("STRING") or raw.startswith(('"', "`")):
+            continue
+        mask[token.start:token.end + 1] = [False] * (token.end - token.start + 1)
+    return mask
+
+
+def _scan_aggregates(text, source_dialect=None):
     """Every outermost aggregate call in `text`, as (start, end) offsets."""
-    if parse(text) is None:
+    if parse(text, source_dialect) is None:
         return []
     candidates = []
-    quoted = quoted_char_mask(text)
+    quoted = _expression_quote_mask(text, source_dialect)
+    structure = "".join(" " if quoted[i] else ch for i, ch in enumerate(text))
     for match in _CALL_NAME_RE.finditer(text):
         start = match.start()
         if quoted[start]:
@@ -129,14 +146,14 @@ def _scan_aggregates(text):
             probe += 1
         if probe >= len(text) or text[probe] != "(":
             continue
-        close = _match_paren(text, probe)
+        close = _match_paren(text, probe, quoted)
         if close is None:
             continue
-        end = _end_of_call(text, close + 1)
+        end = _end_of_call(structure, close + 1, quoted)
         # Confirm the slice against sqlglot: that is what separates an aggregate from
         # a scalar call (ROUND, COALESCE, CAST), a UDF, and a window function.
-        if _is_modelled_aggregate(parse(text[start:end])) \
-                and not _OVER_RE.match(text, end):
+        if _is_modelled_aggregate(parse(text[start:end], source_dialect)) \
+                and not _OVER_RE.match(structure, end):
             candidates.append((start, end))
 
     # Drop any span contained within another: only the outermost becomes a measure.
@@ -149,7 +166,7 @@ def _scan_aggregates(text):
     return out
 
 
-def _end_of_call(text, end):
+def _end_of_call(text, end, mask=None):
     """Where a call's span really ends: past a trailing `WITHIN GROUP (...)`, if any.
 
     An ordered-set aggregate carries its value-bearing column in the ORDER BY -- on
@@ -162,13 +179,13 @@ def _end_of_call(text, end):
     match = _WITHIN_GROUP_RE.match(text, end)
     if not match:
         return end
-    close = _match_paren(text, match.end() - 1)
+    close = _match_paren(text, match.end() - 1, mask)
     return end if close is None else close + 1
 
 
-def _match_paren(text, open_at):
+def _match_paren(text, open_at, mask=None):
     """Index of the `)` closing the `(` at `open_at`, honouring quotes."""
-    mask = quoted_char_mask(text)
+    mask = quoted_char_mask(text) if mask is None else mask
     depth = 0
     for i in range(open_at, len(text)):
         if mask[i]:
@@ -305,7 +322,7 @@ def unsafe_aggregate_datasets(expr):
     return datasets, unqualified
 
 
-def unsafe_aggregate_heads(expr):
+def unsafe_aggregate_heads(expr, source_dialect=None):
     """The first part of every column path a non-idempotent aggregate in `expr` reads,
     and whether any reads an unqualified column -- or None when `expr` does not parse.
 
@@ -313,7 +330,7 @@ def unsafe_aggregate_heads(expr):
     once a path has three: `orders.payload.amount` is attributed to `payload`. In a view
     projection every column is written `dataset.path`, so the head is the dataset.
     """
-    tree = parse(expr)
+    tree = parse(expr, source_dialect)
     if tree is None:
         return None
     heads, unqualified = set(), False
@@ -331,7 +348,7 @@ def unsafe_aggregate_heads(expr):
     return heads, unqualified
 
 
-def unsplittable_aggregate_datasets(expr):
+def unsplittable_aggregate_datasets(expr, source_dialect=None):
     """Datasets read by an aggregate that decomposition has to leave where it is.
 
     The classifier recognizes one shape more than decomposition acts on, and the
@@ -352,7 +369,7 @@ def unsplittable_aggregate_datasets(expr):
     Returns the dataset names as written. An empty set when nothing is stranded, or
     when the expression does not parse (the caller is already conservative there).
     """
-    tree = parse(expr)
+    tree = parse(expr, source_dialect)
     if tree is None:
         return set()
     # Identity, not equality: two `SUM(x)` nodes in one expression compare equal, and
@@ -363,7 +380,8 @@ def unsplittable_aggregate_datasets(expr):
     for scope in _outermost_aggregate_scopes(tree):
         if _is_modelled_aggregate(scope) and id(scope) not in windowed:
             continue
-        stranded |= {column.table for column in scope.find_all(exp.Column)
+        stranded |= {column.parts[0].name if source_dialect is not None else column.table
+                     for column in scope.find_all(exp.Column)
                      if column.table}
     return stranded
 
@@ -411,7 +429,7 @@ def _mask_references(text):
     return masked.replace("\x00lb\x00", "\\{").replace("\x00rb\x00", "\\}"), saved
 
 
-def unqualified_column_names(sql_text):
+def unqualified_column_names(sql_text, source_dialect=None):
     """The bare (unqualified, unquoted) column names in a SQL snippet, or None.
 
     Parser-based on purpose: only sqlglot can tell a column from a keyword, a
@@ -420,7 +438,7 @@ def unqualified_column_names(sql_text):
     text does not parse, and the caller should leave it alone.
     """
     masked, _ = _mask_references(str(sql_text))
-    tree = parse(masked)
+    tree = parse(masked, source_dialect)
     if tree is None:
         return None
     names = set()
@@ -511,6 +529,15 @@ class UnattributableSQL(ValueError):
     """Cube SQL whose columns cannot be attributed to a dataset statically."""
 
 
+def native_tokens(text, source_dialect):
+    """`text` tokenized by `source_dialect`'s reader; UnattributableSQL when it fails."""
+    try:
+        return sqlglot.Dialect.get_or_raise(
+            SQL_DIALECT_READERS.get(source_dialect)).tokenize(text)
+    except sqlglot.errors.SqlglotError as exc:
+        raise UnattributableSQL(str(exc).splitlines()[0]) from None
+
+
 def _parse_as(text, dialect):
     """`text` parsed as `dialect`, or None when it does not parse as that."""
     try:
@@ -539,7 +566,7 @@ def _misread(tree, text):
     return False
 
 
-def strip_sql_comments(sql):
+def strip_sql_comments(sql, source_dialect=None):
     """`sql` with its `--` and `/* */` comments replaced by a space.
 
     A trailing `-- note` is harmless in a member's own SQL, but inlined into another
@@ -548,6 +575,17 @@ def strip_sql_comments(sql):
     left-to-right scan, so a bracket inside a comment opens nothing.
     """
     text = str(sql)
+    if source_dialect is not None:
+        # Native token spans keep raw/triple-quoted literals and identifiers intact.
+        # Everything between tokens is whitespace or a comment. Tokenizing first
+        # also rejects unterminated comments instead of silently deleting them.
+        out, cursor = [], 0
+        for token in native_tokens(text, source_dialect):
+            out.append(re.sub(r"\S", " ", text[cursor:token.start]))
+            out.append(text[token.start:token.end + 1])
+            cursor = token.end + 1
+        out.append(re.sub(r"\S", " ", text[cursor:]))
+        return "".join(out)
     quoted = quoted_char_mask(text)
     out, i, bracket = [], 0, False
     while i < len(text):
@@ -577,7 +615,28 @@ def strip_sql_comments(sql):
     return "".join(out)
 
 
-def qualify_column_paths(cube_sql, own_cube=None, cube_names=()):
+def _split_bigquery_quoted_paths(text):
+    """Spell `a.b` as `a`.`b` so each parsed path part retains its source span.
+
+    BigQuery interprets both as a path. SQLGlot splits the first into generated
+    identifiers without source positions, preventing safe column qualification.
+    Only identifier tokens are rewritten; dots in string literals stay intact.
+    """
+    for token in reversed(native_tokens(text, "BIGQUERY")):
+        raw = text[token.start:token.end + 1]
+        if token.token_type is TokenType.IDENTIFIER and "." in token.text \
+                and raw.startswith("`") and raw.endswith("`"):
+            parts = raw[1:-1].split(".")
+            # A masked Cube alias must be followed directly by the dot when
+            # restored: `{CUBE}`.`amount` would hide the alias from the inliner
+            # and leave an empty quoted qualifier in ordinary import.
+            quoted = [part if i == 0 and _SENTINEL_RE.fullmatch(part)
+                      else f"`{part}`" for i, part in enumerate(parts)]
+            text = text[:token.start] + ".".join(quoted) + text[token.end + 1:]
+    return text
+
+
+def qualify_column_paths(cube_sql, own_cube=None, cube_names=(), source_dialect=None):
     """Qualify every physical column path in Cube SQL as `{CUBE}.path`.
 
     `qualify_bare_columns` leaves a dotted path as written, which suits the lossless
@@ -593,15 +652,26 @@ def qualify_column_paths(cube_sql, own_cube=None, cube_names=()):
     fails or misreads a unit argument. Only positions are read and the text is never
     regenerated, so which grammar reads it does not matter. Comments are dropped.
 
+    With an explicit warehouse `source_dialect`, use only its grammar. In particular its
+    reading of unit arguments and array/struct syntax is authoritative, so the
+    heuristics used to choose an implicit grammar must not override it. ANSI_SQL names
+    no warehouse grammar, so it keeps those heuristics: the generic grammar alone
+    reads `DATEDIFF(day, a, b)` with `day` as a column.
+
     Raises UnattributableSQL saying why when the columns cannot be attributed statically.
     """
-    masked, saved = _mask_references(strip_sql_comments(cube_sql))
+    masked, saved = _mask_references(strip_sql_comments(cube_sql, source_dialect))
+    if source_dialect == "BIGQUERY":
+        masked = _split_bigquery_quoted_paths(masked)
     # The positions sqlglot reports are into the text it parsed, so it gets no other.
     masked = masked.strip()
-    readings = [t for t in (_parse_as(masked, d) for d in _READINGS) if t is not None]
+    native = source_dialect not in (None, DIALECT_ANSI)
+    dialects = (SQL_DIALECT_READERS[source_dialect],) if native else _READINGS
+    readings = [t for t in (_parse_as(masked, d) for d in dialects) if t is not None]
     if not readings:
         raise UnattributableSQL("it does not parse")
-    tree = next((t for t in readings if not _misread(t, masked)), None)
+    tree = (readings[0] if native
+            else next((t for t in readings if not _misread(t, masked)), None))
     if tree is None:
         raise UnattributableSQL(
             "a unit or type argument reads as a column (or a column as a unit); write "
