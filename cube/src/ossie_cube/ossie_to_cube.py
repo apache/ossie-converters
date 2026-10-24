@@ -1372,9 +1372,11 @@ class _MetricReferences:
             tail_start = parts[1].meta.get("start")
             tail = None
             if not all(isinstance(i, int) for i in (start, end, tail_start)):
-                # BigQuery synthesizes identifiers for quoted dotted paths,
-                # discarding positions even on an unquoted prefix. Correlate the
-                # decoded path with its original contiguous identifier tokens.
+                # SQLGlot's BigQuery parser synthesizes identifiers for quoted
+                # dotted paths, dropping positions even on an unquoted prefix.
+                # Recover spans from contiguous identifier tokens for safe replacement.
+                # Recheck this fallback on SQLGlot upgrades; remove it if the parser
+                # retains positions for every part of these paths.
                 wanted = [p.name for p in parts]
                 def names(token):
                     return (token.text.split(".") if source_dialect == "BIGQUERY"
