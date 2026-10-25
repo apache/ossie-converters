@@ -158,6 +158,24 @@ def serialize_tmdl(document, *, assembly_dir=None):
     return str(tom.TmdlSerializer.SerializeDatabase(database))
 
 
+def serialize_tmdl_folder(document, path, *, assembly_dir=None):
+    """Serialize a TMSL mapping or JSON string into the TMDL folder representation.
+
+    Writes ``database.tmdl``, ``model.tmdl`` and one document per table, role, culture
+    and perspective under ``path``: the layout of a Power BI project's ``definition``
+    folder. TOM removes ``.tmdl`` documents an earlier serialization left in ``path``
+    and leaves every other file there untouched.
+    """
+
+    raw = json.dumps(document) if isinstance(document, dict) else document
+    if not isinstance(raw, str):
+        raise TypeError("document must be a TMSL mapping or JSON string")
+
+    tom = _load_tom(_assembly_directory(assembly_dir))
+    database = tom.JsonSerializer.DeserializeDatabase(raw)
+    tom.TmdlSerializer.SerializeDatabaseToFolder(database, os.fspath(path))
+
+
 def deserialize_tmdl(document, *, assembly_dir=None):
     """Parse a single TMDL document into a TMSL mapping.
 

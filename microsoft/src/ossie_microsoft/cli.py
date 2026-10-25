@@ -19,8 +19,10 @@
 
     ossie-microsoft import -i model.bim   [-o model.yaml]
     ossie-microsoft export -i model.yaml  [-o model.bim]
+    ossie-microsoft export -i model.yaml  --pbip out/ [--force]
 
-With no ``-o``, the result is written to stdout.
+With no ``-o``, the result is written to stdout. ``--pbip`` writes the semantic model
+folder of a Power BI project instead, as split TMDL under ``out/<name>.SemanticModel/``.
 
 Every construct the converter cannot carry across faithfully is reported on stderr, so
 the log is a complete account of what a conversion changed, skipped or could not
@@ -38,7 +40,9 @@ import yaml
 
 from ._common import LOGGER, ConversionError
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
+from .pbip_export import export_powerbi_project
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
+from .tom import TomUnavailableError
 
 
 class _CountingHandler(logging.Handler):
@@ -114,7 +118,20 @@ def _build_parser():
         help="Apache Ossie semantic model -> Power BI semantic model (TMSL model.bim)",
     )
     exp.add_argument("-i", "--input", required=True, help="Apache Ossie YAML file")
-    exp.add_argument("-o", "--output", help="output model.bim (default: stdout)")
+    target = exp.add_mutually_exclusive_group()
+    target.add_argument("-o", "--output", help="output model.bim (default: stdout)")
+    target.add_argument(
+        "--pbip",
+        metavar="DIR",
+        help="write a Power BI project semantic model folder, DIR/<name>.SemanticModel/, "
+        "as split TMDL (requires the optional TOM setup)",
+    )
+    exp.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="with --pbip, replace the definition of an existing semantic model folder",
+    )
     return parser
 
 
@@ -126,6 +143,10 @@ def _run_import(args):
 def _run_export(args):
     with open(args.input, encoding="utf-8-sig") as fh:
         ossie_yaml = fh.read()
+    if args.pbip:
+        # The folder is the output, so there is nothing left for stdout.
+        export_powerbi_project(ossie_yaml, args.pbip, force=args.force)
+        return None
     # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
     return json.dumps(
         convert_ossie_to_semantic_model(ossie_yaml), indent=2, ensure_ascii=False
@@ -133,7 +154,10 @@ def _run_export(args):
 
 
 def main(argv=None):
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "export" and args.force and not args.pbip:
+        parser.error("--force requires --pbip")
     handler = _run_import if args.command == "import" else _run_export
 
     # Each lossy step is reported through both `warnings` and the logger. For a command
@@ -146,7 +170,14 @@ def main(argv=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             out = handler(args)
-    except (ConversionError, TypeError, ValueError, OSError, yaml.YAMLError) as e:
+    except (
+        ConversionError,
+        TomUnavailableError,
+        TypeError,
+        ValueError,
+        OSError,
+        yaml.YAMLError,
+    ) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
     finally:
@@ -155,7 +186,7 @@ def main(argv=None):
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:
             fh.write(out)
-    else:
+    elif out is not None:
         sys.stdout.write(out)
 
     if counter.count and not args.quiet:

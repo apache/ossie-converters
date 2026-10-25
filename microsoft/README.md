@@ -20,9 +20,9 @@
 # Apache Ossie Microsoft Converter
 
 Converts between a Microsoft Power BI / Fabric semantic model and an Apache Ossie (OSI)
-semantic model. Power BI output is available as either a TMSL `model.bim` mapping or a
-TMDL document. The conversion is offline and requires no Power BI or Fabric
-connection.
+semantic model. Power BI output is available as a TMSL `model.bim` mapping, a TMDL
+document, or the split TMDL semantic model folder of a Power BI project (PBIP). The
+conversion is offline and requires no Power BI or Fabric connection.
 
 Each Ossie JSON/YAML document contains one model, with `name`, `datasets`,
 `relationships`, and `metrics` at the root alongside `version`. Legacy
@@ -131,6 +131,39 @@ in the Power BI stash for round trip, but not represented in the Apache Ossie do
 output file is still written, so a failing run can be inspected. Both flags are accepted
 before or after the subcommand.
 
+### Exporting to a Power BI project
+
+`--pbip DIR` writes the model as the semantic model folder of a Power BI project, the
+split TMDL layout that Power BI Desktop, Fabric Git integration and `fabric-cicd` read:
+
+```bash
+ossie-microsoft export -i model.yaml --pbip out/
+```
+
+```
+out/<name>.SemanticModel/
+  definition.pbism
+  definition/
+    database.tmdl
+    model.tmdl
+    relationships.tmdl
+    expressions.tmdl
+    tables/<table>.tmdl
+    roles/  cultures/  perspectives/
+```
+
+`<name>` is the Apache Ossie model name. TOM writes `definition/`, so the documents are
+the ones Power BI itself produces, and `definition.pbism` is version `4.0`, the first
+that reads TMDL. It needs the
+[optional TOM setup](#optional-tom-validation-and-tmdl-serialization).
+
+An existing, non-empty folder is refused. `--force` replaces `definition.pbism` and
+`definition/`, removing the documents of tables, roles and other objects that are no
+longer in the model, and keeps everything else in the folder, such as `.pbi/` and
+`diagramLayout.json`. A folder that stores its model as TMSL (`model.bim`) is never
+switched to TMDL. The `.pbip` file, the report, and the `.platform` file that Fabric
+Git integration generates are not written.
+
 ### Library
 
 ```python
@@ -154,12 +187,17 @@ print(tmdl)
 
 # The import direction also accepts model.bim JSON text or a TMDL document.
 ossie_yaml = convert_semantic_model_to_ossie(tmdl)
+
+# Or write a Power BI project semantic model folder; returns out/<name>.SemanticModel.
+from ossie_microsoft import export_powerbi_project
+
+folder = export_powerbi_project(ossie_yaml, "out/")
 ```
 
 `output_format` accepts `"TMSL"` (the default) or `"TMDL"`, case-insensitively.
 `convert_semantic_model_to_ossie` accepts a parsed `model.bim` mapping, `model.bim`
-JSON text, or a single TMDL document as text. TMDL input and output require the
-optional TOM setup described above.
+JSON text, or a single TMDL document as text. TMDL input and output, and
+`export_powerbi_project`, require the optional TOM setup described above.
 
 Each report is emitted twice, because the two channels answer different questions:
 
