@@ -41,5 +41,9 @@ jobs:
           # and every 4.x connector requires filelock<4, so no fixed version can be
           # installed yet. The connector only uses FileLock, not the affected
           # ReadWriteLock or SoftFileLock. Remove once snowpark allows connector 5.
-          allow-ghsas: GHSA-v4x8-3wr5-3wq8, GHSA-567q-5qvw-pf92, GHSA-9vhv-jxww-xfm5
+          # pydantic-settings GHSA-4xgf-cpjx-pc3j is fixed in 2.14.2, but relationalai
+          # and confocal require pydantic-settings<2.14.0. Neither sets secrets_dir, so
+          # the affected NestedSecretsSettingsSource is never used. Remove once they
+          # allow pydantic-settings 2.14.2.
+          allow-ghsas: GHSA-v4x8-3wr5-3wq8, GHSA-567q-5qvw-pf92, GHSA-9vhv-jxww-xfm5, GHSA-4xgf-cpjx-pc3j
           comment-summary-in-pr: always
