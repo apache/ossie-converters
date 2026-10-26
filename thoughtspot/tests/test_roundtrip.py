@@ -73,11 +73,13 @@ import re
 from ossie_thoughtspot import _yaml, datatypes, ossie_to_thoughtspot, stash, tml, tml_to_ossie
 from ossie_thoughtspot.constants import (
     DATASET_STASH_CONNECTION_NAME,
+    DATASET_STASH_UNSURFACED_COLUMNS,
     DIALECT,
     DOCUMENT_VERSION,
     PORTABLE_DIALECT,
     RELATIONSHIP_STASH_CARDINALITY,
     RELATIONSHIP_STASH_TYPE,
+    VENDOR_KEY,
 )
 from ossie_thoughtspot.datatypes import OSSIE_DATATYPES
 from ossie_thoughtspot.tml import DocumentSet, TmlDocument
@@ -525,12 +527,16 @@ def test_tpcds_known_unportable_metrics_have_no_portable_sibling_and_an_issue():
     assert PORTABLE_DIALECT not in _dialects(total_sales)
     assert "metric:total_sales" in _issue_refs(ossie_result.issues, "TS-EXPR-THOUGHTSPOT-ONLY")
 
-    # A physical column reference the model never surfaces as a field
-    # resolves to nothing at all, which is a different unportable reason
-    # (and a different code) from the two above.
-    total_return_quantity = _metric(model, "total_return_quantity")
-    assert PORTABLE_DIALECT not in _dialects(total_return_quantity)
-    assert "metric:total_return_quantity" in _issue_refs(ossie_result.issues, "TS-EXPR-UNRESOLVED")
+
+def test_tpcds_column_aggregation_metric_gets_an_ansi_sql_sibling():
+    _, ossie_result, _ = _tml_roundtrip("tpcds")
+    metric = _metric(ossie_result.model, "total_return_quantity")
+    dialects = _dialects(metric)
+    assert dialects[DIALECT] == "sum ( [store_returns_sv::sr_return_quantity] )"
+    assert dialects[PORTABLE_DIALECT] == "SUM(store_returns_sv.sr_return_quantity)"
+    assert "metric:total_return_quantity" not in _issue_refs(
+        ossie_result.issues, "TS-EXPR-UNRESOLVED"
+    )
 
 
 def test_a_metrics_portable_expression_carries_its_column_level_aggregation():
@@ -538,12 +544,7 @@ def test_a_metrics_portable_expression_carries_its_column_level_aggregation():
     a bare `formula`) composes a portable ANSI_SQL sibling that carries the
     same aggregate (`_compose_aggregate_entries`, tml_to_ossie.py).
 
-    Exercised here with a small, purpose-built document rather than either
-    fixture set: neither fixture's own `column_id` + `aggregation` metric
-    (tpcds's `total_return_quantity`, asserted unportable just above) takes
-    this shape over a column the model ALSO surfaces as a field, which is
-    what `_compose_aggregate_entries` requires before it can name a
-    warehouse column at all.
+    The physical column is surfaced only as MEASURE -- no ATTRIBUTE sibling.
     """
     table = tml.TmlDocument(
         kind="table",
@@ -565,7 +566,6 @@ def test_a_metrics_portable_expression_carries_its_column_level_aggregation():
             "name": "aggregate_probe_model",
             "model_tables": [{"name": "widgets"}],
             "columns": [
-                {"name": "amount", "column_id": "widgets::amount", "properties": {"column_type": "ATTRIBUTE"}},
                 {
                     "name": "total_amount",
                     "column_id": "widgets::amount",
@@ -583,6 +583,17 @@ def test_a_metrics_portable_expression_carries_its_column_level_aggregation():
     assert dialects[DIALECT] == "sum ( [widgets::amount] )"
     assert dialects[PORTABLE_DIALECT] == "SUM(widgets.amount)"
 
+    widgets = next(ds for ds in ossie_result.model["datasets"] if ds["name"] == "widgets")
+    widgets_stash = next(
+        json.loads(ext["data"])
+        for ext in widgets.get("custom_extensions") or []
+        if ext.get("vendor_name") == VENDOR_KEY
+    )
+    unsurfaced_names = {
+        c["name"] for c in widgets_stash.get(DATASET_STASH_UNSURFACED_COLUMNS) or []
+    }
+    assert "amount" in unsurfaced_names
+
     # The composed aggregate survives being written back out as a formula
     # too -- a metric is always a formula on the way back.
     tml_result = ossie_to_thoughtspot.convert(ossie_result.model)
@@ -590,6 +601,8 @@ def test_a_metrics_portable_expression_carries_its_column_level_aggregation():
     formulas = _model_formulas_by_id(tml_result.documents.model.body)
     formula_id = new_columns["total_amount"]["formula_id"]
     assert formulas[formula_id]["expr"] == "sum ( [widgets::amount] )"
+    table_body = tml_result.documents.tables[0].body
+    assert any(c.get("name") == "amount" for c in table_body.get("columns") or [])
 
 
 # ---------------------------------------------------------------------------
