@@ -110,7 +110,7 @@ The converter also runs on `ANSI_SQL`-only models — see the canonical [TPC-DS 
 
 ## Input validation
 
-Malformed input is reported as an `OssieConversionError` naming the entity (`Relationship 'o2c': 'from_columns' must contain only non-empty strings`), which the CLI prints as `Error: …` with exit status 1. That covers unparseable YAML, a container of the wrong type (a dataset, field, metric, relationship or dialect entry that is not a mapping; `datasets`, `fields`, `primary_key` or `from_columns` that are not lists), missing names, and unreadable input or output paths.
+Malformed input is reported as an `OssieConversionError` naming the entity (`Relationship 'o2c': 'from_columns' must contain only non-empty strings`), which the CLI prints as `Error: …` with exit status 1. That covers unparseable YAML, a container of the wrong type (a dataset, field, metric, relationship or dialect entry that is not a mapping; `datasets`, `fields`, `primary_key` or `from_columns` that are not lists), missing names, a dataset without a `source` (Looker would silently use the view name as the table), and unreadable input or output paths.
 
 ## Limitations
 

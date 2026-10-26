@@ -199,9 +199,17 @@ class TestConvertSource:
     def test_two_part_emitted_as_is(self):
         assert _convert_source("dataset.tbl", "ds") == "sql_table_name: dataset.tbl ;;"
 
-    def test_empty_warns_and_returns_none(self):
-        with pytest.warns(UserWarning, match="no source"):
-            assert _convert_source("", "ds") is None
+    @pytest.mark.parametrize("source", [None, "", "   "])
+    def test_missing_source_is_a_conversion_error(self, source):
+        # Looker would fall back to the view name as the table, so a dataset
+        # without a source must not convert.
+        with pytest.raises(OssieConversionError, match="Dataset 'ds'.*required 'source'"):
+            _convert_source(source, "ds")
+
+    def test_dataset_without_source_fails_before_rendering(self):
+        ds = {"name": "t", "fields": [_field("a")]}
+        with pytest.raises(OssieConversionError, match="Dataset 't'.*required 'source'"):
+            convert_ossie_to_lookml(_model([ds]))
 
 
 # ---------------------------------------------------------------------------

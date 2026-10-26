@@ -263,6 +263,9 @@ class _Dataset:
             )
         context = f"Dataset '{self.name}'"
         self.source = dataset.get("source")
+        # Validated up front: Looker would silently fall back to the view name
+        # as the table if sql_table_name were omitted.
+        self.table_clause = _convert_source(self.source, self.name)
         self.primary_key = _require_name_list(dataset, "primary_key", context)
         self.raw_fields = _require_list(dataset, "fields", context)
         for index, field in enumerate(self.raw_fields, 1):
@@ -443,10 +446,8 @@ def _plan_primary_key(plan):
 def _render_view(plan):
     lines = [f"view: {plan.name} {{"]
 
-    table_clause = _convert_source(plan.source, plan.name)
-    if table_clause:
-        lines.append(_indent(table_clause, 1))
-        lines.append("")
+    lines.append(_indent(plan.table_clause, 1))
+    lines.append("")
 
     # LookML views have no description parameter; keep the text as a comment
     # here and emit it on the explore, which does.
@@ -522,17 +523,16 @@ def _convert_source(source, dataset_name):
 
     Returns a `sql_table_name: ... ;;` line for table references (backtick-
     quoting a 3-part BigQuery `project.dataset.table`), or a `derived_table`
-    block for subquery sources. Returns None when source is empty.
+    block for subquery sources. `source` is required by the Ossie spec, and
+    without it Looker would use the view name as the table, so an empty
+    source is an error rather than a warning.
     """
-    if not source:
-        warnings.warn(
-            f"Dataset '{dataset_name}': no source provided; sql_table_name omitted"
-        )
-        return None
-
-    source_stripped = str(source).strip()
+    source_stripped = str(source).strip() if isinstance(source, str) else ""
     if not source_stripped:
-        return None
+        raise OssieConversionError(
+            f"Dataset '{dataset_name}': missing required 'source' (Looker would "
+            f"fall back to the view name as the table)"
+        )
 
     upper = source_stripped.upper()
     if upper.startswith(("SELECT ", "SELECT\n", "SELECT\t",
