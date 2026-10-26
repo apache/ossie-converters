@@ -133,7 +133,13 @@ def test_ossie_to_solid_to_ossie_preserves_the_model_shape():
     assert [d["name"] for d in restored["datasets"]] == [
         d["name"] for d in original["datasets"]
     ]
-    assert sorted(by_name(restored["metrics"])) == sorted(by_name(original["metrics"]))
+    # Every metric survives, but not its scope: Solid holds all metrics in one list,
+    # so a dataset-scoped one comes back model-scoped, bound to the same dataset.
+    scoped = [m["name"] for d in original["datasets"] for m in d.get("metrics") or []]
+    assert scoped, "the example no longer has a dataset-scoped metric to check"
+    assert sorted(by_name(restored["metrics"])) == sorted(
+        [*by_name(original["metrics"]), *scoped])
+    assert all("metrics" not in d for d in restored["datasets"])
     for dataset in original["datasets"]:
         assert by_name(restored["datasets"])[dataset["name"]].get("primary_key") == (
             dataset.get("primary_key")
@@ -174,13 +180,9 @@ def test_ossie_to_solid_to_ossie_preserves_metric_expressions():
         }
 
     before, after = expressions(original), expressions(restored)
-    # Single-table metrics survive verbatim. Cross-table ones lose their qualifiers,
-    # because Solid's format cannot record which table each column belongs to.
-    assert after["total_sales"] == before["total_sales"]
-    assert after["total_profit"] == before["total_profit"]
-    assert after["customer_lifetime_value"] == (
-        "SUM(ss_ext_sales_price) / COUNT(DISTINCT c_customer_sk)"
-    )
+    # Every model-scoped metric survives verbatim, cross-table ones included: each
+    # column belongs to only one of the metric's tables, so import can qualify it again.
+    assert {name: after[name] for name in before} == before
 
 
 def test_the_documented_losses_of_an_ossie_export_are_exactly_these():
@@ -199,22 +201,22 @@ def test_the_documented_losses_of_an_ossie_export_are_exactly_these():
     # free text, so a declared metric datatype and a relationship annotation both have
     # nowhere to land.
     assert sum("datatype 'Decimal' has no Solid equivalent" in w for w in going) == 7
-    assert sum("datatype 'Integer' has no Solid equivalent" in w for w in going) == 1
+    # brand_rank_in_store, and the dataset-scoped total_quantity.
+    assert sum("datatype 'Integer' has no Solid equivalent" in w for w in going) == 2
     assert sum("ai_context.synonyms has no Solid equivalent" in w for w in going) == 4
     # The spec's own examples of an explicit time role -- an Integer year, a String
     # quarter name, an untyped month -- have nowhere to land in Solid either.
     assert sum("dimension.is_time: true has no Solid equivalent" in w for w in going) == 3
-    assert len(going) == 20
+    assert len(going) == 21
 
 
-def test_reimporting_that_export_only_loses_the_cross_table_qualifiers():
+def test_reimporting_that_export_loses_no_qualifier_or_datatype():
     original = model_of(example("tpcds_semantic_model.yaml"))
     solid, _ = convert_quietly(
         convert_ossie_to_solid, example("tpcds_semantic_model.yaml")
     )
     ossie, coming = convert_quietly(convert_solid_to_ossie, solid, dialect="ANSI_SQL")
-    assert all("spans 2 tables" in w for w in coming), coming
-    assert len(coming) == 5
+    assert coming == []
     # Every field keeps its datatype: the type the export wrote for it reads back as
     # the same one, rather than a Decimal returning as an Integer.
     restored = model_of(ossie)
