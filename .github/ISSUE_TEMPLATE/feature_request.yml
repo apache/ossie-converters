@@ -1,0 +1,68 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Feature request
+description: Suggest an improvement to an existing converter or to the repository.
+labels: [enhancement]
+body:
+  # The Converter options must match the converter/* labels in .github/labeler.yml;
+  # auto-label-issues.yml applies converter/<option> and dev/check-issue-templates
+  # keeps the two in sync.
+  - type: dropdown
+    id: converter
+    attributes:
+      label: Converter
+      description: Which converter(s) does this affect? Select all that apply.
+      multiple: true
+      options:
+        - cube
+        - databricks
+        - dbt
+        - gooddata
+        - hex
+        - holistics
+        - honeydew
+        - microsoft
+        - nvidia
+        - omni
+        - ontology
+        - orionbelt
+        - polaris
+        - salesforce
+        - sigma
+        - snowflake
+        - thoughtspot
+        - wisdom
+        - wisdom-semantic-view
+        - N/A
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What can't you do today, or what is harder than it should be?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

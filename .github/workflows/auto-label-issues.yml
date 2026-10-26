@@ -22,6 +22,7 @@ on:
     types: [opened]
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
@@ -29,32 +30,58 @@ jobs:
     if: github.repository_owner == 'apache'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/labeler.yml
+            .github/scripts/issue-labels.js
+          sparse-checkout-cone-mode: false
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const label = 'needs-triage';
-            try {
-              await github.rest.issues.getLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: label
-              });
-            } catch (e) {
-              if (e.status === 404) {
-                await github.rest.issues.createLabel({
+            const fs = require('fs');
+            const { converterNames, labelsForIssue } = require(
+              `${process.env.GITHUB_WORKSPACE}/.github/scripts/issue-labels.js`
+            );
+
+            const ensureLabel = async (name, color, description) => {
+              try {
+                await github.rest.issues.getLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  name: label,
-                  color: 'e11d48',
-                  description: 'Issue needs triage by a maintainer'
+                  name
                 });
+              } catch (e) {
+                if (e.status === 404) {
+                  await github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name,
+                    color,
+                    description
+                  });
+                } else {
+                  throw e;
+                }
+              }
+            };
+
+            const names = converterNames(fs.readFileSync('.github/labeler.yml', 'utf8'));
+            const found = labelsForIssue(context.payload.issue, names);
+
+            await ensureLabel('needs-triage', 'e11d48', 'Issue needs triage by a maintainer');
+            for (const label of found) {
+              if (label === 'new-converter') {
+                await ensureLabel(label, '5319e7', 'Request or proposal for a new converter');
               } else {
-                throw e;
+                await ensureLabel(label, '0e8a16', '');
               }
             }
+
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              labels: [label]
+              labels: ['needs-triage', ...found]
             });
