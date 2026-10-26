@@ -75,7 +75,7 @@ _MODEL_KEYS = frozenset({
 })
 _DATASET_KEYS = frozenset({
     "name", "source", "primary_key", "unique_keys", "description", "ai_context",
-    "fields", "custom_extensions",
+    "fields", "metrics", "custom_extensions",
 })
 _FIELD_KEYS = frozenset({
     "name", "expression", "dimension", "label", "description", "datatype", "ai_context",
@@ -228,8 +228,15 @@ def _convert_model(ossie, explicit_dialect, model_name):
         for d in datasets
     ]
 
-    metrics = _convert_metrics(
-        as_list(ossie.get("metrics"), "model: metrics"), by_name, resolved_dialect)
+    # Solid holds every metric in one model-level list, binding each to its tables, so a
+    # dataset-scoped metric joins it bound to the dataset that declares it.
+    taken = set()
+    metrics = _convert_metrics(as_list(ossie.get("metrics"), "model: metrics"),
+                               by_name, resolved_dialect, taken=taken)
+    for dataset in datasets:
+        metrics += _convert_metrics(
+            as_list(dataset.get("metrics"), f"dataset '{dataset['name']}': metrics"),
+            by_name, resolved_dialect, scope=dataset["name"], taken=taken)
     if metrics:
         solid["metrics"] = metrics
     relationships = _convert_relationships(
@@ -356,6 +363,8 @@ def _all_expressions(ossie):
     for dataset in entries(ossie.get("datasets")):
         for field in entries(dataset.get("fields")):
             yield field.get("expression")
+        for metric in entries(dataset.get("metrics")):
+            yield metric.get("expression")
     for metric in entries(ossie.get("metrics")):
         yield metric.get("expression")
 
@@ -702,8 +711,12 @@ def _convert_relationships(relationships, by_name):
     return converted
 
 
-def _convert_metrics(metrics, by_name, dialect):
+def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None):
+    """Convert model-scoped metrics, or with `scope` (a dataset name), the
+    dataset-scoped metrics that dataset declares. `taken` collects the Solid metric
+    names used so far, across both."""
     dataset_names = list(by_name)
+    taken = set() if taken is None else taken
     # Each dataset's field names, so unqualifying can tell when a bare name would
     # belong to more than one of the datasets a metric reads.
     fields = {
@@ -716,10 +729,23 @@ def _convert_metrics(metrics, by_name, dialect):
         if not isinstance(metric, dict):
             raise ConversionError("Each entry of 'metrics' must be a mapping")
         name = require_str(metric, "name", "metric")
-        warn_unknown_keys(metric, _METRIC_KEYS, "metric", f"'{name}'", _OSSIE)
-        stash = read_stash(metric, f"metric '{name}'")
-        _warn_foreign_extensions(metric, "metric", name)
-        solid_name = _solid_name(name, stash, "metric", name)
+        label = f"{scope}.{name}" if scope else name
+        warn_unknown_keys(metric, _METRIC_KEYS, "metric", f"'{label}'", _OSSIE)
+        stash = read_stash(metric, f"metric '{label}'")
+        _warn_foreign_extensions(metric, "metric", label)
+        solid_name = _solid_name(name, stash, "metric", label)
+        if scope and solid_name.lower() in taken:
+            # Apache Ossie names a dataset-scoped metric `dataset.metric`, so it may
+            # share a name with another dataset's metric or a model-scoped one; Solid's
+            # one list cannot hold both under one name.
+            base = renamed = f"{scope}_{solid_name}"
+            suffix = 2
+            while renamed.lower() in taken:
+                renamed, suffix = f"{base}_{suffix}", suffix + 1
+            warn("metric", f"'{label}' shares its name with another metric, so it was "
+                           f"renamed to '{renamed}'")
+            solid_name = renamed
+        taken.add(solid_name.lower())
         # Solid types a metric by evaluating its formula against the warehouse, so its
         # YAML has no slot for a declared result type.
         if metric.get("datatype"):
@@ -744,7 +770,17 @@ def _convert_metrics(metrics, by_name, dialect):
         tables = stash.get("tables")
         if tables is not None:
             tables = string_list(tables, f"metric '{name}': stashed tables")
-        if tables is None:
+        if scope:
+            # Its own dataset, whether or not the expression names it: a dataset-scoped
+            # expression reads its fields unqualified.
+            own = by_name[scope]["source"]
+            others = [t for t in referenced if t.lower() != own.lower()]
+            if others:
+                warn("metric", f"'{label}' is declared on '{scope}' but reads "
+                               f"{', '.join(others)}; a dataset-scoped metric may read "
+                               f"only its own dataset's fields")
+            tables = [own, *others]
+        elif tables is None:
             tables = referenced
         elif not ({t.lower() for t in referenced} <= {t.lower() for t in tables}):
             # Import stashes `tables` only for an expression that does not name them

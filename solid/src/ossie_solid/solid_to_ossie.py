@@ -71,10 +71,11 @@ _RELATIONSHIP_KEYS = frozenset({"left_table", "right_table", "join_keys"})
 _SOLID = "a Solid semantic model"
 from .expressions import (
     AMBIGUOUS,
+    SHARED,
     UNCHANGED,
     UNPARSED,
     column_reference,
-    qualify_metric,
+    qualify_by_owner,
     referenced_datasets,
 )
 
@@ -529,7 +530,7 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
         # expression, and for one that references no column at all (`COUNT(*)`).
         expected = [d["name"] for d in owners]
         if (unknown
-                or status in (UNPARSED, AMBIGUOUS)
+                or status in (UNPARSED, AMBIGUOUS, SHARED)
                 or referenced_datasets(
                     expression, dialect, dataset_names, fields) != expected):
             stash["tables"] = tables
@@ -539,29 +540,37 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
 
 
 def _qualify(name, expression, owners, dialect):
-    """Qualify a Solid metric's bare column references with their dataset name.
+    """Qualify a Solid metric's bare column references with their dataset names.
 
-    Solid stores formulas against bare columns and records the owning table separately,
-    so the dataset is unambiguous only when exactly one table owns the metric. A
-    multi-table metric is left verbatim: solid-server strips alias prefixes when the
-    formula is saved and keeps the alias-to-table binding in `metric.column_ids`, which
-    its YAML export does not carry, so the binding cannot be recovered from the file.
+    Solid stores formulas against bare columns and records the owning tables
+    separately; Apache Ossie requires a model-scoped metric to qualify every field as
+    `dataset.field`. A column only one of the metric's tables has can only mean that
+    table's. One that several of them have cannot be attributed from the file:
+    solid-server strips alias prefixes when the formula is saved and keeps the
+    alias-to-table binding in `metric.column_ids`, which its YAML export does not carry.
+    Such an expression is left verbatim.
     """
-    if len(owners) != 1:
-        if len(owners) > 1:
-            warn("metric",
-                 f"'{name}' spans {len(owners)} tables "
-                 f"({', '.join(d['name'] for d in owners)}); its column references "
-                 f"cannot be attributed to a dataset and were left unqualified")
-        else:
-            warn("metric", f"'{name}' names no owning table; its column references "
-                           f"were left unqualified")
+    if not owners:
+        warn("metric", f"'{name}' names no owning table; its column references "
+                       f"were left unqualified")
         return expression, UNCHANGED
 
-    dataset = owners[0]
-    columns = [f["name"] for f in dataset.get("fields") or []]
-    qualified, status = qualify_metric(expression, dialect, dataset["name"], columns)
-    if status == UNPARSED:
+    owner_of, shared = {}, set()
+    for dataset in owners:
+        for field in dataset.get("fields") or []:
+            column = field["name"].lower()
+            if owner_of.setdefault(column, dataset["name"]) != dataset["name"]:
+                shared.add(column)
+    for column in shared:
+        owner_of.pop(column, None)
+    qualified, status = qualify_by_owner(expression, dialect, owner_of, shared)
+    if status == SHARED:
+        warn("metric",
+             f"'{name}' spans {len(owners)} tables "
+             f"({', '.join(d['name'] for d in owners)}) and reads a column more than one "
+             f"of them has, so its column references cannot be attributed to a dataset "
+             f"and were left unqualified")
+    elif status == UNPARSED:
         warn("metric", f"'{name}': expression could not be parsed as {dialect} SQL and "
                        f"was left unqualified")
     elif status == AMBIGUOUS:

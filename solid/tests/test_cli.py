@@ -53,8 +53,12 @@ def test_a_round_trip_through_the_cli_matches_the_input(tmp_path, capsys):
     )
 
 
-def test_warnings_go_to_stderr_as_plain_lines(capsys):
-    main(["import", "-i", str(FIXTURES / "tpcds_solid.yaml")])
+def test_warnings_go_to_stderr_as_plain_lines(capsys, tmp_path):
+    model = tmp_path / "model.yaml"
+    model.write_text("semantic_model:\n  name: m\n  tables:\n    - name: db.s.t\n"
+                     "      facts: [{name: a, type: 'NUMBER(38,0)'}]\n"
+                     "  metrics:\n    - {name: total, expression: SUM(a), tables: []}\n")
+    main(["import", "-i", str(model)])
     err = capsys.readouterr().err
     assert err.startswith("Warning: [metric]")
     assert "Traceback" not in err
