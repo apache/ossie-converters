@@ -149,6 +149,27 @@ def test_a_dataset_sharing_the_model_name_is_moved_aside():
     assert "Model orders {" in next(t for name, t in result.files if name.endswith("orders.model.aml"))
 
 
+def test_an_expression_with_only_sql_is_dropped_with_an_error():
+    """An expression with no dialect entries has no body to write, but it is not malformed."""
+    payload = document(
+        datasets=[{"name": "orders", "source": "db.orders", "fields": [
+            {"name": "a", "expression": EXPRESSION},
+            {"name": "b", "expression": {"sql": "orders.b"}},
+        ]}],
+        metrics=[{"name": "total", "expression": {"sql": "SUM(orders.a)"}}],
+    )
+    result = ossie_to_aml.convert(payload, "ANSI_SQL", data_source_name="probe")
+
+    dropped = sorted(
+        i.object_ref for i in result.issues.issues if i.code == ossie_to_aml.ISSUE_NO_USABLE_DIALECT
+    )
+    assert dropped == ["orders.b", "total"]
+    text = "".join(t for _, t in result.files)
+    assert "dimension a" in text
+    assert "dimension b" not in text
+    assert "total" not in text
+
+
 def test_an_aggregation_that_does_not_wrap_the_whole_expression_is_kept_whole():
     """`SUM(a) + SUM(b)` starts with `SUM(` and ends with `)` and is not a sum.
 
