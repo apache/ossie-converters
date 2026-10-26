@@ -219,13 +219,14 @@ column the catalog has. A field renamed again in Apache Ossie keeps its new name
 
 | Apache Ossie | Solid | Notes |
 |---|---|---|
-| `metrics[]` | `metrics[]` | Solid metrics are already model-level. |
+| `metrics[]` | `metrics[]` | Solid metrics are already model-level, so import writes model-scoped metrics, which every Apache Ossie consumer reads. |
+| `datasets[].metrics` | `metrics[]` with `tables: [that table]` | A dataset-scoped metric reads its dataset's fields unqualified, as a Solid formula reads columns, and is bound to that table on export. Solid holds every metric in one list, so a name it shares with another metric gets the dataset's name as a prefix, with a warning, and a re-import writes it model-scoped. |
 | `name` | `name` | A name Solid declares twice is renamed on import and restored on export, as for fields. |
 | `expression.dialects[]` | `expression` + `tables[]` | See [Metric expressions](#metric-expressions). |
 | `description` | `description` | |
 | `datatype` | — | Solid types a metric by evaluating its formula against the warehouse, so there is no slot for a declared result type. Export warns. |
 | `ai_context.synonyms` | `synonyms` | |
-| `custom_extensions[SOLID]` | `tables[]` | Stashed only when the qualified expression does not already name the same datasets — for a cross-table metric, or one referencing no column at all (`COUNT(*)`). If the expression was edited in Apache Ossie to read a dataset the stash does not list, export takes the tables from the expression instead. |
+| `custom_extensions[SOLID]` | `tables[]` | Stashed only when the qualified expression does not already name the same datasets — for a cross-table metric that reads a column more than one of its tables has, or one referencing no column at all (`COUNT(*)`). If the expression was edited in Apache Ossie to read a dataset the stash does not list, export takes the tables from the expression instead. |
 
 ## Cardinality
 
@@ -273,10 +274,16 @@ something else. On any disagreement — an unparseable expression, or a column a
 `year` in `EXTRACT(year FROM …)` — the expression is left **exactly as written** and a
 warning is emitted. An unqualified metric is a far smaller problem than a corrupted one.
 
-**A cross-table metric cannot be qualified.** Solid's `tables[]` may hold more than one
-table, and the alias-to-table binding lives in `metric.column_ids`, which its YAML export
-does not carry. Those metrics keep their bare column names, keep `tables[]` in the stash,
-and emit a warning.
+**A cross-table metric is qualified column by column.** Apache Ossie requires a
+model-scoped metric to qualify every field as `dataset.field`, and a Solid metric may list
+several tables. A column only one of them has can only be that table's, so
+`SUM(ss_ext_sales_price) / COUNT(DISTINCT c_customer_sk)` over `store_sales` and
+`customer` becomes `SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT
+customer.c_customer_sk)`. A metric that reads a column more than one of its tables has
+cannot be attributed from the file — solid-server keeps that binding in
+`metric.column_ids`, which its YAML export does not carry — so it keeps its bare column
+names, keeps `tables[]` in the stash, and emits a warning. In the real Solid exports this
+was checked against, that is one cross-table metric in six.
 
 ## Identifier quoting
 
@@ -468,10 +475,11 @@ should do with a foreign model, not a defect in the transform:
   real column does not, so the Solid model names a column the warehouse does not have.
   Emitting the underlying name and keeping the alias as a synonym would be truer, but it
   changes which identifier downstream Solid consumers see and so needs a product call.
-- **A metric written against bare column names reaches Solid with `tables: []`.** Only a
-  dataset-qualified reference identifies its owner. Resolving bare names against each
-  dataset's declared fields would fix most cases; it is inference, so it is deliberately
-  not done silently.
+- **A model-scoped metric written against bare column names reaches Solid with
+  `tables: []`.** Only a dataset-qualified reference identifies its owner. The spec now
+  requires model-scoped metrics to qualify every field, but models written before that
+  rule may not; resolving bare names against each dataset's declared fields would fix
+  most of them, but it is inference, so it is deliberately not done silently.
 
 And two are **format-level**:
 
@@ -479,6 +487,10 @@ And two are **format-level**:
   `benchmark_questions` are currently stashed, but the same construct appears across the
   ecosystem — Snowflake Cortex `verified_queries`, WisdomAI reviewed queries — and looks
   like a candidate for a core field rather than N vendor extensions.
+- **A single-table Solid metric could be dataset-scoped.** It reads one table's columns
+  unqualified, which is what `datasets[].metrics` (added in apache/ossie#591) is for.
+  Import still writes model-scoped metrics, which every consumer reads, while support
+  for the dataset-scoped form spreads across the other converters.
 - **Solid's export does not record its source warehouse**, which is why the dialect has to
   be inferred. Adding it to the export would make the format self-describing; the
   converter would read it first and keep inference only as a fallback for existing files.

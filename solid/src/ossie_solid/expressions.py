@@ -92,6 +92,7 @@ UNQUALIFIED = "unqualified"
 UNCHANGED = "unchanged"
 UNPARSED = "unparsed"
 AMBIGUOUS = "ambiguous"
+SHARED = "shared"
 
 
 def _read(dialect):
@@ -243,9 +244,21 @@ def qualify_metric(expression, dialect, dataset, columns):
       "ambiguous"  -- the token scan and the parse disagree on which names are columns,
                       so the text is returned verbatim rather than risk a bad edit
     """
+    return qualify_by_owner(expression, dialect, {c.lower(): dataset for c in columns})
+
+
+def qualify_by_owner(expression, dialect, owners, shared=()):
+    """Prefix every bare column in `expression` with the dataset that owns it.
+
+    `owners` maps a lower-cased column name to its dataset, for a metric that reads
+    several. `shared` names columns more than one of those datasets has: nothing in the
+    file says which one the formula means, so an expression reading one is returned
+    verbatim with the status "shared". Otherwise as `qualify_metric`.
+    """
     if not expression or not expression.strip():
         return expression, UNCHANGED
-    known = {c.lower() for c in columns}
+    shared = {c.lower() for c in shared}
+    known = set(owners) | shared
     if not known:
         return expression, UNCHANGED
 
@@ -257,6 +270,8 @@ def qualify_metric(expression, dialect, dataset, columns):
     expected = _bare_columns(tree, known)
     if not expected:
         return expression, UNCHANGED
+    if shared & set(expected):
+        return expression, SHARED
 
     targets = []
     for index, token in enumerate(tokens):
@@ -278,11 +293,11 @@ def qualify_metric(expression, dialect, dataset, columns):
     if Counter(_unquote(t.text).lower() for t in targets) != expected:
         return expression, AMBIGUOUS
 
-    prefix = f"{column_reference(dataset, dialect)}."
-    return _splice(
-        expression,
-        [(t.start, t.start, prefix) for t in targets],
-    ), QUALIFIED
+    return _splice(expression, [
+        (t.start, t.start,
+         f"{column_reference(owners[_unquote(t.text).lower()], dialect)}.")
+        for t in targets
+    ]), QUALIFIED
 
 
 def unqualify_metric(expression, dialect, datasets, fields=None):

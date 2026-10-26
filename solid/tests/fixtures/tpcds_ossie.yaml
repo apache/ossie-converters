@@ -686,7 +686,7 @@ metrics:
   expression:
     dialects:
     - dialect: SNOWFLAKE
-      expression: SUM(ss_ext_sales_price) / COUNT(DISTINCT c_customer_sk)
+      expression: SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT customer.c_customer_sk)
   description: 'Average lifetime sales value per customer. Spans two tables, so Solid stores the
 
     formula with bare column names and resolves them at query time.'
@@ -694,9 +694,6 @@ metrics:
     synonyms:
     - CLV
     - LTV
-  custom_extensions:
-  - vendor_name: SOLID
-    data: '{"_v": 1, "tables": ["tpcds.public.store_sales", "tpcds.public.customer"]}'
 custom_extensions:
 - vendor_name: SOLID
   data: '{"_v": 1, "dialect": "SNOWFLAKE", "model_llm_description": "TPC-DS retail semantic model for

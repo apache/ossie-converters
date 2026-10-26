@@ -939,3 +939,53 @@ def test_a_datatype_of_the_wrong_kind_beside_an_empty_dimension_block_is_rejecte
              "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "a"}]}}]}]}
     with pytest.raises(ConversionError, match="datatype must be a string"):
         convert_ossie_to_solid(yaml.safe_dump(ossie))
+
+
+# --- dataset-scoped metrics ---------------------------------------------------------
+
+
+def _with_dataset_metrics(dataset_metrics, model_metrics=()):
+    def metric(name, sql):
+        return {"name": name,
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]}}
+
+    def field(name):
+        return {"name": name, "datatype": "Decimal",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
+
+    ossie = {
+        "version": "0.2.0.dev0",
+        "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders",
+             "fields": [field("amount"), field("qty")],
+             "metrics": [metric(n, sql) for n, sql in dataset_metrics]},
+            {"name": "returns", "source": "db.s.returns", "fields": [field("refund")]},
+        ],
+        "metrics": [metric(n, sql) for n, sql in model_metrics],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    return by_name(solid_model_of(solid).get("metrics") or []), warnings_
+
+
+def test_a_dataset_scoped_metric_is_bound_to_the_dataset_that_declares_it():
+    metrics, warnings_ = _with_dataset_metrics([("total_qty", "SUM(qty)")])
+    assert metrics["total_qty"] == {
+        "name": "total_qty", "expression": "SUM(qty)", "tables": ["db.s.orders"]}
+    assert warnings_ == []
+
+
+def test_a_dataset_scoped_metric_sharing_a_model_metrics_name_is_renamed():
+    metrics, warnings_ = _with_dataset_metrics(
+        [("total", "SUM(amount)")], model_metrics=[("total", "SUM(returns.refund)")])
+    assert metrics["total"]["tables"] == ["db.s.returns"]
+    assert metrics["orders_total"]["tables"] == ["db.s.orders"]
+    assert any("'orders.total' shares its name with another metric, so it was renamed "
+               "to 'orders_total'" in w for w in warnings_)
+
+
+def test_a_dataset_scoped_metric_reading_another_dataset_is_reported():
+    metrics, warnings_ = _with_dataset_metrics(
+        [("net", "SUM(amount) - SUM(returns.refund)")])
+    assert metrics["net"]["tables"] == ["db.s.orders", "db.s.returns"]
+    assert any("may read only its own dataset's fields" in w for w in warnings_)

@@ -285,22 +285,45 @@ def test_a_metric_referencing_no_column_keeps_its_tables_in_the_stash(tpcds):
     assert stash_of(metric)["tables"] == ["tpcds.public.store_sales"]
 
 
-def test_a_cross_table_metric_is_left_unqualified_and_warns():
-    _, warnings_ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
-    assert any(
-        "CUSTOMER_LIFETIME_VALUE" in w and "spans 2 tables" in w for w in warnings_
-    )
-
-
-def test_a_cross_table_metric_keeps_its_tables_in_the_stash(tpcds):
+def test_a_cross_table_metric_qualifies_each_column_with_the_table_that_has_it(tpcds):
+    # A model-scoped metric must qualify every field. Each of these columns belongs to
+    # only one of the metric's two tables, so that is the one it reads.
     metric = by_name(tpcds["metrics"])["CUSTOMER_LIFETIME_VALUE"]
     assert expression_of(metric) == (
-        "SUM(ss_ext_sales_price) / COUNT(DISTINCT c_customer_sk)"
+        "SUM(store_sales.ss_ext_sales_price) / "
+        "COUNT(DISTINCT customer.c_customer_sk)"
     )
-    assert stash_of(metric)["tables"] == [
-        "tpcds.public.store_sales",
-        "tpcds.public.customer",
-    ]
+    # The expression names both tables, so there is nothing to stash.
+    assert "tables" not in stash_of(metric)
+
+
+SHARED_COLUMN = """
+semantic_model:
+  name: shop
+  tables:
+    - name: db.s.orders
+      facts: [{name: amount, type: 'NUMBER(38,2)'}, {name: id, type: 'NUMBER(38,0)'}]
+    - name: db.s.customers
+      dimensions: [{name: id, type: 'NUMBER(38,0)'}]
+  metrics:
+    - name: per_customer
+      expression: SUM(amount) / COUNT(DISTINCT id)
+      tables: [db.s.orders, db.s.customers]
+"""
+
+
+def test_a_cross_table_metric_reading_a_column_both_tables_have_is_left_as_written():
+    # Which table's `id` the formula means is recorded only in solid-server's
+    # `metric.column_ids`, which its YAML export does not carry.
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, SHARED_COLUMN)
+    metric = model_of(ossie)["metrics"][0]
+    assert expression_of(metric) == "SUM(amount) / COUNT(DISTINCT id)"
+    assert stash_of(metric)["tables"] == ["db.s.orders", "db.s.customers"]
+    assert any("'per_customer' spans 2 tables (orders, customers) and reads a column "
+               "more than one of them has" in w for w in warnings_)
+    solid, _ = convert_quietly(convert_ossie_to_solid, ossie)
+    assert solid_model_of(solid)["metrics"][0]["tables"] == [
+        "db.s.orders", "db.s.customers"]
 
 
 def test_metric_synonyms_become_ai_context_synonyms(tpcds):
