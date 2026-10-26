@@ -350,6 +350,14 @@ public class FieldMappingHandler implements PipelineStep {
             // Determine field type based on Ossie structure
             boolean hasDimension = ossieField.containsKey(DIMENSION);
             ExpressionInfo expressionInfo = unwrapExpression(ossieField);
+            if (expressionInfo == null) {
+                logger.warn(
+                        "Field '{}' in dataset '{}' has no dialect expression, so export cannot "
+                                + "translate it; omitting the field",
+                        getString(ossieField, NAME),
+                        getString(ossieDataset, NAME));
+                continue;
+            }
 
             String expression = expressionInfo.expression();
             String dialect = expressionInfo.dialect();
@@ -532,7 +540,14 @@ public class FieldMappingHandler implements PipelineStep {
         Map<String, Object> expression = asMap(expressionObj);
         Object dialectsObj = expression.get(DIALECTS);
 
+        // An expression that carries only `sql` has no dialect entry to unwrap.
+        if (dialectsObj == null) {
+            return null;
+        }
         List<Object> dialects = asList(dialectsObj);
+        if (dialects.isEmpty()) {
+            return null;
+        }
 
         Object selectedDialectObj = null;
         for (Object dialectObj : dialects) {

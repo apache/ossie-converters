@@ -1448,6 +1448,23 @@ def test_duplicate_auto_ontology_field_names_across_attribute_kinds_are_rejected
         convert_auto_ontology_to_ossie(yaml.safe_dump(native))
 
 
+def test_sql_only_field_and_metric_are_skipped_with_a_warning() -> None:
+    ossie = yaml.safe_load(_ossie_yaml())
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    net_total = next(field for field in orders["fields"] if field["name"] == "net_total")
+    net_total["expression"] = {"sql": "orders.net_total"}
+    ossie["metrics"][0]["expression"] = {"sql": "SUM(orders.net_total)"}
+
+    with pytest.warns(UserWarning) as warned:
+        converted = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie))
+
+    messages = [str(warning.message) for warning in warned]
+    assert any("net_total" in message for message in messages)
+    assert any("revenue_per_customer" in message for message in messages)
+    assert "net_total" not in converted
+    assert "revenue_per_customer" not in converted
+
+
 def test_catalog_only_auto_ontology_has_no_representable_terms() -> None:
     native = yaml.safe_load(_auto_ontology_yaml())
     native["semantic_layer"]["terms"] = []
