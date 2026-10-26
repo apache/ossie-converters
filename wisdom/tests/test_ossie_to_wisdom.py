@@ -396,16 +396,16 @@ def test_reversed_symmetric_relationship_keeps_its_type(relationship_type):
     assert result.issues == []
 
 
-def test_reversed_one_to_many_still_describes_the_relationship():
-    # Imported as customers -> orders; `from`/`to` now read orders -> customers, so orders is the
-    # many side. Swapping back gives customers ONE_TO_MANY orders, which says the same thing.
+def test_flipped_one_to_many_follows_the_flip():
+    # Imported as customers -> orders, then deliberately flipped to orders -> customers, so orders is
+    # now the many side. The export follows the flip as MANY_TO_ONE instead of swapping it back.
     result, edge = _orders_customers_export(
         custom_extensions=[
             _wisdom_extension({"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["customers", "orders"]})
         ],
     )
-    assert edge["properties"]["relationshipType"] == "ONE_TO_MANY"
-    assert _join_sides(edge) == (("customers", "id"), ("orders", "customer_fk"))
+    assert edge["properties"]["relationshipType"] == "MANY_TO_ONE"
+    assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
     assert result.issues == []
 
 

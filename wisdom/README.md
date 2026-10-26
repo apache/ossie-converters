@@ -88,6 +88,11 @@ The `ONE_TO_ONE` and `MANY_TO_MANY` notes in `ai_context` are for readers only; 
 export does not depend on them. `ONE_TO_MANY` gets no note: once flipped, the relationship
 is many-to-one as Ossie reads it, and a one-to-many note would contradict that.
 
+Compatibility: a converter from before the `WISDOM` extension reads only the notes, so it
+exports a `ONE_TO_MANY` relationship from a newer document as `MANY_TO_ONE` from its many
+side. That is the same relationship written the other way round; only Wisdom's original
+left/right order is lost.
+
 Compound join conditions that are an `AND` of equality conditions are flattened into
 positional `from_columns`/`to_columns` arrays; any other compound condition (e.g. `OR`)
 drops the relationship with a `RELATIONSHIP_DROPPED` warning.
@@ -106,8 +111,10 @@ are stable:
 - Relationships become `MANY_TO_ONE` edges (Ossie's `from` is the many side). A relationship
   with a `WISDOM` custom extension written by `wisdom-to-ossie` gets its type back from it:
   `ONE_TO_ONE`, `MANY_TO_MANY`, or `ONE_TO_MANY` with the two sides (and their columns)
-  swapped back. Reversing `from`/`to` after import keeps the type, since the relationship
-  means the same thing either way. If a recorded dataset is no longer one of the
+  swapped back. If `from`/`to` were reversed after import, `ONE_TO_ONE` and `MANY_TO_MANY`
+  keep their type, since they mean the same thing either way, and a `ONE_TO_MANY` is
+  exported as `MANY_TO_ONE` in the new direction, since its many side is now `from`. If a
+  recorded dataset is no longer one of the
   relationship's `from`/`to`, or the entry is malformed, the edge stays `MANY_TO_ONE`
   with a `RELATIONSHIP_TYPE_UNRESOLVED` warning. The entries read this way are not reported
   as `CUSTOM_EXTENSION_DROPPED`. Composite keys become compound `AND` join conditions.

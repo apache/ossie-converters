@@ -437,16 +437,21 @@ class OssieToWisdomConverter:
     def _stored_relationship_type(
         self, extension: OssieCustomExtension, relationship: OssieRelationship
     ) -> str | None:
-        """Returns the type stored by wisdom_to_ossie, or None when the entry is malformed or stale."""
+        """Returns the type to export for the relationship as it stands, or None when the entry is
+        malformed or stale."""
         data = decode_extension_data(extension.data)
         if data is None:
             return None
         relationship_type = data.get("relationshipType")
         if not isinstance(relationship_type, str) or relationship_type not in _RELATIONSHIP_TYPES:
             return None
-        # Reversing from/to keeps the meaning: ONE_TO_ONE and MANY_TO_MANY are symmetric and
-        # ONE_TO_MANY is swapped back on export. Only endpoints moved to other datasets are stale.
         endpoints = [relationship.from_dataset, relationship.to]
-        if data.get("normalizedEndpoints") not in (endpoints, endpoints[::-1]):
-            return None
-        return relationship_type
+        if data.get("normalizedEndpoints") == endpoints:
+            return relationship_type
+        if data.get("normalizedEndpoints") == endpoints[::-1]:
+            # from/to were reversed after import. ONE_TO_ONE and MANY_TO_MANY are symmetric. A reversed
+            # ONE_TO_MANY now has its many side in `from`, so it is exported as MANY_TO_ONE in the new
+            # direction rather than swapped back.
+            return "MANY_TO_ONE" if relationship_type == "ONE_TO_MANY" else relationship_type
+        # An endpoint moved to another dataset, so the stored type may no longer apply.
+        return None
