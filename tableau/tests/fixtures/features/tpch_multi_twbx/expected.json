@@ -1,0 +1,61 @@
+{
+  "fail": null,
+  "outputs": 3,
+  "loss_kinds": [
+    "duplicate_datasource",
+    "lod",
+    "parameters_unreferenced",
+    "relationship_cardinality",
+    "semantic_values"
+  ],
+  "datasources": {
+    "lineitem": {
+      "datasets": 6,
+      "fields": 54,
+      "relationships": 5,
+      "metrics": 2,
+      "converted": true,
+      "losses": [
+        "lod",
+        "parameters_unreferenced",
+        "relationship_cardinality",
+        "semantic_values"
+      ]
+    },
+    "customer": {
+      "datasets": 6,
+      "fields": 54,
+      "relationships": 5,
+      "metrics": 2,
+      "converted": true,
+      "losses": [
+        "duplicate_datasource",
+        "lod",
+        "parameters_unreferenced",
+        "relationship_cardinality",
+        "semantic_values"
+      ]
+    },
+    "part": {
+      "datasets": 6,
+      "fields": 54,
+      "relationships": 5,
+      "metrics": 2,
+      "converted": true,
+      "losses": [
+        "duplicate_datasource",
+        "lod",
+        "parameters_unreferenced",
+        "relationship_cardinality",
+        "semantic_values"
+      ]
+    }
+  },
+  "loss_counts": {
+    "duplicate_datasource": 2,
+    "lod": 3,
+    "parameters_unreferenced": 3,
+    "relationship_cardinality": 3,
+    "semantic_values": 3
+  }
+}

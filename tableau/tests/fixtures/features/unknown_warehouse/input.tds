@@ -1,0 +1,1 @@
+<datasource name="pg" version="18.1"><connection class="postgres" dbname="d" server="s"><relation name="t" table="[public].[t]" type="table"/><cols><map key="[a]" value="[t].[a]"/></cols></connection><column name="[a]" datatype="integer" role="dimension" type="ordinal"/></datasource>

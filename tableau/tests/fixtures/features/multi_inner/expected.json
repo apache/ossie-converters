@@ -1,0 +1,39 @@
+{
+  "fail": null,
+  "outputs": 2,
+  "loss_kinds": [
+    "duplicate_datasource",
+    "source_qualified",
+    "unknown_warehouse"
+  ],
+  "datasources": {
+    "a__pg": {
+      "datasets": 1,
+      "fields": 1,
+      "relationships": 0,
+      "metrics": 0,
+      "converted": true,
+      "losses": [
+        "source_qualified",
+        "unknown_warehouse"
+      ]
+    },
+    "b__pg2": {
+      "datasets": 1,
+      "fields": 1,
+      "relationships": 0,
+      "metrics": 0,
+      "converted": true,
+      "losses": [
+        "duplicate_datasource",
+        "source_qualified",
+        "unknown_warehouse"
+      ]
+    }
+  },
+  "loss_counts": {
+    "duplicate_datasource": 1,
+    "source_qualified": 2,
+    "unknown_warehouse": 2
+  }
+}

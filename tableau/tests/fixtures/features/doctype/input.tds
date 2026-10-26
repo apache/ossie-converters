@@ -1,0 +1,1 @@
+<?xml version="1.0"?><!DOCTYPE d [<!ENTITY a "x">]><datasource name="d">&a;</datasource>

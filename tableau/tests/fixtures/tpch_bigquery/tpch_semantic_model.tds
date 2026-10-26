@@ -1,0 +1,763 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<datasource formatted-name="federated.fbed9917b1ab86f18ef366ca6a" inline="true" version="18.1" xmlns:user="http://www.tableausoftware.com/xml/user">
+  <document-format-change-manifest>
+    <ObjectModelEncapsulateLegacy />
+    <ObjectModelRelationshipPerfOptions />
+    <ObjectModelTableType />
+    <SchemaViewerObjectModel />
+  </document-format-change-manifest>
+  <connection class="federated">
+    <named-connections>
+      <named-connection caption="bigquery.googleapis.com" name="bigquery.2274d62398d3a932bd9b6c551a">
+        <connection CATALOG="my-gcp-project" EXECCATALOG="my-gcp-project" authentication="oauth" class="bigquery" connection-dialect="google-sql" project="my-gcp-project" schema="my_dataset" server="bigquery.googleapis.com" username="" />
+      </named-connection>
+    </named-connections>
+    <relation type="collection">
+      <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="LINEITEM" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_lineitem]" type="table" />
+      <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="ORDERS" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_orders]" type="table" />
+      <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="CUSTOMER" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_customer]" type="table" />
+      <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="NATION" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_nation]" type="table" />
+      <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="PART" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_part]" type="table" />
+      <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="SUPPLIER" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_supplier]" type="table" />
+    </relation>
+    <cols>
+      <map key="[C_CUSTKEY]" value="[CUSTOMER].[C_CUSTKEY]" />
+      <map key="[C_NAME]" value="[CUSTOMER].[C_NAME]" />
+      <map key="[C_ADDRESS]" value="[CUSTOMER].[C_ADDRESS]" />
+      <map key="[C_NATIONKEY]" value="[CUSTOMER].[C_NATIONKEY]" />
+      <map key="[C_PHONE]" value="[CUSTOMER].[C_PHONE]" />
+      <map key="[C_ACCTBAL]" value="[CUSTOMER].[C_ACCTBAL]" />
+      <map key="[C_MKTSEGMENT]" value="[CUSTOMER].[C_MKTSEGMENT]" />
+      <map key="[C_COMMENT]" value="[CUSTOMER].[C_COMMENT]" />
+      <map key="[L_ORDERKEY]" value="[LINEITEM].[L_ORDERKEY]" />
+      <map key="[L_PARTKEY]" value="[LINEITEM].[L_PARTKEY]" />
+      <map key="[L_SUPPKEY]" value="[LINEITEM].[L_SUPPKEY]" />
+      <map key="[L_LINENUMBER]" value="[LINEITEM].[L_LINENUMBER]" />
+      <map key="[L_QUANTITY]" value="[LINEITEM].[L_QUANTITY]" />
+      <map key="[L_EXTENDEDPRICE]" value="[LINEITEM].[L_EXTENDEDPRICE]" />
+      <map key="[L_DISCOUNT]" value="[LINEITEM].[L_DISCOUNT]" />
+      <map key="[L_TAX]" value="[LINEITEM].[L_TAX]" />
+      <map key="[L_RETURNFLAG]" value="[LINEITEM].[L_RETURNFLAG]" />
+      <map key="[L_LINESTATUS]" value="[LINEITEM].[L_LINESTATUS]" />
+      <map key="[L_SHIPDATE]" value="[LINEITEM].[L_SHIPDATE]" />
+      <map key="[L_COMMITDATE]" value="[LINEITEM].[L_COMMITDATE]" />
+      <map key="[L_RECEIPTDATE]" value="[LINEITEM].[L_RECEIPTDATE]" />
+      <map key="[L_SHIPINSTRUCT]" value="[LINEITEM].[L_SHIPINSTRUCT]" />
+      <map key="[L_SHIPMODE]" value="[LINEITEM].[L_SHIPMODE]" />
+      <map key="[L_COMMENT]" value="[LINEITEM].[L_COMMENT]" />
+      <map key="[N_NATIONKEY]" value="[NATION].[N_NATIONKEY]" />
+      <map key="[N_NAME]" value="[NATION].[N_NAME]" />
+      <map key="[N_REGIONKEY]" value="[NATION].[N_REGIONKEY]" />
+      <map key="[N_COMMENT]" value="[NATION].[N_COMMENT]" />
+      <map key="[O_ORDERKEY]" value="[ORDERS].[O_ORDERKEY]" />
+      <map key="[O_CUSTKEY]" value="[ORDERS].[O_CUSTKEY]" />
+      <map key="[O_ORDERSTATUS]" value="[ORDERS].[O_ORDERSTATUS]" />
+      <map key="[O_TOTALPRICE]" value="[ORDERS].[O_TOTALPRICE]" />
+      <map key="[O_ORDERDATE]" value="[ORDERS].[O_ORDERDATE]" />
+      <map key="[O_ORDERPRIORITY]" value="[ORDERS].[O_ORDERPRIORITY]" />
+      <map key="[O_CLERK]" value="[ORDERS].[O_CLERK]" />
+      <map key="[O_SHIPPRIORITY]" value="[ORDERS].[O_SHIPPRIORITY]" />
+      <map key="[O_COMMENT]" value="[ORDERS].[O_COMMENT]" />
+      <map key="[P_PARTKEY]" value="[PART].[P_PARTKEY]" />
+      <map key="[P_NAME]" value="[PART].[P_NAME]" />
+      <map key="[P_MFGR]" value="[PART].[P_MFGR]" />
+      <map key="[P_BRAND]" value="[PART].[P_BRAND]" />
+      <map key="[P_TYPE]" value="[PART].[P_TYPE]" />
+      <map key="[P_SIZE]" value="[PART].[P_SIZE]" />
+      <map key="[P_CONTAINER]" value="[PART].[P_CONTAINER]" />
+      <map key="[P_RETAILPRICE]" value="[PART].[P_RETAILPRICE]" />
+      <map key="[P_COMMENT]" value="[PART].[P_COMMENT]" />
+      <map key="[S_SUPPKEY]" value="[SUPPLIER].[S_SUPPKEY]" />
+      <map key="[S_NAME]" value="[SUPPLIER].[S_NAME]" />
+      <map key="[S_ADDRESS]" value="[SUPPLIER].[S_ADDRESS]" />
+      <map key="[S_NATIONKEY]" value="[SUPPLIER].[S_NATIONKEY]" />
+      <map key="[S_PHONE]" value="[SUPPLIER].[S_PHONE]" />
+      <map key="[S_ACCTBAL]" value="[SUPPLIER].[S_ACCTBAL]" />
+      <map key="[S_COMMENT]" value="[SUPPLIER].[S_COMMENT]" />
+    </cols>
+    <metadata-records>
+      <metadata-record class="column">
+        <remote-name>C_CUSTKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[C_CUSTKEY]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_CUSTKEY</remote-alias>
+        <ordinal>1</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>C_NAME</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[C_NAME]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_NAME</remote-alias>
+        <ordinal>2</ordinal>
+        <local-type>string</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>C_ADDRESS</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[C_ADDRESS]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_ADDRESS</remote-alias>
+        <ordinal>3</ordinal>
+        <local-type>string</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>C_NATIONKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[C_NATIONKEY]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_NATIONKEY</remote-alias>
+        <ordinal>4</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>C_PHONE</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[C_PHONE]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_PHONE</remote-alias>
+        <ordinal>5</ordinal>
+        <local-type>string</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>C_ACCTBAL</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[C_ACCTBAL]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_ACCTBAL</remote-alias>
+        <ordinal>6</ordinal>
+        <local-type>real</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>C_MKTSEGMENT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[C_MKTSEGMENT]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_MKTSEGMENT</remote-alias>
+        <ordinal>7</ordinal>
+        <local-type>string</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>C_COMMENT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[C_COMMENT]</local-name>
+        <parent-name>[CUSTOMER]</parent-name>
+        <remote-alias>C_COMMENT</remote-alias>
+        <ordinal>8</ordinal>
+        <local-type>string</local-type>
+        <object-id>[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_ORDERKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[L_ORDERKEY]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_ORDERKEY</remote-alias>
+        <ordinal>1</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_PARTKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[L_PARTKEY]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_PARTKEY</remote-alias>
+        <ordinal>2</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_SUPPKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[L_SUPPKEY]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_SUPPKEY</remote-alias>
+        <ordinal>3</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_LINENUMBER</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[L_LINENUMBER]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_LINENUMBER</remote-alias>
+        <ordinal>4</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_QUANTITY</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[L_QUANTITY]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_QUANTITY</remote-alias>
+        <ordinal>5</ordinal>
+        <local-type>real</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_EXTENDEDPRICE</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[L_EXTENDEDPRICE]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_EXTENDEDPRICE</remote-alias>
+        <ordinal>6</ordinal>
+        <local-type>real</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_DISCOUNT</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[L_DISCOUNT]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_DISCOUNT</remote-alias>
+        <ordinal>7</ordinal>
+        <local-type>real</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_TAX</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[L_TAX]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_TAX</remote-alias>
+        <ordinal>8</ordinal>
+        <local-type>real</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_RETURNFLAG</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[L_RETURNFLAG]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_RETURNFLAG</remote-alias>
+        <ordinal>9</ordinal>
+        <local-type>string</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_LINESTATUS</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[L_LINESTATUS]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_LINESTATUS</remote-alias>
+        <ordinal>10</ordinal>
+        <local-type>string</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_SHIPDATE</remote-name>
+        <remote-type>7</remote-type>
+        <local-name>[L_SHIPDATE]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_SHIPDATE</remote-alias>
+        <ordinal>11</ordinal>
+        <local-type>date</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_COMMITDATE</remote-name>
+        <remote-type>7</remote-type>
+        <local-name>[L_COMMITDATE]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_COMMITDATE</remote-alias>
+        <ordinal>12</ordinal>
+        <local-type>date</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_RECEIPTDATE</remote-name>
+        <remote-type>7</remote-type>
+        <local-name>[L_RECEIPTDATE]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_RECEIPTDATE</remote-alias>
+        <ordinal>13</ordinal>
+        <local-type>date</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_SHIPINSTRUCT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[L_SHIPINSTRUCT]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_SHIPINSTRUCT</remote-alias>
+        <ordinal>14</ordinal>
+        <local-type>string</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_SHIPMODE</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[L_SHIPMODE]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_SHIPMODE</remote-alias>
+        <ordinal>15</ordinal>
+        <local-type>string</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>L_COMMENT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[L_COMMENT]</local-name>
+        <parent-name>[LINEITEM]</parent-name>
+        <remote-alias>L_COMMENT</remote-alias>
+        <ordinal>16</ordinal>
+        <local-type>string</local-type>
+        <object-id>[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>N_NATIONKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[N_NATIONKEY]</local-name>
+        <parent-name>[NATION]</parent-name>
+        <remote-alias>N_NATIONKEY</remote-alias>
+        <ordinal>1</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[NATION_8291F7C1C0279D1BDF55B50C34234AC2]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>N_NAME</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[N_NAME]</local-name>
+        <parent-name>[NATION]</parent-name>
+        <remote-alias>N_NAME</remote-alias>
+        <ordinal>2</ordinal>
+        <local-type>string</local-type>
+        <object-id>[NATION_8291F7C1C0279D1BDF55B50C34234AC2]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>N_REGIONKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[N_REGIONKEY]</local-name>
+        <parent-name>[NATION]</parent-name>
+        <remote-alias>N_REGIONKEY</remote-alias>
+        <ordinal>3</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[NATION_8291F7C1C0279D1BDF55B50C34234AC2]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>N_COMMENT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[N_COMMENT]</local-name>
+        <parent-name>[NATION]</parent-name>
+        <remote-alias>N_COMMENT</remote-alias>
+        <ordinal>4</ordinal>
+        <local-type>string</local-type>
+        <object-id>[NATION_8291F7C1C0279D1BDF55B50C34234AC2]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_ORDERKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[O_ORDERKEY]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_ORDERKEY</remote-alias>
+        <ordinal>1</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_CUSTKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[O_CUSTKEY]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_CUSTKEY</remote-alias>
+        <ordinal>2</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_ORDERSTATUS</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[O_ORDERSTATUS]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_ORDERSTATUS</remote-alias>
+        <ordinal>3</ordinal>
+        <local-type>string</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_TOTALPRICE</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[O_TOTALPRICE]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_TOTALPRICE</remote-alias>
+        <ordinal>4</ordinal>
+        <local-type>real</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_ORDERDATE</remote-name>
+        <remote-type>7</remote-type>
+        <local-name>[O_ORDERDATE]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_ORDERDATE</remote-alias>
+        <ordinal>5</ordinal>
+        <local-type>date</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_ORDERPRIORITY</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[O_ORDERPRIORITY]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_ORDERPRIORITY</remote-alias>
+        <ordinal>6</ordinal>
+        <local-type>string</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_CLERK</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[O_CLERK]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_CLERK</remote-alias>
+        <ordinal>7</ordinal>
+        <local-type>string</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_SHIPPRIORITY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[O_SHIPPRIORITY]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_SHIPPRIORITY</remote-alias>
+        <ordinal>8</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>O_COMMENT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[O_COMMENT]</local-name>
+        <parent-name>[ORDERS]</parent-name>
+        <remote-alias>O_COMMENT</remote-alias>
+        <ordinal>9</ordinal>
+        <local-type>string</local-type>
+        <object-id>[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_PARTKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[P_PARTKEY]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_PARTKEY</remote-alias>
+        <ordinal>1</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_NAME</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[P_NAME]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_NAME</remote-alias>
+        <ordinal>2</ordinal>
+        <local-type>string</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_MFGR</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[P_MFGR]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_MFGR</remote-alias>
+        <ordinal>3</ordinal>
+        <local-type>string</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_BRAND</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[P_BRAND]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_BRAND</remote-alias>
+        <ordinal>4</ordinal>
+        <local-type>string</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_TYPE</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[P_TYPE]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_TYPE</remote-alias>
+        <ordinal>5</ordinal>
+        <local-type>string</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_SIZE</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[P_SIZE]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_SIZE</remote-alias>
+        <ordinal>6</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_CONTAINER</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[P_CONTAINER]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_CONTAINER</remote-alias>
+        <ordinal>7</ordinal>
+        <local-type>string</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_RETAILPRICE</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[P_RETAILPRICE]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_RETAILPRICE</remote-alias>
+        <ordinal>8</ordinal>
+        <local-type>real</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>P_COMMENT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[P_COMMENT]</local-name>
+        <parent-name>[PART]</parent-name>
+        <remote-alias>P_COMMENT</remote-alias>
+        <ordinal>9</ordinal>
+        <local-type>string</local-type>
+        <object-id>[PART_9BE203CDFEF8628939C9942FB61FDAE3]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>S_SUPPKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[S_SUPPKEY]</local-name>
+        <parent-name>[SUPPLIER]</parent-name>
+        <remote-alias>S_SUPPKEY</remote-alias>
+        <ordinal>1</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>S_NAME</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[S_NAME]</local-name>
+        <parent-name>[SUPPLIER]</parent-name>
+        <remote-alias>S_NAME</remote-alias>
+        <ordinal>2</ordinal>
+        <local-type>string</local-type>
+        <object-id>[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>S_ADDRESS</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[S_ADDRESS]</local-name>
+        <parent-name>[SUPPLIER]</parent-name>
+        <remote-alias>S_ADDRESS</remote-alias>
+        <ordinal>3</ordinal>
+        <local-type>string</local-type>
+        <object-id>[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>S_NATIONKEY</remote-name>
+        <remote-type>131</remote-type>
+        <local-name>[S_NATIONKEY]</local-name>
+        <parent-name>[SUPPLIER]</parent-name>
+        <remote-alias>S_NATIONKEY</remote-alias>
+        <ordinal>4</ordinal>
+        <local-type>integer</local-type>
+        <object-id>[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>S_PHONE</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[S_PHONE]</local-name>
+        <parent-name>[SUPPLIER]</parent-name>
+        <remote-alias>S_PHONE</remote-alias>
+        <ordinal>5</ordinal>
+        <local-type>string</local-type>
+        <object-id>[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>S_ACCTBAL</remote-name>
+        <remote-type>5</remote-type>
+        <local-name>[S_ACCTBAL]</local-name>
+        <parent-name>[SUPPLIER]</parent-name>
+        <remote-alias>S_ACCTBAL</remote-alias>
+        <ordinal>6</ordinal>
+        <local-type>real</local-type>
+        <object-id>[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]</object-id>
+      </metadata-record>
+      <metadata-record class="column">
+        <remote-name>S_COMMENT</remote-name>
+        <remote-type>129</remote-type>
+        <local-name>[S_COMMENT]</local-name>
+        <parent-name>[SUPPLIER]</parent-name>
+        <remote-alias>S_COMMENT</remote-alias>
+        <ordinal>7</ordinal>
+        <local-type>string</local-type>
+        <object-id>[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]</object-id>
+      </metadata-record>
+    </metadata-records>
+  </connection>
+  <aliases enabled="yes" />
+  <column aggregation="Sum" caption="C Custkey" datatype="integer" name="[C_CUSTKEY]" role="measure" type="quantitative" />
+  <column caption="C Name" datatype="string" name="[C_NAME]" role="dimension" type="nominal" />
+  <column caption="C Address" datatype="string" name="[C_ADDRESS]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="C Nationkey" datatype="integer" name="[C_NATIONKEY]" role="measure" type="quantitative" />
+  <column caption="C Phone" datatype="string" name="[C_PHONE]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="C Acctbal" datatype="real" name="[C_ACCTBAL]" role="measure" type="quantitative" />
+  <column caption="C Mktsegment" datatype="string" name="[C_MKTSEGMENT]" role="dimension" type="nominal" />
+  <column caption="C Comment" datatype="string" name="[C_COMMENT]" role="dimension" type="nominal" />
+  <column caption="customer_label" datatype="string" name="[Calculation_f4691c1783f9791a114f]" role="dimension" type="nominal">
+    <calculation class="tableau" formula="[C_NAME] + ' - ' + [C_MKTSEGMENT]" />
+  </column>
+  <column aggregation="Sum" caption="L Orderkey" datatype="integer" name="[L_ORDERKEY]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="L Partkey" datatype="integer" name="[L_PARTKEY]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="L Suppkey" datatype="integer" name="[L_SUPPKEY]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="L Linenumber" datatype="integer" name="[L_LINENUMBER]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="L Quantity" datatype="real" name="[L_QUANTITY]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="L Extendedprice" datatype="real" name="[L_EXTENDEDPRICE]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="L Discount" datatype="real" name="[L_DISCOUNT]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="L Tax" datatype="real" name="[L_TAX]" role="measure" type="quantitative" />
+  <column caption="L Returnflag" datatype="string" name="[L_RETURNFLAG]" role="dimension" type="nominal" />
+  <column caption="L Linestatus" datatype="string" name="[L_LINESTATUS]" role="dimension" type="nominal" />
+  <column caption="L Shipdate" datatype="date" name="[L_SHIPDATE]" role="dimension" type="ordinal" />
+  <column caption="L Commitdate" datatype="date" name="[L_COMMITDATE]" role="dimension" type="ordinal" />
+  <column caption="L Receiptdate" datatype="date" name="[L_RECEIPTDATE]" role="dimension" type="ordinal" />
+  <column caption="L Shipinstruct" datatype="string" name="[L_SHIPINSTRUCT]" role="dimension" type="nominal" />
+  <column caption="L Shipmode" datatype="string" name="[L_SHIPMODE]" role="dimension" type="nominal" />
+  <column caption="L Comment" datatype="string" name="[L_COMMENT]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="N Nationkey" datatype="integer" name="[N_NATIONKEY]" role="measure" type="quantitative" />
+  <column caption="N Name" datatype="string" name="[N_NAME]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="N Regionkey" datatype="integer" name="[N_REGIONKEY]" role="measure" type="quantitative" />
+  <column caption="N Comment" datatype="string" name="[N_COMMENT]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="O Orderkey" datatype="integer" name="[O_ORDERKEY]" role="measure" type="quantitative" />
+  <column aggregation="Sum" caption="O Custkey" datatype="integer" name="[O_CUSTKEY]" role="measure" type="quantitative" />
+  <column caption="O Orderstatus" datatype="string" name="[O_ORDERSTATUS]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="O Totalprice" datatype="real" name="[O_TOTALPRICE]" role="measure" type="quantitative" />
+  <column caption="O Orderdate" datatype="date" name="[O_ORDERDATE]" role="dimension" type="ordinal" />
+  <column caption="O Orderpriority" datatype="string" name="[O_ORDERPRIORITY]" role="dimension" type="nominal" />
+  <column caption="O Clerk" datatype="string" name="[O_CLERK]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="O Shippriority" datatype="integer" name="[O_SHIPPRIORITY]" role="measure" type="quantitative" />
+  <column caption="O Comment" datatype="string" name="[O_COMMENT]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="P Partkey" datatype="integer" name="[P_PARTKEY]" role="measure" type="quantitative" />
+  <column caption="P Name" datatype="string" name="[P_NAME]" role="dimension" type="nominal" />
+  <column caption="P Mfgr" datatype="string" name="[P_MFGR]" role="dimension" type="nominal" />
+  <column caption="P Brand" datatype="string" name="[P_BRAND]" role="dimension" type="nominal" />
+  <column caption="P Type" datatype="string" name="[P_TYPE]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="P Size" datatype="integer" name="[P_SIZE]" role="measure" type="quantitative" />
+  <column caption="P Container" datatype="string" name="[P_CONTAINER]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="P Retailprice" datatype="real" name="[P_RETAILPRICE]" role="measure" type="quantitative" />
+  <column caption="P Comment" datatype="string" name="[P_COMMENT]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="S Suppkey" datatype="integer" name="[S_SUPPKEY]" role="measure" type="quantitative" />
+  <column caption="S Name" datatype="string" name="[S_NAME]" role="dimension" type="nominal" />
+  <column caption="S Address" datatype="string" name="[S_ADDRESS]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="S Nationkey" datatype="integer" name="[S_NATIONKEY]" role="measure" type="quantitative" />
+  <column caption="S Phone" datatype="string" name="[S_PHONE]" role="dimension" type="nominal" />
+  <column aggregation="Sum" caption="S Acctbal" datatype="real" name="[S_ACCTBAL]" role="measure" type="quantitative" />
+  <column caption="S Comment" datatype="string" name="[S_COMMENT]" role="dimension" type="nominal" />
+  <column caption="total_revenue" datatype="real" name="[Calculation_60e60fcd98f1121df18c]" role="measure" type="quantitative">
+    <calculation class="tableau" formula="SUM([L_EXTENDEDPRICE] * (1 - [L_DISCOUNT]))" />
+  </column>
+  <column caption="revenue_per_customer" datatype="real" name="[Calculation_6d78da77d529273f365e]" role="measure" type="quantitative">
+    <calculation class="tableau" formula="SUM([L_EXTENDEDPRICE] * (1 - [L_DISCOUNT])) / COUNTD([C_CUSTKEY])" />
+  </column>
+  <column caption="customer_lifetime_revenue" datatype="real" name="[Calculation_1e55446f2bc06d6d5318]" role="measure" type="quantitative">
+    <calculation class="tableau" formula="{FIXED [C_CUSTKEY] : SUM([L_EXTENDEDPRICE] * (1 - [L_DISCOUNT]))}" />
+  </column>
+  <column caption="CUSTOMER" datatype="table" name="[__tableau_internal_object_id__].[CUSTOMER_979EE13F032C02B4652A4E3C3928D90B]" role="measure" type="quantitative" />
+  <column caption="LINEITEM" datatype="table" name="[__tableau_internal_object_id__].[LINEITEM_D6DEF3B6C248E09592DA506240613BD9]" role="measure" type="quantitative" />
+  <column caption="NATION" datatype="table" name="[__tableau_internal_object_id__].[NATION_8291F7C1C0279D1BDF55B50C34234AC2]" role="measure" type="quantitative" />
+  <column caption="ORDERS" datatype="table" name="[__tableau_internal_object_id__].[ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1]" role="measure" type="quantitative" />
+  <column caption="PART" datatype="table" name="[__tableau_internal_object_id__].[PART_9BE203CDFEF8628939C9942FB61FDAE3]" role="measure" type="quantitative" />
+  <column caption="SUPPLIER" datatype="table" name="[__tableau_internal_object_id__].[SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8]" role="measure" type="quantitative" />
+  <layout dim-ordering="alphabetic" measure-ordering="alphabetic" show-structure="false" />
+  <semantic-values>
+    <semantic-value key="[Country].[Name]" value="&quot;USA&quot;" />
+  </semantic-values>
+  <object-graph>
+    <objects>
+      <object caption="CUSTOMER" id="CUSTOMER_979EE13F032C02B4652A4E3C3928D90B">
+        <properties context="">
+          <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="CUSTOMER" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_customer]" type="table" />
+        </properties>
+      </object>
+      <object caption="LINEITEM" id="LINEITEM_D6DEF3B6C248E09592DA506240613BD9">
+        <properties context="">
+          <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="LINEITEM" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_lineitem]" type="table" />
+        </properties>
+      </object>
+      <object caption="NATION" id="NATION_8291F7C1C0279D1BDF55B50C34234AC2">
+        <properties context="">
+          <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="NATION" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_nation]" type="table" />
+        </properties>
+      </object>
+      <object caption="ORDERS" id="ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1">
+        <properties context="">
+          <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="ORDERS" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_orders]" type="table" />
+        </properties>
+      </object>
+      <object caption="PART" id="PART_9BE203CDFEF8628939C9942FB61FDAE3">
+        <properties context="">
+          <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="PART" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_part]" type="table" />
+        </properties>
+      </object>
+      <object caption="SUPPLIER" id="SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8">
+        <properties context="">
+          <relation connection="bigquery.2274d62398d3a932bd9b6c551a" name="SUPPLIER" table="[my-gcp-project].[my_dataset].[ossie_it_tpch_supplier]" type="table" />
+        </properties>
+      </object>
+    </objects>
+    <relationships>
+      <relationship>
+        <expression op="=">
+          <expression op="[O_CUSTKEY]" />
+          <expression op="[C_CUSTKEY]" />
+        </expression>
+        <first-end-point object-id="ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1" />
+        <second-end-point object-id="CUSTOMER_979EE13F032C02B4652A4E3C3928D90B" />
+      </relationship>
+      <relationship>
+        <expression op="=">
+          <expression op="[C_NATIONKEY]" />
+          <expression op="[N_NATIONKEY]" />
+        </expression>
+        <first-end-point object-id="CUSTOMER_979EE13F032C02B4652A4E3C3928D90B" />
+        <second-end-point object-id="NATION_8291F7C1C0279D1BDF55B50C34234AC2" />
+      </relationship>
+      <relationship>
+        <expression op="=">
+          <expression op="[L_ORDERKEY]" />
+          <expression op="[O_ORDERKEY]" />
+        </expression>
+        <first-end-point object-id="LINEITEM_D6DEF3B6C248E09592DA506240613BD9" />
+        <second-end-point object-id="ORDERS_AB2FAD6A9F7C58C2C0DABDB6C89213F1" />
+      </relationship>
+      <relationship>
+        <expression op="=">
+          <expression op="[L_PARTKEY]" />
+          <expression op="[P_PARTKEY]" />
+        </expression>
+        <first-end-point object-id="LINEITEM_D6DEF3B6C248E09592DA506240613BD9" />
+        <second-end-point object-id="PART_9BE203CDFEF8628939C9942FB61FDAE3" />
+      </relationship>
+      <relationship>
+        <expression op="=">
+          <expression op="[L_SUPPKEY]" />
+          <expression op="[S_SUPPKEY]" />
+        </expression>
+        <first-end-point object-id="LINEITEM_D6DEF3B6C248E09592DA506240613BD9" />
+        <second-end-point object-id="SUPPLIER_D6872606714D25FBBDA7B70A0D67EBF8" />
+      </relationship>
+    </relationships>
+  </object-graph>
+</datasource>

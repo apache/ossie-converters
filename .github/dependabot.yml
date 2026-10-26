@@ -49,6 +49,7 @@ updates:
       - "/orionbelt"
       - "/sigma"
       - "/snowflake"
+      - "/tableau"
       - "/thoughtspot"
       - "/wisdom"
     schedule:

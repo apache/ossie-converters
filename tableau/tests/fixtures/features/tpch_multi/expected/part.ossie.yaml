@@ -1,0 +1,698 @@
+version: 0.2.0.dev0
+name: part
+description: Converted from Tableau datasource part
+datasets:
+- name: CUSTOMER
+  source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.CUSTOMER
+  fields:
+  - name: C_CUSTKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_CUSTKEY
+    label: C Custkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - C Custkey
+  - name: C_NAME
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_NAME
+    dimension: {}
+    label: C Name
+    datatype: String
+    ai_context:
+      synonyms:
+      - C Name
+  - name: C_ADDRESS
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_ADDRESS
+    dimension: {}
+    label: C Address
+    datatype: String
+    ai_context:
+      synonyms:
+      - C Address
+  - name: C_NATIONKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_NATIONKEY
+    label: C Nationkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - C Nationkey
+  - name: C_PHONE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_PHONE
+    dimension: {}
+    label: C Phone
+    datatype: String
+    ai_context:
+      synonyms:
+      - C Phone
+  - name: C_ACCTBAL
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_ACCTBAL
+    label: C Acctbal
+    datatype: Float
+    ai_context:
+      synonyms:
+      - C Acctbal
+  - name: C_MKTSEGMENT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_MKTSEGMENT
+    dimension: {}
+    label: C Mktsegment
+    datatype: String
+    ai_context:
+      synonyms:
+      - C Mktsegment
+  - name: C_COMMENT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: C_COMMENT
+    dimension: {}
+    label: C Comment
+    datatype: String
+    ai_context:
+      synonyms:
+      - C Comment
+  - name: customer_label
+    expression:
+      dialects:
+      - dialect: TABLEAU
+        expression: '[C_NAME] + '' - '' + [C_MKTSEGMENT]'
+      - dialect: SNOWFLAKE
+        expression: (C_NAME) || ' - ' || (C_MKTSEGMENT)
+    dimension:
+      is_time: false
+    datatype: String
+    custom_extensions:
+    - vendor_name: TABLEAU
+      data: '{"names": {"_v": 1, "data": {"caption": "customer_label", "local": "Calculation_f4691c1783f9791a114f"},
+        "kind": "field_names", "witness": {"label": null, "name": "customer_label"}}}'
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+- name: LINEITEM
+  source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.LINEITEM
+  fields:
+  - name: L_ORDERKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_ORDERKEY
+    label: L Orderkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - L Orderkey
+  - name: L_PARTKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_PARTKEY
+    label: L Partkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - L Partkey
+  - name: L_SUPPKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_SUPPKEY
+    label: L Suppkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - L Suppkey
+  - name: L_LINENUMBER
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_LINENUMBER
+    label: L Linenumber
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - L Linenumber
+  - name: L_QUANTITY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_QUANTITY
+    label: L Quantity
+    datatype: Float
+    ai_context:
+      synonyms:
+      - L Quantity
+  - name: L_EXTENDEDPRICE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_EXTENDEDPRICE
+    label: L Extendedprice
+    datatype: Float
+    ai_context:
+      synonyms:
+      - L Extendedprice
+  - name: L_DISCOUNT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_DISCOUNT
+    label: L Discount
+    datatype: Float
+    ai_context:
+      synonyms:
+      - L Discount
+  - name: L_TAX
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_TAX
+    label: L Tax
+    datatype: Float
+    ai_context:
+      synonyms:
+      - L Tax
+  - name: L_RETURNFLAG
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_RETURNFLAG
+    dimension: {}
+    label: L Returnflag
+    datatype: String
+    ai_context:
+      synonyms:
+      - L Returnflag
+  - name: L_LINESTATUS
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_LINESTATUS
+    dimension: {}
+    label: L Linestatus
+    datatype: String
+    ai_context:
+      synonyms:
+      - L Linestatus
+  - name: L_SHIPDATE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_SHIPDATE
+    dimension:
+      is_time: true
+    label: L Shipdate
+    datatype: Date
+    ai_context:
+      synonyms:
+      - L Shipdate
+  - name: L_COMMITDATE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_COMMITDATE
+    dimension:
+      is_time: true
+    label: L Commitdate
+    datatype: Date
+    ai_context:
+      synonyms:
+      - L Commitdate
+  - name: L_RECEIPTDATE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_RECEIPTDATE
+    dimension:
+      is_time: true
+    label: L Receiptdate
+    datatype: Date
+    ai_context:
+      synonyms:
+      - L Receiptdate
+  - name: L_SHIPINSTRUCT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_SHIPINSTRUCT
+    dimension: {}
+    label: L Shipinstruct
+    datatype: String
+    ai_context:
+      synonyms:
+      - L Shipinstruct
+  - name: L_SHIPMODE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_SHIPMODE
+    dimension: {}
+    label: L Shipmode
+    datatype: String
+    ai_context:
+      synonyms:
+      - L Shipmode
+  - name: L_COMMENT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: L_COMMENT
+    dimension: {}
+    label: L Comment
+    datatype: String
+    ai_context:
+      synonyms:
+      - L Comment
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+- name: NATION
+  source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION
+  fields:
+  - name: N_NATIONKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: N_NATIONKEY
+    label: N Nationkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - N Nationkey
+  - name: N_NAME
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: N_NAME
+    dimension: {}
+    label: N Name
+    datatype: String
+    ai_context:
+      synonyms:
+      - N Name
+  - name: N_REGIONKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: N_REGIONKEY
+    label: N Regionkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - N Regionkey
+  - name: N_COMMENT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: N_COMMENT
+    dimension: {}
+    label: N Comment
+    datatype: String
+    ai_context:
+      synonyms:
+      - N Comment
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+- name: ORDERS
+  source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.ORDERS
+  fields:
+  - name: O_ORDERKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_ORDERKEY
+    label: O Orderkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - O Orderkey
+  - name: O_CUSTKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_CUSTKEY
+    label: O Custkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - O Custkey
+  - name: O_ORDERSTATUS
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_ORDERSTATUS
+    dimension: {}
+    label: O Orderstatus
+    datatype: String
+    ai_context:
+      synonyms:
+      - O Orderstatus
+  - name: O_TOTALPRICE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_TOTALPRICE
+    label: O Totalprice
+    datatype: Float
+    ai_context:
+      synonyms:
+      - O Totalprice
+  - name: O_ORDERDATE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_ORDERDATE
+    dimension:
+      is_time: true
+    label: O Orderdate
+    datatype: Date
+    ai_context:
+      synonyms:
+      - O Orderdate
+  - name: O_ORDERPRIORITY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_ORDERPRIORITY
+    dimension: {}
+    label: O Orderpriority
+    datatype: String
+    ai_context:
+      synonyms:
+      - O Orderpriority
+  - name: O_CLERK
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_CLERK
+    dimension: {}
+    label: O Clerk
+    datatype: String
+    ai_context:
+      synonyms:
+      - O Clerk
+  - name: O_SHIPPRIORITY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_SHIPPRIORITY
+    label: O Shippriority
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - O Shippriority
+  - name: O_COMMENT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: O_COMMENT
+    dimension: {}
+    label: O Comment
+    datatype: String
+    ai_context:
+      synonyms:
+      - O Comment
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+- name: PART
+  source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.PART
+  fields:
+  - name: P_PARTKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_PARTKEY
+    label: P Partkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - P Partkey
+  - name: P_NAME
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_NAME
+    dimension: {}
+    label: P Name
+    datatype: String
+    ai_context:
+      synonyms:
+      - P Name
+  - name: P_MFGR
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_MFGR
+    dimension: {}
+    label: P Mfgr
+    datatype: String
+    ai_context:
+      synonyms:
+      - P Mfgr
+  - name: P_BRAND
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_BRAND
+    dimension: {}
+    label: P Brand
+    datatype: String
+    ai_context:
+      synonyms:
+      - P Brand
+  - name: P_TYPE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_TYPE
+    dimension: {}
+    label: P Type
+    datatype: String
+    ai_context:
+      synonyms:
+      - P Type
+  - name: P_SIZE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_SIZE
+    label: P Size
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - P Size
+  - name: P_CONTAINER
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_CONTAINER
+    dimension: {}
+    label: P Container
+    datatype: String
+    ai_context:
+      synonyms:
+      - P Container
+  - name: P_RETAILPRICE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_RETAILPRICE
+    label: P Retailprice
+    datatype: Float
+    ai_context:
+      synonyms:
+      - P Retailprice
+  - name: P_COMMENT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: P_COMMENT
+    dimension: {}
+    label: P Comment
+    datatype: String
+    ai_context:
+      synonyms:
+      - P Comment
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+- name: SUPPLIER
+  source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.SUPPLIER
+  fields:
+  - name: S_SUPPKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: S_SUPPKEY
+    label: S Suppkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - S Suppkey
+  - name: S_NAME
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: S_NAME
+    dimension: {}
+    label: S Name
+    datatype: String
+    ai_context:
+      synonyms:
+      - S Name
+  - name: S_ADDRESS
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: S_ADDRESS
+    dimension: {}
+    label: S Address
+    datatype: String
+    ai_context:
+      synonyms:
+      - S Address
+  - name: S_NATIONKEY
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: S_NATIONKEY
+    label: S Nationkey
+    datatype: Integer
+    ai_context:
+      synonyms:
+      - S Nationkey
+  - name: S_PHONE
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: S_PHONE
+    dimension: {}
+    label: S Phone
+    datatype: String
+    ai_context:
+      synonyms:
+      - S Phone
+  - name: S_ACCTBAL
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: S_ACCTBAL
+    label: S Acctbal
+    datatype: Float
+    ai_context:
+      synonyms:
+      - S Acctbal
+  - name: S_COMMENT
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: S_COMMENT
+    dimension: {}
+    label: S Comment
+    datatype: String
+    ai_context:
+      synonyms:
+      - S Comment
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+relationships:
+- name: ORDERS_CUSTOMER
+  from: ORDERS
+  to: CUSTOMER
+  from_columns:
+  - O_CUSTKEY
+  to_columns:
+  - C_CUSTKEY
+- name: CUSTOMER_NATION
+  from: CUSTOMER
+  to: NATION
+  from_columns:
+  - C_NATIONKEY
+  to_columns:
+  - N_NATIONKEY
+- name: LINEITEM_ORDERS
+  from: LINEITEM
+  to: ORDERS
+  from_columns:
+  - L_ORDERKEY
+  to_columns:
+  - O_ORDERKEY
+- name: LINEITEM_PART
+  from: LINEITEM
+  to: PART
+  from_columns:
+  - L_PARTKEY
+  to_columns:
+  - P_PARTKEY
+- name: LINEITEM_SUPPLIER
+  from: LINEITEM
+  to: SUPPLIER
+  from_columns:
+  - L_SUPPKEY
+  to_columns:
+  - S_SUPPKEY
+metrics:
+- name: total_revenue
+  expression:
+    dialects:
+    - dialect: TABLEAU
+      expression: SUM([LINEITEM].[L_EXTENDEDPRICE] * (1 - [LINEITEM].[L_DISCOUNT]))
+    - dialect: SNOWFLAKE
+      expression: SUM((LINEITEM.L_EXTENDEDPRICE) * (1 - (LINEITEM.L_DISCOUNT)))
+  datatype: Float
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"names": {"_v": 1, "data": {"caption": "total_revenue", "local": "Calculation_60e60fcd98f1121df18c"},
+      "kind": "field_names", "witness": {"label": null, "name": "total_revenue"}}}'
+- name: revenue_per_customer
+  expression:
+    dialects:
+    - dialect: TABLEAU
+      expression: SUM([LINEITEM].[L_EXTENDEDPRICE] * (1 - [LINEITEM].[L_DISCOUNT]))
+        / COUNTD([CUSTOMER].[C_CUSTKEY])
+    - dialect: SNOWFLAKE
+      expression: SUM((LINEITEM.L_EXTENDEDPRICE) * (1 - (LINEITEM.L_DISCOUNT))) /
+        COUNT(DISTINCT (CUSTOMER.C_CUSTKEY))
+  datatype: Float
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"names": {"_v": 1, "data": {"caption": "revenue_per_customer", "local":
+      "Calculation_6d78da77d529273f365e"}, "kind": "field_names", "witness": {"label":
+      null, "name": "revenue_per_customer"}}}'
+custom_extensions:
+- vendor_name: TABLEAU
+  data: '{"source_file": "input.twb", "datasource": "part", "connection_classes":
+    ["federated", "snowflake"], "connection": {"class": "snowflake", "server": "account.snowflakecomputing.com",
+    "dbname": "SNOWFLAKE_SAMPLE_DATA", "schema": "TPCH_SF1"}, "unconverted_calculations":
+    [{"name": "customer_lifetime_revenue", "internal_name": "Calculation_1e55446f2bc06d6d5318",
+    "reason": "lod", "formula": "{FIXED [C_CUSTKEY] : SUM([L_EXTENDEDPRICE] * (1 -
+    [L_DISCOUNT]))}", "role": "measure", "datatype": "real"}], "root": {"name": "part",
+    "caption": "part", "formatted_name": "federated.1b4cgxc0es9g0e1da4yec04i4bu9",
+    "source_platform": "mac"}, "raw": {"_v": 1, "kind": "raw_xml", "witness": ["CUSTOMER",
+    "LINEITEM", "NATION", "ORDERS", "PART", "SUPPLIER"], "data": [{"tag": "calc",
+    "xml": "<column caption=\"customer_lifetime_revenue\" datatype=\"real\" name=\"[Calculation_1e55446f2bc06d6d5318]\"
+    role=\"measure\" type=\"quantitative\">\n    <calculation class=\"tableau\" formula=\"{FIXED
+    [C_CUSTKEY] : SUM([L_EXTENDEDPRICE] * (1 - [L_DISCOUNT]))}\" />\n  </column>\n  "},
+    {"tag": "semantic-values", "xml": "<semantic-values>\n    <semantic-value key=\"[Country].[Name]\"
+    value=\"&quot;USA&quot;\" />\n  </semantic-values>\n  "}]}}'

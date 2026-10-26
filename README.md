@@ -108,6 +108,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `WISDOM` | WisdomAI domain |
 | `NVIDIA_AUTO_ONTOLOGY` | NVIDIA Auto Ontology model document YAML (formerly `NVIDIA_GSF`) |
 | `SIGMA` | Sigma Computing data model |
+| `TABLEAU` | Tableau classic data source / workbook |
 | `THOUGHTSPOT` | ThoughtSpot TML (Model + Table/SQL View) |
 | `CUBE` | Cube data model |
 | `HEX` | Hex semantic project |

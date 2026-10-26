@@ -1,0 +1,22 @@
+[
+  {
+    "detail": "{FIXED [C_CUSTKEY] : SUM([L_EXTENDEDPRICE] * (1 - [L_DISCOUNT]))}",
+    "kind": "lod",
+    "name": "customer_lifetime_revenue"
+  },
+  {
+    "detail": "1 workbook parameter(s), none referenced by this datasource; not converted",
+    "kind": "parameters_unreferenced",
+    "name": ""
+  },
+  {
+    "detail": "Tableau relationships carry no cardinality; first endpoint was assumed to be the many side",
+    "kind": "relationship_cardinality",
+    "name": ""
+  },
+  {
+    "detail": "1 <semantic-values> element(s) kept in the TABLEAU extension",
+    "kind": "semantic_values",
+    "name": "semantic-values"
+  }
+]

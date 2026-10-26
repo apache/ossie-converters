@@ -1,0 +1,57 @@
+version: 0.2.0.dev0
+name: bq
+description: Converted from Tableau datasource bq
+datasets:
+- name: events
+  source: proj.ds.events_*
+  ai_context:
+    synonyms:
+    - events_*
+  fields:
+  - name: a
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: a
+    dimension: {}
+    datatype: Integer
+  - name: b
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: b
+    dimension: {}
+    datatype: String
+- name: q
+  source: SELECT a FROM `proj.ds.t` WHERE d > @start_date
+metrics:
+- name: n
+  expression:
+    dialects:
+    - dialect: TABLEAU
+      expression: COUNTD([events].[a])
+    - dialect: BIGQUERY
+      expression: COUNT(DISTINCT (events.a))
+  datatype: Integer
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"names": {"_v": 1, "data": {"caption": "n", "local": "Calculation_1"},
+      "kind": "field_names", "witness": {"label": null, "name": "n"}}}'
+- name: x
+  expression:
+    dialects:
+    - dialect: TABLEAU
+      expression: SUM([events].[a])/ZN(SUM([events].[a]))
+    - dialect: BIGQUERY
+      expression: SUM((events.a)) / COALESCE(SUM((events.a)), 0)
+  datatype: Float
+  custom_extensions:
+  - vendor_name: TABLEAU
+    data: '{"names": {"_v": 1, "data": {"caption": "x", "local": "Calculation_2"},
+      "kind": "field_names", "witness": {"label": null, "name": "x"}}}'
+custom_extensions:
+- vendor_name: TABLEAU
+  data: '{"source_file": "input.tds", "datasource": "bq", "connection_classes": ["bigquery"],
+    "connection": {"class": "bigquery", "project": "proj", "CATALOG": "proj", "EXECCATALOG":
+    "proj"}, "unconverted_calculations": [], "root": {"name": "bq", "caption": null,
+    "formatted_name": null, "source_platform": null}}'

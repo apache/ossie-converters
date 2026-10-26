@@ -1,0 +1,22 @@
+[
+  {
+    "detail": "table has no column metadata; columns cannot be attributed",
+    "kind": "no_column_metadata",
+    "name": "q"
+  },
+  {
+    "detail": "custom SQL uses @named query parameters; the SQL is kept verbatim and the parameters are not bound",
+    "kind": "query_parameter",
+    "name": "q"
+  },
+  {
+    "detail": "source qualified with the connection database 'proj'",
+    "kind": "source_qualified",
+    "name": "events_*"
+  },
+  {
+    "detail": "wildcard (sharded) table; kept as written in the dataset source, which most consumers cannot resolve",
+    "kind": "wildcard_table",
+    "name": "events_*"
+  }
+]

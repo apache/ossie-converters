@@ -1,0 +1,17 @@
+[
+  {
+    "detail": "1 worksheet(s) blend this datasource with others (data blending): w",
+    "kind": "blend",
+    "name": "pg2"
+  },
+  {
+    "detail": "source qualified with the connection database 'd'",
+    "kind": "source_qualified",
+    "name": "u"
+  },
+  {
+    "detail": "connection class(es) postgres are not registered warehouses; translated as generic ANSI SQL",
+    "kind": "unknown_warehouse",
+    "name": "pg2"
+  }
+]

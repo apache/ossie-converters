@@ -1,0 +1,17 @@
+[
+  {
+    "detail": "same connection and tables as data source 'pg'; both are converted, consider keeping one",
+    "kind": "duplicate_datasource",
+    "name": "pg2"
+  },
+  {
+    "detail": "source qualified with the connection database 'd'",
+    "kind": "source_qualified",
+    "name": "t"
+  },
+  {
+    "detail": "connection class(es) postgres are not registered warehouses; translated as generic ANSI SQL",
+    "kind": "unknown_warehouse",
+    "name": "pg2"
+  }
+]

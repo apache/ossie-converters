@@ -80,6 +80,10 @@ converter/snowflake:
   - changed-files:
       - any-glob-to-any-file: 'snowflake/**'
 
+converter/tableau:
+  - changed-files:
+      - any-glob-to-any-file: 'tableau/**'
+
 converter/thoughtspot:
   - changed-files:
       - any-glob-to-any-file: 'thoughtspot/**'

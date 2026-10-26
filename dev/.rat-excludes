@@ -68,3 +68,7 @@ ossie/**
 # Specific project files
 **/.editorconfig
 **/.python-version
+
+# Tableau converter: synthetic TPC-H fixtures (XML/YAML goldens) and generated docs
+tableau/tests/fixtures/**
+tableau/docs/**
