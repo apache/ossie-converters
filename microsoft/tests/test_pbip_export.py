@@ -112,6 +112,20 @@ def test_export_rejects_a_name_that_cannot_name_a_folder(osi, tmp_path, written,
     assert not written
 
 
+@pytest.mark.parametrize("name", ["CON", "nul", "Com1", "LPT9", "COM¹", "aux.sales", "PRN .x"])
+def test_export_rejects_a_windows_device_name(osi, tmp_path, written, name):
+    with pytest.raises(ConversionError, match="cannot name a semantic model folder"):
+        export_powerbi_project({**osi, "name": name}, tmp_path)
+    assert not written
+
+
+@pytest.mark.parametrize("name", ["CONTOSO", "console", "COM10", "sales.con", "Null Island"])
+def test_export_accepts_a_name_that_only_resembles_a_device_name(osi, tmp_path, written, name):
+    assert export_powerbi_project({**osi, "name": name}, tmp_path).name == (
+        f"{name}.SemanticModel"
+    )
+
+
 def test_export_reports_a_managed_tom_failure(osi, tmp_path, monkeypatch):
     error = RuntimeError("fallback")
     error.Message = "column 'Sales'[Amount] is not unique"
@@ -140,7 +154,18 @@ def test_cli_exports_a_project_folder(osi, tmp_path, written, capsys):
     assert main(["export", "-i", source, "--pbip", str(out), "-q"]) == 0
 
     assert (out / "sales_model.SemanticModel" / "definition.pbism").is_file()
-    assert capsys.readouterr().out == ""
+    assert capsys.readouterr() == ("", "")
+
+
+def test_cli_says_where_the_project_folder_went(osi, tmp_path, written, capsys):
+    source = _ossie_file(osi, tmp_path)
+    out = tmp_path / "project"
+
+    assert main(["export", "-i", source, "--pbip", str(out)]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"Wrote {out / 'sales_model.SemanticModel'}\n" in captured.err
 
 
 def test_cli_needs_force_to_replace_a_project_folder(osi, tmp_path, written, capsys):

@@ -38,8 +38,10 @@ PBISM = {
     "version": "4.0",
     "settings": {},
 }
-# Characters Windows rejects in a file name; the folder must be portable to every clone.
+# Characters and device names Windows rejects in a file name; the folder must be portable
+# to every clone. A device name is reserved with any extension too, so `NUL.sales` is.
 _INVALID_NAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED_NAME_RE = re.compile(r"CON|PRN|AUX|NUL|(COM|LPT)[0-9¹²³]", re.IGNORECASE)
 
 
 def export_powerbi_project(
@@ -86,7 +88,12 @@ def export_powerbi_project(
 
 def _folder_name(name):
     name = str(name)
-    if not name.strip() or _INVALID_NAME_RE.search(name) or name.endswith((".", " ")):
+    if (
+        not name.strip()
+        or _INVALID_NAME_RE.search(name)
+        or _RESERVED_NAME_RE.fullmatch(name.split(".")[0].rstrip())
+        or name.endswith((".", " "))
+    ):
         raise ConversionError(
             f"model name {name!r} cannot name a semantic model folder; rename the "
             "Apache Ossie model"
