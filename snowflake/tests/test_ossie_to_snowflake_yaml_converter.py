@@ -446,6 +446,14 @@ class TestExtractExpression:
         assert len(w) == 1
         assert "my_field" in str(w[0].message)
 
+    def test_sql_only_returns_none_with_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = _extract_expression({"sql": "orders.amount"}, "my_field")
+        assert result is None
+        assert len(w) == 1
+        assert "my_field" in str(w[0].message)
+
     def test_missing_expression_raises(self):
         with pytest.raises(OssieConversionError, match="Missing or malformed"):
             _extract_expression(None, "f")

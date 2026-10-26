@@ -523,7 +523,7 @@ class OssieToMSIConverter:
         ossie_sql_expr: Optional[OssieDialectExpression] = None
         first_expr: Optional[OssieDialectExpression] = None
 
-        for dialect_expr in ossie_expr.dialects:
+        for dialect_expr in ossie_expr.dialects or []:
             if sql_only and self._sql_dialect(dialect_expr.dialect) is None:
                 continue
             if first_expr is None:

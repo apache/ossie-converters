@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import warnings
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Set
 from copy import deepcopy
@@ -365,6 +366,9 @@ def convert_ossie_to_auto_ontology(
                 )
             field_names.add(field_name)
             expressions = _normalize_expressions(field.get("expression"), field_name)
+            if not expressions:
+                _warn_skipped_sql_only(field_name)
+                continue
             selected = _pick_expression(expressions, field_name)
             source_column = _simple_source_column(
                 selected, name, str(context["source"]["table"])
@@ -392,6 +396,9 @@ def convert_ossie_to_auto_ontology(
             raise AutoOntologyConversionError(f"Duplicate metric name {name!r}")
         metric_names.add(name)
         expressions = _normalize_expressions(metric.get("expression"), name)
+        if not expressions:
+            _warn_skipped_sql_only(name)
+            continue
         selected = _pick_expression(expressions, name)
         refs = _metric_table_refs(metric, selected, datasets)
         _collect_expression_columns(selected, None, refs, datasets, preserved)
@@ -2017,6 +2024,9 @@ def _normalize_expressions(value: Any, name: str) -> list[dict[str, str]]:
         raise AutoOntologyConversionError(f"{name!r} has no valid expression")
     dialects = value.get("dialects")
     if not isinstance(dialects, list) or not dialects:
+        # An expression that carries only `sql` has no dialect entry to convert.
+        if not dialects and value.get("sql") is not None:
+            return []
         raise AutoOntologyConversionError(
             f"{name!r} requires at least one expression dialect"
         )
@@ -2033,6 +2043,12 @@ def _normalize_expressions(value: Any, name: str) -> list[dict[str, str]]:
     if not result:
         raise AutoOntologyConversionError(f"{name!r} has no usable expression dialect")
     return result
+
+
+def _warn_skipped_sql_only(name: str) -> None:
+    warnings.warn(
+        f"Skipping {name!r}: it has only a portable sql expression and no dialect entries"
+    )
 
 
 def _pick_expression(expressions: list[dict[str, str]], name: str) -> str:
