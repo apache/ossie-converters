@@ -100,6 +100,13 @@ def _build_parser():
     )
     imp.add_argument("-i", "--input", required=True, help="model.bim (TMSL JSON) file")
     imp.add_argument("-o", "--output", help="output Apache Ossie YAML (default: stdout)")
+    imp.add_argument(
+        "--translate-dax",
+        action="store_true",
+        default=False,
+        help="translate single-column aggregate DAX measures to OSSIE_SQL_2026 where "
+        "unambiguous, keeping the original DAX as a fallback (default: off, keep DAX only)",
+    )
 
     exp = sub.add_parser(
         "export",
@@ -113,7 +120,7 @@ def _build_parser():
 
 def _run_import(args):
     with open(args.input, encoding="utf-8-sig") as fh:
-        return convert_semantic_model_to_ossie(json.load(fh))
+        return convert_semantic_model_to_ossie(json.load(fh), translate_dax=args.translate_dax)
 
 
 def _run_export(args):

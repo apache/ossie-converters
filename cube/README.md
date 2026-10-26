@@ -69,9 +69,9 @@ calls inside a composite metric). Python 3.11+.
 
 ```bash
 ossie-cube import -i model/ [-o model.yaml] [--name my_model] [--view sales]
-                            [--strict-fanout]
+                            [--strict-fanout] [--source-dialect BIGQUERY]
 ossie-cube import -i model/ --view sales --project [--source orders]
-                            [--no-strict-fanout]
+                            [--no-strict-fanout] [--source-dialect BIGQUERY]
 ossie-cube export -i model.yaml -o model/ [--dialect SNOWFLAKE] [--base-cube orders]
 ```
 
@@ -116,6 +116,11 @@ for issue in issues:
 
 # One view's public surface; `source` is the dataset it is rooted at.
 ossie_yaml, source, issues = convert_cube_view_to_ossie(files, "sales")
+
+# Parse, label and validate warehouse SQL in both import modes.
+ossie_yaml, issues = convert_cube_to_ossie(files, source_dialect="BIGQUERY")
+ossie_yaml, source, issues = convert_cube_view_to_ossie(
+    files, "sales", source_dialect="BIGQUERY")
 ```
 
 ## Mapping
@@ -195,8 +200,26 @@ skipped — and the spec's table decides what it matches: `orders."AMOUNT"` is t
 stays a raw quoted column.
 
 **Expression dialects**: Cube SQL is the SQL of the model's data source, and the
-Ossie dialect enum has no `CUBE` entry -- so import emits `ANSI_SQL`, and export
-prefers `ANSI_SQL` with `--dialect` prepending a warehouse dialect (e.g.
+Ossie dialect enum has no `CUBE` entry. Pass `--source-dialect ANSI_SQL|SNOWFLAKE|DATABRICKS|BIGQUERY`
+on import (including `--project`) to parse source SQL in that dialect, qualify metric
+columns without treating date units or type arguments as columns, and label generated
+expressions correctly. For example, BigQuery's `` `order-id` `` remains backtick-quoted
+and is labelled `BIGQUERY`. SQL is not transpiled. During column qualification,
+BigQuery paths such as `` `orders.amount` `` are spelled as `` orders.`amount` ``;
+native comments are removed before inlining, while quoted literals stay intact.
+
+Explicit dialect selection also validates every emitted SQL expression in its declared
+dialect before returning or writing output. Malformed, empty and multiple-statement
+expressions, and SQL commands used as expressions, raise a `ConversionError` with context.
+Original Ossie expressions restored
+from `meta.ossie` retain their own dialects and are validated accordingly; restored
+non-SQL dialects remain opaque. This checks SQL syntax, not warehouse execution or
+the existence of physical columns. One source dialect applies to the whole import;
+import models from different warehouse dialects separately. Dialects absent from the
+specification, such as T-SQL, cannot be selected.
+
+Omitting `--source-dialect` preserves the existing `ANSI_SQL` labels and permissive
+import behavior. Export prefers `ANSI_SQL` with `--dialect` prepending a warehouse dialect (e.g.
 `SNOWFLAKE` for a Snowflake-backed Cube model). `OSSIE_SQL_2026`, Ossie's portable
 SQL, is ANSI-compatible and taken next; its label is kept in `meta.ossie.dialect` so
 re-import hands it back unchanged.
@@ -205,6 +228,11 @@ Failing those, export falls back to the **first** dialect on offer that is wareh
 (`SNOWFLAKE`, `DATABRICKS`, `BIGQUERY`), records which one in `meta.ossie.dialect`, and
 reports it. The record matters: without it re-import would label vendor-specific SQL as
 `ANSI_SQL` and mislead the next converter.
+
+Export uses the chosen expression's grammar to locate aggregates and resolve native
+quoted references. A composite metric's aggregates stay on the datasets they read,
+so Cube can apply its per-cube fan-out correction. Literals, comments and window
+frames are preserved during this analysis.
 
 Cube holds one `sql` per member, so an expression offering **several** dialects cannot
 keep its alternatives natively — the whole expression object is parked and restored, since
@@ -382,10 +410,10 @@ surface. The round-trip import is unchanged.
   dataset's; fields stay dataset-scoped. A raw path is a struct field of the declaring
   cube's table, and one starting with the cube's own name is that table's column, since
   Cube aliases the table by it. Comments are dropped, so an inlined `-- note` cannot
-  swallow the rest of an expression. As in the round-trip import, an expression is
-  the data source's own SQL labelled `ANSI_SQL`: backtick- or bracket-quoted
-  identifiers are attributed correctly, but `validation/validate.py` parses the text
-  as ANSI and rejects them.
+  swallow the rest of an expression. Pass `--source-dialect` to select the warehouse
+  grammar and validate the emitted expressions with their correct dialect labels.
+  Without it, expressions retain the legacy `ANSI_SQL` label; warehouse-specific
+  quoting may then be rejected by `validation/validate.py`.
 - A dataset's `primary_key` names the columns its key members read.
 - The CUBE stash keeps only what describes the published model: a member's `format`,
   `currency`, measure `title` and dimension `type`, a join's declared cardinality, and

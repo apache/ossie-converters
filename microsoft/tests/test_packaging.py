@@ -54,6 +54,7 @@ PACKAGE_DIR = SRC / PACKAGE
 MODULES = frozenset(
     {
         "_common",
+        "_dax_to_sql",
         "_sql_to_dax",
         "cli",
         "engine",

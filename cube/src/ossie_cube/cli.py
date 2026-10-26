@@ -20,6 +20,7 @@
     ossie-cube import -i model/ [-o model.yaml] [--name my_model] [--view sales]
     ossie-cube import -i cubes/orders.yml cubes/users.yml views/sales.yml
     ossie-cube import -i model/ --view sales --project [--source orders]
+    ossie-cube import -i model/ --source-dialect BIGQUERY
     ossie-cube export -i model.yaml -o model/ [--dialect SNOWFLAKE] [--base-cube orders]
 
 `import` converts a Cube data model (any `.yml` holding `cubes:` / `views:`) into an
@@ -46,9 +47,9 @@ import argparse
 import os
 import sys
 
-from ._common import ConversionError
-from .cube_to_osi import convert_cube_to_ossie
-from .osi_to_cube import convert_ossie_to_cube
+from ._common import SQL_DIALECT_READERS, ConversionError
+from .cube_to_ossie import convert_cube_to_ossie
+from .ossie_to_cube import convert_ossie_to_cube
 from .view_projection import convert_cube_view_to_ossie
 
 
@@ -73,6 +74,10 @@ def _build_parser():
     imp.add_argument("--view",
                      help="view whose name/description/AI context map onto the "
                           "Ossie model (default: the sole view, if there is one)")
+    imp.add_argument("--source-dialect", choices=sorted(SQL_DIALECT_READERS),
+                     help="warehouse SQL dialect for parsing, labelling and validating "
+                          "imported expressions (also with --project); without it, "
+                          "retain the legacy ANSI_SQL import")
     imp.add_argument("--strict-fanout", dest="strict_fanout",
                      action=argparse.BooleanOptionalAction, default=None,
                      help="refuse the conversion when a metric is fan-out-unsafe, "
@@ -196,13 +201,15 @@ def main(argv=None):
         if args.project:
             out, source, issues = convert_cube_view_to_ossie(
                 files, args.view, source=args.source,
-                strict_fanout=args.strict_fanout is not False)
+                strict_fanout=args.strict_fanout is not False,
+                source_dialect=args.source_dialect)
             print(f"Projected view '{args.view}', rooted at dataset '{source}'",
                   file=sys.stderr)
         else:
             out, issues = convert_cube_to_ossie(
                 files, model_name=args.name, view=args.view,
-                strict_fanout=bool(args.strict_fanout))
+                strict_fanout=bool(args.strict_fanout),
+                source_dialect=args.source_dialect)
         if args.output:
             with open(args.output, "w", encoding="utf-8") as fh:
                 fh.write(out)

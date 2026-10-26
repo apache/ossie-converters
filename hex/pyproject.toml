@@ -30,7 +30,7 @@ dev = [
 ]
 
 [project]
-name = "ossie-hex"
+name = "apache-ossie-hex"
 version = "0.2.0.dev0"
 description = "Bidirectional converter between Apache Ossie semantic models and Hex semantic projects"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]

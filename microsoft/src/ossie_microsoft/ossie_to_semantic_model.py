@@ -54,6 +54,7 @@ from ._common import (
     OSSIE_TO_TMSL_DATATYPE,
     OSSIE_UNSUPPORTED,
     OSSIE_VERSION,
+    PORTABLE_SQL,
     RELATIONSHIP_CARDINALITY_METADATA,
     RELATIONSHIP_ENDPOINT_METADATA,
     TMSL_TO_OSSIE_DATATYPE,
@@ -656,7 +657,14 @@ def _source_column(expressions, name, stash):
 
 
 def _preferred_expression(expressions):
-    for dialect in (DIALECT_DAX, DIALECT_ANSI, DIALECT_OSSIE_SQL):
+    # DAX is native. The portable `sql` form is the spec's primary form, so it comes
+    # next, ahead of an ANSI_SQL entry that may be a stale copy; it reads as
+    # OSSIE_SQL_2026.
+    if DIALECT_DAX in expressions:
+        return DIALECT_DAX, expressions[DIALECT_DAX]
+    if PORTABLE_SQL in expressions:
+        return DIALECT_OSSIE_SQL, expressions[PORTABLE_SQL]
+    for dialect in (DIALECT_ANSI, DIALECT_OSSIE_SQL):
         if dialect in expressions:
             return dialect, expressions[dialect]
     dialect = next(

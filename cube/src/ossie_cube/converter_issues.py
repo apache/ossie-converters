@@ -21,7 +21,7 @@ A bare `warnings.warn` is fine for "this label was dropped", but Cube carries
 semantics that an Apache Ossie expression string genuinely cannot hold -- most
 importantly the row-multiplication correction Cube applies at query time (see
 `FANOUT_UNSAFE_METRIC`). Those need to reach the caller as data, not as text on
-stderr, so a pipeline can gate on them. Same approach as the osi-dbt converter's
+stderr, so a pipeline can gate on them. Same approach as the ossie-dbt converter's
 `ConverterIssue`.
 """
 

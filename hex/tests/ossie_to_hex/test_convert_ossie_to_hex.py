@@ -182,6 +182,10 @@ resources:
     description: Foreign key to item dimension
     type: number
     expr_sql: ss_item_sk
+  - id: ss_ticket_number
+    description: Ticket number identifying the sales transaction
+    type: number
+    expr_sql: ss_ticket_number
   - id: ss_customer_sk
     description: Foreign key to customer dimension
     type: number

@@ -71,3 +71,7 @@ Some Ossie concepts (e.g., `ai_context` on relationships) do not have a native c
 
 Snowflake metric result types are inferred from their expressions, so Ossie
 metric `datatype` values are not emitted as `data_type` properties.
+
+A unique key that repeats the dataset's primary key is not emitted as a
+`unique_keys` entry: Snowflake semantic views declare a column as `PRIMARY KEY`
+or `UNIQUE`, not both.
