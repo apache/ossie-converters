@@ -528,9 +528,9 @@ class OssieToMSIConverter:
                 continue
             if first_expr is None:
                 first_expr = dialect_expr
-            if dialect_expr.dialect is self._dialect:
+            if dialect_expr.dialect == self._dialect:
                 return dialect_expr
-            if dialect_expr.dialect is OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
+            if dialect_expr.dialect == OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
                 ossie_sql_expr = dialect_expr
 
         if ossie_sql_expr is not None:
@@ -538,7 +538,7 @@ class OssieToMSIConverter:
         return first_expr
 
     @staticmethod
-    def _sql_dialect(dialect: OssieDialect) -> Optional[str]:
+    def _sql_dialect(dialect: str) -> Optional[str]:
         # SQLGlot also registers non-SQL expression languages; those are not SQL fallbacks.
         if dialect in {
             OssieDialect.DAX,
@@ -552,7 +552,7 @@ class OssieToMSIConverter:
         # The portable core's DATEADD/DATEDIFF unit-first syntax matches this reader.
         if dialect in {OssieDialect.ANSI_SQL, OssieDialect.OSSIE_SQL_2026}:
             return "snowflake"
-        reader = dialect.value.lower()
+        reader = dialect.lower()
         try:
             sqlglot.Dialect.get_or_raise(reader)
         except ValueError:

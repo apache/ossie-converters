@@ -86,11 +86,16 @@ def parse_ossie_dialect_expression(
     return ParsedExpr(expr=expr, dialect=dialect)
 
 
-def _to_sqlglot_dialect(ossie_dialect: OssieDialect) -> SQLGlotDialect | None:
+def _to_sqlglot_dialect(dialect: str) -> SQLGlotDialect | None:
     """Translate an Ossie dialect to a sqlglot dialect.
 
     Returns a sqlglot dialect or None (signal for sqlglot base behavior).
     """
+    try:
+        # Dialects are free-form strings; one outside the well-known set is still valid.
+        ossie_dialect = OssieDialect(dialect)
+    except ValueError:
+        return None
 
     if ossie_dialect == OssieDialect.BIGQUERY:
         read = SQLGlotDialect.BIGQUERY

@@ -861,6 +861,18 @@ class TestOssieToMSIDialectSelection:
 
         assert result.metrics[0].type_params.expr == "amt_snowflake_only"
 
+    def test_an_unregistered_dialect_is_valid_but_the_metric_is_dropped_with_an_issue(self) -> None:
+        doc = _doc_with_metric_expression(
+            OssieExpression(
+                dialects=[OssieDialectExpression(dialect="FakeDB", expression="SUM(orders.amount)")]
+            )
+        )
+
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "revenue") in result.issues
+
     def test_the_first_ossie_sql_2026_entry_wins_when_the_dialect_is_repeated(self) -> None:
         # `dialects` has no `uniqueItems` constraint, so the same dialect may be listed twice.
         doc = _doc_with_metric_expression(
