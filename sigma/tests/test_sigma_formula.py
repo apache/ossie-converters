@@ -130,6 +130,9 @@ def test_renders_to_a_warehouse_dialect_from_the_same_tree():
         # Arities the mapping does not claim to cover.
         "Left([Name])",
         "If([A])",
+        # A literal where a condition belongs: not a valid condition/value list.
+        "If([A], 1, 2, 3)",
+        'If([A] > 0, 1, "x", 2, 3)',
     ],
 )
 def test_untranslatable_functions_return_none(formula):

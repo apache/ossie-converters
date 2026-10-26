@@ -540,6 +540,12 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
         # argument count means the last argument is the else value.
         has_else = len(built) % 2 == 1
         pairs = built[:-1] if has_else else built
+        # A number or string in a condition position means the call is not a
+        # valid condition/value list, e.g. If([A], 1, 2, 3); emitting
+        # CASE WHEN 2 THEN 3 would be invalid SQL, so leave it untranslated.
+        for cond in args[0 : len(pairs) : 2]:
+            if isinstance(cond, Literal) and cond.kind != "boolean":
+                raise _NotTranslatable(f"If() condition is a {cond.kind} literal")
         return exp.Case(
             ifs=[exp.If(this=pairs[i], true=pairs[i + 1]) for i in range(0, len(pairs), 2)],
             default=built[-1] if has_else else None,
