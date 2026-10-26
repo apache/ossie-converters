@@ -535,10 +535,15 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
     if name in ("stddev", "standarddeviation") and len(args) == 1:
         return exp.func("STDDEV_SAMP", built[0])
 
-    if name == "if" and len(args) == 3:
-        return _case(built[0], built[1], built[2])
-    if name == "if" and len(args) == 2:
-        return _case(built[0], built[1], None)
+    if name == "if" and len(args) >= 2:
+        # Sigma's If() is variadic: If(c1, v1, c2, v2, ..., [else]). An odd
+        # argument count means the last argument is the else value.
+        has_else = len(built) % 2 == 1
+        pairs = built[:-1] if has_else else built
+        return exp.Case(
+            ifs=[exp.If(this=pairs[i], true=pairs[i + 1]) for i in range(0, len(pairs), 2)],
+            default=built[-1] if has_else else None,
+        )
     if name == "nullif" and len(args) == 2:
         return exp.Nullif(this=built[0], expression=built[1])
     if name == "ifnull" and len(args) == 2:
@@ -716,16 +721,19 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Case):
         ifs = node.args.get("ifs", [])
         default = node.args.get("default")
-        if len(ifs) == 1:
-            cond = _render_sql_node(ifs[0].this, dataset_alias)
-            then = _render_sql_node(ifs[0].args["true"], dataset_alias)
-            if default is None:
-                # Sigma's If() returns Null when the else argument is omitted,
-                # matching CASE without ELSE.
-                return f"If({cond}, {then})"
-            otherwise = _render_sql_node(default, dataset_alias)
-            return f"If({cond}, {then}, {otherwise})"
-        raise _NotTranslatable("Multi-branch CASE has no single Sigma If() equivalent")
+        if node.args.get("this") is not None:
+            raise _NotTranslatable("Simple CASE <expr> WHEN ... has no Sigma If() equivalent")
+        if not ifs:
+            raise _NotTranslatable("CASE with no WHEN branches")
+        parts = []
+        for branch in ifs:
+            parts.append(_render_sql_node(branch.this, dataset_alias))
+            parts.append(_render_sql_node(branch.args["true"], dataset_alias))
+        # Sigma's If() is variadic and returns Null when the else argument is
+        # omitted, matching CASE without ELSE.
+        if default is not None:
+            parts.append(_render_sql_node(default, dataset_alias))
+        return f"If({', '.join(parts)})"
 
     if isinstance(node, exp.Nullif):
         # Sigma has a native NullIf(), which evaluates its first argument once.

@@ -85,6 +85,14 @@ from ossie_sigma.sigma_formula import (
         ("If([A] = [B], Null(), [A])", "T", 'CASE WHEN "A" = "B" THEN NULL ELSE "A" END'),
         # Sigma's If() returns Null when the else argument is omitted.
         ("If([A] > 0, [B])", "T", 'CASE WHEN "A" > 0 THEN "B" END'),
+        # Sigma's If() is variadic: condition/value pairs, then an optional else.
+        ("If([A] > 1, 1, [A] > 0, 2)", "T", 'CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 END'),
+        ("If([A] > 1, 1, [A] > 0, 2, 3)", "T", 'CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 ELSE 3 END'),
+        (
+            "If([A] > 2, 1, [A] > 1, 2, [A] > 0, 3, 4)",
+            "T",
+            'CASE WHEN "A" > 2 THEN 1 WHEN "A" > 1 THEN 2 WHEN "A" > 0 THEN 3 ELSE 4 END',
+        ),
         ("NullIf([A], 0)", "T", 'NULLIF("A", 0)'),
         ("Percentile([X], 0.75)", "T", 'PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "X")'),
         ("StdDev([X])", "T", 'STDDEV_SAMP("X")'),
@@ -168,6 +176,8 @@ def test_is_plain_column_ref():
         ("NULL", "T", "Null()"),
         ('CASE WHEN "A" > 0 THEN "B" END', "T", "If(([A] > 0), [B])"),
         ('CASE WHEN "A" > 0 THEN "B" ELSE NULL END', "T", "If(([A] > 0), [B], Null())"),
+        ('CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 END', "T", "If(([A] > 1), 1, ([A] > 0), 2)"),
+        ('CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 ELSE 3 END', "T", "If(([A] > 1), 1, ([A] > 0), 2, 3)"),
         ('NULLIF("A", 0)', "T", "NullIf([A], 0)"),
         ('SUM("A") / NULLIF(SUM("B"), 0)', "T", "(Sum([A]) / NullIf(Sum([B]), 0))"),
     ],
@@ -185,6 +195,8 @@ def test_reverse_translation_basic(sql, dataset_alias, expected):
         "If([A] > 0, [B])",
         "If([A] > 0, [B], Null())",
         "If([A] = 0, Null(), [A])",
+        "If([A] > 1, 1, [A] > 0, 2)",
+        "If([A] > 1, 1, [A] > 0, Null(), 3)",
         "NullIf([A], 0)",
         "CountIf([A] > 0)",
     ],
@@ -195,6 +207,11 @@ def test_null_returning_formulas_round_trip(formula):
     back = sql_to_sigma_formula(sql, dataset_alias="T")
     assert back is not None
     assert to_ansi_sql(parse_formula(back), dataset_alias="T") == sql
+
+
+def test_reverse_translation_gives_up_on_simple_case():
+    # CASE <expr> WHEN <value> compares against an operand; Sigma's If() has no such form.
+    assert sql_to_sigma_formula('CASE "A" WHEN 1 THEN 2 END', dataset_alias="T") is None
 
 
 def test_reverse_translation_gives_up_on_count_star():
