@@ -1,0 +1,59 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: New converter
+description: Propose or request a converter for a platform that does not have one yet.
+labels: [new-converter]
+body:
+  # auto-label-issues.yml recognizes this form by its "Platform" heading and applies
+  # new-converter itself, since GitHub drops form labels that do not exist yet.
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: The tool or format the converter would target.
+      placeholder: e.g. Lightdash, Apache Superset
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Documentation
+      description: A link to the platform's semantic model documentation.
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Direction
+      options:
+        - Import to Ossie
+        - Export from Ossie
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: How does the platform represent its semantic model, and how would it map to Ossie?
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to contribute this converter.
