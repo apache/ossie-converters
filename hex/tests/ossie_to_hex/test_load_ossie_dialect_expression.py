@@ -17,6 +17,7 @@
 
 import pytest
 from inline_snapshot import snapshot
+from ossie import OssieDialectExpression
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.load_ossie_dialect_expression import (
@@ -93,3 +94,16 @@ def test_invalid_metric_expression(ctx: ExportContext) -> None:
   SELECT \x1b[4mFROM\x1b[0m\
 """
     )
+
+
+@pytest.mark.parametrize("dialect", ["DB_DIALECT", "SNOWFLKE"])
+def test_unregistered_dialect_is_parsed_with_the_base_dialect(
+    ctx: ExportContext, dialect: str
+) -> None:
+    expression = OssieDialectExpression(dialect=dialect, expression="id")
+
+    parsed = parse_ossie_dialect_expression(expression, ctx=ctx)
+
+    assert parsed is not None
+    assert parsed.dialect is None
+    assert not ctx.problems
