@@ -72,6 +72,10 @@ converter/salesforce:
   - changed-files:
       - any-glob-to-any-file: 'salesforce/**'
 
+converter/sap-csn:
+  - changed-files:
+      - any-glob-to-any-file: 'sap-csn/**'
+
 converter/sigma:
   - changed-files:
       - any-glob-to-any-file: 'sigma/**'
