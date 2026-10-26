@@ -144,8 +144,11 @@ def _run_export(args):
     with open(args.input, encoding="utf-8-sig") as fh:
         ossie_yaml = fh.read()
     if args.pbip:
-        # The folder is the output, so there is nothing left for stdout.
-        export_powerbi_project(ossie_yaml, args.pbip, force=args.force)
+        # The folder is the output, so there is nothing left for stdout. Its name comes from
+        # the model rather than the command line, so say where it went.
+        folder = export_powerbi_project(ossie_yaml, args.pbip, force=args.force)
+        if not args.quiet:
+            print(f"Wrote {folder}", file=sys.stderr)
         return None
     # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
     return json.dumps(

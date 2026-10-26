@@ -152,7 +152,10 @@ out/<name>.SemanticModel/
     roles/  cultures/  perspectives/
 ```
 
-`<name>` is the Apache Ossie model name. TOM writes `definition/`, so the documents are
+`<name>` is the Apache Ossie model name, and the written folder is reported on stderr
+(`Wrote out/<name>.SemanticModel`) unless `-q` is given. A name Windows cannot use for a
+folder, including a device name such as `CON` or `NUL`, is rejected so the project can
+be cloned anywhere. TOM writes `definition/`, so the documents are
 the ones Power BI itself produces, and `definition.pbism` is version `4.0`, the first
 that reads TMDL. It needs the
 [optional TOM setup](#optional-tom-validation-and-tmdl-serialization).
