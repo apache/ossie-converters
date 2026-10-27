@@ -453,3 +453,61 @@ def test_example_questions_keep_their_sql():
     rec = _rec("COUNT(*)", examples=[{"question": "Q-A"}, {"question": "Q-B", "sql": "SELECT 'B'"}])
     back = convert_ossie_to_registry(_doc(rec), rec["name"])["definition"]["examples"]
     assert [(e.get("question"), e["sql"]) for e in back] == [("Q-B", "SELECT 'B'"), ("Q-A", "")]
+
+
+# ---- PR review: joins with unqualified columns, zero_denominator round trip, backticked names
+
+def test_unqualified_column_in_a_query_that_joins_tables_is_refused():
+    """SQL resolves a bare column against every joined table; guessing the base table would write
+    `store_sales.c_birth_country`, a field that does not exist."""
+    join = [{"name": "c", "to": TABLE, "cardinality": "many_to_one", "sql": "s.SS_CUSTOMER_SK = c.C_CUSTOMER_SK"}]
+    rec = _rec("SELECT C_BIRTH_COUNTRY, SUM(SS_NET_PAID) AS paid FROM TPCDS.PUBLIC.STORE_SALES s "
+               f"JOIN {TABLE} c ON s.SS_CUSTOMER_SK = c.C_CUSTOMER_SK GROUP BY C_BIRTH_COUNTRY", joins=join)
+    with pytest.raises(A.NotConvertible, match="C_BIRTH_COUNTRY, SS_NET_PAID not qualified by a table"):
+        A.convert(rec)
+    rec = _rec("SELECT c.C_BIRTH_COUNTRY, SUM(s.SS_NET_PAID) AS paid FROM TPCDS.PUBLIC.STORE_SALES s "
+               f"JOIN {TABLE} c ON s.SS_CUSTOMER_SK = c.C_CUSTOMER_SK GROUP BY c.C_BIRTH_COUNTRY", joins=join)
+    (m, ds, _), = A.convert(rec)                                    # qualified: converts
+    assert m["expression"]["dialects"][0]["expression"] == "SUM(store_sales.ss_net_paid)"
+    assert A.agent_context(m)["dimensions"] == ["customer.c_birth_country"]
+    rec = _rec("COUNT(*)")                                          # a row-set source with a join
+    rec["metadata"]["definition"]["source"] = {
+        "alias": "m", "parameters": [], "entity": "TPCDS.PUBLIC.STORE_SALES",
+        "sql": f"SELECT * FROM TPCDS.PUBLIC.STORE_SALES m JOIN {TABLE} c ON m.SS_CUSTOMER_SK = c.C_CUSTOMER_SK "
+               "WHERE C_BIRTH_COUNTRY = 'FRANCE'"}
+    with pytest.raises(A.NotConvertible, match="C_BIRTH_COUNTRY not qualified by a table"):
+        A.convert(rec)
+
+
+def test_zero_denominator_round_trip_is_idempotent():
+    """forward -> edit -> write-back -> forward gives the edited expression, wrapped once."""
+    rec = _rec("SUM(m.C_BALANCE) / SUM(m.C_LIMIT)", aggregation={"type": "ratio", "zero_denominator": "zero"})
+    doc = _doc(rec)
+    m = doc["metrics"][0]
+    assert m["expression"]["dialects"][0]["expression"] == \
+        "COALESCE(SUM(customer.c_balance) / SUM(customer.c_limit), 0)"
+    assert write_back(doc, m["name"], rec) == {}
+    for dl in m["expression"]["dialects"]:
+        dl["expression"] = dl["expression"].replace("SUM(customer.c_limit)", "(SUM(customer.c_limit) + 1)")
+    patch = write_back(doc, m["name"], rec)["set"]
+    assert patch["formula"] == "SUM(m.C_BALANCE) / (SUM(m.C_LIMIT) + 1)"         # the wrapper is not in the formula
+    assert "aggregation.zero_denominator" not in patch
+    again = json.loads(json.dumps(rec))
+    again["metadata"]["definition"]["formula"] = patch["formula"]
+    (m2, _, _), = A.convert(again)
+    assert m2["expression"] == m["expression"]                                    # forward again: identical
+    back = convert_ossie_to_registry(doc, m["name"])["definition"]
+    assert back["aggregation"]["zero_denominator"] == "zero" and not back["formula"].startswith("COALESCE")
+    for dl in m["expression"]["dialects"]:                                         # wrapper removed in Ossie
+        dl["expression"] = dl["expression"][len("COALESCE("):-len(", 0)")]
+    assert write_back(doc, m["name"], rec)["set"]["aggregation.zero_denominator"] == "null"
+
+
+def test_backticked_bigquery_names():
+    rec = _rec("COUNT(DISTINCT `tbl`.cust_id)", dialect="bigquery")
+    rec["metadata"]["definition"]["source"].update({"table": "`proj`.`ds`.`tbl`", "entity": "`proj`.`ds`.`tbl`"})
+    (m, ds, _), = A.convert(rec)
+    assert ds[0]["name"] == "tbl" and ds[0]["source"] == "`proj`.`ds`.`tbl`"
+    assert m["expression"]["dialects"][0]["expression"] == "COUNT(DISTINCT tbl.cust_id)"
+    back = convert_ossie_to_registry(_doc(rec), rec["name"])["definition"]
+    assert back["source"]["table"] == "`proj`.`ds`.`tbl`" and back["formula"] == "COUNT(DISTINCT m.cust_id)"

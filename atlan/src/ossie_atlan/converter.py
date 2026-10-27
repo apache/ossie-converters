@@ -113,7 +113,9 @@ def field_note(ext: dict) -> str:
 
 
 def _parts(table: str) -> list[str]:
-    return [p.strip('"') for p in re.findall(r'"[^"]+"|[^.]+', table)]
+    """catalog.schema.table split into its parts with identifier quotes removed: double quotes
+    (Snowflake, Postgres, ANSI) and backticks (BigQuery, Databricks, Spark, MySQL)."""
+    return [p[1:-1] if p[0] in "\"`" else p for p in re.findall(r'"[^"]+"|`[^`]+`|[^.]+', table)]
 
 
 def _slug(text: str) -> str:
@@ -427,11 +429,24 @@ def _normalize_source(d: dict) -> None:
     where = tree.args.get("where")
     if where:
         cond = where.this
-        for c in cond.find_all(exp.Column):
-            if not c.table:
-                c.set("table", exp.to_identifier(alias))
+        _qualify_or_refuse([cond], alias, joined=bool(tree.args.get("joins")))
         parts = list(cond.flatten()) if isinstance(cond, exp.And) else [cond]
         d["filters"] = [p.sql(dialect=DIALECT) for p in parts] + list(d.get("filters") or [])
+
+
+def _qualify_or_refuse(nodes: list[exp.Expression], base_alias: str, joined: bool) -> None:
+    """Give every unqualified column the base table's alias, or refuse when the SQL joins other
+    tables: there the column may live on any of them, and guessing the base table would write a
+    field that does not exist without any signal."""
+    bare = sorted({c.name for n in nodes for c in n.find_all(exp.Column)
+                   if not c.table and not isinstance(c.this, exp.Star)})
+    if bare and joined:
+        raise NotConvertible(f"column{'s' if len(bare) > 1 else ''} {', '.join(bare)} not qualified by a "
+                             "table in a query that joins tables, so the owning table is unknown")
+    for n in nodes:
+        for c in n.find_all(exp.Column):
+            if not c.table:
+                c.set("table", exp.to_identifier(base_alias))
 
 
 def split_query(art: dict) -> list[dict]:
@@ -493,17 +508,14 @@ def split_query(art: dict) -> list[dict]:
         if not any(inner.sql() == g.sql() or (isinstance(g, exp.Column) and not g.table and g.name == n)
                    for n, inner in dims):                # GROUP BY <select alias> is that select item
             dims.append((g.alias_or_name if isinstance(g, exp.Column) else _slug(g.sql()), g))
-    for _, inner in dims + outs:                    # unqualified columns belong to the base table
-        for c in inner.find_all(exp.Column):
-            if not c.table:
-                c.set("table", exp.to_identifier(base_alias))
+    # an unqualified column belongs to the base table only when the query reads one table; with
+    # a join, SQL resolves it against every joined table, which a registry record cannot do here
     where = tree.args.get("where")
+    _qualify_or_refuse([inner for _, inner in dims + outs] + ([where.this] if where else []),
+                       base_alias, joined=bool(joins))
     filters = []
     if where:
         cond = where.this
-        for c in cond.find_all(exp.Column):
-            if not c.table:
-                c.set("table", exp.to_identifier(base_alias))
         filters = [p.sql(dialect=DIALECT) for p in (cond.flatten() if isinstance(cond, exp.And) else [cond])]
     records, taken = [], set()
     for alias, inner in outs:
@@ -1104,6 +1116,12 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None) ->
         return node
 
     tree = sqlglot.parse_one(expr_text, read=DIALECT)
+    # COALESCE(<expr>, 0) around the whole expression is how forward writes
+    # aggregation.zero_denominator = zero: it is that setting, not part of the formula
+    zero = (isinstance(tree, exp.Coalesce) and len(tree.expressions) == 1
+            and isinstance(tree.expressions[0], exp.Literal) and tree.expressions[0].this == "0")
+    if zero:
+        tree = tree.this
     for c in list(tree.find_all(exp.Column)):
         if c.table in ds:
             c.replace(field_sql(c.table, c.name))
@@ -1133,7 +1151,8 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None) ->
         window.append(wt.sql(dialect=DIALECT))
     return {"formula": tree.sql(dialect=DIALECT), "base": ds[base]["source"], "base_alias": alias[base],
             "joins": joins, "dimensions": dims, "timeframe_column": tf, "window": window,
-            "is_ratio": isinstance(tree, exp.Div), "parameters": ctx.get("parameters") or []}
+            "is_ratio": isinstance(tree, exp.Div), "zero_denominator": "zero" if zero else None,
+            "parameters": ctx.get("parameters") or []}
 
 
 def write_back(doc: dict, metric_name: str, record: dict, registry_version: int | None = None) -> dict:
@@ -1186,6 +1205,8 @@ def write_back(doc: dict, metric_name: str, record: dict, registry_version: int 
     if m.get("datatype") and m.get("datatype") != fm.get("datatype"):
         patch["output.datatype"] = DTYPE_BACK.get(m["datatype"], "unknown")
     rd = record["metadata"]["definition"]
+    if mine["zero_denominator"] != theirs["zero_denominator"]:   # the COALESCE wrapper added or removed
+        patch["aggregation.zero_denominator"] = mine["zero_denominator"] or "null"
     if mine["formula"] != theirs["formula"]:
         patch["formula"] = mine["formula"]          # the folded filters are now inside it
         patch["filters"] = unfolded_filters(record)   # the windows and parameter picks were never folded
@@ -1260,7 +1281,9 @@ def to_registry(doc: dict, metric_name: str) -> dict:
     defn = {
         "spec_version": "1.0-draft.4", "version": 1, "dialect": dialect,
         "formula": parts["formula"],
-        "aggregation": {"type": "ratio" if parts["is_ratio"] else "custom", **sem.pop("aggregation", {})},
+        "aggregation": {"type": "ratio" if parts["is_ratio"] else "custom",
+                        **({"zero_denominator": parts["zero_denominator"]} if parts["zero_denominator"] else {}),
+                        **sem.pop("aggregation", {})},
         "output": {"alias": m["name"], "datatype": DTYPE_BACK.get(m.get("datatype"), "unknown"),
                    **sem.pop("output", {})},
         "source": {"entity": parts["base"], "alias": "m", "table": parts["base"], "sql": None,
