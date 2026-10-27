@@ -49,14 +49,15 @@ Apache License 2.0). A complete record is
 | `aggregation.type` | `count`, `sum`, `ratio`, `custom`, ... | not carried (the expression shows it) |
 | `aggregation.reaggregation` | how to combine across groups (`sum`, `none`, or prose) | `agent_context.reaggregation` + instructions |
 | `aggregation.null_handling` | how empty values count | `agent_context.null_handling` + instructions |
-| `aggregation.zero_denominator` | `null` or `zero` | `zero` wraps the expression in `COALESCE(..., 0)` |
+| `aggregation.zero_denominator` | `null` or `zero` | `zero` wraps the expression in `COALESCE(..., 0)`; on write-back that wrapper is read as the setting (never copied into `formula`), and only for a record whose setting is `zero` |
 | `output.alias`, `output.datatype`, `output.unit` | the output column, its type and unit | `datatype`; unit to `agent_context.unit` + instructions |
-| `source.table` | the base table, fully qualified | the base dataset's `source` |
+| `source.table` | the base table, fully qualified | the base dataset's `source`, parsed in `dialect`: quoted parts exactly as written (case and quotes), unquoted parts folded as the dialect folds them. Two spellings of one table (quoted and unquoted) match when a join is resolved |
 | `source.sql` | a filtered row set (`SELECT * FROM t WHERE ...`) or a `FROM` fragment with joins | the WHERE moves into the aggregates; a join in it needs a matching `joins[]` entry |
 | `source.alias` | the alias the formula uses for the base table | resolved, not carried |
 | `source.timeframe_column` | the metric's time column | a time field; `agent_context.timeframe_field` |
 | `source.parameters[]` | `{name, datatype, default}`; referenced as `:name` or `{{name}}` | bound to the default; a no-default parameter that picks one value of a column becomes a dimension; otherwise refused |
 | `joins[]` | `{name, to, sql, cardinality, origin}`; `sql` is an ON predicate or a full `JOIN t a ON ...` | a relationship; `cardinality: many_to_one` is required |
+| (convention) | in a record's structured fields (`formula`, `filters`, `mandatory_filters`, `dimensions[].sql`, `source.timeframe_column`), a column with no table prefix belongs to `source.table`; `dimensions[].required_join` names one of the record's joins instead | followed as stated when `source.table` is a plain table. When the record's SQL joins tables (a whole-query `formula` with a JOIN, or a `source.sql` with a JOIN) a column with no table prefix in any of those fields is refused, since SQL resolves it against every joined table. A `required_join` that names no join is refused |
 | `dimensions[]` | `{name, kind, sql, datatype, description, values, value_map, filter_form, required_join}` | fields with `dimension.is_time`; values and map as the field's `ai_context`; a bare column with `required_join` is read on that joined table |
 | `filters[]` | predicates every query applies | folded into every aggregate as `CASE WHEN`; a range comparison against a fixed date is parked in `agent_context.window` instead (see README) |
 | `mandatory_filters[]` | predicates that define the metric (cannot be removed) | same, folded in |

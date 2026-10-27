@@ -65,7 +65,8 @@ ignore in index inner insert intersect interval into is join key last left like 
 natural not null nulls offset on or order outer over partition primary procedure qualify range
 references replace respect return revoke right rollback rows schema select set show table then time
 timestamp top true truncate union unique update use user using values view when where while window
-with""".split())
+with current_date current_time current_timestamp current_user localtime localtimestamp session_user
+ilike rlike regexp lateral sample""".split())
 TIME_KINDS = {"time", "date", "timestamp"}
 
 
@@ -112,10 +113,25 @@ def field_note(ext: dict) -> str:
     return " ".join(parts)
 
 
+def _table_idents(table: str, folded: bool = True) -> list[exp.Identifier]:
+    """The one place a table name is read: parsed in the record's dialect (so BigQuery's
+    `proj.ds.tbl` in one pair of backticks is three parts). With `folded`, every part is
+    case-folded the way the dialect resolves it (for matching); without, parts are as written."""
+    try:
+        t = exp.to_table(table, dialect=DIALECT)
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError, ValueError):
+        raise NotConvertible(f"table name {table!r} does not parse in this dialect") from None
+    raw = t.parts
+    if not raw or not all(isinstance(i, exp.Identifier) for i in raw):
+        raise NotConvertible(f"table name {table!r} is not a plain table reference")
+    if any(q in i.name for i in raw for q in "`\"[]"):
+        raise NotConvertible(f"table name {table!r} is quoted in a way this dialect does not use")
+    return normalize_identifiers(t.copy(), dialect=DIALECT).parts if folded else raw
+
+
 def _parts(table: str) -> list[str]:
-    """catalog.schema.table split into its parts with identifier quotes removed: double quotes
-    (Snowflake, Postgres, ANSI) and backticks (BigQuery, Databricks, Spark, MySQL)."""
-    return [p[1:-1] if p[0] in "\"`" else p for p in re.findall(r'"[^"]+"|`[^`]+`|[^.]+', table)]
+    """catalog.schema.table as bare names, quotes removed."""
+    return [i.name for i in _table_idents(table)]
 
 
 def _slug(text: str) -> str:
@@ -123,17 +139,19 @@ def _slug(text: str) -> str:
 
 
 def norm_table(table: str) -> str:
-    """Unquoted table-name parts folded the way the record's dialect folds identifiers (Snowflake
-    and Oracle to upper case, Postgres and DuckDB to lower case, BigQuery and Databricks not at
-    all), so `crm.public.account` and `CRM.PUBLIC.ACCOUNT` are one Snowflake table and two
-    BigQuery tables; quoted parts keep their case."""
-    out = []
-    for part in re.findall(r'"[^"]+"|`[^`]+`|[^.]+', table):
-        if part[0] in "\"`":
-            out.append(part)
-        else:
-            out.append(normalize_identifiers(exp.to_identifier(part), dialect=DIALECT).name)
-    return ".".join(out)
+    """A table name as the Ossie dataset source: quoted parts exactly as written (case and
+    quotes), unquoted parts folded the way the dialect folds them (Snowflake upper, Postgres
+    lower). Quotes are never dropped: whether a quoted name is safe unquoted depends on each
+    warehouse's reserved words."""
+    folded, raw = _table_idents(table), _table_idents(table, folded=False)
+    return ".".join((r if r.quoted else f).sql(dialect=DIALECT) for f, r in zip(folded, raw))
+
+
+def table_key(table: str) -> tuple[str, ...]:
+    """What two spellings of one table have in common, for matching only (never written out): the
+    folded names without quotes. So `proj`.`ds`.`cust` and proj.ds.cust, or "CRM"."PUBLIC"."ACCOUNT"
+    and crm.public.account in Snowflake, are one table."""
+    return tuple(i.name for i in _table_idents(table))
 
 
 def _ident(name: str) -> str:
@@ -144,10 +162,12 @@ def _ident(name: str) -> str:
 
 
 def dataset_name(table: str, taken: set[str]) -> str:
-    parts = _parts(table)
-    name = parts[-1].lower()
+    """An Ossie identifier for the table: its last part, slugged (`my tbl` -> my_tbl), with the
+    schema in front when that is a keyword or already taken."""
+    parts = [_slug(p) or "dataset" for p in _parts(table)]
+    name = parts[-1]
     if name in KEYWORDS or name in taken:
-        name = "_".join(p.lower() for p in parts[-2:])
+        name = "_".join(parts[-2:])
     return name
 
 
@@ -178,7 +198,7 @@ class _Model:
         self.table_alias: dict[str, str] = {}
         self.short_alias: dict[str, str | None] = {}
         for alias, table in self.alias_table.items():
-            self.table_alias.setdefault(table, alias)
+            self.table_alias.setdefault(table_key(table), alias)
             short = _parts(table)[-1].upper()
             self.short_alias[short] = alias if short not in self.short_alias else None   # None = ambiguous
         for alias, of in (d["source"].get("_aliases") or {}).items():     # extra aliases from source.sql / join sql
@@ -198,7 +218,8 @@ class _Model:
             return self.base
         if q in self.alias_ds:
             return q
-        full = norm_table(".".join(p for p in (c.catalog, c.db, q) if p))
+        full = table_key(exp.Table(this=c.args["table"].copy(), db=c.args["db"].copy() if c.args.get("db") else None,
+                                   catalog=c.args["catalog"].copy() if c.args.get("catalog") else None).sql(dialect=DIALECT))
         return self.table_alias.get(full) or self.short_alias.get(q.upper())
 
     def field(self, alias: str, node: exp.Expression, name: str | None = None, **extra) -> str:
@@ -266,8 +287,9 @@ class _Model:
 
 
 def _table_name(t: exp.Table) -> str:
-    """catalog.schema.table as written, quoted parts kept."""
-    return ".".join(i.sql(dialect=DIALECT) for i in (t.args.get("catalog"), t.args.get("db"), t.this) if i)
+    """A parsed table reference in its canonical spelling (see norm_table)."""
+    return norm_table(exp.Table(this=t.this.copy(), db=t.args["db"].copy() if t.args.get("db") else None,
+                                catalog=t.args["catalog"].copy() if t.args.get("catalog") else None).sql(dialect=DIALECT))
 
 
 def _literal(p: dict) -> str:
@@ -411,21 +433,25 @@ def _normalize_source(d: dict) -> None:
                              "so the formula's columns cannot be placed")
     if t.alias and t.alias != alias:
         extra[t.alias] = alias
-    declared = {norm_table(j["to"]) for j in d.get("joins") or []}
+    declared = {table_key(j["to"]) for j in d.get("joins") or []}
     for jn in tree.args.get("joins") or []:              # joins in the row set become declared joins
         jt = jn.this
         if not isinstance(jt, exp.Table) or jn.args.get("on") is None:
             raise NotConvertible("row-set source joins without an ON clause, or joins a subquery")
         to = _table_name(jt)
         jalias = jt.alias or jt.name
-        if norm_table(to) in declared:                   # the declared join carries the cardinality
-            existing = next(j for j in d["joins"] if norm_table(j["to"]) == norm_table(to))
+        if table_key(to) in declared:                    # the declared join carries the cardinality
+            existing = next(j for j in d["joins"] if table_key(j["to"]) == table_key(to))
             if jalias != existing["name"]:
                 extra[jalias] = existing["name"]
             continue
         d.setdefault("joins", []).append({"name": jalias, "to": to, "sql": jn.args["on"].sql(dialect=DIALECT),
                                           "cardinality": "many_to_one",
                                           "origin": "join in source.sql (cardinality assumed)"})
+    if tree.args.get("joins"):
+        # the formula, filters, dimensions and time column run over the same joined row set as the
+        # WHERE, so a bare column there is just as ambiguous
+        _refuse_bare_structured(d, include_formula=True)
     where = tree.args.get("where")
     if where:
         cond = where.this
@@ -447,6 +473,17 @@ def _qualify_or_refuse(nodes: list[exp.Expression], base_alias: str, joined: boo
         for c in n.find_all(exp.Column):
             if not c.table:
                 c.set("table", exp.to_identifier(base_alias))
+
+
+def _refuse_bare_structured(d: dict, include_formula: bool) -> None:
+    """A record whose SQL joins tables (a row-set source.sql, or a whole-query formula): its
+    structured fields run over that join, so a column with no table there is refused. A
+    dimension may name its table in required_join."""
+    texts = [*([d.get("formula")] if include_formula else []), *(d.get("filters") or []),
+             *(d.get("mandatory_filters") or []),
+             *(x.get("sql") for x in d.get("dimensions") or [] if not x.get("required_join")),
+             (d.get("source") or {}).get("timeframe_column")]
+    _qualify_or_refuse([sqlglot.parse_one(t, read=DIALECT) for t in texts if t], "_", joined=True)
 
 
 def split_query(art: dict) -> list[dict]:
@@ -480,13 +517,13 @@ def split_query(art: dict) -> list[dict]:
         raise NotConvertible("FROM is not a table")
     base_alias = src.alias_or_name
     table = _table_name
-    declared = {norm_table(j["to"]): j for j in d.get("joins") or [] if j.get("to")}
+    declared = {table_key(j["to"]): j for j in d.get("joins") or [] if j.get("to")}
     joins = []
     for j in tree.args.get("joins") or []:
         on = j.args.get("on")
         if on is None or j.args.get("kind") in ("CROSS",):
             raise NotConvertible("join without an ON equality")
-        known = declared.get(norm_table(table(j.this)))     # a declared join carries the cardinality
+        known = declared.get(table_key(table(j.this)))      # a declared join carries the cardinality
         joins.append({"name": j.this.alias_or_name, "to": table(j.this), "sql": on.sql(dialect=DIALECT),
                       "cardinality": known["cardinality"] if known else "many_to_one",
                       "origin": known.get("origin") or "declared" if known else
@@ -511,7 +548,8 @@ def split_query(art: dict) -> list[dict]:
     # an unqualified column belongs to the base table only when the query reads one table; with
     # a join, SQL resolves it against every joined table, which a registry record cannot do here
     where = tree.args.get("where")
-    _qualify_or_refuse([inner for _, inner in dims + outs] + ([where.this] if where else []),
+    _qualify_or_refuse([inner for _, inner in dims + outs] + ([where.this] if where else [])
+                       + [j.args["on"] for j in tree.args.get("joins") or [] if j.args.get("on") is not None],
                        base_alias, joined=bool(joins))
     filters = []
     if where:
@@ -535,6 +573,8 @@ def split_query(art: dict) -> list[dict]:
         if orig and orig != base_alias and orig not in {j["name"] for j in joins}:
             rd["source"]["_aliases"] = {**(rd["source"].get("_aliases") or {}), orig: base_alias}
         rd["joins"] = joins
+        if joins:                                   # the record's own fields run over the joined query too
+            _refuse_bare_structured(d, include_formula=False)
         rd["filters"] = filters + list(d.get("filters") or [])
         rd["dimensions"] = [{"name": _slug(n), "sql": x.sql(dialect=DIALECT), "datatype": "unknown",
                              "kind": "time" if (x.find(exp.DateTrunc, exp.TimestampTrunc)
@@ -763,6 +803,9 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
     dim_refs = []
     for dim in d.get("dimensions") or []:
         node = sqlglot.parse_one(dim["sql"], read=DIALECT)
+        if dim.get("required_join") and dim["required_join"] not in m.alias_ds:
+            raise NotConvertible(f"dimension {dim['name']!r}: required_join {dim['required_join']!r} "
+                                 "names no join of this record")
         if dim.get("required_join") in m.alias_ds:          # a bare column of the joined table
             for c in node.find_all(exp.Column):
                 if not c.table:
@@ -784,7 +827,11 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         fname = m.field(alias, node, name=_slug(dim["name"]) or dim["name"], **extra)
         dim_refs.append(f"{m.alias_ds[alias]}.{fname}")
         if dim.get("filter_form"):                     # after the field exists, so it is reused
-            ext["filter_form"] = m.rewrite(dim["filter_form"].replace(":value", "'__v__'"), {}).replace("'__v__'", ":value")
+            ff = sqlglot.parse_one(dim["filter_form"].replace(":value", "'__v__'"), read=DIALECT)
+            for c in ff.find_all(exp.Column):          # a bare column is the dimension's own table's
+                if not c.table:
+                    c.set("table", exp.to_identifier(alias))
+            ext["filter_form"] = m.rewrite(ff.sql(dialect=DIALECT), {}).replace("'__v__'", ":value")
         if field_note(ext):
             f = next(x for x in m.fields[m.alias_ds[alias]] if x["name"] == fname)
             f["ai_context"] = field_note(ext)
@@ -818,7 +865,7 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         raise NotConvertible("formula uses a subquery or window function")
     if not sqlglot.parse_one(expr, read=DIALECT).find(exp.AggFunc):
         raise NotConvertible("aggregate function not in Ossie's portable SQL")
-    if (d.get("aggregation") or {}).get("zero_denominator") == "zero":
+    if (d.get("aggregation") or {}).get("zero_denominator") == "zero" and not _zero_wrapped(expr):
         expr = f"COALESCE({expr}, 0)"
     # a registry name may be a display string ("MAU change vs 60-90 days ago"); Ossie and every
     # tool want an identifier. The registry id in the extension still maps it back.
@@ -1043,7 +1090,16 @@ class NotWritable(RuntimeError):
     """The edit cannot be expressed in the registry record; change the registry instead."""
 
 
-def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None) -> dict:
+def _zero_wrapped(sql: str) -> bool:
+    """The whole expression is COALESCE(<expr>, 0) with a numeric zero."""
+    tree = sqlglot.parse_one(sql, read=DIALECT)
+    return (isinstance(tree, exp.Coalesce) and len(tree.expressions) == 1
+            and isinstance(tree.expressions[0], exp.Literal) and not tree.expressions[0].is_string
+            and tree.expressions[0].this == "0")
+
+
+def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None,
+                   zero_setting: bool = False) -> dict:
     """formula, source, joins, dimensions, timeframe rebuilt from the Ossie model. Which
     relationships, group-by fields and time field belong to this metric comes from the metric's
     own agent_context (relationships / dimensions / timeframe_field); a metric without it (new,
@@ -1116,10 +1172,10 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None) ->
         return node
 
     tree = sqlglot.parse_one(expr_text, read=DIALECT)
-    # COALESCE(<expr>, 0) around the whole expression is how forward writes
-    # aggregation.zero_denominator = zero: it is that setting, not part of the formula
-    zero = (isinstance(tree, exp.Coalesce) and len(tree.expressions) == 1
-            and isinstance(tree.expressions[0], exp.Literal) and tree.expressions[0].this == "0")
+    # For a record whose aggregation.zero_denominator is zero, forward writes the setting as
+    # COALESCE(<expr>, 0) around the whole expression: that wrapper is the setting, not part of
+    # the formula. Anywhere else a COALESCE is the author's own SQL and stays in the formula.
+    zero = zero_setting and _zero_wrapped(tree.sql(dialect=DIALECT))
     if zero:
         tree = tree.this
     for c in list(tree.find_all(exp.Column)):
@@ -1181,10 +1237,12 @@ def write_back(doc: dict, metric_name: str, record: dict, registry_version: int 
     fm, fds, frels = part
     fdoc = {"datasets": fds, "relationships": frels, "metrics": [fm]}
     split = len(converted) > 1 or bool(key)
-    with _parsing(record["metadata"]["definition"].get("dialect")):
+    rd0 = record["metadata"]["definition"]
+    with _parsing(rd0.get("dialect")):
         try:
             names = record_aliases(record)
-            mine, theirs = _reverse_parts(doc, m, names), _reverse_parts(fdoc, fm, names)
+            zero = (rd0.get("aggregation") or {}).get("zero_denominator") == "zero"
+            mine, theirs = _reverse_parts(doc, m, names, zero), _reverse_parts(fdoc, fm, names, zero)
         except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
             raise NotConvertible(f"an expression in the Ossie file does not parse: {str(e).splitlines()[0][:80]}") from None
     patch = {}
@@ -1205,8 +1263,8 @@ def write_back(doc: dict, metric_name: str, record: dict, registry_version: int 
     if m.get("datatype") and m.get("datatype") != fm.get("datatype"):
         patch["output.datatype"] = DTYPE_BACK.get(m["datatype"], "unknown")
     rd = record["metadata"]["definition"]
-    if mine["zero_denominator"] != theirs["zero_denominator"]:   # the COALESCE wrapper added or removed
-        patch["aggregation.zero_denominator"] = mine["zero_denominator"] or "null"
+    if mine["zero_denominator"] != theirs["zero_denominator"]:   # the editor removed the COALESCE wrapper
+        patch["aggregation.zero_denominator"] = "null"
     if mine["formula"] != theirs["formula"]:
         patch["formula"] = mine["formula"]          # the folded filters are now inside it
         patch["filters"] = unfolded_filters(record)   # the windows and parameter picks were never folded
@@ -1281,9 +1339,7 @@ def to_registry(doc: dict, metric_name: str) -> dict:
     defn = {
         "spec_version": "1.0-draft.4", "version": 1, "dialect": dialect,
         "formula": parts["formula"],
-        "aggregation": {"type": "ratio" if parts["is_ratio"] else "custom",
-                        **({"zero_denominator": parts["zero_denominator"]} if parts["zero_denominator"] else {}),
-                        **sem.pop("aggregation", {})},
+        "aggregation": {"type": "ratio" if parts["is_ratio"] else "custom", **sem.pop("aggregation", {})},
         "output": {"alias": m["name"], "datatype": DTYPE_BACK.get(m.get("datatype"), "unknown"),
                    **sem.pop("output", {})},
         "source": {"entity": parts["base"], "alias": "m", "table": parts["base"], "sql": None,

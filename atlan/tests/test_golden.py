@@ -158,7 +158,9 @@ def test_all_cases_import_as_one_file_with_one_issue_per_refusal():
     # two cases define one name two ways (store_sales.sale_date with two expressions; customer
     # with two keys): one file cannot carry both, so the later record is left out with an issue
     conflicts = issues.of_type(IssueType.MERGE_CONFLICT)
-    assert {c.element_name for c in conflicts} == {"sales_to_active_customers", "store_sale_errors"}
+    # (and the BigQuery case's store_sales is spelled in another dialect than the Snowflake ones)
+    assert {c.element_name for c in conflicts} == {"sales_to_active_customers", "store_sale_errors",
+                                                   "paid_by_birth_country"}
     assert "_merge_notes" not in doc and "merge_notes" not in json.dumps(doc)
     assert len(doc["metrics"]) == sum(len(_ossie_yaml(n)["metrics"]) for n in OK) - len(conflicts)
 

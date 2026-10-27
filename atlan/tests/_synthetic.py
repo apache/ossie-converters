@@ -289,6 +289,19 @@ def records() -> dict[str, dict]:
                       "source": "analyst"}],
         "provenance": {"source": "analyst", "trust_score": 8.0, "observed_sql": None}},
         description="Average store sales per active shopper, by store and state, for active Majors customers.")
+    # --- BigQuery names: a whole path in one pair of backticks, a join target quoted per part,
+    #     a column qualified by the backticked table name
+    R["bigquery_backticked_names"] = _record("paid_by_birth_country", {
+        "dialect": "bigquery", "formula": "SUM(`store_sales`.ss_net_paid)",
+        "aggregation": {"type": "sum", "reaggregation": "sum"},
+        "output": {"alias": "paid_by_birth_country", "datatype": "decimal", "unit": "currency"},
+        "source": {"table": "`tpcds.public.store_sales`", "alias": "s", "entity": "`tpcds.public.store_sales`"},
+        "joins": [{"name": "c", "to": "`tpcds`.`public`.`customer`", "cardinality": "many_to_one", "origin": "declared",
+                   "sql": "s.ss_customer_sk = c.c_customer_sk"}],
+        "filters": ["s.ss_quantity > 0"],
+        "dimensions": [_dim("birth_country", "c.c_birth_country", description="Customer birth country.")],
+        "grain": "sale", "population": "Store sales with a positive quantity"},
+        description="Net paid on store sales, by customer birth country")
     return R
 
 

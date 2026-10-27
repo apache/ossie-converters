@@ -74,6 +74,7 @@ CASES = {
     "account_param_as_dimension": "a per-account parameter with no default becomes a dimension on that column",
     "refused_window_cte": "a trailing average over a CTE: Ossie has no window field, so refused",
     "refused_row_listing": "a row lookup, not a measure: refused",
+    "bigquery_backticked_names": "BigQuery names: a path in one pair of backticks, a join target quoted per part",
 }
 
 # An edit made in the Ossie file, and the registry patch write_back must produce for it.

@@ -137,6 +137,13 @@ consumer could run, so the record becomes an issue instead:
 - a `source.alias` that names a joined table (a self-join the author did not mean), or a
   `{{parameter}}` inside a string literal
 - a column whose qualifier is no declared table, or a join condition that is not a key equality
+- a column with no table prefix anywhere in a record whose SQL joins tables (a whole-query
+  formula with a JOIN, or a `source.sql` with a JOIN): SQL resolves it against every joined
+  table, so its owner is unknown. In a record's structured fields alone, an unprefixed column
+  belongs to `source.table` (see [docs/registry-format.md](docs/registry-format.md))
+- a `required_join` that names no join of the record
+- a table name that is not a plain table reference (`IDENTIFIER('x')`, `@stage`, `TABLE(...)`),
+  does not parse in the record's dialect, or uses quotes that dialect does not use
 - a filter over `MIN_BY`/`MAX_BY` or a `WITHIN GROUP` aggregate (folding the filter into one
   argument would leave the ranking column unfiltered)
 
@@ -147,7 +154,7 @@ consumer could run, so the record becomes an issue instead:
 | Type | Meaning |
 |---|---|
 | `METRIC_NOT_CONVERTIBLE` | this record has no Ossie form; the detail names the shape |
-| `MERGE_CONFLICT` | two records define one field or metric name differently; the first is kept, this one left out |
+| `MERGE_CONFLICT` | two records define one field or metric name differently, or spell two tables (or one table, quoted differently) with the same dataset name; the first is kept, this one left out |
 | `PROSE_DIFFERENCE_KEPT_FIRST` | the same field with different prose; the first description is kept |
 
 `export` and `write-back` raise `NotConvertible`, `NotWritable` (an edit the registry cannot
@@ -155,7 +162,7 @@ take) or `Conflict` (the registry record moved on since the file was made).
 
 ## Tests
 
-`tests/fixtures/<case>/` holds 19 golden cases on a synthetic TPC-DS registry
+`tests/fixtures/<case>/` holds 20 golden cases on a synthetic TPC-DS registry
 (`tests/_synthetic.py`): the input record, the expected Ossie document, the definition each
 metric converts back to, the write-back of the unedited file (`{}`), and for refused shapes the
 reason. `uv run pytest` checks that the converter still produces every file byte for byte,

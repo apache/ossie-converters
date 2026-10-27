@@ -477,6 +477,13 @@ def test_unqualified_column_in_a_query_that_joins_tables_is_refused():
                "WHERE C_BIRTH_COUNTRY = 'FRANCE'"}
     with pytest.raises(A.NotConvertible, match="C_BIRTH_COUNTRY not qualified by a table"):
         A.convert(rec)
+    src = rec["metadata"]["definition"]["source"]
+    src["sql"] = src["sql"].split(" WHERE ")[0]
+    for kw in ({"filters": ["C_BIRTH_COUNTRY = 'FRANCE'"]}, {"formula": "SUM(C_BALANCE)"}):
+        bare = json.loads(json.dumps(rec))
+        bare["metadata"]["definition"].update(kw)
+        with pytest.raises(A.NotConvertible, match="not qualified by a table"):
+            A.convert(bare)
 
 
 def test_zero_denominator_round_trip_is_idempotent():
@@ -496,18 +503,138 @@ def test_zero_denominator_round_trip_is_idempotent():
     again["metadata"]["definition"]["formula"] = patch["formula"]
     (m2, _, _), = A.convert(again)
     assert m2["expression"] == m["expression"]                                    # forward again: identical
-    back = convert_ossie_to_registry(doc, m["name"])["definition"]
-    assert back["aggregation"]["zero_denominator"] == "zero" and not back["formula"].startswith("COALESCE")
     for dl in m["expression"]["dialects"]:                                         # wrapper removed in Ossie
         dl["expression"] = dl["expression"][len("COALESCE("):-len(", 0)")]
     assert write_back(doc, m["name"], rec)["set"]["aggregation.zero_denominator"] == "null"
+
+
+def test_a_coalesce_the_author_wrote_is_part_of_the_formula():
+    """Only a record whose zero_denominator is zero has its COALESCE(<expr>, 0) read as that
+    setting; anywhere else the COALESCE is the author's SQL and must survive a write-back."""
+    rec = _rec("COALESCE(SUM(m.C_BALANCE), 0)", aggregation={"type": "sum", "zero_denominator": "null"})
+    doc = _doc(rec)
+    for dl in doc["metrics"][0]["expression"]["dialects"]:
+        dl["expression"] = "COALESCE(SUM(customer.c_balance) * 2, 0)"
+    patch = write_back(doc, doc["metrics"][0]["name"], rec)["set"]
+    assert patch["formula"] == "COALESCE(SUM(m.C_BALANCE) * 2, 0)" and "aggregation.zero_denominator" not in patch
+    rec = _rec("COALESCE(MAX(m.C_FIRST_NAME), '0')")                   # a string '0' is never the setting
+    back = convert_ossie_to_registry(_doc(rec), rec["name"])["definition"]
+    assert back["formula"] == "COALESCE(MAX(m.C_FIRST_NAME), '0')" and "zero_denominator" not in back["aggregation"]
+    rec = _rec("COALESCE(SUM(m.C_BALANCE) / SUM(m.C_LIMIT), 0)", aggregation={"type": "ratio", "zero_denominator": "zero"})
+    assert _one(rec)[0] == "COALESCE(SUM(customer.c_balance) / SUM(customer.c_limit), 0)"   # not wrapped twice
 
 
 def test_backticked_bigquery_names():
     rec = _rec("COUNT(DISTINCT `tbl`.cust_id)", dialect="bigquery")
     rec["metadata"]["definition"]["source"].update({"table": "`proj`.`ds`.`tbl`", "entity": "`proj`.`ds`.`tbl`"})
     (m, ds, _), = A.convert(rec)
-    assert ds[0]["name"] == "tbl" and ds[0]["source"] == "`proj`.`ds`.`tbl`"
+    assert ds[0]["name"] == "tbl" and ds[0]["source"] == "`proj`.`ds`.`tbl`"     # quotes as written
     assert m["expression"]["dialects"][0]["expression"] == "COUNT(DISTINCT tbl.cust_id)"
     back = convert_ossie_to_registry(_doc(rec), rec["name"])["definition"]
     assert back["source"]["table"] == "`proj`.`ds`.`tbl`" and back["formula"] == "COUNT(DISTINCT m.cust_id)"
+    for table, name, source in [("`proj.ds.tbl`", "tbl", "`proj`.`ds`.`tbl`"),         # the path in one pair
+                                ("`proj`.`ds`.`my tbl`", "my_tbl", "`proj`.`ds`.`my tbl`"),
+                                ("`proj`.`ds`.`order`", "ds_order", "`proj`.`ds`.`order`"),
+                                ("`proj`.`ds`.`current_date`", "ds_current_date", "`proj`.`ds`.`current_date`")]:
+        rec["metadata"]["definition"]["source"].update({"table": table, "entity": table})
+        rec["metadata"]["definition"]["formula"] = "COUNT(*)"
+        _, ds, _ = _one(rec)
+        assert (ds[0]["name"], ds[0]["source"]) == (name, source), table
+    snow = _rec("COUNT(*)")
+    snow["metadata"]["definition"]["source"].update({"table": "`a`.`b`.`c`", "entity": "`a`.`b`.`c`"})
+    with pytest.raises(A.NotConvertible, match="quoted in a way this dialect does not use"):
+        A.convert(snow)
+
+
+
+# ---- second verification round
+
+@pytest.mark.parametrize("table", ["IDENTIFIER('x')", "@stage", "$1", "TABLE(FLATTEN(x))", "a.b.c.1tbl"])
+def test_table_names_that_are_not_plain_references_are_refused(table):
+    bad = _rec("COUNT(*)")
+    bad["metadata"]["definition"]["source"].update({"table": table, "entity": table})
+    bad["name"], bad["id"] = "bad", "metric_bad"
+    with pytest.raises(A.NotConvertible, match="not a plain table reference|does not parse"):
+        A.convert(bad)
+    doc, issues = convert_registry_to_ossie([_rec("COUNT(*)"), bad])           # the rest of the batch converts
+    assert [m["name"] for m in doc["metrics"]] == ["preferred_customer_count"]
+    assert [i.element_name for i in issues] == ["bad"]
+
+
+@pytest.mark.parametrize("dialect, table, source", [
+    ("snowflake", 'db.sch."TO"', 'DB.SCH."TO"'),               # quotes are kept as written
+    ("snowflake", 'db.sch."ACCOUNT"', 'DB.SCH."ACCOUNT"'),
+    ("postgres", 'pub."do"', 'pub."do"'),
+    ("snowflake", 'db.sch."Mixed"', 'DB.SCH."Mixed"'),
+    ("snowflake", "db.sch.tbl", "DB.SCH.TBL"),                 # unquoted parts fold as the dialect folds
+    ("bigquery", "proj.ds.Tbl", "proj.ds.Tbl"),                # BigQuery keeps table-name case
+    ("bigquery", "`proj.ds.Tbl`", "`proj`.`ds`.`Tbl`"),
+    ("tsql", "[srv].[db].[dbo].[orders]", "[srv].[db].[dbo].[orders]"),     # four parts
+    ("snowflake", '"srv"."proj"."ds"."tbl"', '"srv"."proj"."ds"."tbl"'),
+    ("redshift", 's."Orders"', 's."Orders"'),                 # quoted parts keep their case as written
+    ("databricks", "`c`.`s`.`Tbl`", "`c`.`s`.`Tbl`"),
+    ("bigquery", "`Orders`", "`Orders`"),
+])
+def test_table_name_spelling(dialect, table, source):
+    rec = _rec("COUNT(*)", dialect=dialect)
+    rec["metadata"]["definition"]["source"].update({"table": table, "entity": table})
+    assert _one(rec)[1][0]["source"] == source
+
+
+def test_a_declared_join_matches_its_sql_join_however_each_is_quoted():
+    rec = _rec("COUNT(*)", dialect="bigquery",
+               joins=[{"name": "c", "to": "`proj`.`ds`.`cust`", "cardinality": "many_to_one", "sql": "m.cid = c.id"}])
+    rec["metadata"]["definition"]["source"].update({"table": None, "entity": "proj.ds.ss",
+                                                    "sql": "proj.ds.ss m JOIN proj.ds.cust c ON m.cid = c.id"})
+    (m, ds, rels), = A.convert(rec)
+    assert [r["name"] for r in rels] == ["ss_to_cust"]
+
+
+def test_whole_query_with_a_join_refuses_bare_columns_in_its_structured_fields():
+    join = [{"name": "c", "to": TABLE, "cardinality": "many_to_one", "sql": "s.SS_CUSTOMER_SK = c.C_CUSTOMER_SK"}]
+    q = (f"SELECT SUM(s.SS_NET_PAID) AS paid FROM TPCDS.PUBLIC.STORE_SALES s "
+         f"JOIN {TABLE} c ON s.SS_CUSTOMER_SK = c.C_CUSTOMER_SK")
+    with pytest.raises(A.NotConvertible, match="C_PREFERRED_CUST_FLAG not qualified by a table"):
+        A.convert(_rec(q, joins=join, filters=["C_PREFERRED_CUST_FLAG = 'Y'"]))
+    rec = _rec(q, joins=join)
+    rec["metadata"]["definition"]["source"]["timeframe_column"] = "C_FIRST_SALES_DATE"
+    with pytest.raises(A.NotConvertible, match="C_FIRST_SALES_DATE not qualified by a table"):
+        A.convert(rec)
+    e, _, _ = _one(_rec(q, joins=join, filters=["c.C_PREFERRED_CUST_FLAG = 'Y'"]))
+    assert e == "SUM(CASE WHEN (customer.c_preferred_cust_flag = 'Y') THEN store_sales.ss_net_paid END)"
+
+
+def test_required_join_must_name_a_join_of_the_record():
+    rec = _rec("COUNT(*)", joins=[{"name": "s", "to": "TPCDS.PUBLIC.STORE", "cardinality": "many_to_one",
+                                  "sql": "s.S_STORE_SK = m.C_STORE_SK"}],
+               dimensions=[{"name": "state", "kind": "categorical", "sql": "S_STATE", "datatype": "string",
+                            "required_join": "store"}])
+    with pytest.raises(A.NotConvertible, match="required_join 'store' names no join"):
+        A.convert(rec)
+
+
+
+def test_bare_column_in_a_whole_query_on_clause_is_refused():
+    join = [{"name": "c", "to": TABLE, "cardinality": "many_to_one", "sql": "s.SS_CUSTOMER_SK = c.C_CUSTOMER_SK"}]
+    rec = _rec(f"SELECT SUM(s.SS_NET_PAID) AS paid FROM TPCDS.PUBLIC.STORE_SALES s JOIN {TABLE} c "
+               "ON SS_CUSTOMER_SK = c.C_CUSTOMER_SK", joins=join)
+    with pytest.raises(A.NotConvertible, match="SS_CUSTOMER_SK not qualified by a table"):
+        A.convert(rec)
+
+
+def test_filter_form_on_a_joined_dimension_names_that_table():
+    rec = _rec("COUNT(*)", joins=[{"name": "s", "to": "TPCDS.PUBLIC.STORE", "cardinality": "many_to_one",
+                                  "sql": "s.S_STORE_SK = m.C_STORE_SK"}],
+               dimensions=[{"name": "state", "kind": "categorical", "sql": "s.S_STATE", "datatype": "string",
+                            "filter_form": "S_STATE = :value"}])
+    _, ds, _ = _one(rec)
+    f = next(x for d in ds for x in d.get("fields", []) if x["name"] == "state")
+    assert f["ai_context"] == "Filter as: store.state = :value."
+
+
+@pytest.mark.parametrize("dialect, table", [("snowflake", "[x]"), ("tsql", "Sch.select.[user]")])
+def test_quoting_the_dialect_does_not_use_is_refused(dialect, table):
+    rec = _rec("COUNT(*)", dialect=dialect)
+    rec["metadata"]["definition"]["source"].update({"table": table, "entity": table})
+    with pytest.raises(A.NotConvertible):
+        A.convert(rec)
