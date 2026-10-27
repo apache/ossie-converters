@@ -16,7 +16,7 @@
 # under the License.
 
 # Breadth: the largest corpus spec, with window-function metrics and a wide
-# relationship graph. Read by test_spec_snapshots and test_ossie_to_relationalai
+# relationship graph. Read by spec/test_corpus and relationalai/tests/test_converter
 # only -- it earns its place by rendering a lot of shapes at once, not by
 # demonstrating any single behaviour.
 version: 0.2.0.dev0

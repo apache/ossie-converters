@@ -1,0 +1,78 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-snapshot",
+]
+
+[project]
+name = "apache-ossie-relationalai"
+version = "0.1.0"
+description = "Ossie ontology → RelationalAI (PyRel) converter"
+authors = [{ name = "RelationalAI", email = "support@relational.ai" }]
+requires-python = ">=3.11"
+readme = "README.md"
+license = "Apache-2.0"
+keywords = [
+    "Apache Ossie",
+    "Ossie",
+    "Ontology",
+    "RelationalAI",
+]
+# The Ossie side (parser, formula grammar, reasoner) lives in ../ontology.
+dependencies = [
+    "apache-ossie-ontology",
+]
+
+# Opt-in extra: `pip install "apache-ossie-relationalai[relationalai]"`.
+#
+# WARNING: `relationalai` is proprietary and declares no license, and running
+# what this converter emits needs a RelationalAI deployment in Snowflake. Read
+# README.md, "The `relationalai` extra", before installing it.
+[project.optional-dependencies]
+relationalai = [
+    "relationalai==1.35.1",
+]
+
+[project.urls]
+homepage = "https://ossie.apache.org/"
+repository = "https://github.com/apache/ossie-converters/"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ossie_relationalai"]
+
+[tool.uv.sources]
+apache-ossie-ontology = { path = "../ontology", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+exclude = ["tests/snapshots", "build", "venv"]
+
+[tool.uv]
+required-version = ">=0.9.0"
+default-groups = [
+    "dev"
+]

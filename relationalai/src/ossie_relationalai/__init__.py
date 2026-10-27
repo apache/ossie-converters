@@ -18,23 +18,24 @@
 """Ossie -> RelationalAI (PyRel) conversion.
 
 Importing anything from this package imports `relationalai`, which ships as the
-optional `relationalai` extra. Nothing under `ossie_ontology` imports this
-package at module scope, so the rest of the library stays installable — and
-importable — without the SDK present.
+optional `relationalai` extra. The Ossie side (parsing, the formula grammar, the
+reasoner) comes from `ossie_ontology`, which does not need the SDK.
 
-The model this converter targets is not here: `OntologyModel` and the rest of
-the PyRel-side types live under `ossie_ontology.vendor.relationalai`, the same
-way the Palantir model lives under `ossie_ontology.vendor.palantir`. What is
-left here is the translation itself.
+The modules split the same way the converter does:
+
+* `converter` and `formula` hold the translation: the ontology and its formulas.
+* `ontology`, `mappings`, `roles` and `fields` are the PyRel-side model it
+  targets: `OntologyModel`, its bindings and roles, and dataset fields rendered
+  as PyRel.
 """
 
-from ossie_ontology.converter.ossie_to_relationalai.converter import (
+from ossie_relationalai.converter import (
     OssieToRelationalAIConverter,
     TableProvider,
     declared_table,
     warehouse_table,
 )
-from ossie_ontology.vendor.relationalai.ontology import OntologyModel
+from ossie_relationalai.ontology import OntologyModel
 
 __all__ = [
     "OssieToRelationalAIConverter",

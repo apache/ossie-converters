@@ -48,7 +48,7 @@ from relationalai.semantics import Boolean, Date, Decimal, Integer, String  # no
 from relationalai.semantics.metamodel.pyrel_codegen import to_pyrel  # noqa: E402
 from relationalai.semantics.metamodel.typer import Typer  # noqa: E402
 
-from ossie_ontology.converter.ossie_to_relationalai import (  # noqa: E402
+from ossie_relationalai import (  # noqa: E402
     OssieToRelationalAIConverter,
     declared_table,
 )

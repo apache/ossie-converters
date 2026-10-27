@@ -68,6 +68,10 @@ converter/polaris:
   - changed-files:
       - any-glob-to-any-file: 'polaris/**'
 
+converter/relationalai:
+  - changed-files:
+      - any-glob-to-any-file: 'relationalai/**'
+
 converter/salesforce:
   - changed-files:
       - any-glob-to-any-file: 'salesforce/**'

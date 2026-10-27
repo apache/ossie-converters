@@ -58,15 +58,15 @@ pyrel = pytest.importorskip(
 from relationalai.semantics.metamodel.pyrel_codegen import to_pyrel  # noqa: E402
 from relationalai.semantics.metamodel.typer import Typer  # noqa: E402
 
-from ossie_ontology.converter.ossie_to_relationalai import (  # noqa: E402
+from ossie_relationalai import (  # noqa: E402
     OntologyModel,
     OssieToRelationalAIConverter,
     declared_table,
 )
 
 
-# Specs under tests/fixtures/. Each name is the stem of `<name>.yaml` and of the
-# snapshot it produces.
+# The shared spec corpus; conftest says where it lives. Each name is the stem of
+# `<name>.yaml` and of the snapshot it produces.
 from tests.conftest import SPEC_NAMES as SPECS
 
 
@@ -149,7 +149,7 @@ def test_palantir_export_converts_all_the_way_to_pyrel(snapshot, fixtures_dir: P
     """Palantir JSON in, executable PyRel out, through the Ossie hub.
 
     Neither converter alone proves this works: `palantir_to_ossie` stops at the
-    Ossie model and `ossie_to_relationalai` starts from one. This is the only
+    Ossie model and this one starts from one. This is the only
     test that runs a vendor format through the hub and out the other side, which
     is the point of the hub-and-spoke arrangement.
     """
@@ -411,8 +411,8 @@ def test_a_bare_column_mapping_formula_converts(validation_dir: Path):
 
     from ossie_ontology.expr.factory import Formula, FormulaCollector
     from ossie_ontology.expr.formula.parser import FormulaParser
-    from ossie_ontology.expr.formula.visitor.converter import MappingFormulaConverter
-    from ossie_ontology.vendor.relationalai.mappings import ValueMapping
+    from ossie_relationalai.formula import MappingFormulaConverter
+    from ossie_relationalai.mappings import ValueMapping
 
     pyrel.Model.all_models.clear()
     ontology = OssieParser().parse(validation_dir / "mapping_formula_valid.yaml")
@@ -447,7 +447,7 @@ def test_binding_by_identifier_alone_looks_up_the_last_role(behaviours_dir: Path
     `TypeError` before it could pick one — and every caller passed `expr`, so
     nothing noticed.
     """
-    from ossie_ontology.vendor.relationalai.mappings import EntityMapping
+    from ossie_relationalai.mappings import EntityMapping
 
     pyrel.Model.all_models.clear()
     ontology = OssieParser().parse(behaviours_dir / "ref_scheme.yaml")

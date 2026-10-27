@@ -44,20 +44,6 @@ dependencies = [
     "pyyaml",
 ]
 
-# Opt-in extra: `pip install "apache-ossie-ontology[relationalai]"`.
-#
-# WARNING: `relationalai` is proprietary and declares no license, and running
-# what this converter emits needs a RelationalAI deployment in Snowflake. Read
-# README.md, "The `relationalai` extra", before installing it.
-#
-# It is an extra rather than a dependency because nothing reachable from
-# `ossie_ontology/__init__.py` imports it: everything but this one converter
-# works without the SDK.
-[project.optional-dependencies]
-relationalai = [
-    "relationalai==1.35.1",
-]
-
 [project.urls]
 homepage = "https://ossie.apache.org/"
 repository = "https://github.com/apache/ossie-converters/"

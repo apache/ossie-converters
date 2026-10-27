@@ -56,7 +56,7 @@ from ossie_ontology.expr.sql import (
     parse_field_expression,
 )
 from ossie_ontology.model import Dataset, DatasetField
-from ossie_ontology.vendor.relationalai.mappings import ConditionValue
+from ossie_relationalai.mappings import ConditionValue
 
 # RelationalAI reads its tables from Snowflake, so a field written in that
 # dialect is read in it, and in ANSI SQL otherwise.

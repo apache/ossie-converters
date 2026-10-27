@@ -17,13 +17,11 @@
 
 """Formula AST -> PyRel rules.
 
-The one module under `ossie_ontology.expr` that imports `relationalai`. It sits
-here rather than with the converter because it is a `GenericFormulaConverter`
-visitor, alongside `collector` and `unbound` — the difference is only what it
-emits. Nothing in the `expr` package imports it, so parsing and validating
-formulas still works with the SDK absent; it is reached solely from
-`ossie_ontology.converter.ossie_to_relationalai`, which the optional
-`relationalai` extra installs.
+A `GenericFormulaConverter` visitor, like `collector` and `unbound` in
+`ossie_ontology.expr.formula.visitor`; the difference is only what it emits.
+The grammar, the AST and the validator stay in `ossie_ontology`, which never
+imports `relationalai`, so parsing and validating formulas works without the
+SDK. This module is the half that needs it.
 """
 
 from __future__ import annotations
@@ -37,9 +35,9 @@ from relationalai.semantics.frontend.base import Ref, Concept as RAIConcept, Cor
     Relationship as RAIRelationship
 
 from ossie_ontology.reasoner import OntologyReasoner
-from ossie_ontology.vendor.relationalai.fields import render_field
-from ossie_ontology.vendor.relationalai.mappings import ConditionValue, ValueMapping
-from ossie_ontology.vendor.relationalai.ontology import OntologyModel
+from ossie_relationalai.fields import render_field
+from ossie_relationalai.mappings import ConditionValue, ValueMapping
+from ossie_relationalai.ontology import OntologyModel
 from ossie_ontology.expr.formula.model import (
     AggregationMethod,
     Conjunction,

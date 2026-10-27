@@ -15,8 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Subtypes and derived formulas. Read by test_spec_snapshots and
-# test_ossie_to_relationalai, and by test_reasoner for inherited reference
+# Subtypes and derived formulas. Read by spec/test_corpus and
+# relationalai/tests/test_converter, and by test_reasoner for inherited reference
 # schemes -- Contractor and PermanentEmployee extend Employee and are identified
 # by its `nr`. CardPayment carries a concept-level `derived_by`, which is the
 # subtype branch of the formula emitter.

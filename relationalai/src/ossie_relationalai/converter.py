@@ -17,13 +17,10 @@
 
 """Ossie -> RelationalAI: an `OssieOntology` becomes a PyRel `OntologyModel`.
 
-Together with `ossie_ontology.expr.formula.visitor.converter` — the formula
-emitter, which stays with its sibling visitors — this package is the only part
-of `ossie_ontology` that imports `relationalai`. Neither is reachable from
-`ossie_ontology/__init__.py`, which is what lets the SDK be an optional extra
-rather than a hard dependency. Install it with:
+Formulas are emitted by `ossie_relationalai.formula`; everything else about the
+translation is here. The SDK is the optional `relationalai` extra:
 
-    pip install "apache-ossie-ontology[relationalai]"
+    pip install "apache-ossie-relationalai[relationalai]"
 """
 from __future__ import annotations
 
@@ -31,11 +28,11 @@ import warnings
 from typing import Any, Callable
 
 from relationalai.util.naming import NameCache
-from ossie_ontology.vendor.relationalai.fields import render_field, table_schema
-from ossie_ontology.vendor.relationalai.mappings import ConditionValue, EntityMapping
-from ossie_ontology.vendor.relationalai.ontology import OntologyModel
+from ossie_relationalai.fields import render_field, table_schema
+from ossie_relationalai.mappings import ConditionValue, EntityMapping
+from ossie_relationalai.ontology import OntologyModel
 from ossie_ontology.expr.formula.model import Formula
-from ossie_ontology.expr.formula.visitor.converter import FormulaConverter, MappingFormulaConverter
+from ossie_relationalai.formula import FormulaConverter, MappingFormulaConverter
 from ossie_ontology.reasoner import OntologyReasoner
 from ossie_ontology.model import (
     Concept,

@@ -22,8 +22,8 @@ from relationalai.semantics import select, Relationship as RAIRelationship, Tabl
 from relationalai.semantics.frontend.base import Ref, CoreConcepts, NumberConcept
 from relationalai.semantics.frontend.core import is_primitive_concept, Float
 
-from ossie_ontology.vendor.relationalai.mappings import EBinding, GRBinding, JoinPathBinding
-from ossie_ontology.vendor.relationalai.roles import role_player
+from ossie_relationalai.mappings import EBinding, GRBinding, JoinPathBinding
+from ossie_relationalai.roles import role_player
 
 
 # Given c, which is either a PyRel Concept or a Ref, return either
