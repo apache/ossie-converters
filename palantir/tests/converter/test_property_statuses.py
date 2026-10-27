@@ -23,12 +23,12 @@ from pathlib import Path
 from typing import Any
 
 
-from ossie_ontology.converter.palantir_to_ossie.converter import PalantirToOssieConverter
-from ossie_ontology.vendor.palantir.model import Status
+from ossie_palantir.palantir_to_ossie import PalantirToOssieConverter
+from ossie_palantir.model import Status
 
-from tests.palantir.converter.builders import dataset, object_type, prop
+from tests.converter.builders import dataset, object_type, prop
 
-from tests.palantir.converter.helpers import (
+from tests.converter.helpers import (
     _convert,
     _relationship_names,
     _mapped_relationship_names,

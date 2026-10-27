@@ -26,14 +26,14 @@ import pytest
 
 from ossie_ontology.model import DatasetField, OssieOntology
 
-from tests.palantir.converter.builders import (
+from tests.converter.builders import (
     dataset,
     many_to_one,
     object_type,
     prop,
 )
 
-from tests.palantir.converter.helpers import _convert
+from tests.converter.helpers import _convert
 
 
 def _two_dataset_export(*, second_carries_primary_key: bool):

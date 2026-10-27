@@ -29,11 +29,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-from ossie_ontology.converter.palantir_to_ossie.converter import PalantirToOssieConverter
-from ossie_ontology.vendor.palantir.parser import PalantirParser
+from ossie_palantir.palantir_to_ossie import PalantirToOssieConverter
+from ossie_palantir.parser import PalantirParser
 from ossie_ontology.model import ConceptMapping, DatasetField, OssieOntology
 
-from tests.palantir.converter.builders import many_to_one, object_type, prop
+from tests.converter.builders import many_to_one, object_type, prop
 
 
 def _convert(

@@ -24,7 +24,7 @@ import warnings
 
 from ossie_ontology.common.graph import topological_sort_break_cycles
 from ossie_ontology.common.utils import to_pascal_case, to_verbalization_string
-from ossie_ontology.vendor.palantir.model import (
+from ossie_palantir.model import (
     ArrayDataType,
     DataSet as PalantirDataSet,
     DataSetColumn,

@@ -49,10 +49,8 @@ from ossie_ontology.spec import OssieSpec
 from ossie_ontology.reasoner import OntologyReasoner
 from ossie_ontology.parser import OssieParser
 from ossie_ontology.expr.factory import FormulaParserFactory, MappingFormulaParserFactory
-from ossie_ontology.vendor.palantir.parser import PalantirParser
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
-from ossie_ontology.converter.palantir_to_ossie.converter import PalantirToOssieConverter
 
 __all__ = [
     # Model — ontology layer
@@ -87,13 +85,11 @@ __all__ = [
     "OntologyReasoner",
     # Parsers
     "OssieParser",
-    "PalantirParser",
-    # Formula parsing — plug these into OssieParser/PalantirParser to get
+    # Formula parsing — plug these into OssieParser to get
     # formulas parsed into an AST rather than kept as raw strings.
     "FormulaParserFactory",
     "MappingFormulaParserFactory",
     # Converters
     "SpecToOssieConverter",
     "OssieToSpecConverter",
-    "PalantirToOssieConverter",
 ]

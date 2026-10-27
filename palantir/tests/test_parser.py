@@ -36,8 +36,8 @@ from pathlib import Path
 
 import pytest
 
-from ossie_ontology.vendor.palantir.model import DataType, Ontology
-from ossie_ontology.vendor.palantir.parser import PalantirOntologyParser, PalantirParser
+from ossie_palantir.model import DataType, Ontology
+from ossie_palantir.parser import PalantirOntologyParser, PalantirParser
 from ossie_ontology.model import BUILTIN_CONCEPTS
 
 # A minimal-but-complete Palantir export: one object type backed by one dataset.

@@ -46,9 +46,7 @@ from pathlib import Path
 
 import pytest
 
-from ossie_ontology.converter.palantir_to_ossie.converter import PalantirToOssieConverter
 from ossie_ontology.parser import OssieParser
-from ossie_ontology.vendor.palantir.parser import PalantirParser
 
 pyrel = pytest.importorskip(
     "relationalai.semantics",
@@ -132,46 +130,6 @@ def test_converter_result_is_an_ontology_model(specs_dir: Path):
     assert isinstance(om, OntologyModel)
     assert om.lookup_concept("Airport") is not None
     assert om.lookup_concept("NoSuchConcept") is None
-
-
-# ---------------------------------------------------------------------------
-# The full spoke-to-spoke path: Palantir -> Ossie -> RelationalAI
-# ---------------------------------------------------------------------------
-
-# An extracted Palantir export on disk, the same shape the real exports have:
-# an ontology JSON plus a data_sets/ folder. Kept as files rather than built
-# inline so it reads the way the Ossie fixtures do, and so it can be swapped for
-# a real export without touching the test.
-PALANTIR_SPEC = "retail_mini"
-
-
-def test_palantir_export_converts_all_the_way_to_pyrel(snapshot, fixtures_dir: Path):
-    """Palantir JSON in, executable PyRel out, through the Ossie hub.
-
-    Neither converter alone proves this works: `palantir_to_ossie` stops at the
-    Ossie model and this one starts from one. This is the only
-    test that runs a vendor format through the hub and out the other side, which
-    is the point of the hub-and-spoke arrangement.
-    """
-    ontology = PalantirToOssieConverter().convert(
-        PalantirParser().parse(fixtures_dir / "palantir" / PALANTIR_SPEC)
-    )
-
-    pyrel.Model.all_models.clear()
-    om = OssieToRelationalAIConverter.convert(ontology, table_provider=declared_table)
-
-    assert isinstance(om, OntologyModel)
-    # Both Palantir object types survived the round trip as concepts.
-    assert om.lookup_concept("Store") is not None
-    assert om.lookup_concept("Sale") is not None
-
-    source = to_pyrel(om.base_model().to_metamodel())
-    snapshot.assert_match(source, "palantir_chain.py")
-
-    namespace: dict = {}
-    pyrel.Model.all_models.clear()
-    exec(compile(source, "generated_palantir_chain.py", "exec"), namespace)
-    Typer().infer_model(namespace["m"].to_metamodel())
 
 
 def test_a_spec_without_datatypes_declares_string_columns(snapshot, behaviours_dir: Path):

@@ -24,17 +24,17 @@ from typing import Any
 
 import pytest
 
-from ossie_ontology.converter.palantir_to_ossie.converter import PalantirToOssieConverter
-from ossie_ontology.vendor.palantir.model import Status
+from ossie_palantir.palantir_to_ossie import PalantirToOssieConverter
+from ossie_palantir.model import Status
 
-from tests.palantir.converter.builders import (
+from tests.converter.builders import (
     dataset,
     many_to_one,
     object_type,
     prop,
 )
 
-from tests.palantir.converter.helpers import (
+from tests.converter.helpers import (
     _convert,
     _concept_names,
     _relationship_names,

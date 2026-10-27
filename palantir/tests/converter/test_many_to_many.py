@@ -26,7 +26,7 @@ import pytest
 
 from ossie_ontology.model import OssieOntology
 
-from tests.palantir.converter.builders import (
+from tests.converter.builders import (
     intermediary,
     many_to_many,
     many_to_one,
@@ -34,7 +34,7 @@ from tests.palantir.converter.builders import (
     prop,
 )
 
-from tests.palantir.converter.helpers import _convert, _relationship_names, _supertype_names
+from tests.converter.helpers import _convert, _relationship_names, _supertype_names
 
 
 def _tagging_export(*, widget_properties: Iterable[dict[str, Any]] = ()):

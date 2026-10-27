@@ -21,8 +21,8 @@
 hook points that keep a formula's raw text and nothing else. The two below fill
 them in: they lex and parse the expression into an AST and validate it against
 the ontology (and, for a mapping expression, against the semantic model's
-columns). They are what `OssieParser`, `SpecToOssieConverter` and
-`PalantirToOssieConverter` use unless a caller passes something else.
+columns). They are what `OssieParser` and `SpecToOssieConverter` (and the
+Palantir converter in `palantir/`) use unless a caller passes something else.
 
 They sit under `expr` rather than `parser` because that is all they depend on --
 `parser` imports `SpecToOssieConverter`, which would make a factory import from

@@ -19,11 +19,14 @@
 
 # Ossie Ontology Converters
 
-Converters between Ossie, Palantir, and Spec ontology formats.
+Converters between Ossie and Spec ontology formats.
+
+The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)) and the
+Ossie → RelationalAI converter ([`relationalai/`](../relationalai/README.md))
+are built on this package but live in their own directories.
 
 | Converter               | Direction |
 |-------------------------|-----------|
-| `palantir_to_ossie`     | Palantir ontology → Ossie model |
 | `ossie_to_spec`         | Ossie model → Spec YAML |
 | `spec_to_ossie`         | Spec YAML → Ossie model |
 
@@ -62,7 +65,6 @@ uv sync
 The package is importable as `ossie_ontology` after installation:
 
 ```python
-from ossie_ontology.converter.palantir_to_ossie.converter import PalantirToOssieConverter
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 ```
@@ -70,38 +72,7 @@ from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverte
 `OssieParser` parses and validates `derived_by` and `requires` expressions into
 an AST by default. To keep formulas as raw text instead, pass the plain
 `FormulaFactory` and `MappingFormulaFactory` from `ossie_ontology.model`.
-`SpecToOssieConverter` and `PalantirToOssieConverter` take the same argument and
-default the same way.
-
-## Scripts
-
-### `scripts/palantir_to_ossie.py`
-
-Converts a Palantir ontology export (a `.zip` archive or an already extracted folder containing a Palantir ontology JSON and a `data_sets` folder of one or more dataset spec JSON files) into an Ossie-compliant YAML representation, printed to stdout.
-
-**Usage:**
-
-```bash
-uv run python scripts/palantir_to_ossie.py path/to/palantir_export.zip
-# or an extracted folder:
-uv run python scripts/palantir_to_ossie.py path/to/palantir_export/
-```
-
-Warnings are written to stderr; the Ossie YAML is written to stdout.
-
-**Environment variables (optional):**
-
-| Variable                  | Default    | Description                                              |
-|---------------------------|------------|----------------------------------------------------------|
-| `SNOWFLAKE_DATABASE_NAME` | `PALANTIR` | Snowflake database name used to qualify table references |
-| `SNOWFLAKE_SCHEMA_NAME`   | `PALANTIR` | Snowflake schema name used to qualify table references   |
-
-If already set in your environment they will be picked up automatically. To override them for a single run:
-
-```bash
-SNOWFLAKE_DATABASE_NAME=MY_DB SNOWFLAKE_SCHEMA_NAME=MY_SCHEMA \
-  uv run python scripts/palantir_to_ossie.py path/to/palantir_export.zip
-```
+`SpecToOssieConverter` takes the same argument and defaults the same way.
 
 ## Running the tests
 

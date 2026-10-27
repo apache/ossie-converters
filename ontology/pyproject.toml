@@ -28,7 +28,7 @@ dev = [
 [project]
 name = "apache-ossie-ontology"
 version = "0.1.0"
-description = "Ossie ontology converters — Palantir → Ossie, Ossie → Spec, Spec → Ossie"
+description = "Ossie ontology converters — Ossie → Spec, Spec → Ossie, Ossie → RelationalAI"
 authors = [{ name = "RelationalAI", email = "support@relational.ai" }]
 requires-python = ">=3.11"
 readme = "README.md"

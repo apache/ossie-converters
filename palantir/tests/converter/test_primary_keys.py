@@ -25,14 +25,14 @@ from typing import Any, Iterable
 import pytest
 
 
-from tests.palantir.converter.builders import (
+from tests.converter.builders import (
     dataset,
     object_type,
     ot_rid,
     prop,
 )
 
-from tests.palantir.converter.helpers import _convert, _identifier_columns
+from tests.converter.helpers import _convert, _identifier_columns
 
 
 def _location_export(

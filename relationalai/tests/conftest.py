@@ -27,7 +27,6 @@ import pytest
 # Sorted by what a file is for, because the suites read them differently:
 #   behaviours/  one spec per behaviour, asserted directly rather than snapshotted
 #   validation/  formulas that must parse, or must fail with a stated message
-#   palantir/    a vendor export, in that vendor's own layout
 # Harness configuration is not a test input and lives in tests/config/.
 _TESTS_DIR = Path(__file__).resolve().parent
 _FIXTURES_DIR = _TESTS_DIR / "fixtures"

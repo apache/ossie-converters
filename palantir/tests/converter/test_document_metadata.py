@@ -23,8 +23,8 @@ from pathlib import Path
 
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
 
-from tests.palantir.converter.builders import dataset, object_type
-from tests.palantir.converter.helpers import _convert
+from tests.converter.builders import dataset, object_type
+from tests.converter.helpers import _convert
 
 
 def test_generated_semantic_model_has_core_document_version(tmp_path: Path):

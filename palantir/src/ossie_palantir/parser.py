@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ossie_ontology.common.utils import camel_to_snake
-from ossie_ontology.vendor.palantir.model import DataSet, DataSetColumn, DataSetModel, ObjectType, Ontology, DataType, \
+from ossie_palantir.model import DataSet, DataSetColumn, DataSetModel, ObjectType, Ontology, DataType, \
     ArrayDataType, Property, Status, ManyToOneRelation, Relation, ManyToManyRelation, IntermediaryRelation, DataSource
-from ossie_ontology.common.file_utils import iter_json_files_from_dir_in_zip, open_top_level_file_from_zip, \
+from ossie_palantir.file_utils import iter_json_files_from_dir_in_zip, open_top_level_file_from_zip, \
     iter_json_files_from_dir, get_top_level_json_file_from_dir, validate_dir
 
 
@@ -735,7 +735,7 @@ class PalantirParser:
           - A single-root folder with 'root/data_sets/' inside.
 
         Missing datasets is a warning rather than an error — see
-        :func:`ossie_ontology.common.file_utils.validate_dir` for why, and for
+        :func:`ossie_palantir.file_utils.validate_dir` for why, and for
         what it costs.
         """
         names = zf.namelist()

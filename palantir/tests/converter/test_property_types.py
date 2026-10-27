@@ -27,14 +27,14 @@ from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverte
 from ossie_ontology.model import DatasetField, OssieOntology
 from ossie_ontology.parser import OssieParser
 
-from tests.palantir.converter.builders import (
+from tests.converter.builders import (
     dataset,
     object_type,
     ot_rid,
     prop,
 )
 
-from tests.palantir.converter.helpers import (
+from tests.converter.helpers import (
     _convert,
     _mapped_relationship_names,
     _identifier_columns,
