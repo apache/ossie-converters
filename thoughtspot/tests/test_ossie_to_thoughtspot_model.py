@@ -830,6 +830,69 @@ class TestDialectSelection:
         assert result is None
         assert any(i["code"] == "TS-EXPR-NO-USABLE-DIALECT" for i in log.as_dicts())
 
+    def test_ossie_sql_2026_is_accepted_as_the_portable_sibling(self):
+        """`OSSIE_SQL_2026` is the specification's own portable dialect
+        (apache/ossie#439), and apache/ossie#450 established it parses
+        identically to ANSI_SQL. Reading only ANSI_SQL rejected documents this
+        converter can translate perfectly well: the field or metric was
+        dropped with an ERROR.
+
+        apache/ossie-converters#32 and #22 are the same defect in eight
+        sibling converters, each fixed by reading it as an ANSI_SQL
+        equivalent. ThoughtSpot was on neither list.
+        """
+        log = IssueLog()
+        result = to_thoughtspot_expression(
+            _dialects(("OSSIE_SQL_2026", "orders.amount")),
+            _resolve_field({"orders.amount": ("ORDERS", "Amount")}),
+            log, object_ref="field:f",
+        )
+        assert result == "[ORDERS::Amount]", result
+        assert not log.has_errors(), log.as_dicts()
+
+    def test_ansi_sql_still_wins_when_both_are_present(self):
+        # Preference order, not a free-for-all: a document carrying both gets
+        # the one this converter emits, so behaviour does not depend on dict
+        # ordering in the source document.
+        log = IssueLog()
+        result = to_thoughtspot_expression(
+            _dialects(("OSSIE_SQL_2026", "orders.other"), ("ANSI_SQL", "orders.amount")),
+            _resolve_field({"orders.amount": ("ORDERS", "Amount"),
+                            "orders.other": ("ORDERS", "Other")}),
+            log, object_ref="field:f",
+        )
+        assert result == "[ORDERS::Amount]", result
+
+    def test_an_unrelated_vendor_dialect_is_still_not_accepted(self):
+        # Widening the accept list must not make it accept anything. A
+        # DATABRICKS-only expression is still untranslatable -- this converter
+        # never re-renders one vendor dialect into another.
+        log = IssueLog()
+        result = to_thoughtspot_expression(
+            _dialects(("DATABRICKS", "orders.amount")),
+            _resolve_field({"orders.amount": ("ORDERS", "Amount")}),
+            log, object_ref="field:f",
+        )
+        assert result is None
+        assert any(i["code"] == "TS-EXPR-NO-USABLE-DIALECT" for i in log.as_dicts())
+
+    def test_the_emitted_portable_dialect_is_still_ansi_sql(self):
+        """The asymmetry is deliberate: strict in what we send, liberal in
+        what we accept. A survey of every `ossie -> vendor` direction in the
+        repository found omni and sigma drop a metric carrying only
+        `OSSIE_SQL_2026` (apache/ossie-converters#22), so emitting it would
+        lose metrics that ANSI_SQL delivers.
+        """
+        from ossie_thoughtspot.constants import (
+            PORTABLE_DIALECT, PORTABLE_DIALECTS_ACCEPTED,
+        )
+
+        assert PORTABLE_DIALECT == "ANSI_SQL"
+        assert PORTABLE_DIALECTS_ACCEPTED[0] == PORTABLE_DIALECT, (
+            "the emitted dialect must be preferred on the way back in"
+        )
+        assert "OSSIE_SQL_2026" in PORTABLE_DIALECTS_ACCEPTED
+
     def test_thoughtspot_is_never_re_rendered_into_ansi_sql_or_vice_versa(self):
         # Never re-render one dialect into another: an ANSI_SQL-only
         # expression the catalog cannot match structurally must not fall
