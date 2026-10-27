@@ -19,9 +19,9 @@
 
 # Apache Ossie Polaris Converter
 
-A two-way converter between [Ossie semantic models](https://github.com/apache/ossie/blob/main/core-spec/spec.md) and [Apache Polaris](https://polaris.apache.org/) catalogs.
+A two-way **Iceberg REST** bootstrap between [Ossie semantic models](https://github.com/apache/ossie/blob/main/core-spec/spec.md) and [Apache Polaris](https://polaris.apache.org/) catalogs.
 
-Apache Polaris is an open-source catalog for Apache Iceberg. This converter communicates with Polaris via the Iceberg REST Catalog API to import catalog metadata into Ossie format and export Ossie models back into Polaris.
+This spoke maps Ossie datasets to Iceberg tables (and back). It does **not** call Polaris's `/semantic-models` API, so metrics, relationships, `ai_context`, and computed field expressions are not stored in the catalog. Export prints a warning when those are present. Use this to create empty tables from a model, not as a lossless Ossie integration.
 
 ## Building
 
@@ -74,8 +74,9 @@ java -jar target/ossie-polaris-converter-0.1.0-SNAPSHOT.jar export \
 ```
 
 The Ossie model becomes a Polaris namespace, and each dataset becomes an Iceberg
-table. Legacy `semantic_model` wrappers are rejected; split older multi-model
-files and flatten each model before exporting.
+table. Metrics, relationships, `ai_context`, and computed field expressions are
+dropped with a warning on stderr. Legacy `semantic_model` wrappers are rejected;
+split older multi-model files and flatten each model before exporting.
 
 ### Options
 
@@ -115,6 +116,7 @@ files and flatten each model before exporting.
 | `field.datatype` | Schema column type |
 | Untyped `field.dimension.is_time: true` | `timestamptz` fallback type |
 | `dataset.description` | Table property `comment` |
+| `metrics`, `relationships`, `ai_context`, computed `field.expression` | Not written (stderr warning) |
 
 ### Data Types
 
