@@ -1251,6 +1251,21 @@ def convert_metric(
                     object_ref=object_ref,
                 )
                 aggregation, aggregation_raw = None, "NONE"
+                # Declining is only half the job. The source column carries no
+                # `aggregation` key, and absent means SUM to ThoughtSpot -- so
+                # emitting the metric unaggregated and saying nothing else puts
+                # the SUM straight back on the return trip, and the document in
+                # between disagrees with both ends of it. Recording the decline
+                # as a load-bearing NONE makes the returned TML say `NONE`
+                # explicitly, which is the one spelling all three agree on.
+                #
+                # This deliberately does NOT reproduce the source byte-for-byte:
+                # the source had no key and the return has `aggregation: NONE`.
+                # That is a repair, not a drift -- a MEASURE column ThoughtSpot
+                # would SUM over a VARCHAR is not a model that works, and the
+                # alternative is to hand back the same broken one. Raised by
+                # @jbonofre reviewing apache/ossie-converters#18.
+                explicit_none_is_load_bearing = True
         if aggregation is None:
             dialects = expression_entries(
                 field_ref, resolve, log, object_ref=object_ref, kind="metric"
@@ -1395,6 +1410,41 @@ def convert_metric(
         else:
             # A genuinely scalar expr: the column aggregation is load-bearing, so
             # compose it.
+            #
+            # When that aggregation is the IMPLICIT default rather than a stated
+            # one, this is the one place the summability guard above cannot
+            # follow. A formula declares no type anywhere in TML -- neither
+            # `columns[]` nor `formulas[]` has a `data_type` key -- so there is
+            # nothing to read, and nothing in this package can supply it: the
+            # forward catalog's `variant` types 37 of 146 constructs and
+            # describes the pass-through SQL op kind rather than a return type,
+            # and `expressions/reverse.py` carries no return types at all.
+            # So `sum ( concat ( [t::a] , [t::b] ) )` is composable here and
+            # cannot be ruled out the way a VARCHAR column can.
+            #
+            # Declining instead would be worse: a formula NEVER has a declared
+            # type, so "decline when untyped" means never defaulting any scalar
+            # formula, which contradicts the rule the default exists to serve.
+            # So it composes, and says that it did so without being able to
+            # check. Measured across 31 real models: all 128 formula-backed
+            # MEASURE columns carry an explicit aggregation, so this reports on
+            # nothing in that corpus -- it is a hole being closed honestly
+            # rather than a common case being made noisy. Raised by @jbonofre
+            # reviewing apache/ossie-converters#18.
+            if aggregation_is_default:
+                log.add(
+                    code="TS-METRIC-AGGREGATION-DEFAULT-UNTYPED-FORMULA",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"column {display_name!r} has no explicit aggregation, so "
+                        f"ThoughtSpot's implicit SUM default is composed around "
+                        f"its formula; a formula declares no datatype in TML, so "
+                        f"unlike a physical column this cannot be checked for "
+                        f"summability. If the expression does not return a "
+                        f"number, set an explicit aggregation on the column"
+                    ),
+                    object_ref=object_ref,
+                )
             metric_shape = METRIC_SHAPE_SCALAR_FORMULA_PLUS_AGGREGATION
             dialects = _compose_aggregate_entries(
                 expr, aggregation_raw, resolve, log, object_ref=object_ref
