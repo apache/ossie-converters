@@ -17,8 +17,8 @@
 
 """The full spoke-to-spoke path: Palantir -> Ossie -> RelationalAI.
 
-It lives here rather than in ontology/ because this package depends on
-apache-ossie-ontology, not the other way round. The module is skipped unless the
+It lives here rather than in ontology/ or relationalai/ because this package
+depends on them, not the other way round. The module is skipped unless the
 optional `relationalai` extra is installed:
 
     uv sync --extra relationalai
@@ -44,7 +44,7 @@ pyrel = pytest.importorskip(
 from relationalai.semantics.metamodel.pyrel_codegen import to_pyrel  # noqa: E402
 from relationalai.semantics.metamodel.typer import Typer  # noqa: E402
 
-from ossie_ontology.converter.ossie_to_relationalai import (  # noqa: E402
+from ossie_relationalai import (  # noqa: E402
     OntologyModel,
     OssieToRelationalAIConverter,
     declared_table,

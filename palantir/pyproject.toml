@@ -45,11 +45,11 @@ dependencies = [
 
 # Opt-in extra, only needed to run the Palantir -> Ossie -> RelationalAI test in
 # tests/test_relationalai.py. It installs the `relationalai` extra of
-# apache-ossie-ontology: read ontology/README.md, "The `relationalai` extra",
-# before installing it.
+# apache-ossie-relationalai: read relationalai/README.md, "The `relationalai`
+# extra", before installing it.
 [project.optional-dependencies]
 relationalai = [
-    "apache-ossie-ontology[relationalai]",
+    "apache-ossie-relationalai[relationalai]",
 ]
 
 [project.urls]
@@ -72,7 +72,9 @@ default-groups = [
     "dev"
 ]
 
-# apache-ossie-ontology is not published to PyPI; resolve it from the in-repo
-# package. Remove this block once it is published.
+# apache-ossie-ontology and apache-ossie-relationalai are not published to PyPI;
+# resolve them from the in-repo packages. Remove this block once they are
+# published.
 [tool.uv.sources]
 apache-ossie-ontology = { path = "../ontology", editable = true }
+apache-ossie-relationalai = { path = "../relationalai", editable = true }

@@ -116,8 +116,8 @@ uv run pytest
 `tests/test_relationalai.py` runs a Palantir export all the way through to
 RelationalAI (PyRel) source. It is skipped unless the optional `relationalai`
 extra is installed. That extra pulls in a proprietary SDK: read
-[the `relationalai` extra](../ontology/README.md#the-relationalai-extra) in the
-ontology README before installing it.
+[the `relationalai` extra](../relationalai/README.md#the-relationalai-extra) in
+the relationalai README before installing it.
 
 ```bash
 uv sync --extra relationalai
