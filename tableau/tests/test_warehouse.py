@@ -30,7 +30,7 @@ pytestmark = pytest.mark.unit
 
 
 def _bigquery_fixture() -> Path:
-    return Path(__file__).parent / "fixtures" / "synthetic_bigquery.tds"
+    return Path(__file__).parent / "fixtures" / "synthetic_bigquery" / "synthetic_bigquery.tds"
 
 DOC = OssieDocument.model_validate({
     "name": "m",
