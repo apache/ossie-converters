@@ -989,3 +989,180 @@ def test_a_dataset_scoped_metric_reading_another_dataset_is_reported():
         [("net", "SUM(amount) - SUM(returns.refund)")])
     assert metrics["net"]["tables"] == ["db.s.orders", "db.s.returns"]
     assert any("may read only its own dataset's fields" in w for w in warnings_)
+
+
+def _struct_field_model(metric_sql):
+    """`orders` has a struct field `customer`; a second dataset is also named
+    `customer`. The metric is declared on `orders`."""
+    def field(name):
+        return {"name": name,
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
+
+    ossie = {
+        "version": "0.2.0.dev0",
+        "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders",
+             "fields": [field("customer"), field("amount")],
+             "metrics": [{"name": "buyers", "expression": {"dialects": [
+                 {"dialect": "ANSI_SQL", "expression": metric_sql}]}}]},
+            {"name": "customer", "source": "db.s.customer", "fields": [field("id")]},
+        ],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    return by_name(solid_model_of(solid)["metrics"])["buyers"], warnings_
+
+
+def test_a_scoped_metrics_struct_path_reads_its_own_field_not_a_same_named_dataset():
+    """Metric Scoping rule 1: a dataset-scoped metric reads only its own dataset's
+    fields, so `customer.id` is a field access into `orders.customer`."""
+    metric, warnings_ = _struct_field_model("COUNT(DISTINCT customer.id)")
+    assert metric == {"name": "buyers", "expression": "COUNT(DISTINCT customer.id)",
+                      "tables": ["db.s.orders"]}
+    assert not [w for w in warnings_ if "buyers" in w], warnings_
+
+
+def test_a_scoped_metric_qualified_by_its_own_dataset_still_reads_the_struct():
+    metric, _ = _struct_field_model("COUNT(DISTINCT orders.customer.id)")
+    assert metric["expression"] == "COUNT(DISTINCT customer.id)"
+    assert metric["tables"] == ["db.s.orders"]
+
+
+def test_a_scoped_metric_keeps_a_qualifier_its_own_dataset_would_shadow():
+    """Stripping `returns.` would leave `SUM(amount) - SUM(amount)`, since the
+    scoped dataset has an `amount` too."""
+    def field(name):
+        return {"name": name, "datatype": "Decimal",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
+
+    ossie = {
+        "version": "0.2.0.dev0",
+        "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders", "fields": [field("amount")],
+             "metrics": [{"name": "net", "expression": {"dialects": [
+                 {"dialect": "ANSI_SQL",
+                  "expression": "SUM(amount) - SUM(returns.amount)"}]}}]},
+            {"name": "returns", "source": "db.s.returns", "fields": [field("amount")]},
+        ],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    metric = by_name(solid_model_of(solid)["metrics"])["net"]
+    assert metric["expression"] == "SUM(amount) - SUM(returns.amount)"
+    assert metric["tables"] == ["db.s.orders", "db.s.returns"]
+    assert any("'orders.net': the dataset qualifiers could not be removed safely "
+               "(ambiguous)" in w for w in warnings_), warnings_
+
+
+def test_a_qualifier_the_stashed_tables_would_shadow_is_kept():
+    """Import stashes `tables` for a metric whose expression does not name them all.
+    If `orders.amount` is then written in Apache Ossie, stripping it would leave an
+    `amount` that `returns`, also bound, has as well."""
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump({
+        "semantic_model": {
+            "name": "m",
+            "tables": [
+                {"name": "db.s.orders", "facts": [{"name": "amount", "type": "NUMBER"}]},
+                {"name": "db.s.returns", "facts": [{"name": "amount", "type": "NUMBER"}]},
+            ],
+            "metrics": [{"name": "rev", "expression": "SUM(amount)",
+                         "tables": ["db.s.orders", "db.s.returns"]}],
+        }}), dialect="SNOWFLAKE")
+    model = yaml.safe_load(ossie)
+    metric = model["metrics"][0]
+    assert metric["expression"]["dialects"][0]["expression"] == "SUM(amount)"
+    metric["expression"]["dialects"][0]["expression"] = "SUM(orders.amount)"
+
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
+    exported = by_name(solid_model_of(solid)["metrics"])["rev"]
+    assert exported["expression"] == "SUM(orders.amount)"
+    assert exported["tables"] == ["db.s.orders", "db.s.returns"]
+    assert any("'rev': the dataset qualifiers could not be removed safely" in w
+               for w in warnings_), warnings_
+
+
+# --- query-backed sources -----------------------------------------------------------
+
+
+_QUERY = "SELECT * FROM public.users WHERE deleted_at IS NULL"
+
+
+def _with_query_source(**extra):
+    def field(name):
+        return {"name": name, "datatype": "Decimal",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
+
+    ossie = {
+        "version": "0.2.0.dev0",
+        "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders",
+             "fields": [field("user_id"), field("amount")]},
+            {"name": "users", "source": _QUERY, "primary_key": ["id"],
+             "fields": [field("id")], **extra},
+        ],
+        "relationships": [{"name": "orders_users", "from": "orders", "to": "users",
+                           "from_columns": ["user_id"], "to_columns": ["id"]}],
+        "metrics": [
+            {"name": "revenue", "expression": {"dialects": [
+                {"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}]}},
+            {"name": "buyers", "expression": {"dialects": [
+                {"dialect": "ANSI_SQL", "expression": "COUNT(DISTINCT users.id)"}]}},
+        ],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    return solid_model_of(solid), warnings_
+
+
+def test_a_query_backed_dataset_is_dropped_with_a_warning():
+    model, warnings_ = _with_query_source()
+    assert [t["name"] for t in model["tables"]] == ["db.s.orders"]
+    assert any("'users': source is a SQL query, not a table" in w for w in warnings_)
+
+
+def test_a_relationship_to_a_query_backed_dataset_is_dropped_with_it():
+    model, warnings_ = _with_query_source()
+    assert "relationships" not in model
+    assert any("'orders_users' joins users, whose source is a SQL query" in w
+               for w in warnings_), warnings_
+
+
+def test_a_metric_reading_a_query_backed_dataset_is_dropped_with_it():
+    model, warnings_ = _with_query_source()
+    assert list(by_name(model["metrics"])) == ["revenue"]
+    assert any("'buyers' reads users, whose source is a SQL query" in w
+               for w in warnings_), warnings_
+
+
+def test_a_query_backed_datasets_own_metrics_are_dropped_with_it():
+    model, warnings_ = _with_query_source(metrics=[
+        {"name": "n", "expression": {"dialects": [
+            {"dialect": "ANSI_SQL", "expression": "COUNT(id)"}]}}])
+    assert "n" not in by_name(model["metrics"])
+    assert any("the dataset and its 1 dataset-scoped metric were dropped" in w
+               for w in warnings_), warnings_
+
+
+@pytest.mark.parametrize("source", [
+    "db.s.orders", "orders", '"DB"."S"."ORDERS"', "db.s.order", "c.s.select"])
+def test_a_table_name_is_not_taken_for_a_query(source):
+    ossie = {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [{"name": "t", "source": source, "fields": [
+            {"name": "x", "expression": {"dialects": [
+                {"dialect": "ANSI_SQL", "expression": "x"}]}}]}],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert solid_model_of(solid)["tables"][0]["name"] == source
+    assert not [w for w in warnings_ if "SQL query" in w]
+
+
+def test_a_model_whose_every_source_is_a_query_is_rejected():
+    ossie = {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [{"name": "u", "source": _QUERY, "fields": [
+            {"name": "x", "expression": {"dialects": [
+                {"dialect": "ANSI_SQL", "expression": "x"}]}}]}],
+    }
+    with pytest.raises(ConversionError, match="Every dataset's source is a SQL query"):
+        convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))

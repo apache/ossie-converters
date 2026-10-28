@@ -56,6 +56,7 @@ from ossie_solid._common import (
     SUPPORTED_DIALECTS,
     ConversionError,
 )
+from ossie_solid.expressions import is_query
 
 # Directory names that hold another converter's test data; top-level directories that
 # are not another converter (the spec submodule, this one); and build output.
@@ -132,16 +133,20 @@ def test_another_vendors_model_converts_to_a_well_formed_solid_model(path):
 
     assert model["name"]
     assert model["tables"], "a Solid model needs at least one table"
+    named = {table["name"] for table in model["tables"]}
     for table in model["tables"]:
         assert table["name"], "every Solid table needs its fully-qualified name"
+        # A query-backed dataset (Cube writes some) has no Solid table to name.
+        assert not is_query(table["name"], None), table["name"]
         # Solid always emits `facts`, as [] when a table has none.
         assert "facts" in table
         for column in (table.get("dimensions") or []) + table["facts"]:
             assert column["name"]
     for metric in model.get("metrics") or []:
         assert metric["name"] and metric["expression"]
+        assert set(metric.get("tables") or []) <= named, metric
     for relationship in model.get("relationships") or []:
-        assert relationship["left_table"] and relationship["right_table"]
+        assert {relationship["left_table"], relationship["right_table"]} <= named
         keys = relationship["join_keys"]
         assert len(keys["left"]) == len(keys["right"])
 
