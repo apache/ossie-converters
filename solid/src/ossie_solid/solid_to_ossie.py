@@ -159,6 +159,7 @@ def _convert_model(solid, explicit_dialect, model_name):
     relationships = _convert_relationships(
         as_list(solid.get("relationships"), "semantic_model: 'relationships'"),
         by_source)
+    _declare_key_columns(datasets, relationships, resolved_dialect)
     metrics = _convert_metrics(
         as_list(solid.get("metrics"), "semantic_model: 'metrics'"),
         by_source, datasets, resolved_dialect)
@@ -218,6 +219,36 @@ def _convert_model(solid, explicit_dialect, model_name):
             stash[key] = value
     write_stash(model, stash)
     return model
+
+
+def _declare_key_columns(datasets, relationships, dialect):
+    """Declare as a field every key or join column a Solid table does not list.
+
+    Apache Ossie keys and join columns name fields of their dataset, but a Solid table
+    may key or join on a column it does not list. Each one is added as a field reading
+    that column, so the model resolves, and marked so export leaves it out again.
+    """
+    by_name = {d["name"]: d for d in datasets}
+    used = {d["name"]: list(d.get("primary_key") or []) for d in datasets}
+    for relationship in relationships:
+        used[relationship["from"]] += relationship["from_columns"]
+        used[relationship["to"]] += relationship["to_columns"]
+    for name, columns in used.items():
+        dataset = by_name[name]
+        declared = {f["name"].casefold() for f in dataset.get("fields") or []}
+        missing = [c for c in dict.fromkeys(columns) if c.casefold() not in declared]
+        for column in missing:
+            field = {"name": column, "expression": {"dialects": [
+                {"dialect": dialect, "expression": column_reference(column, dialect)}]}}
+            write_stash(field, {"undeclared": True})
+            dataset.setdefault("fields", []).append(field)
+        if missing:
+            warn("dataset", f"'{name}' keys or joins on {', '.join(missing)}, which the "
+                            f"Solid table does not list; Apache Ossie needs every key and "
+                            f"join column to be a field, so "
+                            f"{'it was' if len(missing) == 1 else 'they were'} added as "
+                            f"one, and export leaves "
+                            f"{'it' if len(missing) == 1 else 'them'} out again")
 
 
 def _all_raw_types(tables):

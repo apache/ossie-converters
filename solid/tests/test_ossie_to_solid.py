@@ -1143,9 +1143,16 @@ def test_a_query_backed_datasets_own_metrics_are_dropped_with_it():
                for w in warnings_), warnings_
 
 
-@pytest.mark.parametrize("source", [
-    "db.s.orders", "orders", '"DB"."S"."ORDERS"', "db.s.order", "c.s.select"])
-def test_a_table_name_is_not_taken_for_a_query(source):
+@pytest.mark.parametrize(("source", "table"), [
+    ("db.s.orders", "db.s.orders"),
+    ("orders", "orders"),
+    # Solid names a table by its unquoted catalog.schema.table.
+    ('"DB"."S"."ORDERS"', "DB.S.ORDERS"),
+    ("`ecommerce`.`sales`.`order_items`", "ecommerce.sales.order_items"),
+    ("db.s.order", "db.s.order"),
+    ("c.s.select", "c.s.select"),
+])
+def test_a_table_name_is_not_taken_for_a_query(source, table):
     ossie = {
         "version": "0.2.0.dev0", "name": "m",
         "datasets": [{"name": "t", "source": source, "fields": [
@@ -1153,7 +1160,7 @@ def test_a_table_name_is_not_taken_for_a_query(source):
                 {"dialect": "ANSI_SQL", "expression": "x"}]}}]}],
     }
     solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
-    assert solid_model_of(solid)["tables"][0]["name"] == source
+    assert solid_model_of(solid)["tables"][0]["name"] == table
     assert not [w for w in warnings_ if "SQL query" in w]
 
 
@@ -1319,3 +1326,89 @@ def test_an_untyped_aggregate_field_is_still_a_table_scoped_metric():
         _marked_model({"name": "revenue", "expression": _ansi("SUM(amount)")})))
     fact = solid_model_of(solid)["tables"][0]["facts"][0]
     assert fact == {"name": "revenue", "expression": "SUM(amount)"}
+
+
+# --- every name must resolve ----------------------------------------------------------
+
+
+def _keyed_model(primary_key=("id",), from_columns=("manager_id",)):
+    def field(name):
+        return {"name": name, "datatype": "Integer", "expression": _ansi(name)}
+
+    return {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [{"name": "employees", "source": "db.s.employees",
+                      "primary_key": list(primary_key),
+                      "fields": [field("id"), field("manager_id")]}],
+        "relationships": [{"name": "manager", "from": "employees", "to": "employees",
+                           "from_columns": list(from_columns), "to_columns": ["id"]}],
+    }
+
+
+def test_a_primary_key_naming_an_undeclared_field_is_dropped_with_a_warning():
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid,
+                                       yaml.safe_dump(_keyed_model(primary_key=["idd"])))
+    assert "primary_key" not in solid_model_of(solid)["tables"][0]
+    assert any("'employees': primary_key names idd, which is not a declared field"
+               in w for w in warnings_), warnings_
+
+
+def test_a_join_on_an_undeclared_field_is_dropped_with_a_warning():
+    solid, warnings_ = convert_quietly(
+        convert_ossie_to_solid, yaml.safe_dump(_keyed_model(from_columns=["GHOST"])))
+    assert "relationships" not in solid_model_of(solid)
+    assert any("'manager' joins on employees.GHOST, which is not a declared field"
+               in w for w in warnings_), warnings_
+
+
+def test_declared_keys_match_ignoring_case_as_the_spec_validator_does():
+    solid, warnings_ = convert_quietly(
+        convert_ossie_to_solid, yaml.safe_dump(_keyed_model(primary_key=["ID"])))
+    model = solid_model_of(solid)
+    assert model["tables"][0]["primary_key"] == "ID"
+    assert model["relationships"]
+    assert not [w for w in warnings_ if "declared field" in w]
+
+
+@pytest.mark.parametrize("source", ["orders", "public.orders"])
+def test_a_source_that_is_not_catalog_schema_table_is_reported(source):
+    ossie = {"version": "0.2.0.dev0", "name": "m", "datasets": [
+        {"name": "orders", "source": source,
+         "fields": [{"name": "x", "datatype": "Integer", "expression": _ansi("x")}]}]}
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert solid_model_of(solid)["tables"][0]["name"] == source
+    assert any(f"source {source} is not a catalog.schema.table name" in w
+               for w in warnings_), warnings_
+
+
+def test_two_datasets_over_one_table_become_one_solid_table():
+    """A date table joined twice under two names, as LookML and Cube models do."""
+    def field(name):
+        return {"name": name, "datatype": "Integer", "expression": _ansi(name)}
+
+    ossie = {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders",
+             "fields": [field("order_date_id"), field("ship_date_id")]},
+            {"name": "order_date", "source": "db.s.date_dim", "primary_key": ["date_id"],
+             "fields": [field("date_id"), field("year")]},
+            {"name": "ship_date", "source": "DB.S.DATE_DIM", "primary_key": ["date_id"],
+             "fields": [field("date_id"), field("quarter")]},
+        ],
+        "relationships": [
+            {"name": "ordered", "from": "orders", "to": "order_date",
+             "from_columns": ["order_date_id"], "to_columns": ["date_id"]},
+            {"name": "shipped", "from": "orders", "to": "ship_date",
+             "from_columns": ["ship_date_id"], "to_columns": ["date_id"]},
+        ],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    model = solid_model_of(solid)
+    assert [t["name"] for t in model["tables"]] == ["db.s.orders", "db.s.date_dim"]
+    assert [c["name"] for c in model["tables"][1]["facts"]] == [
+        "date_id", "year", "quarter"]
+    assert [r["join_keys"]["left"] for r in model["relationships"]] == [
+        ["order_date_id"], ["ship_date_id"]]
+    assert any("'ship_date' reads the same table as 'order_date', DB.S.DATE_DIM; Solid "
+               "lists a table once" in w for w in warnings_), warnings_
