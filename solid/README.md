@@ -92,27 +92,29 @@ solid_yaml = convert_ossie_to_solid(ossie_yaml_str, model_name="sales")
 
 ## Dialect resolution
 
-**Solid's YAML does not record which warehouse a model came from.** The source system is
-held on the asset row in Solid's own database and is dropped when the YAML is rendered,
-but Apache Ossie requires a dialect on every expression. The converter resolves one in
-this order:
+Apache Ossie requires a dialect on every expression. Since October 2026 Solid's export
+names its warehouse as `source_system`; an older export does not, so the converter
+resolves the dialect in this order:
 
 1. **`--dialect`**, when given. Always wins.
-2. **Inference from the column type vocabulary.** Solid copies each column's `type` out
-   of the catalog, so among the warehouses with an Apache Ossie dialect the names
-   identify it: `NUMBER`/`TEXT` mean Snowflake, `LONG`/`MAP`/`BIGINT` mean Databricks,
-   `INT64`/`FLOAT64`/`BOOL` mean BigQuery. Only names one of the three alone reports
-   vote; shared ones (`STRING`, `BOOLEAN`, `DATE`, `TIMESTAMP_NTZ`, `VARIANT`,
-   `GEOGRAPHY`) are ignored.
-3. **`ANSI_SQL`**, with a warning, when nothing votes, two warehouses tie, or a type name
+2. **`source_system`**, when the export has one: `snowflake`, `databricks` and
+   `big_query` map to their dialects. Any other warehouse (`starburst`, `redshift`,
+   `postgres`, `athena`, …) has no Apache Ossie dialect this converter writes, so it reads
+   as `ANSI_SQL`, with a warning naming it.
+3. **Inference from the column type vocabulary**, for an export without
+   `source_system`. Solid copies each column's `type` out of the catalog, so among the
+   warehouses with an Apache Ossie dialect the names identify it: `NUMBER`/`TEXT` mean
+   Snowflake, `LONG`/`MAP` mean Databricks, `INT64`/`FLOAT64`/`BOOL` mean BigQuery. Only
+   names one of the three alone reports vote; shared ones (`STRING`, `BOOLEAN`, `DATE`,
+   `TIMESTAMP_NTZ`, `VARIANT`, `GEOGRAPHY`) are ignored, and so are `BIGINT`, `SMALLINT`
+   and `TINYINT`, which Postgres, Redshift, Trino and Athena report too.
+4. **`ANSI_SQL`**, with a warning, when nothing votes, two warehouses tie, or a type name
    only Oracle or SQL Server reports (`VARCHAR2`, `DATETIME2`, `UNIQUEIDENTIFIER` …)
    appears.
 
-Solid also reads from warehouses Apache Ossie has no dialect for — Oracle, SQL Server,
-Teradata, Starburst, Fabric, Athena and Vertica. Oracle and SQL Server are recognized
-and fall back to `ANSI_SQL`; for the others inference may pick a dialect whose type
-names they share (Starburst's `BIGINT` reads as Databricks), so pass `--dialect
-ANSI_SQL` explicitly.
+For an older export from a warehouse Apache Ossie has no dialect for (Teradata,
+Starburst, Fabric, Athena, Vertica), inference can still be misled by a type name that
+warehouse shares with one of the three, so pass `--dialect ANSI_SQL` explicitly.
 
 The resolved dialect is recorded in `custom_extensions[SOLID]`, so an export reads
 expressions back in the dialect they were written in without being told again.
@@ -149,7 +151,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 | `description` | `model_llm_description` | Import falls back to `business_context.model_description` when the model has no LLM description, and stashes both. An edit made in Apache Ossie replaces whichever one `description` was written from. |
 | `ai_context.instructions` | `business_context.custom_instructions` and the root `custom_instructions` list | Solid holds free text in `business_context` and, in its structured form, a list of titled entries, each enabled or not and optionally scoped by a condition and to catalog assets. Import renders the free text and then each enabled entry (title, condition, assets, content) into one text, resolving Solid's `@<assetlink …>` markup to the display names it carries, and stashes the originals, so an export restores both and the live catalog references. If the instructions were edited in Apache Ossie, the edited text is used instead, as free text. |
 | `ai_context.examples` | `business_context.business_questions` | |
-| `custom_extensions[SOLID]` | `business_context.model_description`, the `custom_instructions` entries, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. |
+| `custom_extensions[SOLID]` | `business_context.model_description`, the `custom_instructions` entries, `version_number`, `source_system`, `target_system`, `model_llm_short_description`, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. |
 
 ### Datasets
 
@@ -501,6 +503,6 @@ And two are **format-level**:
   unqualified, which is what `datasets[].metrics` (added in apache/ossie#591) is for.
   Import still writes model-scoped metrics, which every consumer reads, while support
   for the dataset-scoped form spreads across the other converters.
-- **Solid's export does not record its source warehouse**, which is why the dialect has to
-  be inferred. Adding it to the export would make the format self-describing; the
-  converter would read it first and keep inference only as a fallback for existing files.
+- **Solid exports from before October 2026 do not record their source warehouse**, so
+  for those the dialect is still inferred from the column types. Newer exports carry
+  `source_system`, which the converter reads first.

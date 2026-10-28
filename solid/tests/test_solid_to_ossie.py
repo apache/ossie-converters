@@ -29,6 +29,7 @@ from conftest import (
     field_of,
     fixture,
     model_of,
+    normalized_yaml,
     solid_model_of,
     stash_of,
 )
@@ -495,3 +496,58 @@ def test_a_list_or_mapping_in_a_text_slot_is_rejected_rather_than_dropped(key):
     solid["semantic_model"]["tables"][0]["dimensions"][0][key] = {"name": "DATE"}
     with pytest.raises(ConversionError, match=f"'{key}' must be text"):
         convert_solid_to_ossie(yaml.safe_dump(solid))
+
+
+# --- fields solid-server added in October 2026 --------------------------------------
+
+
+def _current_export(source_system="databricks", types=None):
+    """databricks_solid.yaml as solid-server writes it since RND-9227, RND-9268 and
+    RND-9478: with `version_number`, `source_system`, `target_system` and
+    `model_llm_short_description`, in the template's key order."""
+    model = yaml.safe_load(fixture("databricks_solid.yaml"))["semantic_model"]
+    if types:
+        for table in model["tables"]:
+            for column in (table.get("dimensions") or []) + (table.get("facts") or []):
+                if column.get("type"):
+                    column["type"] = types.get(column["type"], column["type"])
+    ordered = {"name": model.pop("name"), "version_number": 0,
+               "source_system": source_system, "target_system": "solid"}
+    for key, value in model.items():
+        ordered[key] = value
+        if key == "model_llm_description":
+            ordered["model_llm_short_description"] = "Orders and their customers."
+    return yaml.safe_dump({"semantic_model": ordered}, sort_keys=False)
+
+
+def test_a_current_solid_export_round_trips_exactly():
+    solid = _current_export()
+    ossie, import_warnings = convert_quietly(convert_solid_to_ossie, solid)
+    back, _ = convert_quietly(convert_ossie_to_solid, ossie)
+    assert not [w for w in import_warnings if "not part of a Solid" in w]
+    assert normalized_yaml(back) == normalized_yaml(solid)
+    assert list(solid_model_of(back))[:4] == [
+        "name", "version_number", "source_system", "target_system"]
+
+
+def test_source_system_sets_the_dialect():
+    """`source_system` names the warehouse, so it wins over what the types suggest."""
+    ossie, warnings_ = convert_quietly(
+        convert_solid_to_ossie, _current_export(source_system="snowflake"))
+    assert stash_of(model_of(ossie))["dialect"] == "SNOWFLAKE"
+    assert not [w for w in warnings_ if "infer" in w]
+
+
+def test_a_source_system_with_no_ossie_dialect_reads_as_ansi_sql():
+    """A Starburst model's BIGINT and TIMESTAMP are Trino's, not Databricks': no
+    Databricks label, and a TIMESTAMP with no time zone."""
+    solid = _current_export(source_system="starburst",
+                            types={"LONG": "bigint", "TIMESTAMP": "timestamp(3)"})
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, solid)
+    model = model_of(ossie)
+    assert stash_of(model)["dialect"] == "ANSI_SQL"
+    assert any("comes from starburst, which has no Apache Ossie dialect" in w
+               for w in warnings_), warnings_
+    datatypes = {f["datatype"] for d in model["datasets"] for f in d["fields"]
+                 if f.get("datatype") in ("DateTime", "DateTimeTz")}
+    assert datatypes == {"DateTime"}
