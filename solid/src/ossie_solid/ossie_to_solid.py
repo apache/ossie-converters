@@ -54,6 +54,7 @@ from ._common import (
     readable_dialects,
     render_custom_instructions,
     require_str,
+    split_source,
     string_list,
     warn,
     warn_unknown_keys,
@@ -246,13 +247,20 @@ def _convert_model(ossie, explicit_dialect, model_name):
     # column's name, its SQL text)}: keys, joins and metrics name the field, Solid the
     # column.
     aliases = {}
-    solid["tables"] = []
+    solid["tables"], by_table = [], {}
     for dataset in datasets:
         if dataset["name"] in dropped:
             continue
+        # Relationships and metrics name a dataset's table by this too, through by_name.
+        dataset["source"] = _solid_table_name(dataset)
         table, aliases[dataset["name"]] = _convert_dataset(
             dataset, resolved_dialect, recorded_dialect, marks_dimensions)
-        solid["tables"].append(table)
+        first = by_table.get(table["name"].lower())
+        if first is None:
+            by_table[table["name"].lower()] = (dataset["name"], table)
+            solid["tables"].append(table)
+        else:
+            _merge_table(first, dataset["name"], table)
 
     # Solid holds every metric in one model-level list, binding each to its tables, so a
     # dataset-scoped metric joins it bound to the dataset that declares it.
@@ -412,6 +420,44 @@ def _warn_foreign_extensions(obj, scope, name):
                     f"equivalent and were dropped")
 
 
+def _solid_table_name(dataset):
+    """The Solid name of a dataset's table: its `source` as an unquoted
+    `catalog.schema.table`, which is how Solid names a table in its catalog. A source
+    with fewer parts cannot be found there, and is reported."""
+    source = dataset["source"]
+    parts = split_source(source)
+    if len(parts) < 3:
+        warn("dataset", f"'{dataset['name']}': source {source} is not a "
+                        f"catalog.schema.table name, which Solid needs to find the "
+                        f"table in the warehouse")
+    return ".".join(parts)
+
+
+def _merge_table(first, name, table):
+    """Fold `table`, converted from dataset `name`, into `first`, a (dataset name,
+    table) already converted for the same Solid table.
+
+    Apache Ossie may declare one table as two datasets, as with a date table joined
+    twice under different names; Solid lists a table once. Columns the second adds
+    are kept; its table-level description, key and synonyms are the first's.
+    """
+    first_name, kept = first
+    columns = {c["name"].lower() for c in (kept.get("dimensions") or []) + kept["facts"]}
+    for kind in ("dimensions", "facts"):
+        extra = [c for c in table.get(kind) or [] if c["name"].lower() not in columns]
+        columns.update(c["name"].lower() for c in extra)
+        if extra:
+            kept.setdefault(kind, []).extend(extra)
+    # Solid writes `dimensions` before `facts`.
+    kept["facts"] = kept.pop("facts")
+    differs = [key for key in ("description", "manual_description", "synonyms",
+                               "primary_key") if table.get(key) != kept.get(key)]
+    warn("dataset", f"'{name}' reads the same table as '{first_name}', "
+                    f"{table['name']}; Solid lists a table once, so its columns were "
+                    f"merged into it"
+                    + (f", and its own {', '.join(differs)} dropped" if differs else ""))
+
+
 def _query_datasets(datasets, dialect):
     """The names of the datasets whose `source` is a SQL query, not a table.
 
@@ -476,7 +522,12 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
             (dimensions if is_dimension else facts).append(column)
 
     primary_key = string_list(dataset.get("primary_key"), f"dataset '{name}': primary_key")
-    if primary_key:
+    undeclared = _undeclared(primary_key, fields)
+    if undeclared:
+        warn("dataset", f"'{name}': primary_key names {', '.join(undeclared)}, which "
+                        f"{'is not a declared field' if len(undeclared) == 1 else 'are not declared fields'}"
+                        f" of the dataset, so the key was dropped")
+    elif primary_key:
         # Solid stores a composite key as one comma-joined scalar.
         table["primary_key"] = PK_SEPARATOR.join(
             _column_names(primary_key, aliases))
@@ -497,6 +548,14 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     return table, aliases
 
 
+def _undeclared(names, fields):
+    """The names in `names` that are not one of `fields`, a dataset's field mappings.
+    Keys and join columns name fields; like the spec's validator, ignoring case."""
+    declared = {f["name"].casefold() for f in fields
+                if isinstance(f, dict) and isinstance(f.get("name"), str)}
+    return [n for n in dict.fromkeys(names) if n.casefold() not in declared]
+
+
 def _column_names(fields, aliases):
     """The Solid column names of `fields`, a list of field names: a field that is an
     alias for another column (see _convert_field) names that column."""
@@ -508,6 +567,10 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     name = require_str(field, "name", f"field in '{dataset_name}'")
     warn_unknown_keys(field, _FIELD_KEYS, "field", f"'{dataset_name}.{name}'", _OSSIE)
     stash = read_stash(field, f"field '{dataset_name}.{name}'")
+    if stash.get("undeclared") is True:
+        # A key or join column the Solid table did not list, declared on import only so
+        # the Apache Ossie model resolves (see solid_to_ossie._declare_key_columns).
+        return None, False, None
     _warn_foreign_extensions(field, "field", f"{dataset_name}.{name}")
     solid_name = _solid_name(name, stash, "field", f"{dataset_name}.{name}")
 
@@ -771,6 +834,16 @@ def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=
         if gone:
             warn("relationship", f"'{name}' joins {' and '.join(gone)}, whose source is "
                                  f"a SQL query Solid cannot hold, so it was dropped")
+            continue
+        undeclared = [
+            f"{end}.{column}"
+            for end, columns in ((source, source_columns), (target, target_columns))
+            for column in _undeclared(columns, by_name[end].get("fields") or [])
+        ]
+        if undeclared:
+            warn("relationship", f"'{name}' joins on {', '.join(undeclared)}, which "
+                                 f"{'is not a declared field' if len(undeclared) == 1 else 'are not declared fields'}"
+                                 f", so it was dropped")
             continue
 
         stash = read_stash(relationship, f"relationship '{name}'")

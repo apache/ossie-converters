@@ -157,7 +157,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 
 | Apache Ossie | Solid | Notes |
 |---|---|---|
-| `dataset.source` | `tables[].name` | Solid names a table by its `catalog.schema.table`. Import rejects a table listed twice. Apache Ossie also lets `source` be a SQL query; Solid's tables come from the warehouse catalog, so export drops a query-backed dataset with a warning, along with its dataset-scoped metrics and every relationship and metric that reads it. |
+| `dataset.source` | `tables[].name` | Solid names a table by its `catalog.schema.table`. Import rejects a table listed twice. On export a quoted source (`` `ecommerce`.`orders` ``, `"DB"."S"."T"`) becomes the unquoted name Solid uses, and one with fewer than three parts is reported. Two datasets over one table (a date table joined twice) become one Solid table, the second's columns merged in, with a warning. Apache Ossie also lets `source` be a SQL query; Solid's tables come from the warehouse catalog, so export drops a query-backed dataset with a warning, along with its dataset-scoped metrics and every relationship and metric that reads it. |
 | `dataset.name` | — | Derived on import from the last part of the FQN, widening to `schema_table` and then the whole FQN if a shorter form is taken. Apache Ossie dataset names double as expression qualifiers, so a dotted name is not usable, and names are kept unique ignoring case, as an unquoted SQL qualifier is. |
 | `description` | `description` | Solid's AI-written description. |
 | `ai_context.instructions` | `manual_description` | Solid's human-written annotation. |
@@ -217,6 +217,13 @@ formulas that name the field read the column instead. If another field already i
 column, the alias is dropped and its references read the column. On Snowflake and in
 ANSI SQL a quoted name is case-sensitive, so `"AMOUNT"` is the field `amount` but
 `"Amount"` is not.
+
+Apache Ossie **keys and join columns must name declared fields** (enforced by the spec's
+validator since apache/ossie#649), matched ignoring case. A Solid table may key or join on
+a column it does not list; import declares each such column as a field, with a warning,
+and marks it so export leaves it out again. On export, a primary key or relationship that
+names an undeclared field is dropped with a warning rather than pointing Solid at a
+column that may not exist.
 
 A Solid table **may declare a column name twice**, where Apache Ossie needs field names
 unique within a dataset. Import renames the duplicate (`status` → `status_2`) with a

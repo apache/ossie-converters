@@ -583,3 +583,50 @@ def test_a_metric_import_cannot_qualify_safely_is_reported_and_round_trips(
     assert any(f"'x' {reported}" in w for w in warnings_), warnings_
     assert back == {"name": "x", "expression": expression,
                     "tables": ["shop.sales.orders"]}
+
+
+# --- key and join columns a Solid table does not list ---------------------------------
+
+
+_UNLISTED_KEYS = {"semantic_model": {"name": "m", "tables": [
+    {"name": "db.s.orders", "primary_key": "order_uuid",
+     "facts": [{"name": "amount", "type": "NUMBER"}]},
+    {"name": "db.s.customers", "primary_key": "id",
+     "dimensions": [{"name": "id", "type": "NUMBER"}], "facts": []},
+], "relationships": [{"left_table": "db.s.orders", "right_table": "db.s.customers",
+                      "join_keys": {"left": ["cust_fk"], "right": ["id"]}}]}}
+
+
+def test_a_key_or_join_column_a_table_does_not_list_is_declared_as_a_field():
+    """Apache Ossie keys and join columns name fields (apache/ossie#649 validates it),
+    so a column Solid keys or joins on without listing it is declared as one."""
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie,
+                                       yaml.safe_dump(_UNLISTED_KEYS), dialect="SNOWFLAKE")
+    model = model_of(ossie)
+    orders = dataset_of(model, "orders")
+    declared = {f["name"] for f in orders["fields"]}
+    assert {"order_uuid", "cust_fk"} <= declared
+    relationship = model["relationships"][0]
+    for dataset, columns in ((relationship["from"], relationship["from_columns"]),
+                             (relationship["to"], relationship["to_columns"])):
+        names = {f["name"] for f in dataset_of(model, dataset)["fields"]}
+        assert set(columns) <= names
+    assert set(orders["primary_key"]) <= declared
+    assert any("'orders' keys or joins on order_uuid, cust_fk, which the Solid table "
+               "does not list" in w for w in warnings_), warnings_
+
+
+def test_a_declared_key_column_is_left_out_again_on_export():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(_UNLISTED_KEYS),
+                               dialect="SNOWFLAKE")
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    model, original = solid_model_of(solid), _UNLISTED_KEYS["semantic_model"]
+
+    def shape(m):
+        return [(t["name"], t.get("primary_key"),
+                 [c["name"] for c in (t.get("dimensions") or []) + t["facts"]])
+                for t in m["tables"]]
+
+    assert shape(model) == shape(original)
+    assert model["relationships"] == original["relationships"]
+    assert not [w for w in warnings_ if "order_uuid" in w or "cust_fk" in w]
