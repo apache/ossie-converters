@@ -72,6 +72,16 @@ def canon(obj):
     return obj
 
 
+def _fold_portable_sql(expression):
+    """Reduce an expression's `sql` to what survives the Omni trip, in place."""
+    if not isinstance(expression, dict) or "sql" not in expression:
+        return
+    sql = expression.pop("sql")
+    dialects = expression.setdefault("dialects", [])
+    if not any(d.get("dialect") == "ANSI_SQL" for d in dialects):
+        dialects.append({"dialect": "ANSI_SQL", "expression": sql})
+
+
 def strip_normalized(ossie):
     """Normalize away what the Ossie -> Omni -> Ossie trip changes by design, so a
     round-trip comparison reflects the documented behavior:
@@ -87,6 +97,8 @@ def strip_normalized(ossie):
       (only `is_time: true` has an Omni form -- `timeframes`).
     - a primary-key column no field covers materializes as a hidden
       dimension on export, so it comes back as an extra (stash-only) field.
+    - expression `sql`: Omni holds one SQL string, imported as `ANSI_SQL`, so
+      `sql` is dropped beside an `ANSI_SQL` dialect and becomes one otherwise.
     """
     ossie = copy.deepcopy(ossie)
     model = ossie
@@ -109,6 +121,7 @@ def strip_normalized(ossie):
                 ds.pop("ai_context")
         fields = ds.get("fields", []) or []
         for field in fields:
+            _fold_portable_sql(field.get("expression"))
             field.pop("custom_extensions", None)
             dimension = field.get("dimension")
             is_time = False
@@ -139,6 +152,7 @@ def strip_normalized(ossie):
         rel.pop("ai_context", None)
         rel.pop("custom_extensions", None)
     for metric in model.get("metrics", []) or []:
+        _fold_portable_sql(metric.get("expression"))
         metric.pop("custom_extensions", None)
         metric.pop("datatype", None)
     # Metric order is not semantic; the import regroups metrics by the view

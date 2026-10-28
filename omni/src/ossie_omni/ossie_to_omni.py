@@ -294,7 +294,7 @@ def _convert_dataset(ds, vname, view_names, dialect):
         taken.add(dname.lower())
         expr = pick_expression(field.get("expression"), dialect)
         if expr is None:
-            _warn(fscope, "no usable ANSI_SQL (or preferred-dialect) expression; "
+            _warn(fscope, "no usable ANSI_SQL, sql (or preferred-dialect) expression; "
                           "dropping field")
             continue
         dim = _convert_field(field, dname, expr, fscope)
@@ -544,7 +544,7 @@ def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect):
 
     expr = pick_expression(metric.get("expression"), dialect)
     if expr is None:
-        _warn(scope, "no usable ANSI_SQL (or preferred-dialect) expression; "
+        _warn(scope, "no usable ANSI_SQL, sql (or preferred-dialect) expression; "
                      "dropping metric")
         return None
 

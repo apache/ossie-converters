@@ -27,11 +27,11 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
 from ossie_dbt.expression_utils import _is_constant_expr
@@ -145,7 +145,7 @@ class MSIToOssieConverter:
 
     def convert(
         self, manifest: PydanticSemanticManifest, ossie_model_name: str = "semantic_model"
-    ) -> ConverterResult[OssieDocument]:
+    ) -> ConverterResult[OssieSemanticModel]:
         manifest = PydanticSemanticManifestTransformer.transform(manifest)
         issues: List[ConverterIssue] = []
 
@@ -220,7 +220,7 @@ class MSIToOssieConverter:
                 )
 
         return ConverterResult(
-            output=OssieDocument(
+            output=OssieSemanticModel(
                 version="0.2.0.dev0",
                 name=ossie_model_name,
                 datasets=datasets,

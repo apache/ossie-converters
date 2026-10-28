@@ -24,10 +24,10 @@ from ossie import (
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieRelationship,
+    OssieSemanticModel,
 )
 from ossie_wisdom import ConverterIssueType, OssieToWisdomConverter, WisdomToOssieConverter
 
@@ -180,7 +180,7 @@ def test_unrepresentable_elements_are_reported():
             OssieField(name="order_id", expression=_snowflake("order_id"), ai_context="the identifier"),
         ],
     )
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="first",
         datasets=[dataset],
         relationships=[
@@ -205,7 +205,7 @@ def test_unrepresentable_elements_are_reported():
 
 
 def test_one_to_one_note_restores_relationship_type():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="a", source="db.s.a"),
@@ -229,7 +229,7 @@ def test_one_to_one_note_restores_relationship_type():
 
 def test_relationship_note_with_surrounding_whitespace_still_matches():
     # A YAML block scalar (`ai_context: |`) loads with a trailing newline.
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="a", source="db.s.a"),
@@ -253,7 +253,7 @@ def test_relationship_note_with_surrounding_whitespace_still_matches():
 
 
 def test_free_text_relationship_note_is_not_read_as_a_type_marker():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -280,7 +280,7 @@ def test_free_text_relationship_note_is_not_read_as_a_type_marker():
 
 
 def test_one_to_many_note_restores_relationship_type_and_direction():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -313,7 +313,7 @@ def test_one_to_many_note_restores_relationship_type_and_direction():
 def test_unresolved_metric_attaches_to_first_dataset():
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[OssieDataset(name="a", source="db.s.a"), OssieDataset(name="b", source="db.s.b")],
         metrics=[OssieMetric(name="row_count", expression=_snowflake("COUNT(*)"))],
@@ -329,7 +329,7 @@ def test_unresolved_metric_attaches_to_first_dataset():
 def test_field_only_ossie_sql_2026_is_exported_without_missing_issue():
     """A field expressed only in OSSIE_SQL_2026 is exported, with no spurious
     MISSING_DIALECT_EXPRESSION issue (#442)."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -350,7 +350,7 @@ def test_metric_only_ossie_sql_2026_is_exported_without_missing_issue():
     spurious MISSING_DIALECT_EXPRESSION issue (#442)."""
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[OssieDataset(name="orders", source="analytics.sales.orders")],
         metrics=[
@@ -365,7 +365,7 @@ def test_metric_only_ossie_sql_2026_is_exported_without_missing_issue():
 
 def test_ansi_sql_preferred_over_ossie_sql_2026():
     """ANSI_SQL wins over OSSIE_SQL_2026 when both are present."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -390,7 +390,7 @@ def test_ansi_sql_preferred_over_ossie_sql_2026():
 
 def test_native_dialect_preferred_over_ossie_sql_2026():
     """A native dialect (SNOWFLAKE) wins over OSSIE_SQL_2026 when both are present."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -419,7 +419,7 @@ def test_unusable_dialect_still_reports_missing_expression():
     listed expression. Guards the fallback chain against silently accepting any dialect (#442)."""
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
