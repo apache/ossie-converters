@@ -526,7 +526,7 @@ wheels = [
 
 [[package]]
 name = "orionbelt-semantic-layer"
-version = "2.34.0"
+version = "2.35.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -541,14 +541,15 @@ dependencies = [
     { name = "rdflib" },
     { name = "ruamel-yaml" },
     { name = "sqlglot", extra = ["c"] },
+    { name = "starlette" },
     { name = "structlog" },
     { name = "typer" },
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/23/7f0fe9356558922bec36e420d2dadc6e7c73a2fc57edd70c0d5a0bec75f1/orionbelt_semantic_layer-2.34.0.tar.gz", hash = "sha256:1e53224ea9ce3cfb9dd9a5e01bef7f9e6b38bfda39ddebeebab5366565e9106d", size = 11754146, upload-time = "2026-10-08T07:24:01.587Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/d7/f4c6f1c30e6bfc098c2241ef4e2cc2af7995f7de2e371d382aed981ba60a/orionbelt_semantic_layer-2.35.1.tar.gz", hash = "sha256:427db58c7eb5f2e977da8b6a14766858a0225d10bbcf06bd0de82fdd73c53b07", size = 12193518, upload-time = "2026-10-24T18:15:16.86Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/7a/4ef658f47b6045ed76cf2c51f48e661393c0e4d3fd5a0e35ef2846b4161d/orionbelt_semantic_layer-2.34.0-py3-none-any.whl", hash = "sha256:aebbc0309e2b26caf84477d8f29ce5e9ee0a4f7a7356cd3eaf5dce197b696eb1", size = 2177669, upload-time = "2026-10-08T07:23:59.203Z" },
+    { url = "https://files.pythonhosted.org/packages/03/33/44dfc3ed39119c2bef89be372cc0b69d085bf9e9005717d15b6d8f1ce077/orionbelt_semantic_layer-2.35.1-py3-none-any.whl", hash = "sha256:6cac9c487bf8d8f2911abb25d386e2f6e10a562dc0a5e7cbf032cb2eeac12669", size = 2306874, upload-time = "2026-10-24T18:15:14.708Z" },
 ]
 
 [[package]]
