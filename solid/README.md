@@ -24,8 +24,10 @@ semantic model and a [Solid](https://www.getsolid.ai/) semantic model YAML expor
 Solid connection required.
 
 - **Import** (`ossie-solid import`): Solid → Apache Ossie. Solid features Apache Ossie
-  has no native field for are preserved in `custom_extensions[SOLID]`, so
-  `Solid → Apache Ossie → Solid` is lossless.
+  has no native field for are preserved in `custom_extensions[SOLID]`, so a model Solid
+  exported comes back unchanged from `Solid → Apache Ossie → Solid`. A model edited in
+  Apache Ossie along the way is converted as edited, and anything that can't be carried
+  back is reported as a warning.
 - **Export** (`ossie-solid export`): Apache Ossie → Solid, in the key order
   Solid's own exporter uses.
 
@@ -123,7 +125,7 @@ ANSI SQL:2003 Core — with a warning naming which one was used. A model written
 `ANSI_SQL` and/or `OSSIE_SQL_2026` resolves to `ANSI_SQL` and reads either form silently.
 A field with neither the chosen dialect nor a portable form raises.
 
-**Only SQL dialects are read.** Apache Ossie's dialect enum also covers expression
+**Only SQL dialects are read.** Apache Ossie's dialects also include expression
 languages that are not SQL — `MDX`, `TABLEAU`, `MAQL` — which this converter cannot
 parse, qualify or unqualify. One of those never becomes the resolved dialect: the model
 is reported, and each expression's portable (`ANSI_SQL` or `OSSIE_SQL_2026`) form is
@@ -150,7 +152,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 
 | Apache Ossie | Solid | Notes |
 |---|---|---|
-| `dataset.source` | `tables[].name` | Solid names a table by its `catalog.schema.table`. Import rejects a table listed twice. |
+| `dataset.source` | `tables[].name` | Solid names a table by its `catalog.schema.table`. Import rejects a table listed twice. Apache Ossie also lets `source` be a SQL query; Solid's tables come from the warehouse catalog, so export drops a query-backed dataset with a warning, along with its dataset-scoped metrics and every relationship and metric that reads it. |
 | `dataset.name` | — | Derived on import from the last part of the FQN, widening to `schema_table` and then the whole FQN if a shorter form is taken. Apache Ossie dataset names double as expression qualifiers, so a dotted name is not usable, and names are kept unique ignoring case, as an unquoted SQL qualifier is. |
 | `description` | `description` | Solid's AI-written description. |
 | `ai_context.instructions` | `manual_description` | Solid's human-written annotation. |
@@ -256,8 +258,12 @@ with its dataset. So:
 - **Export** strips those qualifiers back out — unless that would leave a bare name more
   than one of the metric's datasets owns. `SUM(orders.amount) - SUM(returns.amount)`
   would become `SUM(amount) - SUM(amount)`, and `COUNT(customers.id)` beside
-  `orders.amount` would leave an `id` that `orders` has too. Such an expression is kept
-  as written, with a warning.
+  `orders.amount` would leave an `id` that `orders` has too. The datasets counted are
+  every one the metric ends up bound to, not just those its expression names: a
+  dataset-scoped metric's own dataset, and the tables import recorded. Such an
+  expression is kept as written, with a warning. In a dataset-scoped metric, a path that
+  starts with one of the dataset's own fields is a field access, as Metric Scoping
+  requires, even when another dataset has the same name.
 
 Both edits are a **surgical splice**, not a re-render. Each column is located by
 sqlglot's tokenizer, which reports byte offsets and keeps string literals and quoted
@@ -378,6 +384,7 @@ when an input breaks one of these:
   mappings (export);
 - a field or metric has neither the selected dialect nor `ANSI_SQL`/`OSSIE_SQL_2026`
   (export);
+- every dataset's `source` is a SQL query, leaving Solid no table (export);
 - the recorded `custom_extensions[SOLID]` dialect is not one of the four above — which
   only a hand-edited stash can produce (export).
 

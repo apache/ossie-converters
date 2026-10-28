@@ -204,15 +204,18 @@ def _bare_columns(tree, known):
     return counts
 
 
-def _qualified_columns(tree, known, owned):
+def _qualified_columns(tree, known, owned, local=frozenset()):
     """Count, per (qualifier, name), the column references qualified by a dataset in
     `known`: `orders.amount`, and `orders.customer.id` when `customer` is a field of
     `orders` (`owned` maps each dataset to its field names). Any other longer path
-    (`db.table.column`) starts with a schema, not a dataset, and is left out."""
+    (`db.table.column`) starts with a schema, not a dataset, and is left out. So is a
+    path that starts with a name in `local`, the fields of the dataset a dataset-scoped
+    metric belongs to: there `customer.id` is a field access into `customer`, even when a
+    dataset is also named `customer`."""
     counts = Counter()
     for column in tree.find_all(exp.Column):
         path = _path(column)
-        if len(path) < 2 or path[0] not in known:
+        if len(path) < 2 or path[0] not in known or path[0] in local:
             continue
         if len(path) == 2 or path[1] in owned.get(path[0], ()):
             counts[(path[0], path[1])] += 1
@@ -300,20 +303,23 @@ def qualify_by_owner(expression, dialect, owners, shared=()):
     ]), QUALIFIED
 
 
-def unqualify_metric(expression, dialect, datasets, fields=None):
+def unqualify_metric(expression, dialect, datasets, fields=None, scope=None, bound=()):
     """Strip a dataset qualifier off every column in `expression`.
 
     The inverse of `qualify_metric`, used when exporting back to Solid, whose formulas are
     stored bare. `datasets` is the set of dataset names that may legitimately appear as a
     qualifier; any other qualifier -- a genuine table alias an author wrote by hand -- is
-    preserved.
+    preserved. `scope` names the dataset a dataset-scoped metric belongs to: a path that
+    starts with one of its fields is a field access, not a qualifier.
 
     Stripping is only safe while every bare name still means one column. It is not when
-    two datasets the expression reads share a column name: `SUM(orders.amount) -
+    two datasets the metric reads share a column name: `SUM(orders.amount) -
     SUM(returns.amount)` would become `SUM(amount) - SUM(amount)`. So the result is
     "ambiguous", and the text is left as written, when the same name is read from two
     datasets, or when `fields` -- each dataset's field names -- shows that a stripped
-    name is also a field of another dataset the expression reads.
+    name is also a field of another dataset the metric reads: one the expression
+    qualifies, or one in `bound`, the datasets the metric is bound to whether or not
+    the expression names them (the scoped dataset, or tables import recorded).
 
     Returns (expression, status) with the same vocabulary as `qualify_metric`, except that
     a successful edit reports "unqualified".
@@ -330,7 +336,8 @@ def unqualify_metric(expression, dialect, datasets, fields=None):
         return expression, UNPARSED
 
     owned = {d.lower(): {n.lower() for n in names} for d, names in (fields or {}).items()}
-    expected = _qualified_columns(tree, known, owned)
+    local = owned.get(scope.lower(), set()) if scope else set()
+    expected = _qualified_columns(tree, known, owned, local)
     if not expected:
         return expression, UNCHANGED
 
@@ -351,6 +358,8 @@ def unqualify_metric(expression, dialect, datasets, fields=None):
         if previous is not None and previous.token_type is TokenType.DOT:
             continue
         qualifier, field = _unquote(token.text).lower(), _unquote(name.text).lower()
+        if qualifier in local:
+            continue
         after = tokens[index + 3] if index + 3 < len(tokens) else None
         # A longer path is `dataset.struct.member` only when the middle name is one of
         # the dataset's fields; otherwise (`db.table.column`) it starts with a schema.
@@ -361,20 +370,21 @@ def unqualify_metric(expression, dialect, datasets, fields=None):
         # Delete the qualifier and its dot; `end` is inclusive on a sqlglot token.
         edits.append((token.start, dot.end + 1, ""))
 
-    if found != expected or _names_collide(found, owned):
+    if found != expected or _names_collide(found, owned, bound):
         return expression, AMBIGUOUS
     return _splice(expression, edits), UNQUALIFIED
 
 
-def _names_collide(references, owned):
+def _names_collide(references, owned, bound=()):
     """True if stripping the qualifiers from `references`, a Counter of (dataset, name),
-    would leave a bare name that more than one of those datasets could own."""
+    would leave a bare name that more than one dataset the metric reads could own: those
+    datasets are the ones `references` names plus those in `bound`."""
     readers = {}
     for dataset, name in references:
         readers.setdefault(name, set()).add(dataset)
     if any(len(datasets) > 1 for datasets in readers.values()):
         return True
-    referenced = {dataset for dataset, _ in references}
+    referenced = {dataset for dataset, _ in references} | {b.lower() for b in bound}
     return any(
         name in owned.get(other, ())
         for dataset, name in references
@@ -382,19 +392,31 @@ def _names_collide(references, owned):
     )
 
 
-def referenced_datasets(expression, dialect, datasets, fields=None):
+def referenced_datasets(expression, dialect, datasets, fields=None, scope=None):
     """Return the dataset names a metric expression qualifies columns with.
 
     Used on export to reconstruct Solid's `metrics[].tables` when an Apache Ossie model
     carries no SOLID stash. Order follows `datasets`, so the result is deterministic.
     `fields` maps each dataset to its field names, so `orders.customer.id` counts as
-    reading `orders` when `customer` is one of its fields.
+    reading `orders` when `customer` is one of its fields. With `scope`, the dataset a
+    dataset-scoped metric belongs to, a path that starts with one of that dataset's
+    fields reads the field, not a dataset of the same name.
     """
     tree = _parse(expression, dialect)
     if tree is None:
         return []
     known = {d.lower() for d in datasets}
     owned = {d.lower(): {n.lower() for n in names} for d, names in (fields or {}).items()}
-    seen = {qualifier for qualifier, _ in _qualified_columns(tree, known, owned)}
+    local = owned.get(scope.lower(), set()) if scope else set()
+    seen = {qualifier for qualifier, _ in _qualified_columns(tree, known, owned, local)}
     return [d for d in datasets if d.lower() in seen]
+
+
+def is_query(source, dialect):
+    """True if a dataset `source` is a SQL query rather than a table name.
+
+    Apache Ossie lets `source` be either. Text sqlglot cannot parse (`c.s.select`) is
+    taken as a table name: only a query is known to have no Solid slot.
+    """
+    return isinstance(_parse(source, dialect), (exp.Query, exp.Values))
 

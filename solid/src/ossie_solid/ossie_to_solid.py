@@ -62,6 +62,7 @@ from .expressions import (
     AMBIGUOUS,
     UNPARSED,
     is_column_reference,
+    is_query,
     referenced_datasets,
     unqualify_metric,
 )
@@ -223,24 +224,32 @@ def _convert_model(ossie, explicit_dialect, model_name):
     stashed_dialect = clean_text(stash.get("dialect"))
     recorded_dialect = (datatypes.normalize_dialect(stashed_dialect)
                         if stashed_dialect else resolved_dialect)
+    dropped = _query_datasets(datasets, resolved_dialect)
+    if len(dropped) == len(datasets):
+        raise ConversionError(
+            "Every dataset's source is a SQL query, and Solid's tables come from the "
+            "warehouse catalog, so there is nothing to convert")
     solid["tables"] = [
         _convert_dataset(d, resolved_dialect, recorded_dialect, marks_dimensions)
-        for d in datasets
+        for d in datasets if d["name"] not in dropped
     ]
 
     # Solid holds every metric in one model-level list, binding each to its tables, so a
     # dataset-scoped metric joins it bound to the dataset that declares it.
     taken = set()
     metrics = _convert_metrics(as_list(ossie.get("metrics"), "model: metrics"),
-                               by_name, resolved_dialect, taken=taken)
+                               by_name, resolved_dialect, taken=taken, dropped=dropped)
     for dataset in datasets:
+        if dataset["name"] in dropped:
+            continue
         metrics += _convert_metrics(
             as_list(dataset.get("metrics"), f"dataset '{dataset['name']}': metrics"),
-            by_name, resolved_dialect, scope=dataset["name"], taken=taken)
+            by_name, resolved_dialect, scope=dataset["name"], taken=taken,
+            dropped=dropped)
     if metrics:
         solid["metrics"] = metrics
     relationships = _convert_relationships(
-        as_list(ossie.get("relationships"), "model: relationships"), by_name)
+        as_list(ossie.get("relationships"), "model: relationships"), by_name, dropped)
     if relationships:
         solid["relationships"] = relationships
     for key in ("example_queries", "benchmark_questions"):
@@ -379,6 +388,30 @@ def _warn_foreign_extensions(obj, scope, name):
         vendors = ", ".join(sorted({e.get("vendor_name") or "?" for e in foreign}))
         warn(scope, f"'{name}': custom_extensions for {vendors} have no Solid "
                     f"equivalent and were dropped")
+
+
+def _query_datasets(datasets, dialect):
+    """The names of the datasets whose `source` is a SQL query, not a table.
+
+    Apache Ossie allows either, but Solid's tables come from the warehouse catalog, so a
+    query-backed dataset has no Solid slot: naming a table after the SQL would point at
+    a table that does not exist. It is dropped, and the relationships and metrics that
+    read it are dropped with it (see _convert_relationships, _convert_metrics).
+    """
+    dropped = set()
+    for dataset in datasets:
+        name = dataset["name"]
+        if not is_query(require_str(dataset, "source", f"dataset '{name}'"), dialect):
+            continue
+        dropped.add(name)
+        scoped = len(as_list(dataset.get("metrics"), f"dataset '{name}': metrics"))
+        what = "the dataset was"
+        if scoped:
+            what = (f"the dataset and its {scoped} dataset-scoped "
+                    f"metric{'s' if scoped > 1 else ''} were")
+        warn("dataset", f"'{name}': source is a SQL query, not a table; Solid's tables "
+                        f"come from the warehouse catalog, so {what} dropped")
+    return dropped
 
 
 def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
@@ -644,7 +677,7 @@ def _solid_name(name, stash, scope, label):
     return name
 
 
-def _convert_relationships(relationships, by_name):
+def _convert_relationships(relationships, by_name, dropped=frozenset()):
     converted = []
     for relationship in relationships:
         if not isinstance(relationship, dict):
@@ -670,6 +703,11 @@ def _convert_relationships(relationships, by_name):
             raise ConversionError(
                 f"Relationship '{name}' has {len(source_columns)} from_columns but "
                 f"{len(target_columns)} to_columns; they must correspond positionally")
+        gone = [end for end in dict.fromkeys((source, target)) if end in dropped]
+        if gone:
+            warn("relationship", f"'{name}' joins {' and '.join(gone)}, whose source is "
+                                 f"a SQL query Solid cannot hold, so it was dropped")
+            continue
 
         stash = read_stash(relationship, f"relationship '{name}'")
         _warn_foreign_extensions(relationship, "relationship", name)
@@ -711,11 +749,19 @@ def _convert_relationships(relationships, by_name):
     return converted
 
 
-def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None):
+def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
+                     dropped=frozenset()):
     """Convert model-scoped metrics, or with `scope` (a dataset name), the
     dataset-scoped metrics that dataset declares. `taken` collects the Solid metric
-    names used so far, across both."""
+    names used so far, across both. A metric reading a dataset in `dropped` (see
+    _query_datasets) is dropped too."""
     dataset_names = list(by_name)
+    # Every dataset sharing a source, so a table a metric is bound to maps back to the
+    # datasets whose fields it could read.
+    by_source = {}
+    for dataset_name, dataset in by_name.items():
+        by_source.setdefault(dataset["source"].lower(), []).append(dataset_name)
+    dropped_sources = {by_name[d]["source"].lower() for d in dropped}
     taken = set() if taken is None else taken
     # Each dataset's field names, so unqualifying can tell when a bare name would
     # belong to more than one of the datasets a metric reads.
@@ -749,27 +795,32 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None):
         # Solid types a metric by evaluating its formula against the warehouse, so its
         # YAML has no slot for a declared result type.
         if metric.get("datatype"):
-            warn("metric", f"'{name}': datatype '{metric['datatype']}' has no Solid "
+            warn("metric", f"'{label}': datatype '{metric['datatype']}' has no Solid "
                            f"equivalent and was dropped")
 
         expression, fallback = pick_expression(
-            metric.get("expression"), dialect, f"Metric '{name}'")
+            metric.get("expression"), dialect, f"Metric '{label}'")
         if expression is None:
             raise ConversionError(
-                f"Metric '{name}' has no {readable_dialects(dialect)} expression")
+                f"Metric '{label}' has no {readable_dialects(dialect)} expression")
         if fallback and dialect != DIALECT_ANSI:
-            warn("metric", f"'{name}' has no {dialect} expression; the {fallback} "
+            warn("metric", f"'{label}' has no {dialect} expression; the {fallback} "
                            f"one was used")
 
         # Solid stores formulas against bare columns and records the owning tables
         # separately, so the dataset qualifier Apache Ossie carries is stripped back out.
-        referenced = [
-            by_name[d]["source"]
-            for d in referenced_datasets(expression, dialect, dataset_names, fields)
-        ]
+        read = referenced_datasets(expression, dialect, dataset_names, fields, scope)
+        referenced = [by_name[d]["source"] for d in read]
         tables = stash.get("tables")
         if tables is not None:
-            tables = string_list(tables, f"metric '{name}': stashed tables")
+            tables = string_list(tables, f"metric '{label}': stashed tables")
+        gone = [d for d in read if d in dropped] + [
+            t for t in tables or [] if t.lower() in dropped_sources]
+        if gone:
+            warn("metric", f"'{label}' reads {', '.join(gone)}, whose source is a SQL "
+                           f"query Solid cannot hold, so the metric was dropped")
+            taken.discard(solid_name.lower())
+            continue
         if scope:
             # Its own dataset, whether or not the expression names it: a dataset-scoped
             # expression reads its fields unqualified.
@@ -787,35 +838,40 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None):
             # all, so the stash may list more than the expression reads, never other
             # tables. An expression reading one the stash lacks was edited in Apache
             # Ossie, and binding it to the stashed tables would join the wrong one.
-            warn("metric", f"'{name}' reads {', '.join(referenced)}, which the tables "
+            warn("metric", f"'{label}' reads {', '.join(referenced)}, which the tables "
                            f"recorded at import ({', '.join(tables)}) do "
                            f"not include, "
                            f"so its expression was edited in Apache Ossie; the tables "
                            f"were taken from the expression")
             tables = referenced
-        bare, status = unqualify_metric(expression, dialect, dataset_names, fields)
+        # The datasets behind every table the metric ends up bound to, not just those
+        # its expression names: a stripped qualifier must not leave a bare name that
+        # one of them also has.
+        bound = [d for t in tables for d in by_source.get(t.lower(), ())]
+        bare, status = unqualify_metric(
+            expression, dialect, dataset_names, fields, scope, bound)
         if status in (UNPARSED, AMBIGUOUS):
-            warn("metric", f"'{name}': the dataset qualifiers could not be removed "
+            warn("metric", f"'{label}': the dataset qualifiers could not be removed "
                            f"safely ({status}), so the expression was left as written; "
                            f"Solid stores formulas with bare column names")
         if not tables:
-            warn("metric", f"'{name}' names no table; Solid needs at least one to "
+            warn("metric", f"'{label}' names no table; Solid needs at least one to "
                            f"resolve its columns")
 
         solid_metric = {"name": solid_name}
-        description = clean_text(metric.get("description"), f"metric '{name}': description")
+        description = clean_text(metric.get("description"), f"metric '{label}': description")
         if description:
             solid_metric["description"] = description
         solid_metric["expression"] = bare
         instructions, synonyms, examples = ai_context_parts(
-            metric.get("ai_context"), f"metric '{name}'")
+            metric.get("ai_context"), f"metric '{label}'")
         if instructions:
-            warn("metric", f"'{name}': ai_context.instructions has no Solid equivalent "
+            warn("metric", f"'{label}': ai_context.instructions has no Solid equivalent "
                            f"and was dropped")
         if synonyms:
             solid_metric["synonyms"] = synonyms
         if examples:
-            warn("metric", f"'{name}': ai_context.examples has no Solid equivalent and "
+            warn("metric", f"'{label}': ai_context.examples has no Solid equivalent and "
                            f"was dropped")
         solid_metric["tables"] = list(tables)
         converted.append(solid_metric)
