@@ -24,6 +24,7 @@ Solid asset-link markup, and small identifier helpers.
 
 import datetime
 import json
+import math
 import re
 import warnings
 
@@ -210,6 +211,8 @@ def load_yaml(text):
         return yaml.safe_load(text)
     except yaml.YAMLError as e:
         raise ConversionError(f"Invalid YAML: {e}") from e
+    except RecursionError as e:
+        raise ConversionError("Invalid YAML: it is nested too deeply to read") from e
 
 
 def dump_yaml(obj):
@@ -254,10 +257,26 @@ def _json_default(value):
         f"custom_extensions[SOLID]")
 
 
+def _tag_non_finite(value):
+    """`value` with every NaN or infinite float tagged. YAML reads `.nan` and `.inf` as
+    floats, which JSON has no spelling for: `json.dumps` would write `NaN`, which a
+    strict JSON reader rejects."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return {_JSON_TAG: "float", "v": repr(value)}
+    if isinstance(value, dict):
+        return {k: _tag_non_finite(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_tag_non_finite(v) for v in value]
+    return value
+
+
 def _json_object_hook(data):
     tag = data.get(_JSON_TAG)
-    if not isinstance(tag, str) or tag not in _JSON_TEMPORAL or set(data) != {
-            _JSON_TAG, "v"}:
+    if not isinstance(tag, str) or set(data) != {_JSON_TAG, "v"}:
+        return data
+    if tag == "float" and data["v"] in ("nan", "inf", "-inf"):
+        return float(data["v"])
+    if tag not in _JSON_TEMPORAL:
         return data
     try:
         return _JSON_TEMPORAL[tag].fromisoformat(data["v"])
@@ -279,6 +298,10 @@ def read_stash(obj, what="object"):
             except ValueError as e:
                 raise ConversionError(
                     f"{what}: SOLID custom_extensions data is not valid JSON: {e}") from e
+            except RecursionError as e:
+                raise ConversionError(
+                    f"{what}: SOLID custom_extensions data is nested too deeply to "
+                    f"read") from e
             if not isinstance(data, dict):
                 raise ConversionError(
                     f"{what}: SOLID custom_extensions data must be a JSON object")
@@ -298,11 +321,15 @@ def write_stash(obj, data):
     payload = {"_v": STASH_VERSION}
     payload.update(data)
     try:
-        blob = json.dumps(payload, ensure_ascii=False, default=_json_default)
+        blob = json.dumps(_tag_non_finite(payload), ensure_ascii=False,
+                          allow_nan=False, default=_json_default)
     except (TypeError, ValueError) as e:
         # A mapping keyed by something JSON cannot key by, such as a YAML date.
         raise ConversionError(
             f"a value cannot be carried in custom_extensions[SOLID]: {e}") from e
+    except RecursionError as e:
+        raise ConversionError(
+            "a value is nested too deeply to carry in custom_extensions[SOLID]") from e
     exts = obj.setdefault("custom_extensions", [])
     for ext in exts:
         if ext.get("vendor_name") == VENDOR:

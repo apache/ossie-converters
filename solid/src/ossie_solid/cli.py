@@ -93,6 +93,11 @@ def main(argv=None):
     except (ConversionError, OSError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+    except RecursionError:
+        # The readers turn this into a ConversionError; this catches a structure deep
+        # enough to load but not to walk or write back out.
+        print(f"Error: {args.input} is nested too deeply to convert", file=sys.stderr)
+        return 1
     return 0
 
 
