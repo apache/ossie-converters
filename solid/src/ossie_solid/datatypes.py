@@ -63,12 +63,15 @@ OSSIE_DATATYPES = frozenset({
 # strips the angle-bracket params that would tell them apart; TIMESTAMP_NTZ is both
 # Snowflake and Databricks; VARIANT, GEOGRAPHY and GEOMETRY are Databricks types now
 # too, and GEOGRAPHY a BigQuery one; BOOLEAN, DATE, FLOAT and DECIMAL are near-universal.
+# BIGINT, SMALLINT and TINYINT are left out too: Postgres, Redshift, Trino (Starburst)
+# and Athena report them, so they would label those models DATABRICKS. Solid's own
+# Databricks exports spell 64-bit integers LONG.
 _DIALECT_MARKERS = {
     DIALECT_SNOWFLAKE: frozenset(
         {"NUMBER", "TEXT", "OBJECT", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"}
     ),
     DIALECT_DATABRICKS: frozenset(
-        {"LONG", "MAP", "BIGINT", "TINYINT", "SMALLINT", "BYTE", "SHORT", "VOID"}
+        {"LONG", "MAP", "BYTE", "SHORT", "VOID"}
     ),
     DIALECT_BIGQUERY: frozenset(
         {"INT64", "FLOAT64", "BOOL", "BIGNUMERIC", "BIGDECIMAL", "BYTES", "RECORD"}
@@ -216,9 +219,9 @@ def parse_type(raw):
 def infer_dialect(raw_types):
     """Infer the Apache Ossie dialect from a model's column type vocabulary.
 
-    Solid's YAML export does not record the source warehouse -- it lives on the asset
-    row in Solid's own database and is dropped at render time -- but the raw type names
-    it copies out of the catalog do identify it. Each distinctive name votes for its
+    Solid's YAML export records the source warehouse as `source_system` only since
+    October 2026 (see resolve_dialect); for an older export, the raw type names it
+    copies out of the catalog identify it. Each distinctive name votes for its
     warehouse; the warehouse with the most votes wins.
 
     Returns (dialect, confident). `confident` is False when no marker was seen, two
@@ -319,14 +322,32 @@ def normalize_dialect(dialect):
     return normalized
 
 
-def resolve_dialect(explicit, raw_types, scope="model"):
-    """Pick the dialect for a conversion: an explicit choice wins, else inference.
+# Solid's `source_system` values (solid-server's SourceSystemType) for the warehouses
+# that have an Apache Ossie dialect this converter writes.
+_SOURCE_SYSTEM_DIALECTS = {
+    "snowflake": DIALECT_SNOWFLAKE,
+    "databricks": DIALECT_DATABRICKS,
+    "big_query": DIALECT_BIGQUERY,
+}
 
-    Warns when inference had to fall back to ANSI_SQL, since a fallback means every
-    expression is being labelled with a dialect it was not written in.
+
+def resolve_dialect(explicit, raw_types, scope="model", source_system=None):
+    """Pick the dialect for a conversion: an explicit choice wins, then the warehouse
+    the Solid export names as its `source_system`, else inference from the types.
+
+    Warns when it had to fall back to ANSI_SQL, since a fallback means every expression
+    is being labelled with a dialect it was not written in.
     """
     if explicit:
         return normalize_dialect(explicit)
+    if source_system:
+        dialect = _SOURCE_SYSTEM_DIALECTS.get(source_system.strip().lower())
+        if dialect:
+            return dialect
+        warn(scope, f"the model comes from {source_system}, which has no Apache Ossie "
+                    f"dialect of its own; using {DIALECT_ANSI}. Pass --dialect to set "
+                    f"it explicitly.")
+        return DIALECT_ANSI
     dialect, confident = infer_dialect(raw_types)
     other = sorted({base for base in (parse_type(raw)[0] for raw in raw_types)
                     if base in _OTHER_WAREHOUSE_MARKERS})

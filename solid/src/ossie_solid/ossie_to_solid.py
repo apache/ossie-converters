@@ -213,11 +213,20 @@ def _convert_model(ossie, explicit_dialect, model_name):
         business_context["custom_instructions"] = custom_instructions
 
     solid = {"name": model_name or require_str(ossie, "name", "Apache Ossie model")}
+    # Model fields Apache Ossie has no slot for, which import stashed as Solid wrote
+    # them, in the order solid-server's template writes them.
+    for key in ("version_number", "source_system", "target_system"):
+        if stash.get(key) is not None:
+            solid[key] = stash[key]
     solid["business_context"] = business_context
     if entries:
         solid["custom_instructions"] = entries
     if llm_description:
         solid["model_llm_description"] = llm_description
+    short_description = clean_text(stash.get("model_llm_short_description"),
+                                   "model: stashed model_llm_short_description")
+    if short_description:
+        solid["model_llm_short_description"] = short_description
 
     # Import derived each field's `datatype` from its raw type in the dialect it recorded,
     # so that is the dialect to check the two still agree in (see _recorded_type).

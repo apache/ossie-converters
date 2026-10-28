@@ -76,6 +76,10 @@ def test_a_raw_type_splits_into_a_base_name_and_parameters(raw, base, params):
         # NUMBER would otherwise vote Snowflake, and SQL Server's BIGINT Databricks.
         (["NUMBER", "VARCHAR2", "DATE"], "ANSI_SQL"),
         (["BIGINT", "NVARCHAR", "DATETIME2"], "ANSI_SQL"),
+        # Postgres, Redshift, Trino (Starburst) and Athena report BIGINT too, so it does
+        # not say Databricks; Solid's Databricks exports spell it LONG.
+        (["bigint", "varchar", "timestamp(3)"], "ANSI_SQL"),
+        (["BIGINT", "SMALLINT", "STRING"], "ANSI_SQL"),
     ],
 )
 def test_the_warehouse_is_inferred_from_its_distinctive_type_names(types, expected):

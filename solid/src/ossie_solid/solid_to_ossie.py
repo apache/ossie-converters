@@ -53,9 +53,15 @@ from ._common import (
 # semantic_layer_yaml_export_template.py). Anything else is reported, not dropped
 # silently.
 _MODEL_KEYS = frozenset({
-    "name", "business_context", "custom_instructions", "model_llm_description",
+    "name", "version_number", "source_system", "target_system", "business_context",
+    "custom_instructions", "model_llm_description", "model_llm_short_description",
     "tables", "metrics", "relationships", "example_queries", "benchmark_questions",
 })
+# Model keys Apache Ossie has no slot for, carried in the stash as Solid wrote them.
+_STASHED_MODEL_KEYS = (
+    "version_number", "source_system", "target_system", "model_llm_short_description",
+    "example_queries", "benchmark_questions",
+)
 _BUSINESS_CONTEXT_KEYS = frozenset(
     {"business_questions", "model_description", "custom_instructions"})
 _TABLE_KEYS = frozenset({
@@ -122,7 +128,9 @@ def _convert_model(solid, explicit_dialect, model_name):
                               "model requires at least one dataset")
 
     resolved_dialect = datatypes.resolve_dialect(
-        explicit_dialect, _all_raw_types(tables), scope="model")
+        explicit_dialect, _all_raw_types(tables), scope="model",
+        source_system=clean_text(solid.get("source_system"),
+                                 "semantic_model: 'source_system'"))
 
     # Solid names a table by its fully-qualified `catalog.schema.table`, which becomes
     # the Apache Ossie `source`; the dataset name is derived from it and is what
@@ -200,9 +208,10 @@ def _convert_model(solid, explicit_dialect, model_name):
         stash["custom_instruction_entries"] = entries
     if raw_instructions and (entries or has_asset_links(raw_instructions)):
         stash["custom_instructions"] = raw_instructions
-    for key in ("example_queries", "benchmark_questions"):
+    for key in _STASHED_MODEL_KEYS:
         value = solid.get(key)
-        if value:
+        # `version_number` starts at 0, which is a value, not an absence.
+        if value or (key == "version_number" and value is not None):
             stash[key] = value
     write_stash(model, stash)
     return model
