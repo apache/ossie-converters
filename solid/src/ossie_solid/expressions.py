@@ -93,6 +93,16 @@ UNCHANGED = "unchanged"
 UNPARSED = "unparsed"
 AMBIGUOUS = "ambiguous"
 SHARED = "shared"
+SCOPED = "scoped"
+ALIASED = "aliased"
+UNRESOLVED = "unresolved"
+
+
+def _opens_scope(tree):
+    """True if the expression declares names of its own: a subquery (its FROM) or a
+    lambda (its parameters). A bare column inside one may then mean something other
+    than the metric's table, so adding or removing a qualifier could rebind it."""
+    return tree.find(exp.Query, exp.Lambda) is not None
 
 
 def _read(dialect):
@@ -250,13 +260,21 @@ def qualify_metric(expression, dialect, dataset, columns):
     return qualify_by_owner(expression, dialect, {c.lower(): dataset for c in columns})
 
 
-def qualify_by_owner(expression, dialect, owners, shared=()):
+def qualify_by_owner(expression, dialect, owners, shared=(), datasets=()):
     """Prefix every bare column in `expression` with the dataset that owns it.
 
     `owners` maps a lower-cased column name to its dataset, for a metric that reads
     several. `shared` names columns more than one of those datasets has: nothing in the
     file says which one the formula means, so an expression reading one is returned
-    verbatim with the status "shared". Otherwise as `qualify_metric`.
+    verbatim with the status "shared". `datasets` names the datasets a qualifier may
+    already be. The expression is also returned verbatim when the result would not be a
+    self-contained Apache Ossie expression, or might not mean the same thing:
+      "aliased"    -- a column is qualified by something that is not a dataset (a table
+                      alias `p.amount`, or the table's full name)
+      "scoped"     -- it has a subquery or lambda, whose own names a qualifier could
+                      rebind
+      "unresolved" -- it reads a bare name that is none of its tables' columns
+    Otherwise as `qualify_metric`.
     """
     if not expression or not expression.strip():
         return expression, UNCHANGED
@@ -270,9 +288,17 @@ def qualify_by_owner(expression, dialect, owners, shared=()):
     if tree is None or tokens is None:
         return expression, UNPARSED
 
+    qualifiers = {d.lower() for d in datasets} | {d.lower() for d in owners.values()}
+    paths = [_path(column) for column in tree.find_all(exp.Column)]
+    if any(len(p) > 1 and p[0] not in known and p[0] not in qualifiers for p in paths):
+        return expression, ALIASED
     expected = _bare_columns(tree, known)
     if not expected:
         return expression, UNCHANGED
+    if _opens_scope(tree):
+        return expression, SCOPED
+    if any(len(p) == 1 and p[0] not in known for p in paths):
+        return expression, UNRESOLVED
     if shared & set(expected):
         return expression, SHARED
 
@@ -321,6 +347,9 @@ def unqualify_metric(expression, dialect, datasets, fields=None, scope=None, bou
     qualifies, or one in `bound`, the datasets the metric is bound to whether or not
     the expression names them (the scoped dataset, or tables import recorded).
 
+    An expression with a subquery or lambda is returned verbatim as "scoped": a name
+    stripped bare there could bind to the subquery's table or the lambda's parameter.
+
     Returns (expression, status) with the same vocabulary as `qualify_metric`, except that
     a successful edit reports "unqualified".
     """
@@ -340,6 +369,8 @@ def unqualify_metric(expression, dialect, datasets, fields=None, scope=None, bou
     expected = _qualified_columns(tree, known, owned, local)
     if not expected:
         return expression, UNCHANGED
+    if _opens_scope(tree):
+        return expression, SCOPED
 
     edits, found = [], Counter()
     for index, token in enumerate(tokens):
@@ -367,12 +398,27 @@ def unqualify_metric(expression, dialect, datasets, fields=None, scope=None, bou
                 and field not in owned.get(qualifier, ())):
             continue
         found[(qualifier, field)] += 1
-        # Delete the qualifier and its dot; `end` is inclusive on a sqlglot token.
-        edits.append((token.start, dot.end + 1, ""))
+        edits.append((token, dot, name))
 
     if found != expected or _names_collide(found, owned, bound):
         return expression, AMBIGUOUS
-    return _splice(expression, edits), UNQUALIFIED
+    # Delete each qualifier and its dot (`end` is inclusive on a sqlglot token). The
+    # result must read as many columns as the original: a name only its qualifier made
+    # a column (`snapshots.current_date`) would otherwise become a function. Such a name
+    # is quoted instead, and if that still does not hold, the original is kept.
+    columns = len(list(tree.find_all(exp.Column)))
+    for quote in (False, True):
+        result = _splice(expression, [
+            (token.start, name.end + 1, column_reference(_unquote(name.text), dialect))
+            if quote and name.token_type is not TokenType.IDENTIFIER
+            and needs_quoting(_unquote(name.text), dialect)
+            else (token.start, dot.end + 1, "")
+            for token, dot, name in edits
+        ])
+        rewritten = _parse(result, dialect)
+        if rewritten is not None and len(list(rewritten.find_all(exp.Column))) == columns:
+            return result, UNQUALIFIED
+    return expression, AMBIGUOUS
 
 
 def _names_collide(references, owned, bound=()):

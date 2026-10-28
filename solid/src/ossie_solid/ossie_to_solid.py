@@ -60,6 +60,7 @@ from ._common import (
 )
 from .expressions import (
     AMBIGUOUS,
+    SCOPED,
     UNPARSED,
     is_column_reference,
     is_query,
@@ -863,6 +864,11 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
             warn("metric", f"'{label}': the dataset qualifiers could not be removed "
                            f"safely ({status}), so the expression was left as written; "
                            f"Solid stores formulas with bare column names")
+        elif status == SCOPED:
+            warn("metric", f"'{label}' has a subquery or lambda, where a column stripped "
+                           f"of its dataset qualifier could bind to the subquery's table "
+                           f"or the lambda's parameter, so the expression was left as "
+                           f"written; Solid stores formulas with bare column names")
         if not tables:
             warn("metric", f"'{label}' names no table; Solid needs at least one to "
                            f"resolve its columns")

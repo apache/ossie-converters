@@ -285,6 +285,24 @@ something else. On any disagreement — an unparseable expression, or a column a
 `year` in `EXTRACT(year FROM …)` — the expression is left **exactly as written** and a
 warning is emitted. An unqualified metric is a far smaller problem than a corrupted one.
 
+The same holds wherever adding or removing a qualifier could change what a name binds
+to, or leave it unresolvable:
+
+- **A subquery or lambda** declares names of its own. In `customer_id IN (SELECT
+  customer_id FROM crm.vip)` the inner `customer_id` is `crm.vip`'s, and qualifying it
+  with the metric's table would correlate the subquery to the outer row; stripping a
+  qualifier inside one can likewise bind a column to the subquery's table or the
+  lambda's parameter. Neither direction rewrites such an expression.
+- **A qualifier that is not a dataset** — a table alias (`p.amount`) or the table's full
+  name — is something an Apache Ossie reader cannot resolve, so import leaves the
+  expression as written and says so, rather than qualifying the rest of it.
+- **A bare name none of the metric's tables has** (another metric, or a column the
+  model does not list) cannot be qualified, so the expression is not half-qualified.
+- **A name only its qualifier made a column**: bare, `current_date` is the CURRENT_DATE
+  function. Export checks that its result reads as many columns as the original did,
+  quotes such a name the dialect's way when it does not, and otherwise keeps the
+  original.
+
 **A cross-table metric is qualified column by column.** Apache Ossie requires a
 model-scoped metric to qualify every field as `dataset.field`, and a Solid metric may list
 several tables. A column only one of them has can only be that table's, so
@@ -293,8 +311,10 @@ several tables. A column only one of them has can only be that table's, so
 customer.c_customer_sk)`. A metric that reads a column more than one of its tables has
 cannot be attributed from the file — solid-server keeps that binding in
 `metric.column_ids`, which its YAML export does not carry — so it keeps its bare column
-names, keeps `tables[]` in the stash, and emits a warning. In the real Solid exports this
-was checked against, that is one cross-table metric in six.
+names, keeps `tables[]` in the stash, and emits a warning. Of the six cross-table metrics
+in the real Solid exports this was checked against, three are qualified; one reads a
+shared column, and two (the same metric, in two models) qualify their columns with a
+table alias, so both are left as written with a warning.
 
 ## Identifier quoting
 

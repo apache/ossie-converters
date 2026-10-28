@@ -551,3 +551,35 @@ def test_a_source_system_with_no_ossie_dialect_reads_as_ansi_sql():
     datatypes = {f["datatype"] for d in model["datasets"] for f in d["fields"]
                  if f.get("datatype") in ("DateTime", "DateTimeTz")}
     assert datatypes == {"DateTime"}
+
+
+# --- metrics import leaves as written --------------------------------------------------
+
+
+def _import_metric(expression):
+    solid = {"semantic_model": {"name": "m", "tables": [
+        {"name": "shop.sales.orders", "facts": [
+            {"name": n, "type": "NUMBER"} for n in ("amount", "order_id", "customer_id")]},
+    ], "metrics": [{"name": "x", "expression": expression,
+                    "tables": ["shop.sales.orders"]}]}}
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid),
+                                       dialect="SNOWFLAKE")
+    metric = model_of(ossie)["metrics"][0]
+    back, _ = convert_quietly(convert_ossie_to_solid, ossie)
+    return metric, warnings_, solid_model_of(back)["metrics"][0]
+
+
+@pytest.mark.parametrize(("expression", "reported"), [
+    (("COUNT(DISTINCT CASE WHEN customer_id IN (SELECT customer_id FROM crm.vip) "
+     "THEN order_id END)"), "has a subquery or lambda"),
+    ("COUNT(DISTINCT CASE WHEN p.amount > 0 THEN p.order_id END)",
+     "qualifies a column with a table alias"),
+    ("SUM(amount * discount)", "reads a name that is not a column of its tables"),
+])
+def test_a_metric_import_cannot_qualify_safely_is_reported_and_round_trips(
+        expression, reported):
+    metric, warnings_, back = _import_metric(expression)
+    assert expression_of(metric) == expression
+    assert any(f"'x' {reported}" in w for w in warnings_), warnings_
+    assert back == {"name": "x", "expression": expression,
+                    "tables": ["shop.sales.orders"]}
