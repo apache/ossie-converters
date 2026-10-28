@@ -76,10 +76,13 @@ _METRIC_KEYS = frozenset({"name", "description", "expression", "synonyms", "tabl
 _RELATIONSHIP_KEYS = frozenset({"left_table", "right_table", "join_keys"})
 _SOLID = "a Solid semantic model"
 from .expressions import (
+    ALIASED,
     AMBIGUOUS,
+    SCOPED,
     SHARED,
     UNCHANGED,
     UNPARSED,
+    UNRESOLVED,
     column_reference,
     qualify_by_owner,
     referenced_datasets,
@@ -539,7 +542,7 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
         # expression, and for one that references no column at all (`COUNT(*)`).
         expected = [d["name"] for d in owners]
         if (unknown
-                or status in (UNPARSED, AMBIGUOUS, SHARED)
+                or status in _LEFT_AS_WRITTEN
                 or referenced_datasets(
                     expression, dialect, dataset_names, fields) != expected):
             stash["tables"] = tables
@@ -572,7 +575,8 @@ def _qualify(name, expression, owners, dialect):
                 shared.add(column)
     for column in shared:
         owner_of.pop(column, None)
-    qualified, status = qualify_by_owner(expression, dialect, owner_of, shared)
+    qualified, status = qualify_by_owner(
+        expression, dialect, owner_of, shared, [d["name"] for d in owners])
     if status == SHARED:
         warn("metric",
              f"'{name}' spans {len(owners)} tables "
@@ -586,7 +590,22 @@ def _qualify(name, expression, owners, dialect):
         warn("metric", f"'{name}': a column name in the expression also appears in a "
                        f"non-column position, so the reference could not be qualified "
                        f"safely; the expression was left as written")
+    elif status == ALIASED:
+        warn("metric", f"'{name}' qualifies a column with a table alias or name rather "
+                       f"than a dataset, which an Apache Ossie metric cannot resolve; "
+                       f"the expression was left as written")
+    elif status == SCOPED:
+        warn("metric", f"'{name}' has a subquery or lambda, where a qualifier added to "
+                       f"a column could bind it to the wrong table; the expression was "
+                       f"left unqualified")
+    elif status == UNRESOLVED:
+        warn("metric", f"'{name}' reads a name that is not a column of its tables, so "
+                       f"it cannot be qualified; the expression was left as written")
     return qualified, status
+
+
+# The outcomes where `_qualify` returns the expression as Solid wrote it.
+_LEFT_AS_WRITTEN = (UNPARSED, AMBIGUOUS, SHARED, SCOPED, ALIASED, UNRESOLVED)
 
 
 __all__ = ["convert_solid_to_ossie"]

@@ -24,12 +24,16 @@ asked to qualify: the splice must leave every byte outside the inserted qualifie
 import pytest
 
 from ossie_solid.expressions import (
+    ALIASED,
     AMBIGUOUS,
     QUALIFIED,
+    SCOPED,
     UNCHANGED,
     UNPARSED,
     UNQUALIFIED,
+    UNRESOLVED,
     column_reference,
+    qualify_by_owner,
     qualify_metric,
     referenced_datasets,
     unqualify_metric,
@@ -70,10 +74,12 @@ def test_a_column_name_inside_a_string_literal_is_not_touched():
     assert status == QUALIFIED
 
 
-def test_an_already_qualified_column_is_left_alone():
+def test_a_column_qualified_by_an_alias_is_left_alone_and_reported():
+    """`o` is a table alias, not a dataset, so an Apache Ossie reader could not resolve
+    it; the expression is left as written, with a status the caller warns about."""
     assert qualify_metric("SUM(o.amount)", "SNOWFLAKE", "orders", COLUMNS) == (
         "SUM(o.amount)",
-        UNCHANGED,
+        ALIASED,
     )
 
 
@@ -378,3 +384,56 @@ def test_a_schema_qualified_path_whose_middle_is_not_a_field_is_left_alone():
     fields = {"orders": ["customer", "amount"]}
     assert unqualify_metric("SUM(orders.public.amount)", "BIGQUERY", ["orders"],
                             fields) == ("SUM(orders.public.amount)", UNCHANGED)
+
+
+# --- expressions the rewriter must leave alone ---------------------------------------
+
+
+@pytest.mark.parametrize("expression", [
+    # The inner customer_id is crm.vip's: qualifying it with `orders` would correlate
+    # the subquery to the outer row.
+    ("COUNT(DISTINCT CASE WHEN customer_id IN (SELECT customer_id FROM crm.vip) "
+    "THEN order_id END)"),
+    "SUM(amount) / (SELECT SUM(amount) FROM shop.sales.returns)",
+])
+def test_a_metric_with_a_subquery_is_not_qualified(expression):
+    owners = {"customer_id": "orders", "order_id": "orders", "amount": "orders"}
+    assert qualify_by_owner(expression, "SNOWFLAKE", owners) == (expression, SCOPED)
+
+
+@pytest.mark.parametrize("expression", [
+    "COUNT(DISTINCT CASE WHEN p.amount > 0 THEN p.order_id END)",
+    "SUM(shop.sales.orders.amount)",
+])
+def test_a_metric_qualified_by_something_other_than_a_dataset_is_reported(expression):
+    owners = {"order_id": "orders", "amount": "orders"}
+    assert qualify_by_owner(expression, "SNOWFLAKE", owners) == (expression, ALIASED)
+
+
+def test_a_metric_reading_a_name_none_of_its_tables_has_is_not_half_qualified():
+    assert qualify_by_owner("SUM(amount * discount)", "SNOWFLAKE",
+                            {"amount": "orders"}) == ("SUM(amount * discount)", UNRESOLVED)
+
+
+@pytest.mark.parametrize(("expression", "dialect"), [
+    # r.order_id = order_id would compare returns' order_id with itself.
+    (("SUM(orders.amount) FILTER (WHERE EXISTS (SELECT 1 FROM db.s.returns r "
+     "WHERE r.order_id = orders.order_id))"), "ANSI_SQL"),
+    # price -> price > price would compare the parameter with itself.
+    ("FILTER(orders.prices, price -> price > orders.price)", "DATABRICKS"),
+])
+def test_a_metric_with_a_subquery_or_lambda_keeps_its_qualifiers(expression, dialect):
+    fields = {"orders": ["amount", "order_id", "prices", "price"]}
+    assert unqualify_metric(expression, dialect, ["orders"], fields) == (
+        expression, SCOPED)
+
+
+@pytest.mark.parametrize(("dialect", "expected"), [
+    ("SNOWFLAKE", 'MAX("CURRENT_DATE")'),
+    ("ANSI_SQL", 'MAX("current_date")'),
+])
+def test_a_stripped_name_that_would_become_a_function_is_quoted(dialect, expected):
+    """Bare, `current_date` is the CURRENT_DATE function; only the qualifier made it
+    the column."""
+    assert unqualify_metric("MAX(snapshots.current_date)", dialect, ["snapshots"],
+                            {"snapshots": ["current_date"]}) == (expected, UNQUALIFIED)
