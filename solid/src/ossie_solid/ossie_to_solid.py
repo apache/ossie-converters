@@ -62,9 +62,12 @@ from .expressions import (
     AMBIGUOUS,
     SCOPED,
     UNPARSED,
+    column_read,
+    is_aggregate,
     is_column_reference,
     is_query,
     referenced_datasets,
+    rename_fields,
     unqualify_metric,
 )
 
@@ -239,27 +242,36 @@ def _convert_model(ossie, explicit_dialect, model_name):
         raise ConversionError(
             "Every dataset's source is a SQL query, and Solid's tables come from the "
             "warehouse catalog, so there is nothing to convert")
-    solid["tables"] = [
-        _convert_dataset(d, resolved_dialect, recorded_dialect, marks_dimensions)
-        for d in datasets if d["name"] not in dropped
-    ]
+    # Per dataset, the fields that are aliases for another column, as {field: (the
+    # column's name, its SQL text)}: keys, joins and metrics name the field, Solid the
+    # column.
+    aliases = {}
+    solid["tables"] = []
+    for dataset in datasets:
+        if dataset["name"] in dropped:
+            continue
+        table, aliases[dataset["name"]] = _convert_dataset(
+            dataset, resolved_dialect, recorded_dialect, marks_dimensions)
+        solid["tables"].append(table)
 
     # Solid holds every metric in one model-level list, binding each to its tables, so a
     # dataset-scoped metric joins it bound to the dataset that declares it.
     taken = set()
     metrics = _convert_metrics(as_list(ossie.get("metrics"), "model: metrics"),
-                               by_name, resolved_dialect, taken=taken, dropped=dropped)
+                               by_name, resolved_dialect, taken=taken, dropped=dropped,
+                               aliases=aliases)
     for dataset in datasets:
         if dataset["name"] in dropped:
             continue
         metrics += _convert_metrics(
             as_list(dataset.get("metrics"), f"dataset '{dataset['name']}': metrics"),
             by_name, resolved_dialect, scope=dataset["name"], taken=taken,
-            dropped=dropped)
+            dropped=dropped, aliases=aliases)
     if metrics:
         solid["metrics"] = metrics
     relationships = _convert_relationships(
-        as_list(ossie.get("relationships"), "model: relationships"), by_name, dropped)
+        as_list(ossie.get("relationships"), "model: relationships"), by_name, dropped,
+        aliases)
     if relationships:
         solid["relationships"] = relationships
     for key in ("example_queries", "benchmark_questions"):
@@ -447,10 +459,27 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
         warn("dataset", f"'{name}': ai_context.examples has no Solid equivalent at the "
                         f"table level and was dropped")
 
+    fields = as_list(dataset.get("fields"), f"dataset '{name}': fields")
+    # Which field each column name belongs to, starting with every field's own name: an
+    # alias for a column another field already is would list it twice.
+    taken = {f["name"].lower(): f["name"] for f in fields
+             if isinstance(f, dict) and isinstance(f.get("name"), str)}
+    dimensions, facts, aliases = [], [], {}
+    for field in fields:
+        if not isinstance(field, dict):
+            raise ConversionError(f"Dataset '{name}': each field must be a mapping")
+        column, is_dimension, alias = _convert_field(
+            field, dialect, recorded_dialect, name, marks_dimensions, taken)
+        if alias:
+            aliases[field["name"]] = alias
+        if column is not None:
+            (dimensions if is_dimension else facts).append(column)
+
     primary_key = string_list(dataset.get("primary_key"), f"dataset '{name}': primary_key")
     if primary_key:
         # Solid stores a composite key as one comma-joined scalar.
-        table["primary_key"] = PK_SEPARATOR.join(primary_key)
+        table["primary_key"] = PK_SEPARATOR.join(
+            _column_names(primary_key, aliases))
     unique_keys = as_list(dataset.get("unique_keys"), f"dataset '{name}': unique_keys")
     if unique_keys and unique_keys != [primary_key]:
         warn("dataset", f"'{name}': unique_keys have no Solid equivalent and were "
@@ -461,21 +490,21 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     if indexes:
         table["indexes"] = indexes
 
-    dimensions, facts = [], []
-    for field in as_list(dataset.get("fields"), f"dataset '{name}': fields"):
-        if not isinstance(field, dict):
-            raise ConversionError(f"Dataset '{name}': each field must be a mapping")
-        column, is_dimension = _convert_field(
-            field, dialect, recorded_dialect, name, marks_dimensions)
-        (dimensions if is_dimension else facts).append(column)
     if dimensions:
         table["dimensions"] = dimensions
     # Unlike `dimensions`, Solid always emits `facts` -- as `[]` when a table has none.
     table["facts"] = facts
-    return table
+    return table, aliases
 
 
-def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensions):
+def _column_names(fields, aliases):
+    """The Solid column names of `fields`, a list of field names: a field that is an
+    alias for another column (see _convert_field) names that column."""
+    return [aliases[f][0] if f in aliases else f for f in fields]
+
+
+def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensions,
+                   taken):
     name = require_str(field, "name", f"field in '{dataset_name}'")
     warn_unknown_keys(field, _FIELD_KEYS, "field", f"'{dataset_name}.{name}'", _OSSIE)
     stash = read_stash(field, f"field '{dataset_name}.{name}'")
@@ -491,6 +520,25 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     if fallback and dialect != DIALECT_ANSI:
         warn("field", f"'{dataset_name}.{name}' has no {dialect} expression; the "
                       f"{fallback} one was used")
+
+    # A field over another column (`cust` reading `customer_id`, or `amount` reading the
+    # case-sensitive `"Amount"`) is an alias Solid has no slot for: a Solid column is a
+    # catalog column, so it takes the column's name, keeping the field's as a synonym. A
+    # duplicate import renamed is not one: its stash restores Solid's name.
+    alias = None
+    read = column_read(expression, dialect) if stash.get("renamed") is None else None
+    if read is not None and not is_column_reference(expression, name, dialect):
+        alias = (read, expression.strip())
+        if taken.get(read.lower(), name) != name:
+            warn("field", f"'{dataset_name}.{name}' reads the column {read}, which "
+                          f"another field already exports; Solid lists a column once, "
+                          f"so it was dropped, and references to it read {read}")
+            return None, False, alias
+        taken[read.lower()] = name
+        warn("field", f"'{dataset_name}.{name}' reads the column {read}; Solid names a "
+                      f"column by its catalog name, so it was exported as {read}, with "
+                      f"'{name}' as a synonym")
+        solid_name = read
 
     datatype = _declared_datatype(field, f"{dataset_name}.{name}")
     recorded_type = _recorded_type(
@@ -514,8 +562,11 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     # A Solid fact may be a table-scoped metric instead of a catalog column, in which
     # case it carries an expression and no type. Everything else is a column, whose
     # expression is just its own name.
+    # Without a stashed role, only an aggregate is one: a scalar expression (`first_name
+    # || ' ' || last_name`) is a computed column, whatever role the field takes.
     is_metric_fact = role == METRIC or (
-        role == FACT and stash.get("role") is None and raw_type is None and computed)
+        role == FACT and stash.get("role") is None and raw_type is None and computed
+        and is_aggregate(expression, dialect))
     if is_metric_fact:
         # A metric has no catalog type to derive one from, so it keeps one only if
         # Solid typed it or a datatype was given to it in Apache Ossie.
@@ -548,6 +599,8 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
         warn("field", f"'{dataset_name}.{name}' is a computed field "
                       f"(`{expression}`); Solid columns map to catalog columns, so the "
                       f"expression was dropped")
+    if alias and name not in (synonyms or []):
+        synonyms = [*(synonyms or []), name]
     if synonyms:
         column["synonyms"] = synonyms
     if examples:
@@ -560,7 +613,7 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
                             f"field '{dataset_name}.{name}': stashed sample_values")
     if sample_values:
         column["sample_values"] = list(sample_values)
-    return column, is_dimension
+    return column, is_dimension, alias
 
 
 # Solid's roles for a column: a dimension, a fact that is a catalog column, or a fact
@@ -687,7 +740,8 @@ def _solid_name(name, stash, scope, label):
     return name
 
 
-def _convert_relationships(relationships, by_name, dropped=frozenset()):
+def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=None):
+    aliases = aliases or {}
     converted = []
     for relationship in relationships:
         if not isinstance(relationship, dict):
@@ -754,17 +808,24 @@ def _convert_relationships(relationships, by_name, dropped=frozenset()):
         converted.append({
             "left_table": by_name[left]["source"],
             "right_table": by_name[right]["source"],
-            "join_keys": {"left": left_columns, "right": right_columns},
+            "join_keys": {
+                "left": _column_names(left_columns, aliases.get(left, {})),
+                "right": _column_names(right_columns, aliases.get(right, {})),
+            },
         })
     return converted
 
 
 def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
-                     dropped=frozenset()):
+                     dropped=frozenset(), aliases=None):
     """Convert model-scoped metrics, or with `scope` (a dataset name), the
     dataset-scoped metrics that dataset declares. `taken` collects the Solid metric
     names used so far, across both. A metric reading a dataset in `dropped` (see
-    _query_datasets) is dropped too."""
+    _query_datasets) is dropped too. `aliases` holds each dataset's fields that are
+    aliases for another column (see _convert_model); a metric reads the column."""
+    aliases = aliases or {}
+    renames = {d: {f: text for f, (_, text) in fields.items()}
+               for d, fields in aliases.items()}
     dataset_names = list(by_name)
     # Every dataset sharing a source, so a table a metric is bound to maps back to the
     # datasets whose fields it could read.
@@ -774,10 +835,12 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
     dropped_sources = {by_name[d]["source"].lower() for d in dropped}
     taken = set() if taken is None else taken
     # Each dataset's field names, so unqualifying can tell when a bare name would
-    # belong to more than one of the datasets a metric reads.
+    # belong to more than one of the datasets a metric reads, plus the columns its
+    # alias fields read, which is what an expression names once they are renamed.
     fields = {
         name: [f["name"] for f in dataset.get("fields") or []
                if isinstance(f, dict) and isinstance(f.get("name"), str)]
+        + [column for column, _ in aliases.get(name, {}).values()]
         for name, dataset in by_name.items()
     }
     converted = []
@@ -816,6 +879,13 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
         if fallback and dialect != DIALECT_ANSI:
             warn("metric", f"'{label}' has no {dialect} expression; the {fallback} "
                            f"one was used")
+
+        renamed_expression, status = rename_fields(expression, dialect, renames, scope)
+        if status in (UNPARSED, AMBIGUOUS, SCOPED):
+            warn("metric", f"'{label}' reads a field that is an alias for another "
+                           f"column, and the reference could not be rewritten safely "
+                           f"({status}); it was left naming the field")
+        expression = renamed_expression
 
         # Solid stores formulas against bare columns and records the owning tables
         # separately, so the dataset qualifier Apache Ossie carries is stripped back out.

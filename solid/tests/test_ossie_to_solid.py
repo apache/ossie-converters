@@ -1209,3 +1209,113 @@ def test_a_top_level_sql_that_is_not_a_string_is_rejected():
     ossie["metrics"][0]["expression"] = {"sql": ["SUM(a.amt)"]}
     with pytest.raises(ConversionError, match="expression sql must be a string"):
         convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+
+
+# --- a field is not always its column -------------------------------------------------
+
+
+def _ansi(sql):
+    return {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]}
+
+
+def _alias_model():
+    """`orders.cust` reads `customer_id`, and keys, a join and both kinds of metric
+    name the field."""
+    return {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders", "primary_key": ["oid"],
+             "fields": [
+                 {"name": "oid", "datatype": "Integer", "expression": _ansi("order_id")},
+                 {"name": "cust", "datatype": "Integer",
+                  "expression": _ansi("customer_id")},
+             ],
+             "metrics": [{"name": "buyers_here",
+                          "expression": _ansi("COUNT(DISTINCT cust)")}]},
+            {"name": "customers", "source": "db.s.customers", "primary_key": ["id"],
+             "fields": [{"name": "id", "datatype": "Integer", "expression": _ansi("id")}]},
+        ],
+        "relationships": [{"name": "r", "from": "orders", "to": "customers",
+                           "from_columns": ["cust"], "to_columns": ["id"]}],
+        "metrics": [{"name": "buyers", "expression": _ansi("COUNT(DISTINCT orders.cust)")}],
+    }
+
+
+def test_a_field_over_another_column_is_exported_as_that_column():
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid,
+                                       yaml.safe_dump(_alias_model()))
+    model = solid_model_of(solid)
+    orders = model["tables"][0]
+    assert [(c["name"], c.get("synonyms")) for c in orders["facts"]] == [
+        ("order_id", ["oid"]), ("customer_id", ["cust"])]
+    assert orders["primary_key"] == "order_id"
+    assert model["relationships"][0]["join_keys"] == {
+        "left": ["customer_id"], "right": ["id"]}
+    metrics = by_name(model["metrics"])
+    assert metrics["buyers"]["expression"] == "COUNT(DISTINCT customer_id)"
+    assert metrics["buyers_here"]["expression"] == "COUNT(DISTINCT customer_id)"
+    assert any("'orders.cust' reads the column customer_id; Solid names a column by "
+               "its catalog name" in w for w in warnings_), warnings_
+    assert not [w for w in warnings_ if "computed field" in w]
+
+
+def test_a_field_over_a_column_another_field_already_is_is_listed_once():
+    ossie = _alias_model()
+    ossie["datasets"][0]["fields"].append(
+        {"name": "customer_id", "datatype": "Integer", "expression": _ansi("customer_id")})
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    model = solid_model_of(solid)
+    names = [c["name"] for c in model["tables"][0]["facts"]]
+    assert names == ["order_id", "customer_id"]
+    assert model["relationships"][0]["join_keys"]["left"] == ["customer_id"]
+    assert any("'orders.cust' reads the column customer_id, which another field "
+               "already exports" in w for w in warnings_), warnings_
+
+
+@pytest.mark.parametrize(("expression", "column"), [
+    # Quoted, the name is case-sensitive on Snowflake: `"Amount"` is not `amount`.
+    ('"Amount"', "Amount"),
+    # As a bare `amount` folds to it, `"AMOUNT"` is the same column.
+    ('"AMOUNT"', "amount"),
+    ("amount", "amount"),
+])
+def test_a_quoted_column_matches_its_field_only_as_the_dialect_folds_it(
+        expression, column):
+    ossie = {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [{"name": "orders", "source": "DB.S.ORDERS", "fields": [
+            {"name": "amount", "datatype": "Decimal", "expression": {"dialects": [
+                {"dialect": "SNOWFLAKE", "expression": expression}]}}]}],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert solid_model_of(solid)["tables"][0]["facts"][0]["name"] == column
+    assert any("reads the column" in w for w in warnings_) is (column != "amount")
+
+
+def _marked_model(field):
+    """A model that marks its dimensions (one field opts out of time with the spec's
+    own `is_time: false`), so an unmarked, untyped field is read as a fact."""
+    return {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [{"name": "orders", "source": "db.s.orders", "fields": [
+            {"name": "created_at", "datatype": "DateTime", "dimension": {"is_time": False},
+             "expression": _ansi("created_at")},
+            field,
+        ]}],
+    }
+
+
+def test_an_untyped_scalar_computed_field_is_a_column_not_a_metric():
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(
+        _marked_model({"name": "customer_name",
+                       "expression": _ansi("first_name || ' ' || last_name")})))
+    fact = solid_model_of(solid)["tables"][0]["facts"][0]
+    assert fact == {"name": "customer_name", "type": ""}
+    assert any("'orders.customer_name' is a computed field" in w for w in warnings_)
+
+
+def test_an_untyped_aggregate_field_is_still_a_table_scoped_metric():
+    solid, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(
+        _marked_model({"name": "revenue", "expression": _ansi("SUM(amount)")})))
+    fact = solid_model_of(solid)["tables"][0]["facts"][0]
+    assert fact == {"name": "revenue", "expression": "SUM(amount)"}
