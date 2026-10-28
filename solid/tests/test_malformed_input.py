@@ -28,6 +28,7 @@ ConversionError. Any other exception is a bug.
 import copy
 import datetime
 import json
+import math
 import warnings
 
 import pytest
@@ -232,3 +233,21 @@ def test_unquoted_yaml_dates_survive_the_round_trip_as_dates():
         2024, 1, 1)
     assert isinstance(restored["benchmark_questions"][0]["reviewed_at"],
                       datetime.datetime)
+
+
+def test_non_finite_sample_values_are_stashed_as_strict_json():
+    """YAML reads `.nan` and `.inf` as floats, which JSON has no spelling for. They are
+    tagged in the stash, which stays valid JSON, and come back as the same floats."""
+    text = ("semantic_model:\n  name: m\n  tables:\n    - name: db.s.t\n"
+            "      facts:\n        - name: x\n          type: FLOAT\n"
+            "          sample_values: [.nan, .inf, -.inf, 1.5]\n")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ossie = convert_solid_to_ossie(text)
+        solid = convert_ossie_to_solid(ossie)
+    for ext in yaml.safe_load(ossie)["datasets"][0]["fields"][0]["custom_extensions"]:
+        json.loads(ext["data"], parse_constant=lambda name: pytest.fail(name))
+    values = yaml.safe_load(solid)["semantic_model"]["tables"][0]["facts"][0][
+        "sample_values"]
+    assert math.isnan(values[0])
+    assert values[1:] == [math.inf, -math.inf, 1.5]

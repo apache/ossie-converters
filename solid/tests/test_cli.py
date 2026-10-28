@@ -94,6 +94,31 @@ def test_a_malformed_model_exits_non_zero_without_a_traceback(
 
 
 @pytest.mark.parametrize("command", ["import", "export"])
+def test_input_nested_too_deeply_exits_non_zero_without_a_traceback(
+        command, capsys, tmp_path):
+    deep = tmp_path / "deep.yaml"
+    deep.write_text("version: 0.2.0.dev0\nname: m\ndatasets: " + "[" * 5000 + "]" * 5000)
+    assert main([command, "-i", str(deep)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Error: ")
+    assert "Traceback" not in err
+
+
+def test_a_stash_nested_too_deeply_exits_non_zero_without_a_traceback(capsys, tmp_path):
+    deep = tmp_path / "deep.yaml"
+    deep.write_text(yaml.safe_dump({
+        "version": "0.2.0.dev0", "name": "m",
+        "custom_extensions": [{"vendor_name": "SOLID", "data": "[" * 200000}],
+        "datasets": [{"name": "t", "source": "db.s.t", "fields": [
+            {"name": "a", "expression": {"sql": "a"}}]}],
+    }))
+    assert main(["export", "-i", str(deep)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Error: ")
+    assert "nested too deeply" in err
+
+
+@pytest.mark.parametrize("command", ["import", "export"])
 def test_input_that_is_not_utf8_exits_non_zero_with_a_message(command, capsys, tmp_path):
     bad = tmp_path / "latin1.yaml"
     bad.write_bytes("semantic_model:\n  name: caf\xe9\n".encode("latin-1"))
