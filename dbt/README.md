@@ -147,8 +147,9 @@ by `dbt parse`.
   must identify one dataset; ambiguous unqualified or cross-dataset references
   are refused. A sole unknown qualifier is accepted as an alias only in a
   single-dataset document; multiple unknown qualifiers are never collapsed.
-- Metric dialect selection skips non-SQL entries, then prefers the configured
-  dialect, `OSSIE_SQL_2026`, and the first available SQLGlot-readable SQL entry.
+- Field and metric dialect selection skips non-SQL entries, then prefers the configured
+  dialect, the top-level `sql` (portable `OSSIE_SQL_2026`, which wins over an
+  `OSSIE_SQL_2026` entry), and the first available SQLGlot-readable SQL entry.
   Parsing and rendering retain that dialect through ratio decomposition.
   The ANSI/portable core uses SQLGlot's Snowflake reader for its unit-first
   `DATEADD`/`DATEDIFF` syntax; this is syntax handling, not Snowflake execution.

@@ -508,7 +508,8 @@ class OssieToMSIConverter:
     ) -> Optional[OssieDialectExpression]:
         """Return the expression for the preferred dialect.
 
-        Preference order: the converter's dialect, then OSSIE_SQL_2026, then the
+        Preference order: the converter's dialect, then the top-level ``sql``
+        (which wins over an OSSIE_SQL_2026 entry), then OSSIE_SQL_2026, then the
         first entry available. OSSIE_SQL_2026 is Ossie's portable expression
         language, based on ANSI SQL:2003 Core, so it is treated as an ANSI_SQL
         equivalent rather than left to the positional fallback.
@@ -520,8 +521,13 @@ class OssieToMSIConverter:
         OSSIE_SQL_2026 match because the converter's dialect outranks it and
         may still appear further down the list.
         """
-        ossie_sql_expr: Optional[OssieDialectExpression] = None
-        first_expr: Optional[OssieDialectExpression] = None
+        # The top-level `sql` is written in OSSIE_SQL_2026 and wins over an OSSIE_SQL_2026 entry.
+        ossie_sql_expr: Optional[OssieDialectExpression] = (
+            OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression=ossie_expr.sql)
+            if ossie_expr.sql is not None
+            else None
+        )
+        first_expr: Optional[OssieDialectExpression] = ossie_sql_expr
 
         for dialect_expr in ossie_expr.dialects or []:
             if sql_only and self._sql_dialect(dialect_expr.dialect) is None:

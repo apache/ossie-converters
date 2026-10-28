@@ -873,13 +873,44 @@ class TestOssieToMSIDialectSelection:
         assert result.output.metrics == []
         assert ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "revenue") in result.issues
 
-    def test_a_sql_only_expression_is_dropped_with_an_issue(self) -> None:
+    def test_a_sql_only_metric_expression_is_converted(self) -> None:
         doc = _doc_with_metric_expression(OssieExpression(sql="SUM(orders.amount)"))
 
         result = OssieToMSIConverter().convert(doc)
 
-        assert result.output.metrics == []
-        assert ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "revenue") in result.issues
+        assert result.output.metrics[0].type_params.expr == "amount"
+        assert result.issues == []
+
+    def test_a_sql_only_field_expression_is_converted(self) -> None:
+        doc = _ossie_doc(
+            datasets=[
+                _ossie_dataset(
+                    "orders",
+                    fields=[OssieField(name="amount_usd", expression=OssieExpression(sql="amount * 1.1"))],
+                )
+            ]
+        )
+
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.semantic_models[0].dimensions[0].expr == "amount * 1.1"
+        assert result.issues == []
+
+    def test_the_top_level_sql_wins_over_an_ossie_sql_2026_entry(self) -> None:
+        doc = _doc_with_metric_expression(
+            OssieExpression(
+                sql="SUM(orders.amount)",
+                dialects=[
+                    OssieDialectExpression(
+                        dialect=OssieDialect.OSSIE_SQL_2026, expression="SUM(orders.amount_other)"
+                    )
+                ],
+            )
+        )
+
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics[0].type_params.expr == "amount"
 
     def test_the_first_ossie_sql_2026_entry_wins_when_the_dialect_is_repeated(self) -> None:
         # `dialects` has no `uniqueItems` constraint, so the same dialect may be listed twice.
