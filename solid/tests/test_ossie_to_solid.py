@@ -1166,3 +1166,46 @@ def test_a_model_whose_every_source_is_a_query_is_rejected():
     }
     with pytest.raises(ConversionError, match="Every dataset's source is a SQL query"):
         convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+
+
+# --- top-level expression.sql (apache/ossie#617) -------------------------------------
+
+
+def test_an_expression_given_only_as_top_level_sql_is_read():
+    ossie = _one_field_model([], metric_dialects=[])
+    ossie["datasets"][0]["fields"][0]["expression"] = {"sql": "amt"}
+    ossie["metrics"][0]["expression"] = {"sql": "SUM(a.amt)"}
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    model = solid_model_of(solid)
+    assert model["tables"][0]["facts"][0]["name"] == "amt"
+    assert model["metrics"][0] == {
+        "name": "total", "expression": "SUM(amt)", "tables": ["db.s.a"]}
+    assert warnings_ == []
+
+
+def test_top_level_sql_is_authoritative_over_an_ossie_sql_2026_entry():
+    ossie = _one_field_model([{"dialect": "OSSIE_SQL_2026", "expression": "amt"}],
+                             metric_dialects=[
+                                 {"dialect": "OSSIE_SQL_2026", "expression": "MAX(a.amt)"}])
+    ossie["metrics"][0]["expression"]["sql"] = "SUM(a.amt)"
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert solid_model_of(solid)["metrics"][0]["expression"] == "SUM(amt)"
+    assert any("the top-level sql and the OSSIE_SQL_2026 entry in dialects differ" in w
+               for w in warnings_), warnings_
+
+
+def test_a_vendor_dialect_is_still_preferred_over_top_level_sql():
+    ossie = _one_field_model([{"dialect": "SNOWFLAKE", "expression": "amt"}],
+                             metric_dialects=[
+                                 {"dialect": "SNOWFLAKE", "expression": "MAX(a.amt)"}])
+    ossie["metrics"][0]["expression"]["sql"] = "SUM(a.amt)"
+    solid, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert solid_model_of(solid)["metrics"][0]["expression"] == "MAX(amt)"
+
+
+def test_a_top_level_sql_that_is_not_a_string_is_rejected():
+    ossie = _one_field_model([], metric_dialects=[])
+    ossie["datasets"][0]["fields"][0]["expression"] = {"sql": "amt"}
+    ossie["metrics"][0]["expression"] = {"sql": ["SUM(a.amt)"]}
+    with pytest.raises(ConversionError, match="expression sql must be a string"):
+        convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))

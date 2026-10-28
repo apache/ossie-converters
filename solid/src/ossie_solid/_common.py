@@ -332,7 +332,9 @@ def pick_expression(ossie_expression, dialect, what):
 
     A dialect listed twice with different SQL raises, since which one is read would
     otherwise come down to list order. An exact repeat says nothing new and is read
-    once. `what` names the field or metric for the error message.
+    once. The top-level `sql` is the OSSIE_SQL_2026 form, and the spec makes it
+    authoritative over an OSSIE_SQL_2026 entry in `dialects`; either may stand alone.
+    `what` names the field or metric for the error message.
     """
     dialects = {}
     expression = as_mapping(ossie_expression, f"{what}: expression")
@@ -348,6 +350,17 @@ def pick_expression(ossie_expression, dialect, what):
                 f"{what} lists the {name} dialect more than once with different "
                 f"expressions; each dialect may appear once")
         dialects[name] = expr
+    if expression.get("sql") is not None:
+        sql = expression["sql"]
+        if not isinstance(sql, str):
+            raise ConversionError(
+                f"{what}: expression sql must be a string, got {type(sql).__name__}")
+        listed = dialects.get(DIALECT_OSSIE_SQL)
+        if listed is not None and listed != sql:
+            warn("expression", f"{what}: the top-level sql and the {DIALECT_OSSIE_SQL} "
+                               f"entry in dialects differ; the top-level sql is "
+                               f"authoritative and was used")
+        dialects[DIALECT_OSSIE_SQL] = sql
     candidates = (dialect,) + tuple(d for d in PORTABLE_DIALECTS if d != dialect)
     for candidate in candidates:
         expr = dialects.get(candidate)
