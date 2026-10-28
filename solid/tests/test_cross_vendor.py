@@ -185,7 +185,10 @@ def _split_expectations(path):
     solid, _ = convert_quietly(convert_ossie_to_solid, path.read_text())
     found = []
     for dataset, table in zip(document["datasets"], solid_model_of(solid)["tables"]):
-        dimensions = {c["name"] for c in table.get("dimensions") or []}
+        # A field that is an alias for another column becomes that column, with the
+        # field's name as a synonym.
+        dimensions = {name for c in table.get("dimensions") or []
+                      for name in [c["name"], *(c.get("synonyms") or [])]}
         for field in dataset.get("fields") or []:
             if field.get("dimension") is not None:
                 expected = "dimensions"
@@ -251,11 +254,11 @@ def test_a_foreign_model_converts_to_the_expected_solid_shape(foreign):
     # a column cannot be shown to be numeric and so lands in `dimensions`.
     store_sales = model["tables"][0]
     assert [c["name"] for c in store_sales["facts"]] == ["ss_net_paid"]
+    # `ticket_number` is an alias for `ss_ticket_number`, which is already a column.
     assert [c["name"] for c in store_sales["dimensions"]] == [
         "ss_item_sk",
         "ss_ticket_number",
         "ss_sold_date_sk",
-        "ticket_number",
     ]
     assert store_sales["primary_key"] == "ss_item_sk, ss_ticket_number"
 
@@ -270,10 +273,10 @@ def test_the_documented_interop_gaps_are_exactly_these(foreign):
     counts = {
         # No `datatype` -> no Solid `type`. The single largest gap: Solid's columns are
         # typed from the warehouse catalog, and an offline converter has no catalog.
-        "has no datatype": 5,
-        # A field renamed relative to its column keeps the alias and loses the column
-        # it actually reads, because a Solid column IS a catalog column.
-        "is a computed field": 1,
+        "has no datatype": 4,
+        # A field renamed relative to its column is that column, which another field
+        # already exports, so Solid lists it once.
+        "which another field already exports": 1,
         # Solid has no slot for any of these.
         "label 'Year' has no Solid equivalent": 1,
         "unique_keys have no Solid equivalent": 1,
@@ -286,20 +289,19 @@ def test_the_documented_interop_gaps_are_exactly_these(foreign):
     }
     for text, expected in counts.items():
         assert sum(text in w for w in warnings_) == expected, text
-    assert len(warnings_) == sum(counts.values()) == 16
+    assert len(warnings_) == sum(counts.values()) == 15
 
 
-def test_a_renamed_field_loses_the_column_it_reads(foreign):
-    """Pinned because it is the sharpest gap: the output names a column that is not
-    in the warehouse. `ticket_number` reads `ss_ticket_number`, but Solid columns map
-    to catalog columns, so only the alias survives."""
+def test_a_renamed_field_names_the_column_it_reads(foreign):
+    """`ticket_number` reads `ss_ticket_number`. A Solid column is a catalog column, so
+    the output names the column the warehouse has, never the alias, and lists it once
+    since another field already is that column."""
     model, warnings_ = foreign
-    renamed = {c["name"] for c in model["tables"][0]["dimensions"]}
-    assert "ticket_number" in renamed
-    assert any(
-        "ticket_number' is a computed field (`ss_ticket_number`)" in w
-        for w in warnings_
-    )
+    names = [c["name"] for c in model["tables"][0]["dimensions"]]
+    assert "ticket_number" not in names
+    assert names.count("ss_ticket_number") == 1
+    assert any("'store_sales.ticket_number' reads the column ss_ticket_number, which "
+               "another field already exports" in w for w in warnings_)
 
 
 def test_a_bare_column_metric_reaches_solid_with_no_tables(foreign):

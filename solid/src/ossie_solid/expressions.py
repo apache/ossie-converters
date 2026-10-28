@@ -183,15 +183,46 @@ def column_reference(name, dialect):
     return quoted.sql(dialect=_read(dialect)) if quoted is not None else name
 
 
+# Dialects where a quoted name matches exactly while a bare one folds to upper case, so
+# `"Amount"` is not the column `amount` names. Databricks and BigQuery match column
+# names ignoring case either way.
+_CASE_SENSITIVE_QUOTING = frozenset({DIALECT_SNOWFLAKE, DIALECT_ANSI, DIALECT_OSSIE_SQL})
+
+
+def column_read(expression, dialect):
+    """The name of the column `expression` reads, when it is nothing but a reference to
+    one unqualified column (`customer_id`, `"Amount"`); None otherwise."""
+    tree = _parse(expression.strip(), dialect) if isinstance(expression, str) else None
+    if not isinstance(tree, exp.Column) or tree.table:
+        return None
+    return tree.name
+
+
 def is_column_reference(expression, name, dialect):
     """True if `expression` is nothing but a reference to the column `name`, bare or
-    quoted the dialect's way (`"a""b"` is the column a"b on Snowflake)."""
+    quoted the dialect's way (`"a""b"` is the column a"b on Snowflake).
+
+    Where quoting is case-sensitive, a quoted name matches `name` exactly or as its bare
+    form folds (`"ORDER"` is `order`), but `"Amount"` is a different column from
+    `amount`."""
     text = expression.strip()
-    if text.strip('"`[]').lower() == name.strip().lower():
-        return True
+    name = name.strip()
     tree = _parse(text, dialect)
-    return (isinstance(tree, exp.Column) and not tree.table
-            and tree.name.lower() == name.strip().lower())
+    if isinstance(tree, exp.Column) and not tree.table:
+        if tree.this.quoted and dialect in _CASE_SENSITIVE_QUOTING:
+            return tree.name in (name, name.upper())
+        return tree.name.lower() == name.lower()
+    # A name sqlglot does not read as a column (a keyword such as `time`, written bare)
+    # is compared as text.
+    return text.strip('"`[]').lower() == name.lower()
+
+
+def is_aggregate(expression, dialect):
+    """True if `expression` aggregates rows (`SUM(x)`), outside any window: Solid's
+    table-scoped metric, where a scalar expression is a computed column."""
+    tree = _parse(expression, dialect)
+    return tree is not None and any(
+        agg.find_ancestor(exp.Window) is None for agg in tree.find_all(exp.AggFunc))
 
 
 def _path(column):
@@ -457,6 +488,69 @@ def referenced_datasets(expression, dialect, datasets, fields=None, scope=None):
     seen = {qualifier for qualifier, _ in _qualified_columns(tree, known, owned, local)}
     return [d for d in datasets if d.lower() in seen]
 
+
+RENAMED = "renamed"
+
+
+def rename_fields(expression, dialect, renames, scope=None):
+    """Rewrite references to fields that are aliases for another column.
+
+    `renames` maps a lower-cased dataset name to {lower-cased field name: the SQL text
+    of the column it reads}. A reference is `dataset.field`, or, in a metric scoped to
+    the dataset `scope`, the bare `field` (or the head of a path into it). Solid names a
+    column by its catalog name, so `orders.cust` over `customer_id` must read
+    `orders.customer_id`.
+
+    Returns (expression, status): "renamed" after an edit; "unchanged" when nothing
+    refers to such a field; otherwise the expression verbatim, with "unparsed",
+    "scoped" (a subquery or lambda, whose own names could match) or "ambiguous" (the
+    token scan and the parse disagree on what to rename).
+    """
+    if not expression or not expression.strip() or not renames:
+        return expression, UNCHANGED
+    renames = {d.lower(): {f.lower(): text for f, text in fields.items()}
+               for d, fields in renames.items() if fields}
+    local = renames.get(scope.lower(), {}) if scope else {}
+    if not renames:
+        return expression, UNCHANGED
+    tree = _parse(expression, dialect)
+    tokens = _tokenize(expression, dialect)
+    if tree is None or tokens is None:
+        return expression, UNPARSED
+
+    expected = 0
+    for column in tree.find_all(exp.Column):
+        path = _path(column)
+        if path[0] in local or (len(path) > 1 and path[1] in renames.get(path[0], {})):
+            expected += 1
+    if not expected:
+        return expression, UNCHANGED
+    if _opens_scope(tree):
+        return expression, SCOPED
+
+    def kind(index):
+        return tokens[index].token_type if 0 <= index < len(tokens) else None
+
+    edits = []
+    for index, token in enumerate(tokens):
+        if not _is_name_token(token):
+            continue
+        name = _unquote(token.text).lower()
+        if kind(index - 1) is TokenType.DOT:
+            # `dataset.field`, not a later part of a longer path.
+            if kind(index - 3) is TokenType.DOT or not _is_name_token(tokens[index - 2]):
+                continue
+            text = renames.get(_unquote(tokens[index - 2].text).lower(), {}).get(name)
+        elif kind(index + 1) is not TokenType.L_PAREN:
+            text = local.get(name)
+        else:
+            text = None
+        if text is not None:
+            edits.append((token.start, token.end + 1, text))
+
+    if len(edits) != expected:
+        return expression, AMBIGUOUS
+    return _splice(expression, edits), RENAMED
 
 def is_query(source, dialect):
     """True if a dataset `source` is a SQL query rather than a table name.

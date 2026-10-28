@@ -204,8 +204,19 @@ A Solid **fact may be a table-scoped metric** rather than a catalog column — i
 expression-only fact. A hand-edited fact carrying both a `type` and an `expression` is
 marked the same way and keeps both on export. A **dimension with an `expression`**,
 which Solid's own export never writes but a hand-edited model can, is stashed as
-`computed` and keeps its expression on export too. Any other computed field is reported
-and exported as a plain column, since a Solid column is a catalog column.
+`computed` and keeps its expression on export too. A field with no stashed role becomes
+a table-scoped metric only when its expression aggregates (`SUM(amount)`); any other
+computed field (`first_name || ' ' || last_name`) is reported and exported as a plain
+column, since a Solid column is a catalog column.
+
+A field that **reads another column** — `name: cust` over `expression: customer_id`, or
+`amount` over Snowflake's case-sensitive `"Amount"` — is an alias, and a Solid column is
+the catalog column itself. Export names the column (`customer_id`) and keeps the field's
+name as one of its synonyms, with a warning, and the primary key, join keys and metric
+formulas that name the field read the column instead. If another field already is that
+column, the alias is dropped and its references read the column. On Snowflake and in
+ANSI SQL a quoted name is case-sensitive, so `"AMOUNT"` is the field `amount` but
+`"Amount"` is not.
 
 A Solid table **may declare a column name twice**, where Apache Ossie needs field names
 unique within a dataset. Import renames the duplicate (`status` → `status_2`) with a
@@ -502,11 +513,10 @@ should do with a foreign model, not a defect in the transform:
   the honest fix is to reconcile against the live catalog at import time rather than to
   guess here. What the converter owes that flow is a machine-readable list of what needs
   reconciling, which today it only reports as warnings.
-- **A field renamed relative to its column loses the column it reads.** Given
-  `name: ticket_number` over `expression: ss_ticket_number`, the alias survives and the
-  real column does not, so the Solid model names a column the warehouse does not have.
-  Emitting the underlying name and keeping the alias as a synonym would be truer, but it
-  changes which identifier downstream Solid consumers see and so needs a product call.
+- **A field renamed relative to its column becomes that column.** Given
+  `name: ticket_number` over `expression: ss_ticket_number`, the Solid column is
+  `ss_ticket_number`, with `ticket_number` as a synonym, since a Solid column must be one
+  the warehouse has. Downstream Solid consumers see the catalog name, not the alias.
 - **A model-scoped metric written against bare column names reaches Solid with
   `tables: []`.** Only a dataset-qualified reference identifies its owner. The spec now
   requires model-scoped metrics to qualify every field, but models written before that
