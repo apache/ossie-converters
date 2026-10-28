@@ -121,7 +121,10 @@ On export, `--dialect` selects which expression dialect to *read*; without it th
 converter uses the dialect recorded at import, then the single vendor dialect the model's
 expressions use. When the chosen dialect is missing from an expression, its portable form
 is read instead — `ANSI_SQL`, else `OSSIE_SQL_2026`, the spec's portable dialect built on
-ANSI SQL:2003 Core — with a warning naming which one was used. A model written only in
+ANSI SQL:2003 Core — with a warning naming which one was used. The `OSSIE_SQL_2026` form
+may be the expression's top-level `sql` (apache/ossie#617), which may stand alone and
+which the spec makes authoritative over an `OSSIE_SQL_2026` entry in `dialects`; when
+the two differ, the top-level `sql` is read, with a warning. A model written only in
 `ANSI_SQL` and/or `OSSIE_SQL_2026` resolves to `ANSI_SQL` and reads either form silently.
 A field with neither the chosen dialect nor a portable form raises.
 
