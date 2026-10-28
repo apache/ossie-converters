@@ -451,9 +451,12 @@ _RESERVED_NAME_SPEC = {
             "type": "EntityType",
             "identify_by": ["id"],
             "relationships": [
-                {"name": "id", "roles": [{"concept": "GadgetId"}], "multiplicity": "OneToOne"},
-                {"name": "ref", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne"},
-                {"name": "label", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne"},
+                {"name": "id", "roles": [{"concept": "GadgetId"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Gadget} has id {GadgetId}"]},
+                {"name": "ref", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne",
+                 "verbalizes": ["{Gadget} has ref {Label}"]},
+                {"name": "label", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne",
+                 "verbalizes": ["{Gadget} has label {Label}"]},
             ],
         },
         {
@@ -461,7 +464,8 @@ _RESERVED_NAME_SPEC = {
             "type": "EntityType",
             "identify_by": ["ref"],
             "relationships": [
-                {"name": "ref", "roles": [{"concept": "GizmoId"}], "multiplicity": "OneToOne"},
+                {"name": "ref", "roles": [{"concept": "GizmoId"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Gizmo} has ref {GizmoId}"]},
             ],
         },
     ],
@@ -554,7 +558,8 @@ _NESTED_REFERENTS_SPEC = {
             "type": "EntityType",
             "identify_by": ["nr"],
             "relationships": [
-                {"name": "nr", "roles": [{"concept": "EmpNr"}], "multiplicity": "OneToOne"},
+                {"name": "nr", "roles": [{"concept": "EmpNr"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Employee} has {EmpNr}"]},
             ],
         },
         {
@@ -562,7 +567,8 @@ _NESTED_REFERENTS_SPEC = {
             "type": "EntityType",
             "identify_by": ["owner"],
             "relationships": [
-                {"name": "owner", "roles": [{"concept": "Employee"}], "multiplicity": "OneToOne"},
+                {"name": "owner", "roles": [{"concept": "Employee"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Desk} belongs to {Employee}"]},
             ],
         },
     ],

@@ -69,6 +69,11 @@ from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverte
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 ```
 
+The Spec side is the shared `ossie.models.OssieOntologyModel` from the
+`apache-ossie` package (resolved from the `ossie/` submodule). Read and write
+it with its own `OssieOntologyModel.from_ossie_yaml(text)` and
+`document.to_ossie_yaml()` (or the `_json` variants).
+
 `OssieParser` parses and validates `derived_by` and `requires` expressions into
 an AST by default. To keep formulas as raw text instead, pass the plain
 `FormulaFactory` and `MappingFormulaFactory` from `ossie_ontology.model`.

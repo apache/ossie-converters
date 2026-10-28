@@ -39,6 +39,7 @@ keywords = [
     "Ontology"
 ]
 dependencies = [
+    "apache-ossie>=0.2.0.dev0",
     "pydantic",
     "ply",
     "pyyaml",
@@ -47,6 +48,11 @@ dependencies = [
 [project.urls]
 homepage = "https://ossie.apache.org/"
 repository = "https://github.com/apache/ossie-converters/"
+
+# apache-ossie is not yet published to PyPI; resolve it from the in-repo
+# package for now. Remove this block once apache-ossie is published to PyPI.
+[tool.uv.sources]
+apache-ossie = { path = "../ossie/python", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ossie_ontology"]

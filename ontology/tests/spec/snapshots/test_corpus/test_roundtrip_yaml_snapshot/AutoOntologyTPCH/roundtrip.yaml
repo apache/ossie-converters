@@ -21,7 +21,8 @@ description: Business concepts of the tpch semantic model
 ontology:
 - concept: Supplier
   type: EntityType
-  description: A business entity that provides goods or services, including its contact information and account standing.
+  description: A business entity that provides goods or services, including its contact
+    information and account standing.
   identify_by:
   - supplier_key
   relationships:
@@ -29,50 +30,50 @@ ontology:
     description: The business name of the supplier.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Supplier} has supplier name {String}'
-    multiplicity: ManyToOne
   - name: phone_number
     description: The contact telephone number of the supplier.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Supplier} has phone number {String}'
-    multiplicity: ManyToOne
   - name: account_balance
     description: The supplier's account balance, which may be positive or negative.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Supplier} has account balance {Decimal}'
-    multiplicity: ManyToOne
   - name: comment
     description: A free-text comment or remark associated with the supplier.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Supplier} has comment {String}'
-    multiplicity: ManyToOne
   - name: address
     description: The street or physical address of the supplier.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Supplier} has address {String}'
-    multiplicity: ManyToOne
   - name: supplier_key
     description: The unique numeric identifier (primary key) assigned to each supplier.
     roles:
     - concept: Integer
+    multiplicity: OneToOne
     verbalizes:
     - '{Supplier} is identified by supplier key {Integer}'
-    multiplicity: OneToOne
   - name: nation
     roles:
     - concept: Nation
+    multiplicity: ManyToOne
     verbalizes:
     - '{Supplier} has {Nation}'
-    multiplicity: ManyToOne
 - concept: Region
   type: EntityType
   description: A geographic region used to group nations.
@@ -83,66 +84,70 @@ ontology:
     description: A free-text comment or note associated with the region.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Region} has comment {String}'
-    multiplicity: ManyToOne
   - name: region_key
     description: The unique numeric identifier assigned to each region.
     roles:
     - concept: Integer
+    multiplicity: OneToOne
     verbalizes:
     - '{Region} is identified by region key {Integer}'
-    multiplicity: OneToOne
   - name: region_name
     description: The name of the geographic region, such as AFRICA, AMERICA, or EUROPE.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Region} has region name {String}'
-    multiplicity: ManyToOne
 - concept: PartSupplier
   type: EntityType
-  description: Represents the supply relationship between a part and a supplier, including availability, cost, and notes.
+  description: Represents the supply relationship between a part and a supplier, including
+    availability, cost, and notes.
   identify_by:
   - part
   - supplier
   relationships:
   - name: available_quantity
-    description: The quantity of the part currently available in stock from the associated supplier.
+    description: The quantity of the part currently available in stock from the associated
+      supplier.
     roles:
     - concept: Integer
+    multiplicity: ManyToOne
     verbalizes:
     - '{PartSupplier} has available quantity {Integer}'
-    multiplicity: ManyToOne
   - name: comment
     description: A free-text comment or note associated with the part-supplier relationship.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{PartSupplier} has comment {String}'
-    multiplicity: ManyToOne
   - name: supply_cost
-    description: The per-unit cost the supplier charges to provide the associated part.
+    description: The per-unit cost the supplier charges to provide the associated
+      part.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{PartSupplier} has supply cost {Decimal}'
-    multiplicity: ManyToOne
   - name: part
     roles:
     - concept: Part
+    multiplicity: ManyToOne
     verbalizes:
     - '{PartSupplier} has {Part}'
-    multiplicity: ManyToOne
   - name: supplier
     roles:
     - concept: Supplier
+    multiplicity: ManyToOne
     verbalizes:
     - '{PartSupplier} has {Supplier}'
-    multiplicity: ManyToOne
 - concept: Part
   type: EntityType
-  description: A part in the product catalog, including its identification, classification, packaging, and pricing details.
+  description: A part in the product catalog, including its identification, classification,
+    packaging, and pricing details.
   identify_by:
   - part_key
   relationships:
@@ -150,68 +155,73 @@ ontology:
     description: The type and dimension of the container in which the part is packaged.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has container {String}'
-    multiplicity: ManyToOne
   - name: size
     description: The numeric size measurement of the part.
     roles:
     - concept: Integer
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has size {Integer}'
-    multiplicity: ManyToOne
   - name: part_type
-    description: The classification of the part describing its grade, finish, and material composition.
+    description: The classification of the part describing its grade, finish, and
+      material composition.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has part type {String}'
-    multiplicity: ManyToOne
   - name: part_name
-    description: The descriptive name of the part, typically composed of color and material descriptor words.
+    description: The descriptive name of the part, typically composed of color and
+      material descriptor words.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has part name {String}'
-    multiplicity: ManyToOne
   - name: manufacturer
-    description: The manufacturer that produces the part, identified by a standardized manufacturer code.
+    description: The manufacturer that produces the part, identified by a standardized
+      manufacturer code.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has manufacturer {String}'
-    multiplicity: ManyToOne
   - name: retail_price
     description: The retail selling price of the part.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has retail price {Decimal}'
-    multiplicity: ManyToOne
   - name: brand
-    description: The brand under which the part is marketed, identified by a standardized brand code.
+    description: The brand under which the part is marketed, identified by a standardized
+      brand code.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has brand {String}'
-    multiplicity: ManyToOne
   - name: comment
     description: A free-text comment or note associated with the part.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Part} has comment {String}'
-    multiplicity: ManyToOne
   - name: part_key
     description: The unique numeric identifier assigned to each part in the catalog.
     roles:
     - concept: Integer
+    multiplicity: OneToOne
     verbalizes:
     - '{Part} is identified by part key {Integer}'
-    multiplicity: OneToOne
 - concept: Order
   type: EntityType
-  description: A customer order capturing its status, total value, priority, and processing details.
+  description: A customer order capturing its status, total value, priority, and processing
+    details.
   identify_by:
   - order_key
   relationships:
@@ -219,210 +229,234 @@ ontology:
     description: The identifier of the clerk who processed the order.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has clerk {String}'
-    multiplicity: ManyToOne
   - name: comment
     description: A free-text comment or note associated with the order.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has comment {String}'
-    multiplicity: ManyToOne
   - name: order_key
     description: The unique numeric identifier assigned to each customer order.
     roles:
     - concept: Integer
+    multiplicity: OneToOne
     verbalizes:
     - '{Order} is identified by order key {Integer}'
-    multiplicity: OneToOne
   - name: total_price
     description: The total monetary value of the order, including all line items.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has total price {Decimal}'
-    multiplicity: ManyToOne
   - name: ship_priority
     description: A numeric code indicating the shipping priority of the order.
     roles:
     - concept: Integer
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has ship priority {Integer}'
-    multiplicity: ManyToOne
   - name: order_status
-    description: A single-character code indicating the fulfillment status of the order, such as F (fulfilled), O (open), or P (pending).
+    description: A single-character code indicating the fulfillment status of the
+      order, such as F (fulfilled), O (open), or P (pending).
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has order status {String}'
-    multiplicity: ManyToOne
   - name: order_priority
-    description: The priority level assigned to the order, ranging from 1-URGENT to 5-LOW.
+    description: The priority level assigned to the order, ranging from 1-URGENT to
+      5-LOW.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has order priority {String}'
-    multiplicity: ManyToOne
   - name: order_date
-    description: "The date on which the order was placed. \u2014 format: YYYY-MM-DD"
+    description: 'The date on which the order was placed. — format: YYYY-MM-DD'
     roles:
     - concept: Date
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has order date {Date}'
-    multiplicity: ManyToOne
   - name: customer
     roles:
     - concept: Customer
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has {Customer}'
-    multiplicity: ManyToOne
 - concept: OrderLineItem
   type: EntityType
-  description: An individual line within an order representing a specific product quantity, pricing, shipping, and fulfillment details.
+  description: An individual line within an order representing a specific product
+    quantity, pricing, shipping, and fulfillment details.
   identify_by:
   - order
   - line_number
   relationships:
   - name: receipt_date
-    description: "The date on which the line item was received by the customer. \u2014 format: YYYY-MM-DD"
+    description: 'The date on which the line item was received by the customer. —
+      format: YYYY-MM-DD'
     roles:
     - concept: Date
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has receipt date {Date}'
-    multiplicity: ManyToOne
   - name: ship_mode
-    description: The transportation mode used to ship the line item, such as air, truck, rail, or ship.
+    description: The transportation mode used to ship the line item, such as air,
+      truck, rail, or ship.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has ship mode {String}'
-    multiplicity: ManyToOne
   - name: tax_rate
     description: The tax rate applied to the line item, expressed as a decimal fraction.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has tax rate {Decimal}'
-    multiplicity: ManyToOne
   - name: extended_price
-    description: The total gross price for the line item before discount and tax, calculated as quantity times unit price.
+    description: The total gross price for the line item before discount and tax,
+      calculated as quantity times unit price.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has extended price {Decimal}'
-    multiplicity: ManyToOne
   - name: line_number
-    description: The sequential line item number identifying each individual line within an order.
+    description: The sequential line item number identifying each individual line
+      within an order.
     roles:
     - concept: Integer
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has line number {Integer}'
-    multiplicity: ManyToOne
   - name: discount_rate
-    description: The discount rate applied to the line item, expressed as a decimal fraction of the extended price.
+    description: The discount rate applied to the line item, expressed as a decimal
+      fraction of the extended price.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has discount rate {Decimal}'
-    multiplicity: ManyToOne
   - name: quantity
     description: The number of units of the product ordered on this line item.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has quantity {Decimal}'
-    multiplicity: ManyToOne
   - name: line_status
-    description: A single-character code indicating whether the line item is fulfilled/filled (F) or open (O).
+    description: A single-character code indicating whether the line item is fulfilled/filled
+      (F) or open (O).
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has line status {String}'
-    multiplicity: ManyToOne
   - name: commit_date
-    description: "The committed delivery date promised for the line item. \u2014 format: YYYY-MM-DD"
+    description: 'The committed delivery date promised for the line item. — format:
+      YYYY-MM-DD'
     roles:
     - concept: Date
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has commit date {Date}'
-    multiplicity: ManyToOne
   - name: return_flag
-    description: A single-character code indicating the return status of the line item, such as returned, accepted, or not returned.
+    description: A single-character code indicating the return status of the line
+      item, such as returned, accepted, or not returned.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has return flag {String}'
-    multiplicity: ManyToOne
   - name: shipping_instructions
-    description: The shipping handling instruction for the line item, such as deliver in person or collect COD.
+    description: The shipping handling instruction for the line item, such as deliver
+      in person or collect COD.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has shipping instructions {String}'
-    multiplicity: ManyToOne
   - name: comment
     description: A free-text comment or note associated with the line item.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has comment {String}'
-    multiplicity: ManyToOne
   - name: ship_date
-    description: "The date on which the line item was shipped. \u2014 format: YYYY-MM-DD"
+    description: 'The date on which the line item was shipped. — format: YYYY-MM-DD'
     roles:
     - concept: Date
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has ship date {Date}'
-    multiplicity: ManyToOne
   - name: missing_line_status
-    description: Identifies order line items whose line status is unset. Line status captures the fulfillment state of an individual line within an order, so a NULL value marks a line item in an undefined state. Data consumers would use this to surface incomplete records or exclude unprocessed line items from status-based reporting.
+    description: Identifies order line items whose line status is unset. Line status
+      captures the fulfillment state of an individual line within an order, so a NULL
+      value marks a line item in an undefined state. Data consumers would use this
+      to surface incomplete records or exclude unprocessed line items from status-based
+      reporting.
     roles:
     - concept: Boolean
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has missing line status {Boolean}'
-    multiplicity: ManyToOne
   - name: missing_return_flag
-    description: Identifies order line items where the return flag has not been set. For the Order Line Item term, the return flag typically indicates whether a line was returned by the customer. A NULL value signals incomplete fulfillment/return data, which a data consumer would apply when auditing data quality or isolating line items whose return status is unknown.
+    description: Identifies order line items where the return flag has not been set.
+      For the Order Line Item term, the return flag typically indicates whether a
+      line was returned by the customer. A NULL value signals incomplete fulfillment/return
+      data, which a data consumer would apply when auditing data quality or isolating
+      line items whose return status is unknown.
     roles:
     - concept: Boolean
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has missing return flag {Boolean}'
-    multiplicity: ManyToOne
   - name: missing_shipping_instructions
-    description: Flags order line items that have no shipping instructions recorded. Shipping instructions carry business meaning about how a line item should be handled during fulfillment. A data consumer would apply this filter to find line items needing default handling or to detect gaps in fulfillment setup.
+    description: Flags order line items that have no shipping instructions recorded.
+      Shipping instructions carry business meaning about how a line item should be
+      handled during fulfillment. A data consumer would apply this filter to find
+      line items needing default handling or to detect gaps in fulfillment setup.
     roles:
     - concept: Boolean
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has missing shipping instructions {Boolean}'
-    multiplicity: ManyToOne
   - name: part_supplier
     roles:
     - concept: PartSupplier
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has {PartSupplier}'
-    multiplicity: ManyToOne
   - name: order
     roles:
     - concept: Order
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has {Order}'
-    multiplicity: ManyToOne
   - name: part
     roles:
     - concept: Part
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has {Part}'
-    multiplicity: ManyToOne
   - name: supplier
     roles:
     - concept: Supplier
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has {Supplier}'
-    multiplicity: ManyToOne
 - concept: Nation
   type: EntityType
-  description: A country or nation entity with its identifier, name, and descriptive comment.
+  description: A country or nation entity with its identifier, name, and descriptive
+    comment.
   identify_by:
   - nation_key
   relationships:
@@ -430,32 +464,33 @@ ontology:
     description: The official name of the nation.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Nation} has nation name {String}'
-    multiplicity: ManyToOne
   - name: nation_key
     description: The unique numeric identifier assigned to each nation in the table.
     roles:
     - concept: Integer
+    multiplicity: OneToOne
     verbalizes:
     - '{Nation} is identified by nation key {Integer}'
-    multiplicity: OneToOne
   - name: nation_comment
     description: A free-text comment or note associated with the nation.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Nation} has nation comment {String}'
-    multiplicity: ManyToOne
   - name: region
     roles:
     - concept: Region
+    multiplicity: ManyToOne
     verbalizes:
     - '{Nation} has {Region}'
-    multiplicity: ManyToOne
 - concept: Customer
   type: EntityType
-  description: A customer entity including identity, contact information, account balance, and market segment classification.
+  description: A customer entity including identity, contact information, account
+    balance, and market segment classification.
   identify_by:
   - customer_key
   relationships:
@@ -463,57 +498,62 @@ ontology:
     description: The customer's street address as a free-text field.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Customer} has address {String}'
-    multiplicity: ManyToOne
   - name: market_segment
-    description: The market segment classification to which the customer belongs, such as FURNITURE, MACHINERY, or BUILDING.
+    description: The market segment classification to which the customer belongs,
+      such as FURNITURE, MACHINERY, or BUILDING.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Customer} has market segment {String}'
-    multiplicity: ManyToOne
   - name: customer_name
-    description: The customer's name, formatted as a standardized label combining the 'Customer#' prefix with a zero-padded customer number.
+    description: The customer's name, formatted as a standardized label combining
+      the 'Customer#' prefix with a zero-padded customer number.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Customer} has customer name {String}'
-    multiplicity: ManyToOne
   - name: phone_number
-    description: The customer's telephone number stored in a formatted string with country and area code segments.
+    description: The customer's telephone number stored in a formatted string with
+      country and area code segments.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Customer} has phone number {String}'
-    multiplicity: ManyToOne
   - name: customer_key
-    description: The unique numeric identifier assigned to each customer, serving as the primary key for the customer record.
+    description: The unique numeric identifier assigned to each customer, serving
+      as the primary key for the customer record.
     roles:
     - concept: Integer
+    multiplicity: OneToOne
     verbalizes:
     - '{Customer} is identified by customer key {Integer}'
-    multiplicity: OneToOne
   - name: comment
-    description: A free-text comment field containing additional descriptive notes about the customer.
+    description: A free-text comment field containing additional descriptive notes
+      about the customer.
     roles:
     - concept: String
+    multiplicity: ManyToOne
     verbalizes:
     - '{Customer} has comment {String}'
-    multiplicity: ManyToOne
   - name: account_balance
     description: The customer's account balance expressed as a monetary amount.
     roles:
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Customer} has account balance {Decimal}'
-    multiplicity: ManyToOne
   - name: nation
     roles:
     - concept: Nation
+    multiplicity: ManyToOne
     verbalizes:
     - '{Customer} has {Nation}'
-    multiplicity: ManyToOne
 ontology_mappings:
 - name: tpch_mapping
   description: Maps the tpch_ontology onto the tpch semantic model
@@ -525,7 +565,8 @@ ontology_mappings:
       source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.CUSTOMER
       primary_key:
       - customer_key
-      description: A customer entity including identity, contact information, account balance, and market segment classification.
+      description: A customer entity including identity, contact information, account
+        balance, and market segment classification.
       fields:
       - name: address
         expression:
@@ -539,35 +580,40 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: C_MKTSEGMENT
-        description: The market segment classification to which the customer belongs, such as FURNITURE, MACHINERY, or BUILDING.
+        description: The market segment classification to which the customer belongs,
+          such as FURNITURE, MACHINERY, or BUILDING.
         datatype: String
       - name: customer_name
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: C_NAME
-        description: The customer's name, formatted as a standardized label combining the 'Customer#' prefix with a zero-padded customer number.
+        description: The customer's name, formatted as a standardized label combining
+          the 'Customer#' prefix with a zero-padded customer number.
         datatype: String
       - name: phone_number
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: C_PHONE
-        description: The customer's telephone number stored in a formatted string with country and area code segments.
+        description: The customer's telephone number stored in a formatted string
+          with country and area code segments.
         datatype: String
       - name: customer_key
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: C_CUSTKEY
-        description: The unique numeric identifier assigned to each customer, serving as the primary key for the customer record.
+        description: The unique numeric identifier assigned to each customer, serving
+          as the primary key for the customer record.
         datatype: Integer
       - name: comment
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: C_COMMENT
-        description: A free-text comment field containing additional descriptive notes about the customer.
+        description: A free-text comment field containing additional descriptive notes
+          about the customer.
         datatype: String
       - name: account_balance
         expression:
@@ -586,7 +632,8 @@ ontology_mappings:
       source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION
       primary_key:
       - nation_key
-      description: A country or nation entity with its identifier, name, and descriptive comment.
+      description: A country or nation entity with its identifier, name, and descriptive
+        comment.
       fields:
       - name: nation_name
         expression:
@@ -600,7 +647,8 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: N_NATIONKEY
-        description: The unique numeric identifier assigned to each nation in the table.
+        description: The unique numeric identifier assigned to each nation in the
+          table.
         datatype: Integer
       - name: nation_comment
         expression:
@@ -620,49 +668,56 @@ ontology_mappings:
       primary_key:
       - l_orderkey
       - line_number
-      description: An individual line within an order representing a specific product quantity, pricing, shipping, and fulfillment details.
+      description: An individual line within an order representing a specific product
+        quantity, pricing, shipping, and fulfillment details.
       fields:
       - name: receipt_date
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_RECEIPTDATE
-        description: "The date on which the line item was received by the customer. \u2014 format: YYYY-MM-DD"
+        description: 'The date on which the line item was received by the customer.
+          — format: YYYY-MM-DD'
         datatype: Date
       - name: ship_mode
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_SHIPMODE
-        description: The transportation mode used to ship the line item, such as air, truck, rail, or ship.
+        description: The transportation mode used to ship the line item, such as air,
+          truck, rail, or ship.
         datatype: String
       - name: tax_rate
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_TAX
-        description: The tax rate applied to the line item, expressed as a decimal fraction.
+        description: The tax rate applied to the line item, expressed as a decimal
+          fraction.
         datatype: Decimal
       - name: extended_price
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_EXTENDEDPRICE
-        description: The total gross price for the line item before discount and tax, calculated as quantity times unit price.
+        description: The total gross price for the line item before discount and tax,
+          calculated as quantity times unit price.
         datatype: Decimal
       - name: line_number
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_LINENUMBER
-        description: The sequential line item number identifying each individual line within an order.
+        description: The sequential line item number identifying each individual line
+          within an order.
         datatype: Integer
       - name: discount_rate
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_DISCOUNT
-        description: The discount rate applied to the line item, expressed as a decimal fraction of the extended price.
+        description: The discount rate applied to the line item, expressed as a decimal
+          fraction of the extended price.
         datatype: Decimal
       - name: quantity
         expression:
@@ -676,28 +731,32 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: L_LINESTATUS
-        description: A single-character code indicating whether the line item is fulfilled/filled (F) or open (O).
+        description: A single-character code indicating whether the line item is fulfilled/filled
+          (F) or open (O).
         datatype: String
       - name: commit_date
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_COMMITDATE
-        description: "The committed delivery date promised for the line item. \u2014 format: YYYY-MM-DD"
+        description: 'The committed delivery date promised for the line item. — format:
+          YYYY-MM-DD'
         datatype: Date
       - name: return_flag
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_RETURNFLAG
-        description: A single-character code indicating the return status of the line item, such as returned, accepted, or not returned.
+        description: A single-character code indicating the return status of the line
+          item, such as returned, accepted, or not returned.
         datatype: String
       - name: shipping_instructions
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: L_SHIPINSTRUCT
-        description: The shipping handling instruction for the line item, such as deliver in person or collect COD.
+        description: The shipping handling instruction for the line item, such as
+          deliver in person or collect COD.
         datatype: String
       - name: comment
         expression:
@@ -711,28 +770,40 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: L_SHIPDATE
-        description: "The date on which the line item was shipped. \u2014 format: YYYY-MM-DD"
+        description: 'The date on which the line item was shipped. — format: YYYY-MM-DD'
         datatype: Date
       - name: missing_line_status
         expression:
           dialects:
           - dialect: SNOWFLAKE
             expression: '"L_LINESTATUS" IS NULL'
-        description: Identifies order line items whose line status is unset. Line status captures the fulfillment state of an individual line within an order, so a NULL value marks a line item in an undefined state. Data consumers would use this to surface incomplete records or exclude unprocessed line items from status-based reporting.
+        description: Identifies order line items whose line status is unset. Line
+          status captures the fulfillment state of an individual line within an order,
+          so a NULL value marks a line item in an undefined state. Data consumers
+          would use this to surface incomplete records or exclude unprocessed line
+          items from status-based reporting.
         datatype: Boolean
       - name: missing_return_flag
         expression:
           dialects:
           - dialect: SNOWFLAKE
             expression: '"L_RETURNFLAG" IS NULL'
-        description: Identifies order line items where the return flag has not been set. For the Order Line Item term, the return flag typically indicates whether a line was returned by the customer. A NULL value signals incomplete fulfillment/return data, which a data consumer would apply when auditing data quality or isolating line items whose return status is unknown.
+        description: Identifies order line items where the return flag has not been
+          set. For the Order Line Item term, the return flag typically indicates whether
+          a line was returned by the customer. A NULL value signals incomplete fulfillment/return
+          data, which a data consumer would apply when auditing data quality or isolating
+          line items whose return status is unknown.
         datatype: Boolean
       - name: missing_shipping_instructions
         expression:
           dialects:
           - dialect: SNOWFLAKE
             expression: '"L_SHIPINSTRUCT" IS NULL'
-        description: Flags order line items that have no shipping instructions recorded. Shipping instructions carry business meaning about how a line item should be handled during fulfillment. A data consumer would apply this filter to find line items needing default handling or to detect gaps in fulfillment setup.
+        description: Flags order line items that have no shipping instructions recorded.
+          Shipping instructions carry business meaning about how a line item should
+          be handled during fulfillment. A data consumer would apply this filter to
+          find line items needing default handling or to detect gaps in fulfillment
+          setup.
         datatype: Boolean
       - name: l_orderkey
         expression:
@@ -756,7 +827,8 @@ ontology_mappings:
       source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.ORDERS
       primary_key:
       - order_key
-      description: A customer order capturing its status, total value, priority, and processing details.
+      description: A customer order capturing its status, total value, priority, and
+        processing details.
       fields:
       - name: clerk
         expression:
@@ -798,21 +870,23 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: O_ORDERSTATUS
-        description: A single-character code indicating the fulfillment status of the order, such as F (fulfilled), O (open), or P (pending).
+        description: A single-character code indicating the fulfillment status of
+          the order, such as F (fulfilled), O (open), or P (pending).
         datatype: String
       - name: order_priority
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: O_ORDERPRIORITY
-        description: The priority level assigned to the order, ranging from 1-URGENT to 5-LOW.
+        description: The priority level assigned to the order, ranging from 1-URGENT
+          to 5-LOW.
         datatype: String
       - name: order_date
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: O_ORDERDATE
-        description: "The date on which the order was placed. \u2014 format: YYYY-MM-DD"
+        description: 'The date on which the order was placed. — format: YYYY-MM-DD'
         datatype: Date
       - name: o_custkey
         expression:
@@ -824,14 +898,16 @@ ontology_mappings:
       source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.PART
       primary_key:
       - part_key
-      description: A part in the product catalog, including its identification, classification, packaging, and pricing details.
+      description: A part in the product catalog, including its identification, classification,
+        packaging, and pricing details.
       fields:
       - name: container
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: P_CONTAINER
-        description: The type and dimension of the container in which the part is packaged.
+        description: The type and dimension of the container in which the part is
+          packaged.
         datatype: String
       - name: size
         expression:
@@ -845,21 +921,24 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: P_TYPE
-        description: The classification of the part describing its grade, finish, and material composition.
+        description: The classification of the part describing its grade, finish,
+          and material composition.
         datatype: String
       - name: part_name
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: P_NAME
-        description: The descriptive name of the part, typically composed of color and material descriptor words.
+        description: The descriptive name of the part, typically composed of color
+          and material descriptor words.
         datatype: String
       - name: manufacturer
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: P_MFGR
-        description: The manufacturer that produces the part, identified by a standardized manufacturer code.
+        description: The manufacturer that produces the part, identified by a standardized
+          manufacturer code.
         datatype: String
       - name: retail_price
         expression:
@@ -873,7 +952,8 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: P_BRAND
-        description: The brand under which the part is marketed, identified by a standardized brand code.
+        description: The brand under which the part is marketed, identified by a standardized
+          brand code.
         datatype: String
       - name: comment
         expression:
@@ -894,28 +974,32 @@ ontology_mappings:
       primary_key:
       - ps_partkey
       - ps_suppkey
-      description: Represents the supply relationship between a part and a supplier, including availability, cost, and notes.
+      description: Represents the supply relationship between a part and a supplier,
+        including availability, cost, and notes.
       fields:
       - name: available_quantity
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: PS_AVAILQTY
-        description: The quantity of the part currently available in stock from the associated supplier.
+        description: The quantity of the part currently available in stock from the
+          associated supplier.
         datatype: Integer
       - name: comment
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: PS_COMMENT
-        description: A free-text comment or note associated with the part-supplier relationship.
+        description: A free-text comment or note associated with the part-supplier
+          relationship.
         datatype: String
       - name: supply_cost
         expression:
           dialects:
           - dialect: ANSI_SQL
             expression: PS_SUPPLYCOST
-        description: The per-unit cost the supplier charges to provide the associated part.
+        description: The per-unit cost the supplier charges to provide the associated
+          part.
         datatype: Decimal
       - name: ps_partkey
         expression:
@@ -954,13 +1038,15 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: R_NAME
-        description: The name of the geographic region, such as AFRICA, AMERICA, or EUROPE.
+        description: The name of the geographic region, such as AFRICA, AMERICA, or
+          EUROPE.
         datatype: String
     - name: supplier
       source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.SUPPLIER
       primary_key:
       - supplier_key
-      description: A business entity that provides goods or services, including its contact information and account standing.
+      description: A business entity that provides goods or services, including its
+        contact information and account standing.
       fields:
       - name: supplier_name
         expression:
@@ -1002,7 +1088,8 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: S_SUPPKEY
-        description: The unique numeric identifier (primary key) assigned to each supplier.
+        description: The unique numeric identifier (primary key) assigned to each
+          supplier.
         datatype: Integer
       - name: s_nationkey
         expression:
@@ -1091,34 +1178,34 @@ ontology_mappings:
     - object_mapping:
         expression: customer.customer_key
       children:
-      - object_mapping:
+      - relationship: address
+        object_mapping:
           concept: String
           expression: customer.address
-        relationship: address
-      - object_mapping:
+      - relationship: market_segment
+        object_mapping:
           concept: String
           expression: customer.market_segment
-        relationship: market_segment
-      - object_mapping:
+      - relationship: customer_name
+        object_mapping:
           concept: String
           expression: customer.customer_name
-        relationship: customer_name
-      - object_mapping:
+      - relationship: phone_number
+        object_mapping:
           concept: String
           expression: customer.phone_number
-        relationship: phone_number
-      - object_mapping:
+      - relationship: comment
+        object_mapping:
           concept: String
           expression: customer.comment
-        relationship: comment
-      - object_mapping:
+      - relationship: account_balance
+        object_mapping:
           concept: Decimal
           expression: customer.account_balance
-        relationship: account_balance
-      - object_mapping:
+      - relationship: nation
+        object_mapping:
           concept: Nation
           expression: customer.c_nationkey
-        relationship: nation
   - concept: Nation
     object_mappings:
     - expression: nation.nation_key
@@ -1126,18 +1213,18 @@ ontology_mappings:
     - object_mapping:
         expression: nation.nation_key
       children:
-      - object_mapping:
+      - relationship: nation_name
+        object_mapping:
           concept: String
           expression: nation.nation_name
-        relationship: nation_name
-      - object_mapping:
+      - relationship: nation_comment
+        object_mapping:
           concept: String
           expression: nation.nation_comment
-        relationship: nation_comment
-      - object_mapping:
+      - relationship: region
+        object_mapping:
           concept: Region
           expression: nation.n_regionkey
-        relationship: region
   - concept: OrderLineItem
     object_mappings:
     - referent_mappings:
@@ -1157,67 +1244,68 @@ ontology_mappings:
         - relationship: line_number
           expression: order_line_item.line_number
       children:
-      - object_mapping:
+      - relationship: receipt_date
+        object_mapping:
           concept: Date
           expression: order_line_item.receipt_date
-        relationship: receipt_date
-      - object_mapping:
+      - relationship: ship_mode
+        object_mapping:
           concept: String
           expression: order_line_item.ship_mode
-        relationship: ship_mode
-      - object_mapping:
+      - relationship: tax_rate
+        object_mapping:
           concept: Decimal
           expression: order_line_item.tax_rate
-        relationship: tax_rate
-      - object_mapping:
+      - relationship: extended_price
+        object_mapping:
           concept: Decimal
           expression: order_line_item.extended_price
-        relationship: extended_price
-      - object_mapping:
+      - relationship: discount_rate
+        object_mapping:
           concept: Decimal
           expression: order_line_item.discount_rate
-        relationship: discount_rate
-      - object_mapping:
+      - relationship: quantity
+        object_mapping:
           concept: Decimal
           expression: order_line_item.quantity
-        relationship: quantity
-      - object_mapping:
+      - relationship: line_status
+        object_mapping:
           concept: String
           expression: order_line_item.line_status
-        relationship: line_status
-      - object_mapping:
+      - relationship: commit_date
+        object_mapping:
           concept: Date
           expression: order_line_item.commit_date
-        relationship: commit_date
-      - object_mapping:
+      - relationship: return_flag
+        object_mapping:
           concept: String
           expression: order_line_item.return_flag
-        relationship: return_flag
-      - object_mapping:
+      - relationship: shipping_instructions
+        object_mapping:
           concept: String
           expression: order_line_item.shipping_instructions
-        relationship: shipping_instructions
-      - object_mapping:
+      - relationship: comment
+        object_mapping:
           concept: String
           expression: order_line_item.comment
-        relationship: comment
-      - object_mapping:
+      - relationship: ship_date
+        object_mapping:
           concept: Date
           expression: order_line_item.ship_date
-        relationship: ship_date
-      - object_mapping:
+      - relationship: missing_line_status
+        object_mapping:
           concept: Boolean
           expression: order_line_item.missing_line_status
-        relationship: missing_line_status
-      - object_mapping:
+      - relationship: missing_return_flag
+        object_mapping:
           concept: Boolean
           expression: order_line_item.missing_return_flag
-        relationship: missing_return_flag
-      - object_mapping:
+      - relationship: missing_shipping_instructions
+        object_mapping:
           concept: Boolean
           expression: order_line_item.missing_shipping_instructions
-        relationship: missing_shipping_instructions
-      - object_mapping:
+      - relationship: part_supplier
+        object_mapping:
           concept: PartSupplier
           referent_mappings:
           - relationship: part
@@ -1228,15 +1316,14 @@ ontology_mappings:
             referent_mappings:
             - relationship: supplier_key
               expression: order_line_item.l_suppkey
-        relationship: part_supplier
-      - object_mapping:
+      - relationship: part
+        object_mapping:
           concept: Part
           expression: order_line_item.l_partkey
-        relationship: part
-      - object_mapping:
+      - relationship: supplier
+        object_mapping:
           concept: Supplier
           expression: order_line_item.l_suppkey
-        relationship: supplier
   - concept: Order
     object_mappings:
     - expression: order.order_key
@@ -1244,38 +1331,38 @@ ontology_mappings:
     - object_mapping:
         expression: order.order_key
       children:
-      - object_mapping:
+      - relationship: clerk
+        object_mapping:
           concept: String
           expression: order.clerk
-        relationship: clerk
-      - object_mapping:
+      - relationship: comment
+        object_mapping:
           concept: String
           expression: order.comment
-        relationship: comment
-      - object_mapping:
+      - relationship: total_price
+        object_mapping:
           concept: Decimal
           expression: order.total_price
-        relationship: total_price
-      - object_mapping:
+      - relationship: ship_priority
+        object_mapping:
           concept: Integer
           expression: order.ship_priority
-        relationship: ship_priority
-      - object_mapping:
+      - relationship: order_status
+        object_mapping:
           concept: String
           expression: order.order_status
-        relationship: order_status
-      - object_mapping:
+      - relationship: order_priority
+        object_mapping:
           concept: String
           expression: order.order_priority
-        relationship: order_priority
-      - object_mapping:
+      - relationship: order_date
+        object_mapping:
           concept: Date
           expression: order.order_date
-        relationship: order_date
-      - object_mapping:
+      - relationship: customer
+        object_mapping:
           concept: Customer
           expression: order.o_custkey
-        relationship: customer
   - concept: Part
     object_mappings:
     - expression: part.part_key
@@ -1283,38 +1370,38 @@ ontology_mappings:
     - object_mapping:
         expression: part.part_key
       children:
-      - object_mapping:
+      - relationship: container
+        object_mapping:
           concept: String
           expression: part.container
-        relationship: container
-      - object_mapping:
+      - relationship: size
+        object_mapping:
           concept: Integer
           expression: part.size
-        relationship: size
-      - object_mapping:
+      - relationship: part_type
+        object_mapping:
           concept: String
           expression: part.part_type
-        relationship: part_type
-      - object_mapping:
+      - relationship: part_name
+        object_mapping:
           concept: String
           expression: part.part_name
-        relationship: part_name
-      - object_mapping:
+      - relationship: manufacturer
+        object_mapping:
           concept: String
           expression: part.manufacturer
-        relationship: manufacturer
-      - object_mapping:
+      - relationship: retail_price
+        object_mapping:
           concept: Decimal
           expression: part.retail_price
-        relationship: retail_price
-      - object_mapping:
+      - relationship: brand
+        object_mapping:
           concept: String
           expression: part.brand
-        relationship: brand
-      - object_mapping:
+      - relationship: comment
+        object_mapping:
           concept: String
           expression: part.comment
-        relationship: comment
   - concept: PartSupplier
     object_mappings:
     - referent_mappings:
@@ -1338,18 +1425,18 @@ ontology_mappings:
           - relationship: supplier_key
             expression: part_supplier.ps_suppkey
       children:
-      - object_mapping:
+      - relationship: available_quantity
+        object_mapping:
           concept: Integer
           expression: part_supplier.available_quantity
-        relationship: available_quantity
-      - object_mapping:
+      - relationship: comment
+        object_mapping:
           concept: String
           expression: part_supplier.comment
-        relationship: comment
-      - object_mapping:
+      - relationship: supply_cost
+        object_mapping:
           concept: Decimal
           expression: part_supplier.supply_cost
-        relationship: supply_cost
   - concept: Region
     object_mappings:
     - expression: region.region_key
@@ -1357,14 +1444,14 @@ ontology_mappings:
     - object_mapping:
         expression: region.region_key
       children:
-      - object_mapping:
+      - relationship: comment
+        object_mapping:
           concept: String
           expression: region.comment
-        relationship: comment
-      - object_mapping:
+      - relationship: region_name
+        object_mapping:
           concept: String
           expression: region.region_name
-        relationship: region_name
   - concept: Supplier
     object_mappings:
     - expression: supplier.supplier_key
@@ -1372,27 +1459,27 @@ ontology_mappings:
     - object_mapping:
         expression: supplier.supplier_key
       children:
-      - object_mapping:
+      - relationship: supplier_name
+        object_mapping:
           concept: String
           expression: supplier.supplier_name
-        relationship: supplier_name
-      - object_mapping:
+      - relationship: phone_number
+        object_mapping:
           concept: String
           expression: supplier.phone_number
-        relationship: phone_number
-      - object_mapping:
+      - relationship: account_balance
+        object_mapping:
           concept: Decimal
           expression: supplier.account_balance
-        relationship: account_balance
-      - object_mapping:
+      - relationship: comment
+        object_mapping:
           concept: String
           expression: supplier.comment
-        relationship: comment
-      - object_mapping:
+      - relationship: address
+        object_mapping:
           concept: String
           expression: supplier.address
-        relationship: address
-      - object_mapping:
+      - relationship: nation
+        object_mapping:
           concept: Nation
           expression: supplier.s_nationkey
-        relationship: nation
