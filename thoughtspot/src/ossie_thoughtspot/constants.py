@@ -56,9 +56,18 @@ PORTABLE_DIALECT = "ANSI_SQL"
 #: DIALECT_MAP returns the same default reader for both. Reading only ANSI_SQL
 #: therefore rejected documents this converter could translate perfectly well:
 #: `to_thoughtspot_expression` raised TS-EXPR-NO-USABLE-DIALECT and the field or
-#: metric was dropped. apache/ossie-converters#32 and #22 are the same defect in
-#: eight sibling converters, each fixed the same way; ThoughtSpot was on neither
+#: metric was dropped. apache/ossie-converters#32 and #22 track the same defect
+#: in sibling converters and are both still open; ThoughtSpot was on neither
 #: list.
+#:
+#: Scope, and it is narrower than "this converter now reads OSSIE_SQL_2026":
+#: what is accepted reaches `_translate_ansi_sql`, which resolves a qualified
+#: `dataset.field` and nothing else. That is the model-scoped metric namespace
+#: (apache/ossie#486). The other two namespaces the specification defines --
+#: a dataset-scoped metric's unqualified field names, and a field expression's
+#: source columns -- are NOT resolved correctly here, for ANSI_SQL just as much
+#: as for OSSIE_SQL_2026. Widening the accepted list does not change that
+#: either way; see apache/ossie-converters#101.
 PORTABLE_DIALECTS_ACCEPTED = (PORTABLE_DIALECT, "OSSIE_SQL_2026")
 
 #: Ossie spec series this converter targets, matched on major.minor. Not an exact
