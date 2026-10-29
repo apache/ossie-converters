@@ -167,6 +167,37 @@ def test_serialize_tmdl_returns_a_single_document(tmp_path, monkeypatch):
         tom.serialize_tmdl([], assembly_dir=tmp_path)
 
 
+def test_serialize_tmdl_folder_writes_the_folder_representation(tmp_path, monkeypatch):
+    database = object()
+    written = []
+
+    class JsonSerializer:
+        @staticmethod
+        def DeserializeDatabase(raw):  # noqa: N802 - mirrors TOM's managed API
+            assert json.loads(raw) == {"name": "Sales"}
+            return database
+
+    class TmdlSerializer:
+        @staticmethod
+        def SerializeDatabaseToFolder(value, path):  # noqa: N802
+            written.append((value, path))
+
+    monkeypatch.setattr(
+        tom,
+        "_load_tom",
+        lambda _directory: SimpleNamespace(
+            JsonSerializer=JsonSerializer,
+            TmdlSerializer=TmdlSerializer,
+        ),
+    )
+
+    target = tmp_path / "definition"
+    assert tom.serialize_tmdl_folder('{"name": "Sales"}', target, assembly_dir=tmp_path) is None
+    assert written == [(database, os.fspath(target))]
+    with pytest.raises(TypeError, match="mapping or JSON string"):
+        tom.serialize_tmdl_folder([], target, assembly_dir=tmp_path)
+
+
 def test_split_tmdl_documents_separates_a_nested_model():
     document = (
         "database Sales\r\n"
