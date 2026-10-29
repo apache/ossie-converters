@@ -25,6 +25,13 @@ examples, validation script, and shared Python package come from
 submodule, so clone with `--recurse-submodules` (or run
 `git submodule update --init`).
 
+## Filing issues
+
+Use one of the issue forms and pick the converter the issue is about; the
+issue is labeled `converter/<name>` automatically, so converter maintainers can
+filter for it. Requests for a converter that doesn't exist yet go in the
+**New converter** form and are labeled `new-converter`.
+
 ## Bumping the `ossie` submodule pin
 
 The pin is the submodule gitlink at path `ossie` (not a version file); read it
