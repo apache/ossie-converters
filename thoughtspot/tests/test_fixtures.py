@@ -165,6 +165,37 @@ class TestExpectedOutputIsValid:
         assert not any("skipping SQL validation" in e for e in errors), errors
         assert errors == []
 
+    def test_expected_output_passes_the_WHOLE_upstream_validator(self, fixture_name):
+        """`validate_sql` is one of the validator's checks, not the validator.
+
+        The test above claims it "cannot drift from the gate it stands in
+        for", and that was true of the one dimension it measured. It called
+        `validate_sql`, so it saw expression parsing and nothing else --
+        while `validate_references` sat unrun in the same module. Both
+        fixtures emitted `primary_key`, `unique_keys`, `from_columns` and
+        `to_columns` naming warehouse source columns rather than declared
+        fields, which apache/ossie#486 made invalid on 2026-10-22 and
+        apache/ossie#649 made a validator error on 2026-10-28; the suite
+        stayed green through all of it, and bumping the submodule to pick
+        up #649 did not change that, because nothing called the check.
+
+        `validate_document` runs every check the project ships. Adding a
+        check upstream now reaches this converter without an edit here,
+        which is the property the docstring above was reaching for.
+        """
+        pytest.importorskip("sqlglot")
+        jsonschema = pytest.importorskip("jsonschema")  # noqa: F841 - validate_document needs it
+        validate = _upstream_validator()
+        schema_path = Path(__file__).resolve().parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
+        with open(schema_path) as fh:
+            schema = json.load(fh)
+        errors = [
+            str(e)
+            for e in validate.validate_document(_load_expected(FIXTURES_ROOT / fixture_name), schema)
+        ]
+        assert not any("skipping SQL validation" in e for e in errors), errors
+        assert errors == []
+
 
 @pytest.mark.parametrize("fixture_name", FIXTURE_SETS)
 class TestConversionMatchesExpected:
