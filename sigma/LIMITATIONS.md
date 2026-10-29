@@ -108,6 +108,11 @@ emitting a warehouse dialect instead of ANSI is a `dialect=` argument
 are warehouse-agnostic, so the spec gives no signal about which vendor dialect would be
 more useful, and the table-calculation gap above is unaffected either way.
 
+`Text(x)` translates to `CAST(x AS VARCHAR)` and back. The value is the same, but the
+displayed text may not be: Sigma's `Text()` and a warehouse's `CAST` can format numbers
+and dates differently. A cast to a sized text type such as `CHAR(1)` is not mapped,
+because it truncates and `Text()` does not.
+
 ## Untranslatable expressions are omitted on export, not approximated
 
 `formula` is required on every Sigma column and metric, and the data model API

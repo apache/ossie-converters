@@ -555,6 +555,8 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
     if name == "ifnull" and len(args) == 2:
         return exp.Coalesce(this=built[0], expressions=[built[1]])
     if name == "text" and len(args) == 1:
+        # The value is the same, but the text can differ: Sigma's Text() and the
+        # engine's CAST may format numbers and dates differently.
         return exp.Cast(this=built[0], to=exp.DataType.build("VARCHAR"))
     if name == "isnull" and len(args) == 1:
         return exp.Is(this=built[0], expression=exp.Null())
@@ -751,9 +753,10 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"
 
     if isinstance(node, exp.Cast):
-        # Only a cast to a text type has a Sigma equivalent (Text()); other target
-        # types fall through to the not-translatable error below.
-        if node.to.is_type(*exp.DataType.TEXT_TYPES):
+        # Only a cast to an unsized text type has a Sigma equivalent (Text()). A
+        # length such as CHAR(1) truncates, which Text() would not; that and other
+        # target types fall through to the not-translatable error below.
+        if node.to.is_type(*exp.DataType.TEXT_TYPES) and not node.to.expressions:
             return f"Text({_render_sql_node(node.this, dataset_alias)})"
 
     if isinstance(node, exp.CurrentDate):

@@ -240,6 +240,9 @@ def test_reverse_translation_gives_up_on_non_text_casts():
     assert sql_to_sigma_formula('CAST("A" AS INT)') is None
     assert sql_to_sigma_formula('CAST("A" AS DATE)') is None
     assert sql_to_sigma_formula('CAST("A" AS BOOLEAN)') is None
+    # A sized text type truncates, which Text() does not.
+    assert sql_to_sigma_formula('CAST("A" AS CHAR(1))') is None
+    assert sql_to_sigma_formula('CAST("A" AS VARCHAR(10))') is None
 
 
 def test_reverse_translation_gives_up_on_count_star():
