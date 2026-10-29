@@ -28,6 +28,7 @@ from ossie_microsoft._dax_parser import (
     Empty,
     Name,
     Number,
+    Row,
     String,
     Table,
     TableConstructor,
@@ -144,3 +145,21 @@ def test_numbers_in_all_forms():
 def test_malformed_input_raises(text):
     with pytest.raises(DaxParseError):
         parse_dax(text)
+
+
+def test_table_constructor_with_multi_column_rows():
+    assert parse_dax('{(1, "a"), (2, "b")}') == TableConstructor(
+        (Row((Number("1"), String("a"))), Row((Number("2"), String("b"))))
+    )
+
+
+def test_multi_column_row_in_an_in_test():
+    assert parse_dax("('P'[A], 'P'[B]) IN {(1, 2)}") == Binary(
+        "IN",
+        Row((Column("P", "A"), Column("P", "B"))),
+        TableConstructor((Row((Number("1"), Number("2"))),)),
+    )
+
+
+def test_a_parenthesised_expression_is_not_a_row():
+    assert parse_dax("(1)") == Number("1")
