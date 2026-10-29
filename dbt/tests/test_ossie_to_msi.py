@@ -49,6 +49,7 @@ from metricflow_semantic_interfaces.type_enums import (
     DimensionType,
     MetricType,
 )
+from metricflow_semantic_interfaces.validations.semantic_manifest_validator import SemanticManifestValidator
 from tests.helpers import (
     _manifest,
     _measure,
@@ -443,7 +444,7 @@ class TestOssieToMSIMetricConversion:
         result = OssieToMSIConverter().convert(doc).output
 
         by_name = {m.name: m for m in result.metrics}
-        for sub_metric in ("avg_order_value__numerator", "avg_order_value__denominator"):
+        for sub_metric in ("avg_order_value_numerator", "avg_order_value_denominator"):
             params = by_name[sub_metric].type_params.metric_aggregation_params
             assert params is not None
             assert params.semantic_model == "orders"
@@ -541,8 +542,8 @@ class TestOssieToMSIMetricConversion:
         assert ratio.name == "arpu"
         assert ratio.type_params.numerator is not None
         assert ratio.type_params.denominator is not None
-        assert ratio.type_params.numerator.name == "arpu__numerator"
-        assert ratio.type_params.denominator.name == "arpu__denominator"
+        assert ratio.type_params.numerator.name == "arpu_numerator"
+        assert ratio.type_params.denominator.name == "arpu_denominator"
 
     def test_ratio_sub_metrics_are_simple(self) -> None:
         doc = _ossie_doc(
@@ -554,7 +555,64 @@ class TestOssieToMSIMetricConversion:
         simple_metrics = [m for m in result.metrics if m.type == MetricType.SIMPLE]
         assert len(simple_metrics) == 2
         names = {m.name for m in simple_metrics}
-        assert names == {"ratio__numerator", "ratio__denominator"}
+        assert names == {"ratio_numerator", "ratio_denominator"}
+
+    def test_ratio_sub_metric_names_pass_metricflow_validation(self) -> None:
+        """MetricFlow rejects names containing a double underscore, so generated names must not use one."""
+        doc = _ossie_doc(
+            datasets=[
+                _ossie_dataset(
+                    "orders",
+                    fields=[_ossie_field("order_id"), _ossie_field("amount")],
+                    primary_key=["order_id"],
+                )
+            ],
+            metrics=[_ossie_metric("avg_order_value", "(SUM(orders.amount)) / (COUNT(DISTINCT orders.order_id))")],
+        )
+        manifest = OssieToMSIConverter().convert(doc).output
+
+        assert {m.name for m in manifest.metrics} == {
+            "avg_order_value",
+            "avg_order_value_numerator",
+            "avg_order_value_denominator",
+        }
+        errors = SemanticManifestValidator().validate_semantic_manifest(manifest).errors
+        assert [e.message for e in errors] == []
+
+    def test_ratio_sub_metric_name_does_not_reuse_a_document_metric_name(self) -> None:
+        doc = _ossie_doc(
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("cnt")])],
+            metrics=[
+                _ossie_metric("ratio", "(SUM(amount)) / (COUNT(cnt))"),
+                _ossie_metric("ratio_numerator", "SUM(amount)"),
+            ],
+        )
+        result = OssieToMSIConverter().convert(doc).output
+
+        ratio = next(m for m in result.metrics if m.name == "ratio")
+        assert ratio.type_params.numerator is not None
+        assert ratio.type_params.numerator.name == "ratio_numerator_2"
+        names = [m.name for m in result.metrics]
+        assert len(names) == len(set(names))
+        assert set(names) == {"ratio", "ratio_numerator", "ratio_numerator_2", "ratio_denominator"}
+
+    def test_ratio_sub_metric_name_does_not_reuse_a_generated_name(self) -> None:
+        """A metric named like another ratio's generated helper keeps its name; the helper moves aside."""
+        doc = _ossie_doc(
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("cnt")])],
+            metrics=[
+                _ossie_metric("a", "(SUM(amount)) / (COUNT(cnt))"),
+                _ossie_metric("a_numerator", "(SUM(amount)) / (SUM(cnt))"),
+            ],
+        )
+        result = OssieToMSIConverter().convert(doc).output
+
+        names = [m.name for m in result.metrics]
+        assert len(names) == len(set(names))
+        assert set(names) == {
+            "a", "a_numerator_2", "a_denominator",
+            "a_numerator", "a_numerator_numerator", "a_numerator_denominator",
+        }
 
     def test_composite_aggregate_expression_is_dropped_with_issue(self) -> None:
         doc = _ossie_doc(
@@ -1318,11 +1376,11 @@ class TestOssieToMSIRoundTrip:
         # on it. The numerator (SUM(orders.amount), not a row count) is a valid metric on its own
         # and survives, same as it would have before any of this.
         again = OssieToMSIConverter().convert(ossie_doc)
-        assert [m.name for m in again.output.metrics] == ["avg_order_value__numerator"]
+        assert [m.name for m in again.output.metrics] == ["avg_order_value_numerator"]
         assert {i.element_name for i in again.issues} == {
             "order_count",
             "avg_order_value",
-            "avg_order_value__denominator",
+            "avg_order_value_denominator",
         }
 
     def test_discrete_percentile_survives_round_trip(self) -> None:

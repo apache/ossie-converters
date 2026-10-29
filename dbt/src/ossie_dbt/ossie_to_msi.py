@@ -81,6 +81,15 @@ class _KeySets:
     foreign: Set[str]
 
 
+def _unique_metric_name(base: str, taken_names: Set[str]) -> str:
+    """Return `base`, or `base_2`, `base_3`, … if taken, and record the result in `taken_names`."""
+    name, suffix = base, 2
+    while name in taken_names:
+        name, suffix = f"{base}_{suffix}", suffix + 1
+    taken_names.add(name)
+    return name
+
+
 class _UnresolvedRowCountDataset(Exception):
     """A row-count expression that cannot be safely converted into a metric.
 
@@ -110,7 +119,8 @@ class OssieToMSIConverter:
     * Metric expressions are parsed with sqlglot:
       - single-agg patterns (`SUM(col)`, `COUNT(DISTINCT col)`, …) → SIMPLE
         metric with `metric_aggregation_params` (no measure reference needed)
-      - `(expr_a) / (expr_b)` → RATIO (with auto-generated sub-metrics)
+      - `(expr_a) / (expr_b)` → RATIO (with auto-generated sub-metrics named
+        `<metric>_numerator` / `<metric>_denominator`, suffixed `_2`, `_3`, … on a name clash)
       - expressions that cannot be represented without changing aggregation
         semantics are dropped with a ConverterIssue
     """
@@ -290,6 +300,8 @@ class OssieToMSIConverter:
     def _convert_metrics(self, ossie_sm: OssieSemanticModel) -> Tuple[List[PydanticMetric], List[ConverterIssue]]:
         metrics: List[PydanticMetric] = []
         issues: List[ConverterIssue] = []
+        # Names of document metrics and of sub-metrics generated so far; generated names must not reuse them.
+        taken_names: Set[str] = {metric.name for metric in ossie_sm.metrics or []}
         for metric in ossie_sm.metrics or []:
             dialect_expr = self._get_dialect_expression(metric.expression, sql_only=True)
             dialect = self._sql_dialect(dialect_expr.dialect) if dialect_expr is not None else None
@@ -298,6 +310,8 @@ class OssieToMSIConverter:
                     ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
                 )
                 continue
+            # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
+            reserved_names = set(taken_names)
             try:
                 metrics.extend(
                     self._convert_metric(
@@ -306,8 +320,10 @@ class OssieToMSIConverter:
                         metric.description,
                         ossie_sm.datasets,
                         dialect,
+                        taken_names=reserved_names,
                     )
                 )
+                taken_names = reserved_names
             except _UnresolvedRowCountDataset:
                 # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
                 issues.append(
@@ -326,6 +342,8 @@ class OssieToMSIConverter:
         description: Optional[str],
         datasets: List[OssieDataset],
         dialect: str = "",
+        *,
+        taken_names: Optional[Set[str]] = None,
     ) -> List[PydanticMetric]:
         """Return one or more PydanticMetric objects for the given Ossie expression.
 
@@ -333,8 +351,11 @@ class OssieToMSIConverter:
         and column expression directly — no intermediate measure is created.
 
         Multiple metrics are returned when a RATIO metric requires auto-generated
-        sub-metrics for its numerator and denominator.
+        sub-metrics for its numerator and denominator. Their names are added to
+        `taken_names`, which holds every metric name already in use.
         """
+        if taken_names is None:
+            taken_names = {name}
         # --- SIMPLE: single aggregation ---
         agg_result = _extract_agg_info(expr_str, dialect)
         if agg_result is not None:
@@ -378,10 +399,11 @@ class OssieToMSIConverter:
         ratio_result = _try_parse_ratio(expr_str, dialect)
         if ratio_result is not None:
             num_expr, den_expr = ratio_result
-            num_name = f"{name}__numerator"
-            den_name = f"{name}__denominator"
-            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect)
-            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect)
+            # MetricFlow rejects names containing a double underscore, so use a single one.
+            num_name = _unique_metric_name(f"{name}_numerator", taken_names)
+            den_name = _unique_metric_name(f"{name}_denominator", taken_names)
+            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect, taken_names=taken_names)
+            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect, taken_names=taken_names)
             ratio_metric = PydanticMetric(
                 name=name,
                 description=description,
