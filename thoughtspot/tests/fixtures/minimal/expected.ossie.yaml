@@ -33,6 +33,18 @@ datasets:
       - dialect: ANSI_SQL
         expression: order_id
     datatype: Integer
+  - name: customer_id
+    label: customer_id
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[orders::customer_id]'
+      - dialect: ANSI_SQL
+        expression: customer_id
+    datatype: Integer
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "Minimal Connection", "tml_object": "table",
@@ -56,6 +68,18 @@ datasets:
       - dialect: ANSI_SQL
         expression: customer_name
     datatype: String
+  - name: customer_id
+    label: customer_id
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[customers::customer_id]'
+      - dialect: ANSI_SQL
+        expression: customer_id
+    datatype: Integer
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "Minimal Connection", "tml_object": "table",

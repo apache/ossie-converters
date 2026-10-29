@@ -109,6 +109,18 @@ datasets:
       - dialect: ANSI_SQL
         expression: ss_net_profit
     datatype: Decimal
+  - name: ss_ticket_number
+    label: ss_ticket_number
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[store_sales::ss_ticket_number]'
+      - dialect: ANSI_SQL
+        expression: ss_ticket_number
+    datatype: Integer
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
@@ -428,6 +440,18 @@ datasets:
       - dialect: ANSI_SQL
         expression: RETURN_AMT
     datatype: Decimal
+  - name: sr_store_sk
+    label: sr_store_sk
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[store_returns_sv::sr_store_sk]'
+      - dialect: ANSI_SQL
+        expression: sr_store_sk
+    datatype: Integer
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "sql_output_columns":

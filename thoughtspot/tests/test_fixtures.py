@@ -44,6 +44,7 @@ committed here.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -55,6 +56,7 @@ from ossie_thoughtspot.constants import (
     DATASET_STASH_UNSURFACED_COLUMNS,
     DIALECT,
     FIELD_STASH_DATA_TYPE,
+    FIELD_STASH_NOT_MODEL_SURFACED,
     METRIC_SHAPE_COLUMN_AGGREGATION,
     METRIC_SHAPE_SCALAR_FORMULA_PLUS_AGGREGATION,
     METRIC_STASH_SHAPE,
@@ -112,6 +114,23 @@ def _upstream_validator():
     return module
 
 
+def _upstream_document_errors(document: dict) -> list[str]:
+    """Every check `validation/validate.py` ships, run over `document`.
+
+    One helper, so the gate and the test that guards the gate exercise the
+    same call. Narrowing this to a single check (as this suite did with
+    `validate_sql`) now fails
+    `test_that_gate_would_actually_catch_an_undeclared_reference`.
+    """
+    pytest.importorskip("sqlglot")
+    pytest.importorskip("jsonschema")  # validate_document's schema check needs it
+    validate = _upstream_validator()
+    schema_path = Path(__file__).resolve().parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
+    with open(schema_path) as fh:
+        schema = json.load(fh)
+    return [str(e) for e in validate.validate_document(document, schema)]
+
+
 @pytest.mark.parametrize("fixture_name", FIXTURE_SETS)
 class TestFixtureSetsLoad:
     def test_the_fixture_directory_has_tml_documents(self, fixture_name):
@@ -164,6 +183,43 @@ class TestExpectedOutputIsValid:
         # input that proves nothing. Fail loudly instead of skipping silently.
         assert not any("skipping SQL validation" in e for e in errors), errors
         assert errors == []
+
+    def test_expected_output_passes_the_WHOLE_upstream_validator(self, fixture_name):
+        """`validate_sql` is one of the validator's checks, not the validator.
+
+        The test above claims it "cannot drift from the gate it stands in
+        for", and that was true of the one dimension it measured. It called
+        `validate_sql`, so it saw expression parsing and nothing else --
+        while `validate_references` sat unrun in the same module. Both
+        fixtures emitted `primary_key`, `unique_keys`, `from_columns` and
+        `to_columns` naming warehouse source columns rather than declared
+        fields, which apache/ossie#486 made invalid on 2026-10-22 and
+        apache/ossie#649 made a validator error on 2026-10-28; the suite
+        stayed green through all of it, and bumping the submodule to pick
+        up #649 did not change that, because nothing called the check.
+
+        `validate_document` runs every check the project ships. Adding a
+        check upstream now reaches this converter without an edit here,
+        which is the property the docstring above was reaching for.
+        """
+        errors = _upstream_document_errors(_load_expected(FIXTURES_ROOT / fixture_name))
+        assert not any("skipping SQL validation" in e for e in errors), errors
+        assert errors == []
+
+    def test_that_gate_would_actually_catch_an_undeclared_reference(self, fixture_name):
+        """Guards the gate above, which nothing else does.
+
+        Narrowing `_upstream_document_errors` back to `validate_sql` leaves
+        every other test in this suite green -- measured, by doing it. The
+        fixtures are valid either way, so a weaker check still passes them,
+        and we would quietly stop checking references again. A gate that
+        passes everything is indistinguishable from no gate, so this breaks
+        a fixture on purpose and requires the gate to notice.
+        """
+        broken = copy.deepcopy(_load_expected(FIXTURES_ROOT / fixture_name))
+        broken["datasets"][0]["primary_key"] = ["not_a_declared_field"]
+        errors = _upstream_document_errors(broken)
+        assert any("not_a_declared_field" in e for e in errors), errors
 
 
 @pytest.mark.parametrize("fixture_name", FIXTURE_SETS)
@@ -276,13 +332,37 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
         dialects = {d["dialect"]: d["expression"] for d in field["expression"]["dialects"]}
         assert dialects[PORTABLE_DIALECT] == "RETURN_AMT"
 
-    def test_a_physical_column_the_model_does_not_surface_is_stashed(self, dataset):
+    def test_a_physical_column_the_model_does_not_surface_but_a_key_names_is_declared(self, dataset):
+        """`ss_ticket_number` is in the Table and not in the Model, and the
+        `primary_key` names it.
+
+        It used to ride in `unsurfaced_columns` alone, which made the
+        `primary_key` name something the document never declared --
+        invalid under apache/ossie#486. It is now ALSO a declared field,
+        marked so that it emits no TML of its own in either direction.
+        """
         store_sales = next(d for d in dataset["datasets"] if d["name"] == "store_sales")
         extensions = {
             e["vendor_name"]: json.loads(e["data"]) for e in store_sales["custom_extensions"]
         }
+        field = next(f for f in store_sales["fields"] if f["name"] == "ss_ticket_number")
+        field_stash = {
+            e["vendor_name"]: json.loads(e["data"]) for e in field["custom_extensions"]
+        }
+        assert field_stash[VENDOR_KEY][FIELD_STASH_NOT_MODEL_SURFACED] is True
+        assert "ss_ticket_number" in store_sales["primary_key"]
+        # The verbatim entry STAYS. The field carries only a name, warehouse
+        # name and datatype; the raw entry carries `properties`,
+        # `description` and the exact `data_type` spelling too, and is what
+        # rebuilds the Table column byte for byte. An earlier revision
+        # dropped it here on the grounds that a field now covered the
+        # column, and the column came back named after its display name --
+        # a column the warehouse does not have. So the declared field emits
+        # no TML at all, in either document, and this entry is why it does
+        # not have to.
         unsurfaced = {
-            c["name"] for c in extensions[VENDOR_KEY][DATASET_STASH_UNSURFACED_COLUMNS]
+            c["name"]
+            for c in extensions[VENDOR_KEY].get(DATASET_STASH_UNSURFACED_COLUMNS) or []
         }
         assert "ss_ticket_number" in unsurfaced
 
