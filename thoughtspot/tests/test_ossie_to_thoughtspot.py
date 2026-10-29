@@ -1397,3 +1397,77 @@ class TestADatasetSourceMustBeANonEmptyString:
         for source in ("DB.SCH.T", 'DB.SCH."ORDER TABLE"', "SELECT * FROM t WHERE x = 1"):
             result = convert({"name": "m", "datasets": [{"name": "d", "source": source}]})
             assert result.documents.tables, source
+
+
+class TestTheTwoLegsAgreeAboutAnEmptySource:
+    """to-ossie must not write a document to-tml will refuse.
+
+    Raised by @jbonofre reviewing apache/ossie-converters#102: a SQL View
+    with no `sql_query` became `source: ""` with nothing logged, and before
+    that PR `to-tml` handed back the same SQL View. Adding the refusal
+    without the forward-leg report would have made the converter reject a
+    file it produces itself -- the two legs disagreeing about what a valid
+    document is, which is worse than either behaviour alone.
+    """
+
+    _SQL_VIEW_WITHOUT_A_QUERY = """sql_view:
+  name: FX
+  connection: {name: C}
+  sql_view_columns:
+  - name: Currency
+    sql_output_column: CURRENCY
+    db_column_properties: {data_type: VARCHAR}
+"""
+    _MODEL = """model:
+  name: M
+  model_tables: [{name: FX}]
+  columns:
+  - {name: Currency, column_id: 'FX::Currency', properties: {column_type: ATTRIBUTE}}
+"""
+
+    def _forward(self):
+        return tml_to_ossie_convert(tml.load_document_set([
+            ("fx.sql_view.tml", self._SQL_VIEW_WITHOUT_A_QUERY),
+            ("m.model.tml", self._MODEL),
+        ]))
+
+    def test_the_forward_leg_reports_it_rather_than_emitting_it_silently(self):
+        result = self._forward()
+        codes = [i["code"] for i in result.issues.as_dicts()]
+        assert "TS-SQL-VIEW-NO-QUERY" in codes, codes
+
+    def test_it_is_an_error_so_the_cli_exit_code_says_so(self):
+        # The document is still written -- it is useful to look at -- but
+        # `has_errors()` drives the exit code, so nothing reports success.
+        assert self._forward().issues.has_errors()
+
+    def test_the_return_leg_refuses_the_same_document(self):
+        # The two legs agreeing is the point: what one declines to vouch
+        # for, the other declines to read.
+        with pytest.raises(ConversionError, match="empty `source`"):
+            convert(self._forward().model)
+
+
+class TestBuildTableIsGuardedToo:
+    """`build_table` is public and the table tests import it directly, so
+    the guard cannot live only in `convert()`.
+
+    @jbonofre raised this as a nit on apache/ossie-converters#102; it is
+    kept as a test because "the CLI happens not to reach it" is a property
+    of today's call graph, not of the function.
+    """
+
+    @pytest.mark.parametrize("source", [
+        {"kind": "table", "identifier": "a.b.c"},
+        ["a", "b", "c"],
+        12345,
+        {},
+        "",
+    ])
+    def test_a_bad_source_raises_rather_than_crashing_or_returning_a_blank_table(self, source):
+        with pytest.raises(ConversionError):
+            build_table({"name": "d", "source": source}, IssueLog())
+
+    def test_a_good_source_still_builds(self):
+        table = build_table({"name": "d", "source": "DB.SCH.T"}, IssueLog())
+        assert table.body["db_table"] == "T"

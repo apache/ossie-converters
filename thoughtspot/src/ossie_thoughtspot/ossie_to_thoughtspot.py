@@ -190,29 +190,45 @@ def _check_dataset_sources(datasets: object) -> None:
             f"the Ossie document's `datasets` must be a list, not {type(datasets).__name__}"
         )
     for index, dataset in enumerate(datasets):
-        where = f"datasets[{index}]"
         if not isinstance(dataset, dict):
             raise ConversionError(
-                f"{where} must be a mapping, not {type(dataset).__name__}"
+                f"datasets[{index}] must be a mapping, not {type(dataset).__name__}"
             )
-        name = dataset.get("name")
-        if isinstance(name, str) and name:
-            where = f"dataset {name!r}"
-        source = dataset.get("source")
-        if source is None:
-            raise ConversionError(
-                f"{where} has no `source`; it is required, and names the table, "
-                f"view or query the dataset reads from"
-            )
-        if not isinstance(source, str):
-            raise ConversionError(
-                f"{where} has a `source` of type {type(source).__name__}; it must "
-                f"be a string naming a table, view or query. A structured source "
-                f"(a mapping with `kind`/`identifier`) is proposed upstream but "
-                f"not part of the specification, and this converter does not read it"
-            )
-        if not source.strip():
-            raise ConversionError(f"{where} has an empty `source`")
+        _dataset_source(dataset, index=index)
+
+
+def _dataset_source(dataset: dict, *, index: int | None = None) -> str:
+    """`dataset["source"]`, validated, or `ConversionError`.
+
+    THE accessor for a dataset's source: `_decide_kind`, `_source_parts` and
+    `_build_sql_view_body` all go through it rather than reading
+    `dataset.get("source") or ""` for themselves. Raised by @jbonofre
+    reviewing this PR -- checking only in `convert()` leaves `build_table()`
+    unguarded, and the table tests import that directly, so a library caller
+    could still reach the crashes this is here to stop.
+    """
+    name = dataset.get("name")
+    where = (
+        f"dataset {name!r}" if isinstance(name, str) and name
+        else f"datasets[{index}]" if index is not None
+        else "a dataset"
+    )
+    source = dataset.get("source")
+    if source is None:
+        raise ConversionError(
+            f"{where} has no `source`; it is required, and names the table, "
+            f"view or query the dataset reads from"
+        )
+    if not isinstance(source, str):
+        raise ConversionError(
+            f"{where} has a `source` of type {type(source).__name__}; it must "
+            f"be a string naming a table, view or query. A structured source "
+            f"(a mapping with `kind`/`identifier`) is proposed upstream but "
+            f"not part of the specification, and this converter does not read it"
+        )
+    if not source.strip():
+        raise ConversionError(f"{where} has an empty `source`")
+    return source
 
 
 def _split_three_part_identifier(source: str) -> list[str] | None:
@@ -557,7 +573,7 @@ def _decide_kind(dataset: dict, payload: dict, log: IssueLog, *, object_ref: str
     query parsed as db/schema/table, or vice versa). A hand-authored dataset
     has no stash at all, and falls through to `_derive_kind` either way.
     """
-    source = dataset.get("source") or ""
+    source = _dataset_source(dataset)
     was_stashed = DATASET_STASH_TML_OBJECT in payload
     stashed_kind = stash.restore(
         payload, DATASET_STASH_TML_OBJECT, None,
@@ -590,7 +606,7 @@ def _source_parts(dataset: dict, payload: dict, log: IssueLog, *, object_ref: st
     `source` is the correct behaviour once that has happened, not a stale
     three-way split nobody asked for any more.
     """
-    source = dataset.get("source") or ""
+    source = _dataset_source(dataset)
     stashed = payload.get(DATASET_STASH_SOURCE_PARTS)
     if isinstance(stashed, dict):
         db, schema, db_table = (
@@ -766,7 +782,7 @@ def _merge_physical_column(
 def _build_sql_view_body(
     dataset: dict, payload: dict, connection: str | None, log: IssueLog, *, object_ref: str
 ) -> dict:
-    body: dict = {"name": _table_name(dataset, payload), "sql_query": dataset.get("source") or ""}
+    body: dict = {"name": _table_name(dataset, payload), "sql_query": _dataset_source(dataset)}
     body.update(_shared_body(dataset, payload, connection))
 
     output_aliases = payload.get(DATASET_STASH_SQL_OUTPUT_COLUMNS) or {}
