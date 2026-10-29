@@ -65,6 +65,10 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
     ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION: (
         "its DBT custom_extensions data is not a JSON object, so config.meta could not be restored"
     ),
+    ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION: (
+        "more than one DBT custom_extensions entry was present, so only the first "
+        "valid object was restored to config.meta"
+    ),
 }
 
 _DROPPED_ISSUE_TYPES = {

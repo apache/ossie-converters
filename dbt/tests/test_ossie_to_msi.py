@@ -1372,6 +1372,36 @@ class TestOssieToMSIConfigMetaRoundTrip:
             ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, "revenue")
         ]
 
+    def test_extra_dbt_extension_records_duplicate_issue(self) -> None:
+        ext = [
+            OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps({"group_label": "First"})),
+            OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps({"group_label": "Second"})),
+        ]
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.semantic_models[0].dimensions[0].config is not None
+        assert result.output.semantic_models[0].dimensions[0].config.meta == {"group_label": "First"}
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION, "status")
+        ]
+
+    def test_malformed_extension_on_dropped_metric_is_not_reported(self) -> None:
+        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data="{not json")]
+        doc = _ossie_doc(
+            datasets=[
+                _ossie_dataset("customers", fields=[_ossie_field("customer_id")]),
+                _ossie_dataset("orders", fields=[_ossie_field("order_id")]),
+            ],
+            metrics=[_ossie_metric("order_count", "COUNT(*)", custom_extensions=ext)],
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.ROW_COUNT_METRIC_DROPPED, "order_count")
+        ]
+
 
 class TestOssieToMSIRoundTrip:
     def test_sum_over_case_round_trip_does_not_double_aggregate(self) -> None:

@@ -238,6 +238,13 @@ class OssieToMSIConverter:
                 continue
             if config is None:
                 config = PydanticSemanticLayerElementConfig(meta=meta)
+            else:
+                issues.append(
+                    ConverterIssue(
+                        issue_type=ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION,
+                        element_name=element_name,
+                    )
+                )
         return config, issues
 
     @staticmethod
@@ -373,7 +380,6 @@ class OssieToMSIConverter:
                 )
                 continue
             config, config_issues = self._config_from_custom_extensions(metric.custom_extensions, metric.name)
-            issues.extend(config_issues)
             # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
             reserved_names = set(taken_names)
             try:
@@ -398,6 +404,8 @@ class OssieToMSIConverter:
                 issues.append(
                     ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
                 )
+            else:
+                issues.extend(config_issues)
         return metrics, issues
 
     def _convert_metric(

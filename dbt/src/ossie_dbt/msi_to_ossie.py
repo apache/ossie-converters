@@ -324,7 +324,14 @@ class MSIToOssieConverter:
         """
         if config is None or not config.meta:
             return None
-        return [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps(config.meta))]
+        # YAML-parsed meta can hold datetime.date. default=str keeps those
+        # values instead of aborting the conversion.
+        return [
+            OssieCustomExtension(
+                vendor_name=OssieVendor.DBT.value,
+                data=json.dumps(config.meta, default=str),
+            )
+        ]
 
     @staticmethod
     def _extract_keys(entities: Sequence[Entity]) -> Tuple[Optional[List[str]], List[List[str]]]:

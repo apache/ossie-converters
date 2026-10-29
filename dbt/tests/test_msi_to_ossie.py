@@ -16,6 +16,7 @@
 # under the License.
 
 import json
+from datetime import date
 from typing import List, Optional
 
 import jinja2
@@ -379,6 +380,22 @@ class TestConfigMetaCustomExtensions:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
         assert _fields(result)[0].custom_extensions is None
+
+    def test_non_json_meta_value_is_stringified(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[
+                _dimension(
+                    "status",
+                    config=PydanticSemanticLayerElementConfig(meta={"launched": date(2024, 1, 1)}),
+                )
+            ],
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        extensions = _fields(result)[0].custom_extensions
+        assert extensions is not None
+        assert json.loads(extensions[0].data) == {"launched": "2024-01-01"}
 
 
 class TestEntityKeyExtraction:
