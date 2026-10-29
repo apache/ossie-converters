@@ -139,6 +139,8 @@ def test_renders_to_a_warehouse_dialect_from_the_same_tree():
         # A literal where a condition belongs: not a valid condition/value list.
         "If([A], 1, 2, 3)",
         'If([A] > 0, 1, "x", 2, 3)',
+        # Text() of a geography value (e.g. MakePoint) has no SQL mapping yet.
+        "Text(MakePoint(179, 90))",
     ],
 )
 def test_untranslatable_functions_return_none(formula):
@@ -192,6 +194,7 @@ def test_is_plain_column_ref():
         ('CAST("A" AS VARCHAR)', "T", "Text([A])"),
         ('CAST("A" AS TEXT)', "T", "Text([A])"),
         ('CAST("A" AS VARCHAR) || "B"', "T", "Text([A]) & [B]"),
+        ('CAST("A" AS VARCHAR) || CAST("B" AS VARCHAR)', "T", "Text([A]) & Text([B])"),
     ],
 )
 def test_reverse_translation_basic(sql, dataset_alias, expected):
@@ -236,6 +239,7 @@ def test_reverse_translation_gives_up_on_non_text_casts():
     # Only a cast to text has a Sigma equivalent; numeric and date casts are not mapped.
     assert sql_to_sigma_formula('CAST("A" AS INT)') is None
     assert sql_to_sigma_formula('CAST("A" AS DATE)') is None
+    assert sql_to_sigma_formula('CAST("A" AS BOOLEAN)') is None
 
 
 def test_reverse_translation_gives_up_on_count_star():
