@@ -468,12 +468,10 @@ class OssieToMSIConverter:
             # MetricFlow rejects names containing a double underscore, so use a single one.
             num_name = _unique_metric_name(f"{name}_numerator", taken_names)
             den_name = _unique_metric_name(f"{name}_denominator", taken_names)
-            num_metrics = self._convert_metric(
-                num_name, num_expr, None, datasets, dialect, taken_names=taken_names, config=config
-            )
-            den_metrics = self._convert_metric(
-                den_name, den_expr, None, datasets, dialect, taken_names=taken_names, config=config
-            )
+            # Helpers are converter-generated. Copying the author's meta onto them
+            # would duplicate it on the next dbt -> Ossie pass.
+            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect, taken_names=taken_names)
+            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect, taken_names=taken_names)
             ratio_metric = PydanticMetric(
                 name=name,
                 description=description,
