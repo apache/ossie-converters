@@ -338,10 +338,8 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
 
         It used to ride in `unsurfaced_columns` alone, which made the
         `primary_key` name something the document never declared --
-        invalid under apache/ossie#486. It is now a declared field, marked
-        so the return leg does not surface a Model column for it, and the
-        `unsurfaced_columns` entry is gone rather than describing the same
-        column a second time.
+        invalid under apache/ossie#486. It is now ALSO a declared field,
+        marked so that it emits no TML of its own in either direction.
         """
         store_sales = next(d for d in dataset["datasets"] if d["name"] == "store_sales")
         extensions = {
@@ -353,11 +351,20 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
         }
         assert field_stash[VENDOR_KEY][FIELD_STASH_NOT_MODEL_SURFACED] is True
         assert "ss_ticket_number" in store_sales["primary_key"]
+        # The verbatim entry STAYS. The field carries only a name, warehouse
+        # name and datatype; the raw entry carries `properties`,
+        # `description` and the exact `data_type` spelling too, and is what
+        # rebuilds the Table column byte for byte. An earlier revision
+        # dropped it here on the grounds that a field now covered the
+        # column, and the column came back named after its display name --
+        # a column the warehouse does not have. So the declared field emits
+        # no TML at all, in either document, and this entry is why it does
+        # not have to.
         unsurfaced = {
             c["name"]
             for c in extensions[VENDOR_KEY].get(DATASET_STASH_UNSURFACED_COLUMNS) or []
         }
-        assert "ss_ticket_number" not in unsurfaced
+        assert "ss_ticket_number" in unsurfaced
 
     def test_a_composite_key_relationship_is_present(self, dataset):
         relationship = next(

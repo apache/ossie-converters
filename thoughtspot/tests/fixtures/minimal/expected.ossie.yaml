@@ -49,8 +49,9 @@ datasets:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "Minimal Connection", "tml_object": "table",
       "tml_object_source_witness": "MINIMAL.PUBLIC.ORDERS", "unsurfaced_columns":
-      [{"db_column_name": "order_total", "db_column_properties": {"data_type": "DOUBLE"},
-      "name": "order_total"}]}'
+      [{"db_column_name": "customer_id", "db_column_properties": {"data_type": "INT64"},
+      "name": "customer_id"}, {"db_column_name": "order_total", "db_column_properties":
+      {"data_type": "DOUBLE"}, "name": "order_total"}]}'
 - name: customers
   source: MINIMAL.PUBLIC.CUSTOMERS
   primary_key:
@@ -82,7 +83,9 @@ datasets:
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "Minimal Connection", "tml_object": "table",
-      "tml_object_source_witness": "MINIMAL.PUBLIC.CUSTOMERS"}'
+      "tml_object_source_witness": "MINIMAL.PUBLIC.CUSTOMERS", "unsurfaced_columns":
+      [{"db_column_name": "customer_id", "db_column_properties": {"data_type": "INT64"},
+      "name": "customer_id"}]}'
 description: Smallest fixture exercising the one-model-plus-N-tables split.
 relationships:
 - name: orders_to_customers

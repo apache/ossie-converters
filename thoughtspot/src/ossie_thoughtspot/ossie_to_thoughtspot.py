@@ -645,6 +645,8 @@ def _build_table_body(
 
     columns: list[dict] = []
     for field in dataset.get("fields") or []:
+        if stash.read_stash(field).get(FIELD_STASH_NOT_MODEL_SURFACED):
+            continue  # see the Table/SQL-View note in `_build_sql_view_body`
         column = _physical_table_column(field, log)
         if column is not None:
             _merge_physical_column(columns, column, log, object_ref=object_ref)
@@ -714,6 +716,17 @@ def _build_sql_view_body(
     output_aliases = payload.get(DATASET_STASH_SQL_OUTPUT_COLUMNS) or {}
     columns: list[dict] = []
     for field in dataset.get("fields") or []:
+        if stash.read_stash(field).get(FIELD_STASH_NOT_MODEL_SURFACED):
+            # Declared on the way out only so a key or relationship has a
+            # field to name (apache/ossie#486), for a column the source
+            # Model did not surface. It emits no TML of its own, in either
+            # document: the Model column would be one the user never had,
+            # and the Table/SQL-View column is rebuilt verbatim from
+            # DATASET_STASH_UNSURFACED_COLUMNS, which carries `properties`,
+            # `description` and the exact `data_type` spelling that a field
+            # does not. Rebuilding it from the field instead lost all of
+            # those and renamed the column to its display name.
+            continue
         column = _physical_sql_view_column(field, output_aliases, log)
         if column is not None:
             _merge_physical_column(
@@ -1754,11 +1767,30 @@ def _normalise_join_type(value: str) -> str:
 
 
 def _restore_relationship_condition(
-    from_prefix: str, to_prefix: str, from_columns: list[str], to_columns: list[str]
+    from_prefix: str, to_prefix: str, from_columns: list[str], to_columns: list[str],
+    resolve_field: Callable[[str], tuple[str, str] | None] | None = None,
 ) -> str:
     """The equality-only `on:` condition for a relationship with no stashed
     `on_expression` -- reconstructed from `from_columns`/`to_columns` alone,
-    which is all a hand-authored relationship (no stash) has to go on."""
+    which is all a hand-authored relationship (no stash) has to go on.
+
+    Those are FIELD names (apache/ossie#486), and a TML bracket reference
+    resolves against the Table's own column names, so each one is mapped
+    back through `resolve_field` before being formatted. Without that step
+    the condition came back naming the Ossie field --
+    `[ARBONNE_KITS::order_id]` where ThoughtSpot wrote
+    `[ARBONNE_KITS::ORDER_ID]` -- on 15 of the 31 models in the round-trip
+    corpus, because the stashed `on_expression` that would otherwise have
+    covered it is only written when the display name and the warehouse name
+    differ, which is the uncommon case. Raised by @jbonofre reviewing
+    apache/ossie-converters#99.
+
+    Mapping here rather than stashing more is deliberate: it is also right
+    for a hand-authored or foreign document, which has no stash to restore
+    from and whose field names are equally not TML column names. A field
+    the index cannot place falls back to its own name, which is the best
+    available guess and what this did for every field before.
+    """
     from_columns = from_columns or []
     to_columns = to_columns or []
     # `zip` truncates to the shorter list, so a relationship whose two arrays
@@ -1774,15 +1806,24 @@ def _restore_relationship_condition(
             f"{len(from_columns)} from_columns and {len(to_columns)} to_columns; "
             f"they must have equal arity to form a join condition"
         )
+    def column_of(prefix: str, field_name: str) -> str:
+        if resolve_field is None:
+            return field_name
+        placed = resolve_field(f"{prefix}.{field_name}")
+        return placed[1] if placed else field_name
+
     pairs = zip(from_columns, to_columns)
     return " and ".join(
-        f"{identifiers.format_column_ref(from_prefix, fc)} = "
-        f"{identifiers.format_column_ref(to_prefix, tc)}"
+        f"{identifiers.format_column_ref(from_prefix, column_of(from_prefix, fc))} = "
+        f"{identifiers.format_column_ref(to_prefix, column_of(to_prefix, tc))}"
         for fc, tc in pairs
     )
 
 
-def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, dict | None]:
+def _join_entry_for_relationship(
+    rel: dict, log: IssueLog,
+    resolve_field: Callable[[str], tuple[str, str] | None] | None = None,
+) -> tuple[str, dict, dict | None]:
     """One Ossie relationship -> `(from_prefix, model join entry,
     Table joins_with[] entry or None)`.
 
@@ -1892,7 +1933,9 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
                 ),
                 object_ref=f"relationship:{rel.get('name')}",
             )
-        on_expression = _restore_relationship_condition(from_prefix, to_prefix, from_columns, to_columns)
+        on_expression = _restore_relationship_condition(
+            from_prefix, to_prefix, from_columns, to_columns, resolve_field
+        )
     join_type = _normalise_join_type(payload.get(RELATIONSHIP_STASH_TYPE) or "INNER")
     # Gated on the SAME witness as the endpoint swap, because it states the same
     # fact. An Ossie relationship carries no cardinality field: `from` is the many
@@ -2299,7 +2342,9 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
     covered_columns_by_dataset: dict[str, list[set]] = {}
 
     for rel in semantic_model.get("relationships") or []:
-        from_prefix, join_entry, joins_with_entry = _join_entry_for_relationship(rel, log)
+        from_prefix, join_entry, joins_with_entry = _join_entry_for_relationship(
+            rel, log, resolve_field
+        )
         target = model_tables_by_prefix.get(from_prefix)
         if target is None:
             log.add(

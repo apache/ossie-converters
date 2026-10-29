@@ -124,7 +124,9 @@ datasets:
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
-      "tml_object_source_witness": "TPCDS.PUBLIC.STORE_SALES"}'
+      "tml_object_source_witness": "TPCDS.PUBLIC.STORE_SALES", "unsurfaced_columns":
+      [{"db_column_name": "ss_ticket_number", "db_column_properties": {"data_type":
+      "INT64"}, "name": "ss_ticket_number"}]}'
 - name: date_dim
   source: TPCDS.PUBLIC.DATE_DIM
   primary_key:
@@ -453,11 +455,13 @@ datasets:
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "sql_output_columns":
-      {"sr_item_sk": "sr_item_sk", "sr_return_amt": "RETURN_AMT", "sr_store_sk": "sr_store_sk",
-      "sr_ticket_number": "sr_ticket_number"}, "tml_object": "sql_view", "tml_object_source_witness":
+      {"sr_item_sk": "sr_item_sk", "sr_return_amt": "RETURN_AMT", "sr_ticket_number":
+      "sr_ticket_number"}, "tml_object": "sql_view", "tml_object_source_witness":
       "SELECT sr_item_sk, sr_ticket_number, sr_return_amt AS RETURN_AMT, sr_return_quantity,
       sr_store_sk FROM tpcds.public.store_returns", "unsurfaced_columns": [{"db_column_properties":
-      {"data_type": "INT64"}, "name": "sr_return_quantity", "sql_output_column": "sr_return_quantity"}]}'
+      {"data_type": "INT64"}, "name": "sr_return_quantity", "sql_output_column": "sr_return_quantity"},
+      {"db_column_properties": {"data_type": "INT64"}, "name": "sr_store_sk", "sql_output_column":
+      "sr_store_sk"}]}'
 description: TPC-DS retail semantic model used as a shared test fixture.
 relationships:
 - name: store_sales_to_date

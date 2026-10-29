@@ -2277,31 +2277,39 @@ def _declare_referenced_columns(
             field, {FIELD_STASH_NOT_MODEL_SURFACED: True}, log, object_ref
         )
 
+        # `built_field_names` is keyed by (prefix, display name), so it
+        # catches the same column twice but not two DIFFERENT columns whose
+        # display names normalise to one identifier -- which the fields
+        # `convert()` builds are protected from and these were not. Raised
+        # by @jbonofre reviewing apache/ossie-converters#99.
+        field = _resolve_name_collision(
+            field, fields_by_dataset.get(prefix, []), log,
+            kind="field", display_name=display_name, scope=f"dataset {prefix!r}",
+        )
+        field_name = field["name"]
         fields_by_dataset.setdefault(prefix, []).append(field)
         built_field_names[(prefix, display_name)] = field_name
 
-        # The SQL View alias phase ran before this one, so it never saw this
-        # field. Without the entry the return leg rebuilds the column with
-        # the field's name as the query output alias, quietly renaming it
-        # (`Currency` for `CURRENCY`). On a SQL View the query output alias
-        # is what `_normalize_physical_column` folded into `db_column_name`,
-        # which is why this reads that key and not `sql_output_column`.
-        if (
-            dataset_stashes.get(prefix, {}).get(DATASET_STASH_TML_OBJECT) == "sql_view"
-            and isinstance(db_column_name, str)
-            and db_column_name
-        ):
-            dataset_stashes.setdefault(prefix, {}).setdefault(
-                DATASET_STASH_SQL_OUTPUT_COLUMNS, {}
-            )[field_name] = db_column_name
+        # No DATASET_STASH_SQL_OUTPUT_COLUMNS entry either, for the same
+        # reason: this field emits no SQL View column, so there is no output
+        # alias to record for it. The verbatim entry left in
+        # DATASET_STASH_UNSURFACED_COLUMNS already carries the real one.
 
-        unsurfaced = dataset_stashes.get(prefix, {}).get(DATASET_STASH_UNSURFACED_COLUMNS)
-        if unsurfaced:
-            remaining = [c for c in unsurfaced if c.get("name") != display_name]
-            if remaining:
-                dataset_stashes[prefix][DATASET_STASH_UNSURFACED_COLUMNS] = remaining
-            else:
-                del dataset_stashes[prefix][DATASET_STASH_UNSURFACED_COLUMNS]
+        # DATASET_STASH_UNSURFACED_COLUMNS is deliberately left alone. An
+        # earlier revision dropped this column's entry from it, reasoning
+        # that a declared field now covers the column -- but a field only
+        # carries name, warehouse name and datatype, so rebuilding the Table
+        # column from it lost `properties`, `description` and the exact
+        # `data_type` spelling, and `_physical_identity` fell back to the
+        # display name as `db_column_name` (silently: the ASSUMED warning is
+        # skipped for a field that has any stash at all). The warehouse has
+        # no column called `Customer Id`. Raised by @jbonofre reviewing
+        # apache/ossie-converters#99.
+        #
+        # So the field produces no TML at all -- no Model column and no
+        # Table column -- and exists purely so a key or relationship has a
+        # declared name to point at. The verbatim entry stays where it
+        # already was and still rebuilds the column byte for byte.
         return field_name
 
     def repoint(prefix: str, names: list, object_ref: str) -> list:
@@ -2329,10 +2337,28 @@ def _declare_referenced_columns(
         # converter's own work within one conversion, not a retarget, so the
         # witness is restated to match what is now emitted.
         rel_stash = stash.read_stash(relationship)
+        restated = False
         if RELATIONSHIP_STASH_ON_EXPRESSION_WITNESS in rel_stash:
             rel_stash[RELATIONSHIP_STASH_ON_EXPRESSION_WITNESS] = [
                 relationship.get("from_columns"), relationship.get("to_columns"),
             ]
+            restated = True
+        # The endpoint-swap witness is captured in `_relationship_from_join`
+        # from the same pre-repoint columns and needs the same treatment.
+        # Left stale, `stash.restore` reads the mismatch as a retarget and
+        # declines to undo the swap: TS-JOIN-ENDPOINTS-SWAP-STALE fires,
+        # cardinality is forced to MANY_TO_ONE and the join comes back owned
+        # by the many side. For a LEFT_OUTER ONE_TO_MANY that flips which
+        # side is preserved -- all orders instead of all customers, a
+        # different answer rather than a different spelling. Raised by
+        # @jbonofre reviewing apache/ossie-converters#99.
+        if RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS in rel_stash:
+            rel_stash[RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS] = [
+                relationship.get("from"), relationship.get("to"),
+                relationship.get("from_columns"), relationship.get("to_columns"),
+            ]
+            restated = True
+        if restated:
             relationship.update(
                 _write_stash_safely({}, rel_stash, log, object_ref)
             )

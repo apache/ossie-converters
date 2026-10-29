@@ -492,9 +492,20 @@ class TestOneToManyEndpointSwap:
         rel_stash = _own_stash(rel)
         assert rel_stash[RELATIONSHIP_STASH_CARDINALITY] == "ONE_TO_MANY"
         assert rel_stash[RELATIONSHIP_STASH_ENDPOINTS_SWAPPED] is True
+        # The witness must match what is EMITTED, not what the columns were
+        # before being repointed at field names. It briefly did not, and
+        # this assertion pinned the stale value rather than catching it --
+        # the witness then read on the way back as "the user retargeted
+        # this relationship", the swap was not undone, and a LEFT_OUTER
+        # ONE_TO_MANY came back owned by the many side. Caught by
+        # @jbonofre reviewing apache/ossie-converters#99, and covered
+        # end to end by TestARenamedKeyColumnSurvivesAFullRoundTrip.
         assert rel_stash[RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS] == [
-            "ORDERS", "CUSTOMERS", ["CUSTOMER_ID"], ["ID"],
+            "ORDERS", "CUSTOMERS", ["customer_id"], ["id"],
         ]
+        assert rel_stash[RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS][2:] == [
+            rel["from_columns"], rel["to_columns"],
+        ], "the witness must restate the columns as emitted"
 
         # Key derivation follows the swap: the key belongs to the one side
         # (CUSTOMERS), which is now `to`.
@@ -1889,3 +1900,70 @@ class TestEveryKeyAndRelationshipNameResolvesToADeclaredField:
         result = convert(_document_set(model, orders, customers))
         assert self._unresolved(result.model) == ["ORDERS_to_CUSTOMERS.from_columns -> 'Customer Id'"]
         assert any(i["code"] == "TS-JOIN-COLUMN-UNRESOLVED" for i in result.issues.as_dicts())
+
+
+class TestTwoDeclaredFieldsWhoseNamesCollide:
+    """Two DIFFERENT columns whose display names normalise to one
+    identifier, both declared because a relationship names them.
+
+    `built_field_names` is keyed by (prefix, display name), so it catches
+    the same column reached twice and nothing else. The fields `convert()`
+    builds go through `_resolve_name_collision`; the ones declared for
+    reference resolution did not, so `Customer Id` and `Customer-Id` both
+    became `customer_id` -- two fields of one name in a dataset, which
+    upstream's `validate_unique_names` rejects, and a relationship naming
+    whichever one happened to be written last. Raised by @jbonofre
+    reviewing apache/ossie-converters#99.
+    """
+
+    def _converted(self):
+        customers = _table("CUSTOMERS", columns=[
+            _column("Id", "cust_pk", "INT64"),
+            _column("Region", "REGION", "VARCHAR"),
+        ])
+        # Two distinct warehouse columns, two distinct display names, one
+        # normalised identifier.
+        orders = _table("ORDERS", columns=[
+            _column("Customer Id", "cust_id_fk", "INT64"),
+            _column("Customer-Id", "legacy_cust_id", "INT64"),
+            _column("Region", "REGION", "VARCHAR"),
+        ])
+        model = _model(model_tables=[
+            {"name": "ORDERS", "joins": [
+                {"with": "CUSTOMERS",
+                 "on": "[ORDERS::Customer Id] = [CUSTOMERS::Id]",
+                 "type": "INNER", "cardinality": "MANY_TO_ONE"},
+                {"with": "CUSTOMERS",
+                 "on": "[ORDERS::Customer-Id] = [CUSTOMERS::Id] and "
+                       "[ORDERS::Region] = [CUSTOMERS::Region]",
+                 "type": "INNER", "cardinality": "MANY_TO_ONE"},
+            ]},
+            {"name": "CUSTOMERS"},
+        ])
+        return convert(_document_set(model, orders, customers))
+
+    def test_the_two_fields_do_not_share_a_name(self):
+        orders = next(d for d in self._converted().model["datasets"] if d["name"] == "ORDERS")
+        names = [f["name"] for f in orders["fields"]]
+        assert len(names) == len(set(names)), names
+
+    def test_each_field_still_carries_its_own_warehouse_column(self):
+        # The names being distinct is not enough -- they must also still
+        # point at different columns, which is what a collision would have
+        # destroyed by collapsing both onto one field.
+        orders = next(d for d in self._converted().model["datasets"] if d["name"] == "ORDERS")
+        portable = {
+            f["name"]: next(
+                (d["expression"] for d in f["expression"]["dialects"]
+                 if d["dialect"] == PORTABLE_DIALECT), None)
+            for f in orders["fields"]
+        }
+        assert {"cust_id_fk", "legacy_cust_id"} <= set(portable.values()), portable
+
+    def test_every_relationship_still_resolves(self):
+        model = self._converted().model
+        fields = {d["name"]: {f["name"] for f in d.get("fields") or []} for d in model["datasets"]}
+        for rel in model["relationships"]:
+            for side in ("from", "to"):
+                for name in rel.get(f"{side}_columns") or []:
+                    assert name in fields[rel[side]], (rel["name"], side, name)
