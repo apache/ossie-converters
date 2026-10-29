@@ -44,6 +44,7 @@ committed here.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -111,6 +112,23 @@ def _upstream_validator():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _upstream_document_errors(document: dict) -> list[str]:
+    """Every check `validation/validate.py` ships, run over `document`.
+
+    One helper, so the gate and the test that guards the gate exercise the
+    same call. Narrowing this to a single check (as this suite did with
+    `validate_sql`) now fails
+    `test_that_gate_would_actually_catch_an_undeclared_reference`.
+    """
+    pytest.importorskip("sqlglot")
+    pytest.importorskip("jsonschema")  # validate_document's schema check needs it
+    validate = _upstream_validator()
+    schema_path = Path(__file__).resolve().parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
+    with open(schema_path) as fh:
+        schema = json.load(fh)
+    return [str(e) for e in validate.validate_document(document, schema)]
 
 
 @pytest.mark.parametrize("fixture_name", FIXTURE_SETS)
@@ -184,18 +202,24 @@ class TestExpectedOutputIsValid:
         check upstream now reaches this converter without an edit here,
         which is the property the docstring above was reaching for.
         """
-        pytest.importorskip("sqlglot")
-        pytest.importorskip("jsonschema")  # validate_document's schema check needs it
-        validate = _upstream_validator()
-        schema_path = Path(__file__).resolve().parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
-        with open(schema_path) as fh:
-            schema = json.load(fh)
-        errors = [
-            str(e)
-            for e in validate.validate_document(_load_expected(FIXTURES_ROOT / fixture_name), schema)
-        ]
+        errors = _upstream_document_errors(_load_expected(FIXTURES_ROOT / fixture_name))
         assert not any("skipping SQL validation" in e for e in errors), errors
         assert errors == []
+
+    def test_that_gate_would_actually_catch_an_undeclared_reference(self, fixture_name):
+        """Guards the gate above, which nothing else does.
+
+        Narrowing `_upstream_document_errors` back to `validate_sql` leaves
+        every other test in this suite green -- measured, by doing it. The
+        fixtures are valid either way, so a weaker check still passes them,
+        and we would quietly stop checking references again. A gate that
+        passes everything is indistinguishable from no gate, so this breaks
+        a fixture on purpose and requires the gate to notice.
+        """
+        broken = copy.deepcopy(_load_expected(FIXTURES_ROOT / fixture_name))
+        broken["datasets"][0]["primary_key"] = ["not_a_declared_field"]
+        errors = _upstream_document_errors(broken)
+        assert any("not_a_declared_field" in e for e in errors), errors
 
 
 @pytest.mark.parametrize("fixture_name", FIXTURE_SETS)
