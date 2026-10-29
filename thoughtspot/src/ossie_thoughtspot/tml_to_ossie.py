@@ -106,6 +106,7 @@ from .constants import (
     FIELD_STASH_FORMULA_ID,
     FIELD_STASH_FORMULA_NAME,
     FIELD_STASH_DB_COLUMN_NAME_WITNESS,
+    FIELD_STASH_NOT_MODEL_SURFACED,
     METRIC_STASH_AGGREGATION_NONE,
     METRIC_STASH_COLUMN_AGGREGATION,
     METRIC_SHAPE_COLUMN_AGGREGATION,
@@ -2169,6 +2170,186 @@ def _resolved_join_column(
     return column
 
 
+def _declare_referenced_columns(
+    *,
+    relationships: list[dict],
+    dataset_bodies: dict[str, dict],
+    dataset_order: list[str],
+    fields_by_dataset: dict[str, list[dict]],
+    built_field_names: dict[tuple[str, str], str],
+    physical_columns_by_prefix: dict[str, list[dict]],
+    dataset_stashes: dict[str, dict],
+    allocator: identifiers.Allocator,
+    log: IssueLog,
+) -> None:
+    """Declare a field for every warehouse column `primary_key`,
+    `unique_keys` and a relationship's `from_columns`/`to_columns` name, and
+    repoint those references at the field.
+
+    Per apache/ossie#486 all four resolve against a dataset's declared
+    FIELDS. This converter emitted the warehouse column name instead --
+    deliberately, see `_join_column_name`, which is the right answer to the
+    question as it stood before #486 settled it. ThoughtSpot joins on and
+    keys by columns the Model does not surface, so those columns were never
+    declared, and apache/ossie#649 turned naming an undeclared field into a
+    validator error.
+
+    Declaring the field is the whole fix: a field may carry the warehouse
+    column's own name, and the specification says so directly -- "if a field
+    and a source column share a name ... the name refers to the source
+    column inside that dataset's field expressions and to the field
+    everywhere else". So nothing is renamed and no expression changes
+    meaning; what was implicit becomes declared.
+
+    Runs after relationships and keys exist, because it is their references
+    that decide which columns must be declared. Each new field is marked
+    FIELD_STASH_NOT_MODEL_SURFACED so the return leg does not invent a Model
+    column the source never had, and is dropped from
+    DATASET_STASH_UNSURFACED_COLUMNS, which that phase computed before these
+    fields existed -- leaving it there would describe the same column twice,
+    once as a field and once as a column no field covers.
+    """
+
+    def field_name_for(prefix: str, warehouse_name: str, object_ref: str) -> str | None:
+        columns = physical_columns_by_prefix.get(prefix) or []
+        # A Table column is named in the reference by its `db_column_name`;
+        # a SQL View column has none, so `_join_column_name` fell back to the
+        # display name for it. Match on whichever the reference could hold.
+        physical = next(
+            (c for c in columns if c.get("db_column_name") == warehouse_name),
+            None,
+        ) or next(
+            (
+                c for c in columns
+                if c.get("db_column_name") is None and c.get("name") == warehouse_name
+            ),
+            None,
+        )
+        if physical is None:
+            # `_join_column_name` already reported the unresolvable join
+            # operand that produced this; reporting it again here would name
+            # one cause twice.
+            return None
+        display_name = physical.get("name")
+        if not isinstance(display_name, str) or not display_name:
+            return None
+
+        existing = built_field_names.get((prefix, display_name))
+        if existing is not None:
+            return existing
+
+        field_name = _field_or_metric_identifier(
+            display_name, physical.get("db_column_name"), allocator, log,
+            kind="field", object_ref=object_ref,
+        )
+        field: dict = {"name": field_name, "label": display_name}
+        # Built here rather than through `expression_entries` because that
+        # routes the portable sibling through `resolve`, which answers only
+        # for columns a Model ATTRIBUTE surfaces -- precisely the columns
+        # this function exists to handle. What follows is the pair `resolve`
+        # would have produced had it answered: the bracket reference, plus
+        # the bare warehouse column.
+        dialects: list[dict[str, str]] = [
+            {
+                "dialect": DIALECT,
+                "expression": identifiers.format_column_ref(prefix, display_name),
+            }
+        ]
+        db_column_name = physical.get("db_column_name")
+        if isinstance(db_column_name, str) and db_column_name:
+            dialects.append(
+                {"dialect": PORTABLE_DIALECT, "expression": _sql_identifier(db_column_name)}
+            )
+        # No portable sibling without one, matching `resolve`, which returns
+        # None for a column with no `db_column_name`. A SQL View column is
+        # the case that reaches here: its warehouse-side name is the query's
+        # `sql_output_column`, carried in the dataset stash just below and
+        # read back by `_physical_identity`, not written into an expression.
+        field["expression"] = {"dialects": dialects}
+        datatype = _physical_datatype(
+            prefix, display_name,
+            lambda _table, _columns=columns: {"columns": _columns},
+            log, object_ref=object_ref,
+        )
+        if datatype is not None:
+            field["datatype"] = datatype
+        field = _write_stash_safely(
+            field, {FIELD_STASH_NOT_MODEL_SURFACED: True}, log, object_ref
+        )
+
+        fields_by_dataset.setdefault(prefix, []).append(field)
+        built_field_names[(prefix, display_name)] = field_name
+
+        # The SQL View alias phase ran before this one, so it never saw this
+        # field. Without the entry the return leg rebuilds the column with
+        # the field's name as the query output alias, quietly renaming it
+        # (`Currency` for `CURRENCY`). On a SQL View the query output alias
+        # is what `_normalize_physical_column` folded into `db_column_name`,
+        # which is why this reads that key and not `sql_output_column`.
+        if (
+            dataset_stashes.get(prefix, {}).get(DATASET_STASH_TML_OBJECT) == "sql_view"
+            and isinstance(db_column_name, str)
+            and db_column_name
+        ):
+            dataset_stashes.setdefault(prefix, {}).setdefault(
+                DATASET_STASH_SQL_OUTPUT_COLUMNS, {}
+            )[field_name] = db_column_name
+
+        unsurfaced = dataset_stashes.get(prefix, {}).get(DATASET_STASH_UNSURFACED_COLUMNS)
+        if unsurfaced:
+            remaining = [c for c in unsurfaced if c.get("name") != display_name]
+            if remaining:
+                dataset_stashes[prefix][DATASET_STASH_UNSURFACED_COLUMNS] = remaining
+            else:
+                del dataset_stashes[prefix][DATASET_STASH_UNSURFACED_COLUMNS]
+        return field_name
+
+    def repoint(prefix: str, names: list, object_ref: str) -> list:
+        out = []
+        for name in names:
+            resolved = field_name_for(prefix, name, object_ref) if isinstance(name, str) else None
+            out.append(resolved if resolved is not None else name)
+        return out
+
+    for relationship in relationships:
+        object_ref = f"relationship:{relationship.get('name')}"
+        for side in ("from", "to"):
+            prefix = relationship.get(side)
+            key = f"{side}_columns"
+            if isinstance(prefix, str) and isinstance(relationship.get(key), list):
+                relationship[key] = repoint(prefix, relationship[key], object_ref)
+
+        # `RELATIONSHIP_STASH_ON_EXPRESSION_WITNESS` is "from_columns and
+        # to_columns exactly as emitted", captured in phase 4 -- before the
+        # repoint above changed them. Left stale it reads on the way back as
+        # "the user retargeted this relationship", so the verbatim
+        # `on_expression` is distrusted and dropped, and the condition is
+        # re-derived from field names: `[ORDERS::customer_id]` where
+        # ThoughtSpot wrote `[ORDERS::Customer Id]`. The repoint is this
+        # converter's own work within one conversion, not a retarget, so the
+        # witness is restated to match what is now emitted.
+        rel_stash = stash.read_stash(relationship)
+        if RELATIONSHIP_STASH_ON_EXPRESSION_WITNESS in rel_stash:
+            rel_stash[RELATIONSHIP_STASH_ON_EXPRESSION_WITNESS] = [
+                relationship.get("from_columns"), relationship.get("to_columns"),
+            ]
+            relationship.update(
+                _write_stash_safely({}, rel_stash, log, object_ref)
+            )
+
+    for prefix in dataset_order:
+        body = dataset_bodies.get(prefix) or {}
+        object_ref = f"dataset:{prefix}"
+        if isinstance(body.get("primary_key"), list):
+            body["primary_key"] = repoint(prefix, body["primary_key"], object_ref)
+        unique_keys = body.get("unique_keys")
+        if isinstance(unique_keys, list):
+            body["unique_keys"] = [
+                repoint(prefix, key, object_ref) if isinstance(key, list) else key
+                for key in unique_keys
+            ]
+
+
 def _relationship_from_join(
     *,
     name: str,
@@ -3039,6 +3220,21 @@ def convert(document_set: DocumentSet) -> OssieConversion:
             dataset_bodies[prefix]["primary_key"] = primary_key
         if unique_keys:
             dataset_bodies[prefix]["unique_keys"] = unique_keys
+
+    # -- Phase 5.5: declare the columns those references name ----------------
+    # Must follow phases 4 and 5: it is the relationships and keys they build
+    # that decide which columns have to be declared.
+    _declare_referenced_columns(
+        relationships=relationships,
+        dataset_bodies=dataset_bodies,
+        dataset_order=dataset_order,
+        fields_by_dataset=fields_by_dataset,
+        built_field_names=built_field_names,
+        physical_columns_by_prefix=physical_columns_by_prefix,
+        dataset_stashes=dataset_stashes,
+        allocator=field_name_allocator,
+        log=log,
+    )
 
     # -- Phase 6: assemble datasets ------------------------------------------
     datasets_out: list[dict] = []

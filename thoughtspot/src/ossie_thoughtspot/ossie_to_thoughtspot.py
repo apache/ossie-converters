@@ -72,6 +72,7 @@ from typing import Callable, Sequence
 from . import datatypes, formula, identifiers, stash
 from .constants import (
     FIELD_STASH_FORMULA_ID,
+    FIELD_STASH_NOT_MODEL_SURFACED,
     FIELD_STASH_FORMULA_NAME,
     MODEL_STASH_OBJ_ID,
     DATASET_STASH_ALIAS,
@@ -2142,6 +2143,19 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         dataset_prefix = dataset.get("name") or "<unnamed>"
         table_doc = table_doc_by_prefix.get(dataset_prefix)
         for field in dataset.get("fields") or []:
+            if stash.read_stash(field).get(FIELD_STASH_NOT_MODEL_SURFACED):
+                # Declared on the way out so a `primary_key`, `unique_keys`
+                # or relationship reference could name a field rather than a
+                # source column (apache/ossie#486), for a column the source
+                # Model did not carry. Surfacing it now would hand back a
+                # Model with a column the user never had. The Table/SQL-View
+                # document still gets it -- `_build_table_body` reads
+                # `fields` -- which is where it came from in the first place.
+                #
+                # Same treatment, and the same reason, as the unsurfaced
+                # formulas restored below: present in the document, no
+                # surfacing `columns[]` entry.
+                continue
             built = _build_field(field, dataset_prefix, table_doc, allocator, resolve_field, log)
             if built is None:
                 continue

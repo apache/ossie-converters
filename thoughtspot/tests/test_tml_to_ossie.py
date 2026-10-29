@@ -53,6 +53,7 @@ from ossie_thoughtspot.constants import (
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS,
     RELATIONSHIP_STASH_JOIN_SHAPE,
+    PORTABLE_DIALECT,
     RELATIONSHIP_STASH_ON_EXPRESSION,
     RELATIONSHIP_STASH_REFERENCING_JOIN,
     RELATIONSHIP_STASH_TYPE,
@@ -262,14 +263,14 @@ class TestKeyDerivation:
         semantic_model = result.model
         customers_ds = next(d for d in semantic_model["datasets"] if d["name"] == "CUSTOMERS")
 
-        assert customers_ds["primary_key"] == ["ID"]
-        assert customers_ds["unique_keys"] == [["ID"]]
+        assert customers_ds["primary_key"] == ["id"]
+        assert customers_ds["unique_keys"] == [["id"]]
 
         rel = semantic_model["relationships"][0]
         assert rel["from"] == "ORDERS"
         assert rel["to"] == "CUSTOMERS"
-        assert rel["from_columns"] == ["CUSTOMER_ID"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["from_columns"] == ["customer_id"]
+        assert rel["to_columns"] == ["id"]
         rel_stash = _own_stash(rel)
         assert rel_stash[RELATIONSHIP_STASH_TYPE] == "INNER"
         assert rel_stash[RELATIONSHIP_STASH_CARDINALITY] == "MANY_TO_ONE"
@@ -333,24 +334,36 @@ class TestKeyDerivation:
         semantic_model = result.model
         customers_ds = next(d for d in semantic_model["datasets"] if d["name"] == "CUSTOMERS")
 
-        assert customers_ds["primary_key"] == ["Region", "ID"]
+        assert customers_ds["primary_key"] == ["region", "id"]
         rel = semantic_model["relationships"][0]
-        assert rel["from_columns"] == ["Region", "CUSTOMER_ID"]
-        assert rel["to_columns"] == ["Region", "ID"]
+        assert rel["from_columns"] == ["region", "customer_id"]
+        assert rel["to_columns"] == ["region", "id"]
 
 
-class TestRelationshipColumnsResolveToWarehouseNames:
+class TestRelationshipColumnsResolveToFieldNames:
     """from_columns/to_columns (and, through derive_keys, primary_key/
-    unique_keys) must name the warehouse db_column_name a consumer can
-    actually select, never the ThoughtSpot display name embedded in the
-    join condition's `[TABLE::Column]` text, the same resolution
-    convert_field/convert_metric already apply to a field's own expression.
+    unique_keys) must name a DECLARED FIELD of the dataset.
+
+    This class previously asserted the opposite -- that they name the
+    warehouse `db_column_name` -- and that was the right answer to the
+    question as it stood: better the real warehouse column than the
+    ThoughtSpot display name embedded in the join text, which names nothing
+    a consumer can select. apache/ossie#486 settled it differently on
+    2026-10-22: "metrics and relationships do not reach through a dataset
+    to its source columns." Both of the old candidates are source columns.
+
+    The warehouse name is not lost. It is what the declared field's
+    portable expression evaluates to, so a consumer still reaches the same
+    column; what changes is that the document now declares the thing it
+    names.
     """
 
-    def test_relationship_columns_use_the_warehouse_name_not_the_display_name(self):
+    def test_relationship_columns_name_a_declared_field_not_a_source_column(self):
         # The ThoughtSpot column name ("Customer Id"/"Id") differs from its
-        # warehouse db_column_name ("cust_id_fk"/"cust_pk"): emitting the raw
-        # join text verbatim would reference a column that does not exist there.
+        # warehouse db_column_name ("cust_id_fk"/"cust_pk"), and the Model
+        # surfaces neither as a column -- so before this change the
+        # relationship named `cust_id_fk`, a source column the document
+        # never declared.
         customers = _table("CUSTOMERS", columns=[_column("Id", "cust_pk")])
         orders = _table("ORDERS", columns=[_column("Customer Id", "cust_id_fk")])
         model = _model(
@@ -368,15 +381,30 @@ class TestRelationshipColumnsResolveToWarehouseNames:
         result = convert(_document_set(model, orders, customers))
         semantic_model = result.model
         customers_ds = next(d for d in semantic_model["datasets"] if d["name"] == "CUSTOMERS")
+        orders_ds = next(d for d in semantic_model["datasets"] if d["name"] == "ORDERS")
 
         rel = semantic_model["relationships"][0]
-        assert rel["from_columns"] == ["cust_id_fk"]
-        assert rel["to_columns"] == ["cust_pk"]
+        assert rel["from_columns"] == ["customer_id"]
+        assert rel["to_columns"] == ["id"]
 
-        # derive_keys reads straight off to_columns, so the fix reaches
+        # The property #486 actually requires -- that the names RESOLVE.
+        # Asserting the literals alone would still pass if the field were
+        # named something else entirely.
+        assert {f["name"] for f in orders_ds["fields"]} >= {"customer_id"}
+        assert {f["name"] for f in customers_ds["fields"]} >= {"id"}
+
+        # And the warehouse column is still reachable, through the field.
+        id_field = next(f for f in customers_ds["fields"] if f["name"] == "id")
+        portable = next(
+            d["expression"] for d in id_field["expression"]["dialects"]
+            if d["dialect"] == PORTABLE_DIALECT
+        )
+        assert portable == "cust_pk"
+
+        # derive_keys reads straight off to_columns, so the repoint reaches
         # primary_key/unique_keys with no separate resolution step of its own.
-        assert customers_ds["primary_key"] == ["cust_pk"]
-        assert customers_ds["unique_keys"] == [["cust_pk"]]
+        assert customers_ds["primary_key"] == ["id"]
+        assert customers_ds["unique_keys"] == [["id"]]
 
         assert not any(i["code"] == "TS-JOIN-COLUMN-UNRESOLVED" for i in result.issues.as_dicts())
 
@@ -384,6 +412,14 @@ class TestRelationshipColumnsResolveToWarehouseNames:
         # The join condition names a column no physical column on the table
         # declares. The raw TML text is kept (nothing vanishes) rather than
         # dropping the relationship, and the loss is logged.
+        #
+        # The two sides land differently now, which is the point of keeping
+        # them in one test. `Id` IS a physical column, so it is declared as
+        # a field and the reference becomes the field name. `Customer Id`
+        # is not a column of ORDERS at all, so there is nothing to declare
+        # -- the raw text survives, still naming nothing, and still logged.
+        # A document in that state does not satisfy apache/ossie#486, and
+        # it cannot: the defect is in the TML, not in this conversion.
         customers = _table("CUSTOMERS", columns=[_column("Id", "ID")])
         orders = _table("ORDERS", columns=[])  # "Customer Id" is not declared here
         model = _model(
@@ -402,7 +438,7 @@ class TestRelationshipColumnsResolveToWarehouseNames:
         rel = result.model["relationships"][0]
 
         assert rel["from_columns"] == ["Customer Id"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["to_columns"] == ["id"]
         assert any(
             i["code"] == "TS-JOIN-COLUMN-UNRESOLVED" and "Customer Id" in i["message"]
             for i in result.issues.as_dicts()
@@ -447,8 +483,8 @@ class TestOneToManyEndpointSwap:
         # (CUSTOMERS) is `to` -- the reverse of how the join is declared.
         assert rel["from"] == "ORDERS"
         assert rel["to"] == "CUSTOMERS"
-        assert rel["from_columns"] == ["CUSTOMER_ID"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["from_columns"] == ["customer_id"]
+        assert rel["to_columns"] == ["id"]
         # The inline join's synthesized name reflects the emitted (swapped)
         # from/to, not the TML declaration order.
         assert rel["name"] == "ORDERS_to_CUSTOMERS"
@@ -463,8 +499,8 @@ class TestOneToManyEndpointSwap:
         # Key derivation follows the swap: the key belongs to the one side
         # (CUSTOMERS), which is now `to`.
         customers_ds = next(d for d in semantic_model["datasets"] if d["name"] == "CUSTOMERS")
-        assert customers_ds["primary_key"] == ["ID"]
-        assert customers_ds["unique_keys"] == [["ID"]]
+        assert customers_ds["primary_key"] == ["id"]
+        assert customers_ds["unique_keys"] == [["id"]]
         orders_ds = next(d for d in semantic_model["datasets"] if d["name"] == "ORDERS")
         assert "primary_key" not in orders_ds
 
@@ -488,8 +524,8 @@ class TestOneToManyEndpointSwap:
 
         assert rel["from"] == "ORDERS"
         assert rel["to"] == "CUSTOMERS"
-        assert rel["from_columns"] == ["CUSTOMER_ID"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["from_columns"] == ["customer_id"]
+        assert rel["to_columns"] == ["id"]
         assert rel["name"] == "ORDERS_to_CUSTOMERS"
 
         rel_stash = _own_stash(rel)
@@ -517,8 +553,8 @@ class TestOneToManyEndpointSwap:
 
         assert rel["from"] == "PROFILES"
         assert rel["to"] == "PEOPLE"
-        assert rel["from_columns"] == ["PERSON_ID"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["from_columns"] == ["person_id"]
+        assert rel["to_columns"] == ["id"]
 
         rel_stash = _own_stash(rel)
         assert rel_stash[RELATIONSHIP_STASH_CARDINALITY] == "ONE_TO_ONE"
@@ -555,8 +591,8 @@ class TestOneToManyEndpointSwap:
         assert rel["name"] == "customers_to_orders"
         assert rel["from"] == "ORDERS"
         assert rel["to"] == "CUSTOMERS"
-        assert rel["from_columns"] == ["CUSTOMER_ID"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["from_columns"] == ["customer_id"]
+        assert rel["to_columns"] == ["id"]
 
         rel_stash = _own_stash(rel)
         assert rel_stash[RELATIONSHIP_STASH_CARDINALITY] == "ONE_TO_MANY"
@@ -752,8 +788,8 @@ class TestOwnChoice:
         assert rel["name"] == "orders_to_customers"
         assert rel["from"] == "ORDERS"
         assert rel["to"] == "CUSTOMERS"
-        assert rel["from_columns"] == ["CUSTOMER_ID"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["from_columns"] == ["customer_id"]
+        assert rel["to_columns"] == ["id"]
         rel_stash = _own_stash(rel)
         assert rel_stash[RELATIONSHIP_STASH_JOIN_SHAPE] == "referencing"
         assert rel_stash[RELATIONSHIP_STASH_REFERENCING_JOIN] == "orders_to_customers"
@@ -761,7 +797,7 @@ class TestOwnChoice:
         assert rel_stash[RELATIONSHIP_STASH_CARDINALITY] == "MANY_TO_ONE"
 
         customers_ds = next(d for d in semantic_model["datasets"] if d["name"] == "CUSTOMERS")
-        assert customers_ds["primary_key"] == ["ID"]
+        assert customers_ds["primary_key"] == ["id"]
 
     def test_a_malformed_join_condition_is_caught_and_the_conversion_continues(self):
         # Lesson carried into this task: a malformed reference must not abort
@@ -1261,8 +1297,8 @@ class TestKeyDerivationEdgeCasesCommitted:
         assert "unique_keys" not in customers_ds
 
         rel = semantic_model["relationships"][0]
-        assert rel["from_columns"] == ["CUSTOMER_ID"]
-        assert rel["to_columns"] == ["ID"]
+        assert rel["from_columns"] == ["customer_id"]
+        assert rel["to_columns"] == ["id"]
         rel_stash = _own_stash(rel)
         assert rel_stash[RELATIONSHIP_STASH_ON_EXPRESSION] == on_expr
         assert any(i["code"] == "TS-JOIN-RESIDUAL-PREDICATES" for i in result.issues.as_dicts())
@@ -1293,7 +1329,7 @@ class TestKeyDerivationEdgeCasesCommitted:
 
         assert set(datasets) == {"Emp", "Mgr"}
         assert datasets["Emp"]["source"] == datasets["Mgr"]["source"] == "SALES.PUBLIC.EMPLOYEES"
-        assert datasets["Mgr"]["primary_key"] == ["ID"]
+        assert datasets["Mgr"]["primary_key"] == ["id"]
         rel = semantic_model["relationships"][0]
         assert rel["from"] == "Emp"
         assert rel["to"] == "Mgr"
@@ -1740,3 +1776,116 @@ class TestRelationshipNamesAreUniqueAcrossTheModel:
     def test_the_rename_is_reported(self):
         codes = [i["code"] for i in self._convert_two_joins_between_one_pair().issues.as_dicts()]
         assert "TS-RELATIONSHIP-NAME-COLLISION" in codes
+
+
+class TestEveryKeyAndRelationshipNameResolvesToADeclaredField:
+    """The apache/ossie#486 rule itself, asserted as a property.
+
+    Every other test in this file pins the names as literals, which is
+    useful for reading but weak as a guard: a change that went back to
+    emitting source columns would be "fixed" by editing the literals, and
+    the suite would stay green while the documents stopped conforming.
+    This asserts the rule instead -- `primary_key`, `unique_keys`,
+    `from_columns` and `to_columns` name a field the dataset declares --
+    so it holds whatever the names happen to be.
+
+    Deliberately not a copy of upstream's `validate_references`: that one
+    runs over the fixtures in test_fixtures.py. This one runs over the
+    hand-built documents here, which reach shapes the fixtures do not (a
+    self-join, a composite key, an unresolvable operand).
+    """
+
+    @staticmethod
+    def _unresolved(semantic_model: dict) -> list[str]:
+        fields = {
+            d["name"]: {f["name"] for f in d.get("fields") or []}
+            for d in semantic_model["datasets"]
+        }
+        bad = []
+        for dataset in semantic_model["datasets"]:
+            declared = fields[dataset["name"]]
+            for name in dataset.get("primary_key") or []:
+                if name not in declared:
+                    bad.append(f"{dataset['name']}.primary_key -> {name!r}")
+            for key in dataset.get("unique_keys") or []:
+                for name in key:
+                    if name not in declared:
+                        bad.append(f"{dataset['name']}.unique_keys -> {name!r}")
+        for rel in semantic_model.get("relationships") or []:
+            for side in ("from", "to"):
+                for name in rel.get(f"{side}_columns") or []:
+                    if name not in fields.get(rel[side], set()):
+                        bad.append(f"{rel['name']}.{side}_columns -> {name!r}")
+        return bad
+
+    def test_a_simple_equality_join(self):
+        customers = _table("CUSTOMERS", columns=[_column("Id", "cust_pk")])
+        orders = _table("ORDERS", columns=[_column("Customer Id", "cust_id_fk")])
+        model = _model(model_tables=[
+            {"name": "ORDERS", "joins": [{
+                "with": "CUSTOMERS", "on": "[ORDERS::Customer Id] = [CUSTOMERS::Id]",
+                "type": "INNER", "cardinality": "MANY_TO_ONE",
+            }]},
+            {"name": "CUSTOMERS"},
+        ])
+        result = convert(_document_set(model, orders, customers))
+        assert self._unresolved(result.model) == []
+
+    def test_a_composite_key_join(self):
+        customers = _table("CUSTOMERS", columns=[
+            _column("Region", "Region"), _column("Id", "ID"),
+        ])
+        orders = _table("ORDERS", columns=[
+            _column("Region", "Region"), _column("Customer Id", "CUSTOMER_ID"),
+        ])
+        model = _model(model_tables=[
+            {"name": "ORDERS", "joins": [{
+                "with": "CUSTOMERS",
+                "on": "[ORDERS::Region] = [CUSTOMERS::Region] and "
+                      "[ORDERS::Customer Id] = [CUSTOMERS::Id]",
+                "type": "INNER", "cardinality": "MANY_TO_ONE",
+            }]},
+            {"name": "CUSTOMERS"},
+        ])
+        result = convert(_document_set(model, orders, customers))
+        assert self._unresolved(result.model) == []
+
+    def test_a_self_join_resolves_within_each_alias(self):
+        employees = _table("EMPLOYEES", columns=[
+            _column("Id", "ID", "INT64"), _column("Manager Id", "MANAGER_ID", "INT64"),
+            _column("Name", "NAME", "VARCHAR"),
+        ])
+        model = _model(
+            name="OrgChart",
+            model_tables=[
+                {"name": "EMPLOYEES", "alias": "Emp", "joins": [{
+                    "with": "Mgr", "on": "[Emp::Manager Id] = [Mgr::Id]",
+                    "type": "INNER", "cardinality": "MANY_TO_ONE",
+                }]},
+                {"name": "EMPLOYEES", "alias": "Mgr"},
+            ],
+            columns=[_attribute("Emp Name", "Emp::Name"), _attribute("Mgr Name", "Mgr::Name")],
+        )
+        result = convert(_document_set(model, employees))
+        assert self._unresolved(result.model) == []
+
+    def test_an_operand_naming_no_column_at_all_is_the_one_case_that_cannot_resolve(self):
+        """The exception, pinned so it is a known gap and not a surprise.
+
+        `Customer Id` is not a column of ORDERS, so there is nothing to
+        declare and nothing the converter can do: the reference is
+        unresolvable in the source TML. It is reported, not silently
+        emitted, and that issue code is the contract.
+        """
+        customers = _table("CUSTOMERS", columns=[_column("Id", "ID")])
+        orders = _table("ORDERS", columns=[])
+        model = _model(model_tables=[
+            {"name": "ORDERS", "joins": [{
+                "with": "CUSTOMERS", "on": "[ORDERS::Customer Id] = [CUSTOMERS::Id]",
+                "type": "INNER", "cardinality": "MANY_TO_ONE",
+            }]},
+            {"name": "CUSTOMERS"},
+        ])
+        result = convert(_document_set(model, orders, customers))
+        assert self._unresolved(result.model) == ["ORDERS_to_CUSTOMERS.from_columns -> 'Customer Id'"]
+        assert any(i["code"] == "TS-JOIN-COLUMN-UNRESOLVED" for i in result.issues.as_dicts())

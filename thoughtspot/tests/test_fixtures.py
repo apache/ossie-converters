@@ -55,6 +55,7 @@ from ossie_thoughtspot.constants import (
     DATASET_STASH_UNSURFACED_COLUMNS,
     DIALECT,
     FIELD_STASH_DATA_TYPE,
+    FIELD_STASH_NOT_MODEL_SURFACED,
     METRIC_SHAPE_COLUMN_AGGREGATION,
     METRIC_SHAPE_SCALAR_FORMULA_PLUS_AGGREGATION,
     METRIC_STASH_SHAPE,
@@ -184,7 +185,7 @@ class TestExpectedOutputIsValid:
         which is the property the docstring above was reaching for.
         """
         pytest.importorskip("sqlglot")
-        jsonschema = pytest.importorskip("jsonschema")  # noqa: F841 - validate_document needs it
+        pytest.importorskip("jsonschema")  # validate_document's schema check needs it
         validate = _upstream_validator()
         schema_path = Path(__file__).resolve().parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
         with open(schema_path) as fh:
@@ -307,15 +308,32 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
         dialects = {d["dialect"]: d["expression"] for d in field["expression"]["dialects"]}
         assert dialects[PORTABLE_DIALECT] == "RETURN_AMT"
 
-    def test_a_physical_column_the_model_does_not_surface_is_stashed(self, dataset):
+    def test_a_physical_column_the_model_does_not_surface_but_a_key_names_is_declared(self, dataset):
+        """`ss_ticket_number` is in the Table and not in the Model, and the
+        `primary_key` names it.
+
+        It used to ride in `unsurfaced_columns` alone, which made the
+        `primary_key` name something the document never declared --
+        invalid under apache/ossie#486. It is now a declared field, marked
+        so the return leg does not surface a Model column for it, and the
+        `unsurfaced_columns` entry is gone rather than describing the same
+        column a second time.
+        """
         store_sales = next(d for d in dataset["datasets"] if d["name"] == "store_sales")
         extensions = {
             e["vendor_name"]: json.loads(e["data"]) for e in store_sales["custom_extensions"]
         }
-        unsurfaced = {
-            c["name"] for c in extensions[VENDOR_KEY][DATASET_STASH_UNSURFACED_COLUMNS]
+        field = next(f for f in store_sales["fields"] if f["name"] == "ss_ticket_number")
+        field_stash = {
+            e["vendor_name"]: json.loads(e["data"]) for e in field["custom_extensions"]
         }
-        assert "ss_ticket_number" in unsurfaced
+        assert field_stash[VENDOR_KEY][FIELD_STASH_NOT_MODEL_SURFACED] is True
+        assert "ss_ticket_number" in store_sales["primary_key"]
+        unsurfaced = {
+            c["name"]
+            for c in extensions[VENDOR_KEY].get(DATASET_STASH_UNSURFACED_COLUMNS) or []
+        }
+        assert "ss_ticket_number" not in unsurfaced
 
     def test_a_composite_key_relationship_is_present(self, dataset):
         relationship = next(

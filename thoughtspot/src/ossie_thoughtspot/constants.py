@@ -184,6 +184,29 @@ FIELD_STASH_FORMULA_ID = "formula_id"
 #: new column.
 FIELD_STASH_DB_COLUMN_NAME_WITNESS = "db_column_name_display_name_witness"
 
+#: Marks a field this converter DECLARED rather than read off a Model
+#: `columns[]` entry.
+#:
+#: apache/ossie#486 made `primary_key`, `unique_keys` and a relationship's
+#: `from_columns`/`to_columns` resolve against a dataset's declared FIELDS,
+#: not the columns of its `source`. ThoughtSpot routinely joins on, and keys
+#: by, a Table column the Model never surfaces -- so those references named
+#: something the document had never declared, which apache/ossie#649 turned
+#: into a validator error.
+#:
+#: The fix declares the column as a field. That is right for the portable
+#: document and wrong for the return leg, where every field becomes a Model
+#: `columns[]` entry: the source Model did not carry this column, so
+#: rebuilding it with one hands back a Model the user never had. This key
+#: says "declared so a reference resolves, not surfaced by the source
+#: Model", and `build_model` skips the surfacing entry for a field carrying
+#: it -- the same treatment MODEL_STASH_UNSURFACED_FORMULAS already gives a
+#: formula that no column surfaces.
+#:
+#: Absent on a foreign document, where every field is genuinely part of the
+#: producer's public interface and must surface.
+FIELD_STASH_NOT_MODEL_SURFACED = "not_model_surfaced"
+
 # ---------------------------------------------------------------------------
 # The rest of the custom_extensions[THOUGHTSPOT] payload vocabulary.
 #
@@ -554,6 +577,10 @@ STASH_KEY_CLASSIFICATION: dict[str, "StashKeyClass"] = {
     FIELD_STASH_DB_COLUMN_NAME: StashKeyClass.SHADOWS_DERIVABLE,
     FIELD_STASH_DATA_TYPE: StashKeyClass.SHADOWS_DERIVABLE,
     FIELD_STASH_COLUMN_PROPERTIES: StashKeyClass.INFORMATION_ONLY,
+    # Records a decision this converter made on the way out (declare the
+    # field so a reference resolves), not a copy of anything on the Ossie
+    # side, so there is nothing it can shadow or diverge from.
+    FIELD_STASH_NOT_MODEL_SURFACED: StashKeyClass.INFORMATION_ONLY,
     METRIC_STASH_SHAPE: StashKeyClass.INFORMATION_ONLY,
 
     # -- Dataset scope --
