@@ -156,6 +156,65 @@ _WHITESPACE_RE = re.compile(r"\s")
 _PLAIN_IDENTIFIER_SEGMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+def _check_dataset_sources(datasets: object) -> None:
+    """Refuse a document whose datasets are not mappings, or whose `source`
+    is not a non-empty string, before anything tries to parse one.
+
+    `source` is `{"type": "string", "minLength": 1}` and required, so every
+    shape rejected here is a document the specification already disallows.
+    What made this worth a guard is how the three readers below fail on one:
+    `_split_three_part_identifier` indexes and measures `source` directly, so
+    a mapping raises `KeyError: 0`, a list and an int raise `TypeError`, and
+    all three escape `cli.py` as a bare traceback -- it catches
+    `ConversionError`, `OSError` and `UnicodeDecodeError`, none of which
+    those are. `stash.py` describes an identical past bug as "breaking this
+    module's own never-a-bare-traceback contract"; the same discipline had
+    simply never been applied to `source`.
+
+    The two silent shapes matter more than the loud ones. An empty mapping
+    and a missing key are both falsy, so `dataset.get("source") or ""` turned
+    them into an empty string and emitted a Table with `db`, `schema` and
+    `db_table` all blank -- a document that cannot import, reported as a
+    success.
+
+    Raised rather than logged: there is no degraded output worth producing
+    for a dataset with no usable source, and `convert()` already refuses a
+    document with no datasets on the same reasoning.
+
+    A non-string `source` is also exactly what a reader would meet if the
+    structured form proposed on dev@ (`kind`/`identifier`) is adopted, so a
+    clear refusal is the right answer until this converter implements it.
+    """
+    if not isinstance(datasets, list):
+        raise ConversionError(
+            f"the Ossie document's `datasets` must be a list, not {type(datasets).__name__}"
+        )
+    for index, dataset in enumerate(datasets):
+        where = f"datasets[{index}]"
+        if not isinstance(dataset, dict):
+            raise ConversionError(
+                f"{where} must be a mapping, not {type(dataset).__name__}"
+            )
+        name = dataset.get("name")
+        if isinstance(name, str) and name:
+            where = f"dataset {name!r}"
+        source = dataset.get("source")
+        if source is None:
+            raise ConversionError(
+                f"{where} has no `source`; it is required, and names the table, "
+                f"view or query the dataset reads from"
+            )
+        if not isinstance(source, str):
+            raise ConversionError(
+                f"{where} has a `source` of type {type(source).__name__}; it must "
+                f"be a string naming a table, view or query. A structured source "
+                f"(a mapping with `kind`/`identifier`) is proposed upstream but "
+                f"not part of the specification, and this converter does not read it"
+            )
+        if not source.strip():
+            raise ConversionError(f"{where} has an empty `source`")
+
+
 def _split_three_part_identifier(source: str) -> list[str] | None:
     """`source` split on top-level `.` into its parts, or `None` when it does
     not parse as a dotted identifier sequence at all.
@@ -2650,6 +2709,7 @@ def convert(ossie_document: dict) -> TmlConversion:
     semantic_model = ossie_document
     if not semantic_model.get("datasets"):
         raise ConversionError("the Ossie document has no datasets to convert")
+    _check_dataset_sources(semantic_model["datasets"])
 
     log = IssueLog()
     tables = _deduplicate_table_documents(

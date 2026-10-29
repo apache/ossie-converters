@@ -1038,8 +1038,14 @@ class TestDeduplicationRefusesUnsafeMerges:
         # keying on it merged every nameless document together. The datasets
         # below must therefore be genuinely nameless -- an earlier version of
         # this test gave them names and so passed without exercising the path.
+        #
+        # They carry a real `source`, though. It used to be `""`, which is
+        # incidental to what this tests and is not a document the
+        # specification allows (`minLength: 1`); `_check_dataset_sources` now
+        # refuses it. Namelessness is what reaches `<unnamed>`, and that is
+        # unchanged.
         nameless = [
-            {"name": "", "source": "",
+            {"name": "", "source": "DB.SCH.T",
              "fields": [{"name": column, "expression": {"dialects": [
                  {"dialect": "THOUGHTSPOT", "expression": f"[::{column}]"}]}}],
              "custom_extensions": [{"vendor_name": "THOUGHTSPOT",
@@ -1327,3 +1333,67 @@ class TestAnAliasedSelfJoinWithUnsurfacedColumnsIsNotAConflict:
         codes = [i["code"] for i in result.issues.as_dicts()]
         assert "TS-TABLE-COLUMN-CONFLICT" not in codes
         assert not result.issues.has_errors()
+
+
+class TestADatasetSourceMustBeANonEmptyString:
+    """`source` is `{"type": "string", "minLength": 1}` and required, so
+    every shape here is already invalid. What this pins is HOW it is
+    refused.
+
+    Four of them used to escape `cli.py` as a bare Python traceback --
+    `_split_three_part_identifier` indexes and measures `source` directly,
+    and the CLI catches only `ConversionError`, `OSError` and
+    `UnicodeDecodeError`. The other two were worse: an empty mapping and a
+    missing key are both falsy, so `dataset.get("source") or ""` emitted a
+    Table with `db`, `schema` and `db_table` all blank -- unimportable, and
+    reported as a success with exit 0.
+
+    The mapping case is not hypothetical. It is the shape a reader meets if
+    the structured `kind`/`identifier` source proposed on dev@ is adopted,
+    which is why the message says so rather than only naming the type.
+    """
+
+    @staticmethod
+    def _document(source, *, omit=False):
+        dataset = {"name": "d"} if omit else {"name": "d", "source": source}
+        return {"name": "m", "datasets": [dataset]}
+
+    @pytest.mark.parametrize("source,expected", [
+        ({"kind": "table", "identifier": "a.b.c"}, "type dict"),
+        (["a", "b", "c"], "type list"),
+        (12345, "type int"),
+        ({}, "type dict"),
+        ("", "empty `source`"),
+        ("   ", "empty `source`"),
+    ])
+    def test_it_is_refused_as_a_conversion_error(self, source, expected):
+        with pytest.raises(ConversionError) as excinfo:
+            convert(self._document(source))
+        assert expected in str(excinfo.value)
+
+    def test_a_missing_source_is_refused_rather_than_emitting_a_blank_table(self):
+        with pytest.raises(ConversionError) as excinfo:
+            convert(self._document(None, omit=True))
+        assert "has no `source`" in str(excinfo.value)
+
+    def test_a_dataset_that_is_not_a_mapping_is_refused(self):
+        with pytest.raises(ConversionError) as excinfo:
+            convert({"name": "m", "datasets": ["not-a-dataset"]})
+        assert "datasets[0] must be a mapping" in str(excinfo.value)
+
+    def test_the_message_names_the_dataset_so_one_of_many_can_be_found(self):
+        document = {"name": "m", "datasets": [
+            {"name": "good", "source": "DB.SCH.A"},
+            {"name": "bad", "source": {"kind": "table"}},
+        ]}
+        with pytest.raises(ConversionError) as excinfo:
+            convert(document)
+        assert "dataset 'bad'" in str(excinfo.value)
+
+    def test_a_valid_source_is_untouched(self):
+        # The guard must refuse the invalid shapes without narrowing what
+        # counts as valid -- a query source and a quoted identifier both
+        # still convert.
+        for source in ("DB.SCH.T", 'DB.SCH."ORDER TABLE"', "SELECT * FROM t WHERE x = 1"):
+            result = convert({"name": "m", "datasets": [{"name": "d", "source": source}]})
+            assert result.documents.tables, source
