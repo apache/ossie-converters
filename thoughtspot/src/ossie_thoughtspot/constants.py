@@ -39,7 +39,36 @@ DIALECT_IS_REGISTERED = True
 
 #: Dialect emitted alongside DIALECT (not instead of it) for portable expressions, so a
 #: consumer that does not implement our dialect still gets something it can execute.
+#:
+#: ANSI_SQL rather than OSSIE_SQL_2026 on the EMIT side, deliberately and still:
+#: a survey of every ossie -> vendor direction in this repository found omni and
+#: sigma drop a metric carrying only OSSIE_SQL_2026 (apache/ossie-converters#22),
+#: so emitting it would lose metrics that ANSI_SQL delivers. Per apache/ossie#450
+#: the two parse identically, so this stays a relabel if that changes.
 PORTABLE_DIALECT = "ANSI_SQL"
+
+#: Dialects ACCEPTED as the portable sibling on the way back in. Wider than what
+#: is emitted, and the asymmetry is the point: be strict in what you send, liberal
+#: in what you accept.
+#:
+#: `OSSIE_SQL_2026` is the specification's own portable dialect (apache/ossie#439),
+#: and apache/ossie#450 established it parses identically to ANSI_SQL -- sqlglot's
+#: DIALECT_MAP returns the same default reader for both. Reading only ANSI_SQL
+#: therefore rejected documents this converter could translate perfectly well:
+#: `to_thoughtspot_expression` raised TS-EXPR-NO-USABLE-DIALECT and the field or
+#: metric was dropped. apache/ossie-converters#32 and #22 track the same defect
+#: in sibling converters and are both still open; ThoughtSpot was on neither
+#: list.
+#:
+#: Scope, and it is narrower than "this converter now reads OSSIE_SQL_2026":
+#: what is accepted reaches `_translate_ansi_sql`, which resolves a qualified
+#: `dataset.field` and nothing else. That is the model-scoped metric namespace
+#: (apache/ossie#486). The other two namespaces the specification defines --
+#: a dataset-scoped metric's unqualified field names, and a field expression's
+#: source columns -- are NOT resolved correctly here, for ANSI_SQL just as much
+#: as for OSSIE_SQL_2026. Widening the accepted list does not change that
+#: either way; see apache/ossie-converters#101.
+PORTABLE_DIALECTS_ACCEPTED = (PORTABLE_DIALECT, "OSSIE_SQL_2026")
 
 #: Ossie spec series this converter targets, matched on major.minor. Not an exact
 #: version: upstream's first release is proposed as 0.3.0, not 0.2.0.

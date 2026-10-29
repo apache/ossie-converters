@@ -830,6 +830,103 @@ class TestDialectSelection:
         assert result is None
         assert any(i["code"] == "TS-EXPR-NO-USABLE-DIALECT" for i in log.as_dicts())
 
+    def test_ossie_sql_2026_is_accepted_as_the_portable_sibling(self):
+        """`OSSIE_SQL_2026` is the specification's own portable dialect
+        (apache/ossie#439), and apache/ossie#450 established it parses
+        identically to ANSI_SQL. Reading only ANSI_SQL rejected documents this
+        converter can translate perfectly well: the metric was dropped with an
+        ERROR.
+
+        apache/ossie-converters#32 and #22 track the same defect in sibling
+        converters (both still open). ThoughtSpot was on neither list.
+
+        `object_ref` names a METRIC, and deliberately. An earlier draft of
+        this test wrote `field:f` over a `dataset.field` expression, which is
+        a shape apache/ossie#486 makes invalid for a field -- a field
+        expression refers to its own dataset's SOURCE COLUMNS, never to
+        `dataset.field`. It passed, because what is under test resolves one
+        namespace and the label was decoration. Raised by @jbonofre in review.
+        The qualified form is the model-scoped metric namespace, so that is
+        what this says.
+        """
+        log = IssueLog()
+        result = to_thoughtspot_expression(
+            _dialects(("OSSIE_SQL_2026", "orders.amount")),
+            _resolve_field({"orders.amount": ("ORDERS", "Amount")}),
+            log, object_ref="metric:total_amount",
+        )
+        assert result == "[ORDERS::Amount]", result
+        assert not log.has_errors(), log.as_dicts()
+
+    def test_the_two_namespaces_this_does_not_resolve_are_pinned_not_claimed(self):
+        """The limit of the line above, recorded so the scope is not
+        overstated by its absence.
+
+        apache/ossie#486 defines three namespaces. Only the model-scoped
+        metric's qualified `dataset.field` resolves here. A dataset-scoped
+        metric's unqualified name and a field expression's source column both
+        fail, and they fail for ANSI_SQL exactly as they do for
+        OSSIE_SQL_2026 -- this is not something accepting the new dialect
+        introduced. Tracked as apache/ossie-converters#101.
+
+        Pinned as the current behaviour, not endorsed: when #100 lands, this
+        test should start failing and be replaced by its positive form.
+        """
+        for dialect in ("ANSI_SQL", "OSSIE_SQL_2026"):
+            log = IssueLog()
+            result = to_thoughtspot_expression(
+                _dialects((dialect, "SUM(net_amount)")),
+                _resolve_field({"orders.net_amount": ("ORDERS", "Net Amount")}),
+                log, object_ref="metric:m",
+            )
+            assert result is None, (dialect, result)
+            assert any(i["code"] == "TS-EXPR-ANSI-UNSTRUCTURED" for i in log.as_dicts()), (
+                dialect, log.as_dicts()
+            )
+
+    def test_ansi_sql_still_wins_when_both_are_present(self):
+        # Preference order, not a free-for-all: a document carrying both gets
+        # the one this converter emits, so behaviour does not depend on dict
+        # ordering in the source document.
+        log = IssueLog()
+        result = to_thoughtspot_expression(
+            _dialects(("OSSIE_SQL_2026", "orders.other"), ("ANSI_SQL", "orders.amount")),
+            _resolve_field({"orders.amount": ("ORDERS", "Amount"),
+                            "orders.other": ("ORDERS", "Other")}),
+            log, object_ref="field:f",
+        )
+        assert result == "[ORDERS::Amount]", result
+
+    def test_an_unrelated_vendor_dialect_is_still_not_accepted(self):
+        # Widening the accept list must not make it accept anything. A
+        # DATABRICKS-only expression is still untranslatable -- this converter
+        # never re-renders one vendor dialect into another.
+        log = IssueLog()
+        result = to_thoughtspot_expression(
+            _dialects(("DATABRICKS", "orders.amount")),
+            _resolve_field({"orders.amount": ("ORDERS", "Amount")}),
+            log, object_ref="field:f",
+        )
+        assert result is None
+        assert any(i["code"] == "TS-EXPR-NO-USABLE-DIALECT" for i in log.as_dicts())
+
+    def test_the_emitted_portable_dialect_is_still_ansi_sql(self):
+        """The asymmetry is deliberate: strict in what we send, liberal in
+        what we accept. A survey of every `ossie -> vendor` direction in the
+        repository found omni and sigma drop a metric carrying only
+        `OSSIE_SQL_2026` (apache/ossie-converters#22), so emitting it would
+        lose metrics that ANSI_SQL delivers.
+        """
+        from ossie_thoughtspot.constants import (
+            PORTABLE_DIALECT, PORTABLE_DIALECTS_ACCEPTED,
+        )
+
+        assert PORTABLE_DIALECT == "ANSI_SQL"
+        assert PORTABLE_DIALECTS_ACCEPTED[0] == PORTABLE_DIALECT, (
+            "the emitted dialect must be preferred on the way back in"
+        )
+        assert "OSSIE_SQL_2026" in PORTABLE_DIALECTS_ACCEPTED
+
     def test_thoughtspot_is_never_re_rendered_into_ansi_sql_or_vice_versa(self):
         # Never re-render one dialect into another: an ANSI_SQL-only
         # expression the catalog cannot match structurally must not fall
