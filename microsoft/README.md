@@ -113,9 +113,17 @@ ossie-microsoft export -i model.yaml -o model.bim    # Apache Ossie -> Power BI
 Power BI projects saved as split TMDL can be imported too. Pass a `.pbip` file, a
 semantic model folder that contains `definition/`, or that `definition` folder. The
 project root is not an input. A `.pbip` is followed through `datasetReference.byPath`.
-`byConnection` and a project stored as TMSL are outside this path. It needs the
+`byConnection` is not supported. It needs the
 [optional TOM setup](#optional-tom-validation-and-tmdl-serialization). Importing
-`model.bim` does not.
+`model.bim` does not, and a project stored as TMSL (a semantic model folder with
+`model.bim` instead of `definition/`, or a `.pbip` that points at one) is read through
+that `model.bim`. A folder with both is refused as ambiguous.
+
+Only the layout TOM itself writes is loaded: the documents directly in `definition/`
+and one level below in `tables/`, `roles/`, `cultures/` and `perspectives/`. Any other
+`.tmdl` file is skipped with a warning. Two files in the same folder that declare the
+same object (a leftover `tables/Orders.backup.tmdl`, say) are an error naming both.
+The report path in the `.pbip` and its `byPath` must stay inside the project folder.
 
 ```bash
 ossie-microsoft import -i "Report.pbip" -o model.yaml

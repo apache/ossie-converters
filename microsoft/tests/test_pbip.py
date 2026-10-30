@@ -341,3 +341,121 @@ def test_project_api_translates_measures_with_the_existing_converter(tmp_path, m
         {"dialect": "OSSIE_SQL_2026", "expression": "SUM(Sales.Amount)"},
         {"dialect": "DAX", "expression": "SUM ( Sales[Amount] )"},
     ]
+
+
+# --- follow-ups from the #26 review ------------------------------------------
+
+
+def test_a_tmdl_file_outside_the_folder_layout_is_skipped_with_a_warning(tmp_path):
+    root = _project(tmp_path)
+    definition = root / "mini.SemanticModel" / "definition"
+    _write(definition / "old" / "Orders.tmdl", "table Orders\n")
+    _write(definition / "tables" / "archive" / "Orders.tmdl", "table Orders\n")
+
+    with pytest.warns(UserWarning) as caught:
+        documents = tmdl_documents(definition)
+
+    assert [path for path, _ in documents] == [
+        "database.tmdl", "model.tmdl", "cultures/en-US.tmdl", "tables/Orders.tmdl"]
+    messages = sorted(str(w.message) for w in caught)
+    assert any("old/Orders.tmdl" in m and "not loaded" in m for m in messages)
+    assert any("tables/archive/Orders.tmdl" in m for m in messages)
+
+
+def test_a_leftover_copy_of_a_table_names_both_files(tmp_path):
+    root = _project(tmp_path)
+    definition = root / "mini.SemanticModel" / "definition"
+    _write(definition / "tables" / "Orders.backup.tmdl", "/// old copy\ntable Orders\n")
+
+    with pytest.raises(ConversionError, match="both declare Orders") as error:
+        tmdl_documents(definition)
+    assert "tables/Orders.tmdl" in str(error.value)
+    assert "tables/Orders.backup.tmdl" in str(error.value)
+
+
+def test_quoted_table_names_are_compared_as_declared(tmp_path):
+    root = _project(tmp_path)
+    definition = root / "mini.SemanticModel" / "definition"
+    _write(definition / "tables" / "Order Lines.tmdl", "table 'Order Lines'\n")
+    _write(definition / "tables" / "Order.tmdl", "table Order\n")
+
+    paths = [path for path, _ in tmdl_documents(definition)]
+    assert "tables/Order Lines.tmdl" in paths and "tables/Order.tmdl" in paths
+
+
+@pytest.mark.parametrize("field", ["byPath", "report"])
+def test_a_reference_outside_the_project_folder_is_rejected(tmp_path, field):
+    root = _project(tmp_path / "project")
+    outside = _project(tmp_path / "elsewhere")
+    if field == "byPath":
+        _write(root / "mini.Report" / "definition.pbir", json.dumps(
+            {"datasetReference": {"byPath": {"path": str(outside / "mini.SemanticModel")}}}))
+    else:
+        _write(root / "mini.pbip", json.dumps(
+            {"artifacts": [{"report": {"path": str(outside / "mini.Report")}}]}))
+
+    with pytest.raises(ConversionError, match="points outside the project folder"):
+        resolve_definition_dir(root / "mini.pbip")
+
+
+def test_a_missing_input_says_it_does_not_exist(tmp_path, capsys):
+    assert main(["import", "-i", str(tmp_path / "missing.pbip")]) == 1
+    err = capsys.readouterr().err
+    assert "does not exist" in err
+    assert "Traceback" not in err
+
+
+def _tmsl_project(root: Path, bim) -> Path:
+    model = root / "mini.SemanticModel"
+    _write(model / "model.bim", json.dumps(bim))
+    _write(root / "mini.Report" / "definition.pbir", json.dumps(
+        {"datasetReference": {"byPath": {"path": "../mini.SemanticModel"}}}))
+    _write(root / "mini.pbip", json.dumps({"artifacts": [{"report": {"path": "mini.Report"}}]}))
+    return root
+
+
+@pytest.mark.parametrize("entry", ["mini.SemanticModel", "mini.pbip"])
+def test_a_tmsl_project_is_imported_from_its_model_bim(tmp_path, bim, entry, monkeypatch):
+    root = _tmsl_project(tmp_path, bim)
+
+    def no_tom(documents):
+        raise AssertionError("a TMSL project does not need TOM")
+
+    monkeypatch.setattr("ossie_microsoft.pbip.deserialize_tmdl_documents", no_tom)
+    document = yaml.safe_load(import_powerbi_project(root / entry))
+    assert any(item["name"] == "Total Sales" for item in document["metrics"])
+
+
+def test_a_folder_with_both_storage_formats_is_refused(tmp_path, bim):
+    root = _project(tmp_path)
+    _write(root / "mini.SemanticModel" / "model.bim", json.dumps(bim))
+
+    with pytest.raises(ConversionError, match="both model.bim and definition/"):
+        import_powerbi_project(root / "mini.SemanticModel")
+
+
+def test_cli_imports_a_tmsl_semantic_model_folder(tmp_path, bim, capsys):
+    root = _tmsl_project(tmp_path, bim)
+
+    assert main(["import", "-i", str(root / "mini.SemanticModel")]) == 0
+    assert "Total Sales" in capsys.readouterr().out
+
+
+def test_resolving_a_missing_path_says_it_does_not_exist(tmp_path):
+    with pytest.raises(ConversionError, match="does not exist"):
+        resolve_definition_dir(tmp_path / "missing.SemanticModel")
+
+
+def test_a_plain_file_is_not_a_tmsl_project(tmp_path):
+    from ossie_microsoft.pbip import tmsl_model
+
+    _write(tmp_path / "model.bim", "{}")
+    assert tmsl_model(tmp_path / "model.bim") is None
+
+
+def test_a_folder_document_without_a_declaration_is_still_loaded(tmp_path):
+    root = _project(tmp_path)
+    definition = root / "mini.SemanticModel" / "definition"
+    _write(definition / "tables" / "Empty.tmdl", "/// only a comment\n\n")
+
+    assert "tables/Empty.tmdl" in [path for path, _ in tmdl_documents(definition)]
