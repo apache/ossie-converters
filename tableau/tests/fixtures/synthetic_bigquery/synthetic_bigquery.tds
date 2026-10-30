@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<datasource formatted-name="federated.synth000002" inline="true" version="18.1" xmlns:user="http://www.tableausoftware.com/xml/user">
+  <document-format-change-manifest>
+    <_.fcp.ObjectModelEncapsulateLegacy.true...ObjectModelEncapsulateLegacy/>
+    <_.fcp.ObjectModelTableType.true...ObjectModelTableType/>
+  </document-format-change-manifest>
+  <connection class="federated">
+    <named-connections>
+      <named-connection caption="bigquery.googleapis.com" name="bigquery.synth0002">
+        <connection CATALOG="synth-project" EXECCATALOG="synth-billing" authentication="oauth" class="bigquery" connection-dialect="google-sql" project="synth-project" schema="synth_dataset" server="googleapis.com/bigquery"/>
+      </named-connection>
+    </named-connections>
+    <relation connection="bigquery.synth0002" name="ORDERS" table="[synth_dataset].[ORDERS]" type="table"/>
+    <metadata-records>
+    <metadata-record class="column"><remote-name>ORDER_ID</remote-name><remote-type>20</remote-type><local-name>[ORDER_ID]</local-name><parent-name>[ORDERS]</parent-name><remote-alias>ORDER_ID</remote-alias><ordinal>1</ordinal><local-type>integer</local-type><aggregation>Count</aggregation><_.fcp.ObjectModelEncapsulateLegacy.true...object-id>[ORDERS_BBBB0001]</_.fcp.ObjectModelEncapsulateLegacy.true...object-id></metadata-record>
+    <metadata-record class="column"><remote-name>REGION</remote-name><remote-type>129</remote-type><local-name>[REGION]</local-name><parent-name>[ORDERS]</parent-name><remote-alias>REGION</remote-alias><ordinal>2</ordinal><local-type>string</local-type><aggregation>Count</aggregation><_.fcp.ObjectModelEncapsulateLegacy.true...object-id>[ORDERS_BBBB0001]</_.fcp.ObjectModelEncapsulateLegacy.true...object-id></metadata-record>
+    <metadata-record class="column"><remote-name>ORDER_DATE</remote-name><remote-type>135</remote-type><local-name>[ORDER_DATE]</local-name><parent-name>[ORDERS]</parent-name><remote-alias>ORDER_DATE</remote-alias><ordinal>3</ordinal><local-type>datetime</local-type><aggregation>Count</aggregation><_.fcp.ObjectModelEncapsulateLegacy.true...object-id>[ORDERS_BBBB0001]</_.fcp.ObjectModelEncapsulateLegacy.true...object-id></metadata-record>
+    <metadata-record class="column"><remote-name>AMOUNT</remote-name><remote-type>5</remote-type><local-name>[AMOUNT]</local-name><parent-name>[ORDERS]</parent-name><remote-alias>AMOUNT</remote-alias><ordinal>4</ordinal><local-type>real</local-type><aggregation>Count</aggregation><_.fcp.ObjectModelEncapsulateLegacy.true...object-id>[ORDERS_BBBB0001]</_.fcp.ObjectModelEncapsulateLegacy.true...object-id></metadata-record>
+    <metadata-record class="column"><remote-name>NOTE</remote-name><remote-type>129</remote-type><local-name>[NOTE]</local-name><parent-name>[ORDERS]</parent-name><remote-alias>NOTE</remote-alias><ordinal>5</ordinal><local-type>string</local-type><aggregation>Count</aggregation><_.fcp.ObjectModelEncapsulateLegacy.true...object-id>[ORDERS_BBBB0001]</_.fcp.ObjectModelEncapsulateLegacy.true...object-id></metadata-record>
+    </metadata-records>
+  </connection>
+  <column caption="Order Id" datatype="integer" name="[ORDER_ID]" role="dimension" type="nominal"/>
+  <column caption="Region" datatype="string" name="[REGION]" role="dimension" type="nominal"/>
+  <column caption="Order Date" datatype="datetime" name="[ORDER_DATE]" role="dimension" type="nominal"/>
+  <column caption="Amount" datatype="real" name="[AMOUNT]" role="measure" type="quantitative"/>
+  <column caption="Note" datatype="string" name="[NOTE]" role="dimension" type="nominal"/>
+  <column caption="Order Month" datatype="datetime" name="[Calculation_1]" role="dimension" type="ordinal"><calculation class="tableau" formula="DATETRUNC(&apos;month&apos;, [ORDER_DATE])"/></column>
+  <column caption="Region Upper" datatype="string" name="[Calculation_2]" role="dimension" type="nominal"><calculation class="tableau" formula="UPPER([REGION])"/></column>
+  <column caption="Has Note" datatype="boolean" name="[Calculation_3]" role="dimension" type="nominal"><calculation class="tableau" formula="CONTAINS([NOTE], &apos;rush&apos;)"/></column>
+  <column caption="Total Amount" datatype="real" name="[Calculation_4]" role="measure" type="quantitative"><calculation class="tableau" formula="SUM([AMOUNT])"/></column>
+  <_.fcp.ObjectModelEncapsulateLegacy.true...object-graph>
+    <objects>
+      <object caption="ORDERS" id="ORDERS_BBBB0001">
+        <properties context="">
+          <relation connection="bigquery.synth0002" name="ORDERS" table="[synth_dataset].[ORDERS]" type="table"/>
+        </properties>
+      </object>
+    </objects>
+  </_.fcp.ObjectModelEncapsulateLegacy.true...object-graph>
+</datasource>

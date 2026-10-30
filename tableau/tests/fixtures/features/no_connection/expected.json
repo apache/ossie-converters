@@ -1,0 +1,22 @@
+{
+  "fail": null,
+  "outputs": 1,
+  "loss_kinds": [
+    "no_tables"
+  ],
+  "datasources": {
+    "d": {
+      "datasets": 0,
+      "fields": 0,
+      "relationships": 0,
+      "metrics": 0,
+      "converted": false,
+      "losses": [
+        "no_tables"
+      ]
+    }
+  },
+  "loss_counts": {
+    "no_tables": 1
+  }
+}

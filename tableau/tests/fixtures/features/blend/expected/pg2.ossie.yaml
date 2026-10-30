@@ -1,0 +1,20 @@
+version: 0.2.0.dev0
+name: pg2
+description: Converted from Tableau datasource pg2
+datasets:
+- name: u
+  source: d.public.u
+  fields:
+  - name: a
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: a
+    dimension: {}
+    datatype: Integer
+custom_extensions:
+- vendor_name: TABLEAU
+  data: '{"source_file": "input.twb", "datasource": "pg2", "connection_classes": ["postgres"],
+    "connection": {"class": "postgres", "server": "s", "dbname": "d"}, "unconverted_calculations":
+    [], "root": {"name": "pg2", "caption": null, "formatted_name": null, "source_platform":
+    null}}'

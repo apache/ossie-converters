@@ -1,0 +1,25 @@
+{
+  "fail": null,
+  "outputs": 1,
+  "loss_kinds": [
+    "source_qualified",
+    "unknown_warehouse"
+  ],
+  "datasources": {
+    "pg": {
+      "datasets": 1,
+      "fields": 1,
+      "relationships": 0,
+      "metrics": 0,
+      "converted": true,
+      "losses": [
+        "source_qualified",
+        "unknown_warehouse"
+      ]
+    }
+  },
+  "loss_counts": {
+    "source_qualified": 1,
+    "unknown_warehouse": 1
+  }
+}
