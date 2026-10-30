@@ -113,6 +113,12 @@ displayed text may not be: Sigma's `Text()` and a warehouse's `CAST` can format 
 and dates differently. A cast to a sized text type such as `CHAR(1)` is not mapped,
 because it truncates and `Text()` does not.
 
+`Number(x)` translates to `CAST(x AS DOUBLE)`, and an unsized `FLOAT`, `REAL` or `DOUBLE`
+cast reads back as `Number(x)`. An integer or `DECIMAL`/`NUMBER` cast is not mapped,
+because it rounds to a scale (`DECIMAL` and `NUMBER` default to scale 0). `Int(x)`
+translates to `FLOOR(x)`: Sigma's `Int()` rounds down (`Int(-3.2)` is `-4`), which is not
+what `CAST(x AS INT)` does. Date casts are not mapped yet.
+
 ## Untranslatable expressions are omitted on export, not approximated
 
 `formula` is required on every Sigma column and metric, and the data model API
