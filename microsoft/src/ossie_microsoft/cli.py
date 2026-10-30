@@ -112,7 +112,8 @@ def _build_parser():
         "--translate-dax",
         action="store_true",
         default=False,
-        help="translate DAX measures to OSSIE_SQL_2026 where the translation is exact "
+        help="translate DAX measures and calculated columns to OSSIE_SQL_2026 where the "
+        "translation is exact "
         "(see _dax_to_sql), keeping the original DAX as a fallback (default: off, keep DAX only)",
     )
 
