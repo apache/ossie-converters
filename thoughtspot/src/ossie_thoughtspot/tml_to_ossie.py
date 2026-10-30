@@ -1509,19 +1509,59 @@ def convert_metric(
 # one bad reference abort the whole conversion.
 
 
+def _index_columns_of_type(
+    columns: list[dict],
+    log: IssueLog,
+    *,
+    column_type: str,
+) -> set[tuple[str, str]]:
+    """`{(TABLE, physical column display name)}` for every `columns[]` entry
+    of `column_type` bound to a valid physical `column_id`.
+
+    Membership only -- no identifier value. Built ahead of Phase 3 (fields
+    and metrics) because a formula processed early in that phase can
+    reference a column defined later in the same `columns[]` list.
+
+    A malformed `column_id` is caught here, per column, rather than aborting
+    the whole model: the column is left out of the index -- any expression
+    that references it resolves to nothing, which every caller already
+    treats as an ordinary unresolved reference -- and an issue names it.
+    """
+    kind = "field" if column_type == "ATTRIBUTE" else "metric"
+    index: set[tuple[str, str]] = set()
+    for column in columns:
+        properties = _tml_mapping(column.get("properties"), "column `properties`")
+        if properties.get("column_type") != column_type:
+            continue
+        column_id = column.get("column_id")
+        if not column_id:
+            continue
+        try:
+            table_name, physical_name = identifiers.split_column_ref(f"[{column_id}]")
+        except ValueError as exc:
+            log.add(
+                code="TS-COLUMN-ID-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    f"column {column.get('name', '<unnamed>')!r} has a malformed "
+                    f"column_id {column_id!r} ({exc}); it cannot be resolved by any "
+                    f"expression that references it"
+                ),
+                object_ref=f"{kind}:{column.get('name', '<unnamed>')}",
+            )
+            continue
+        index.add((table_name, physical_name))
+    return index
+
+
 def _index_attribute_columns(
     columns: list[dict], log: IssueLog
 ) -> set[tuple[str, str]]:
     """`{(TABLE, physical column display name)}`, for every ATTRIBUTE
     `columns[]` entry bound to a valid physical `column_id`.
 
-    This is the set `resolve()` gates cross-references against: a bare
-    `[TABLE::Column]` reference is portable only when it names a column the
-    model actually surfaces as a field. It has to be built ahead of Phase 3
-    (fields and metrics) because a formula processed early in that phase can
-    reference a column defined later in the same `columns[]` list -- the gate
-    needs to already know about every ATTRIBUTE column, not just the ones
-    converted so far.
+    Phase 3.5's `unsurfaced_columns` stash keys on this set. `resolve()` also
+    includes MEASURE columns via `_index_columns_of_type`.
 
     Membership only -- no identifier value. An earlier revision stored
     `identifiers.normalise(column["name"])` as the value here, on the theory
@@ -1543,36 +1583,8 @@ def _index_attribute_columns(
     physical entry was reported as unsurfaced despite having a real field.
     Tracking membership only, independent of how the identifier is derived,
     closes both without needing the two call sites to agree on anything.
-
-    A malformed `column_id` is caught here, per column, rather than aborting
-    the whole model: the column is left out of the index -- any expression
-    that references it resolves to nothing, which every caller already
-    treats as an ordinary unresolved reference -- and an issue names it.
     """
-    index: set[tuple[str, str]] = set()
-    for column in columns:
-        properties = _tml_mapping(column.get("properties"), "column `properties`")
-        if properties.get("column_type") != "ATTRIBUTE":
-            continue
-        column_id = column.get("column_id")
-        if not column_id:
-            continue
-        try:
-            table_name, physical_name = identifiers.split_column_ref(f"[{column_id}]")
-        except ValueError as exc:
-            log.add(
-                code="TS-COLUMN-ID-MALFORMED",
-                severity=Severity.WARNING,
-                message=(
-                    f"column {column.get('name', '<unnamed>')!r} has a malformed "
-                    f"column_id {column_id!r} ({exc}); it cannot be resolved by any "
-                    f"expression that references it"
-                ),
-                object_ref=f"field:{column.get('name', '<unnamed>')}",
-            )
-            continue
-        index.add((table_name, physical_name))
-    return index
+    return _index_columns_of_type(columns, log, column_type="ATTRIBUTE")
 
 
 def _tml_list(value, what: str) -> list:
@@ -2683,6 +2695,9 @@ def convert(document_set: DocumentSet) -> OssieConversion:
     # -- Phase 2: the cross-model resolver -----------------------------------
     # `model_columns` is the validated list from the top of convert().
     attribute_index = _index_attribute_columns(model_columns, log)
+    resolvable_index = attribute_index | _index_columns_of_type(
+        model_columns, log, column_type="MEASURE"
+    )
 
     def resolve(table: str, column: str) -> tuple[str, str] | None:
         """`(dataset name, warehouse column)` for a `[TABLE::Column]` reference.
@@ -2700,12 +2715,13 @@ def convert(document_set: DocumentSet) -> OssieConversion:
         label/name." So the portable sibling carries the actual warehouse
         column (db_column_name, or a SQL View's sql_output_column), never the
         Ossie field's display-derived identifier, which is not a column on the
-        underlying table at all. `attribute_index` still gates whether the
-        reference is one the model surfaces as a field.
+        underlying table at all. `resolvable_index` gates whether the
+        reference names a physical column the model surfaces as an ATTRIBUTE
+        field or as a MEASURE metric.
         """
         if table not in dataset_bodies:
             return None
-        if (table, column) not in attribute_index:
+        if (table, column) not in resolvable_index:
             return None
         physical = next(
             (p for p in physical_columns_by_prefix.get(table, []) if p.get("name") == column),

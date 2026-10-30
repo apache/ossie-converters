@@ -570,6 +570,8 @@ metrics:
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_returns_sv::sr_return_quantity] )
+    - dialect: ANSI_SQL
+      expression: SUM(store_returns_sv.sr_return_quantity)
   datatype: Integer
   custom_extensions:
   - vendor_name: THOUGHTSPOT
