@@ -328,6 +328,41 @@ class OssieToSalesforceConverterTest {
         assertNull(sfDataObject.get("semanticDimensions"), "the field should still be omitted");
     }
 
+    @Test
+    void testFieldWithOnlyPortableSqlIsReportedAndOmitted() {
+        // An expression may carry only `sql`, with no `dialects` list to unwrap.
+        Map<String, Object> ossieField = Map.of(
+                "name", "order_year",
+                "dimension", Map.of(),
+                "expression", Map.of("sql", "YEAR(order_date)"));
+        Map<String, Object> sourceData = Map.of(
+                "datasets", List.of(Map.of("name", "Orders", "fields", List.of(ossieField))));
+        Map<String, Object> sfDataObject = new LinkedHashMap<>(Map.of("apiName", "Orders"));
+        Map<String, Object> outputData = new LinkedHashMap<>(
+                Map.of("semanticDataObjects", new ArrayList<>(List.of(sfDataObject))));
+
+        Logger fieldLogger = (Logger) LoggerFactory.getLogger(FieldMappingHandler.class);
+        ListAppender<ILoggingEvent> warnings = new ListAppender<>();
+        warnings.start();
+        fieldLogger.addAppender(warnings);
+        try {
+            new FieldMappingHandler(ConversionDirection.OSSIE_TO_SALESFORCE,
+                    new CustomExtensionHandler(jsonMapper))
+                    .execute(sourceData, outputData, Map.of());
+        } finally {
+            fieldLogger.detachAppender(warnings);
+        }
+
+        List<String> reported = warnings.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
+        assertEquals(1, reported.size(), "the omitted field should be reported once: " + reported);
+        assertTrue(reported.get(0).contains("order_year") && reported.get(0).contains("Orders"),
+                "the warning should name the field and its dataset: " + reported);
+        assertNull(sfDataObject.get("semanticDimensions"), "the field should be omitted");
+    }
+
     /**
      * Converts {@code ossieModel}, adding every warning {@link FieldMappingHandler} reported
      * while doing so to {@code warningsOut}.

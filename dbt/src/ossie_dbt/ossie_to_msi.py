@@ -530,7 +530,8 @@ class OssieToMSIConverter:
     ) -> Optional[OssieDialectExpression]:
         """Return the expression for the preferred dialect.
 
-        Preference order: the converter's dialect, then OSSIE_SQL_2026, then the
+        Preference order: the converter's dialect, then the top-level ``sql``
+        (which wins over an OSSIE_SQL_2026 entry), then OSSIE_SQL_2026, then the
         first entry available. OSSIE_SQL_2026 is Ossie's portable expression
         language, based on ANSI SQL:2003 Core, so it is treated as an ANSI_SQL
         equivalent rather than left to the positional fallback.
@@ -542,17 +543,22 @@ class OssieToMSIConverter:
         OSSIE_SQL_2026 match because the converter's dialect outranks it and
         may still appear further down the list.
         """
-        ossie_sql_expr: Optional[OssieDialectExpression] = None
-        first_expr: Optional[OssieDialectExpression] = None
+        # The top-level `sql` is written in OSSIE_SQL_2026 and wins over an OSSIE_SQL_2026 entry.
+        ossie_sql_expr: Optional[OssieDialectExpression] = (
+            OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression=ossie_expr.sql)
+            if ossie_expr.sql is not None
+            else None
+        )
+        first_expr: Optional[OssieDialectExpression] = ossie_sql_expr
 
-        for dialect_expr in ossie_expr.dialects:
+        for dialect_expr in ossie_expr.dialects or []:
             if sql_only and self._sql_dialect(dialect_expr.dialect) is None:
                 continue
             if first_expr is None:
                 first_expr = dialect_expr
-            if dialect_expr.dialect is self._dialect:
+            if dialect_expr.dialect == self._dialect:
                 return dialect_expr
-            if dialect_expr.dialect is OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
+            if dialect_expr.dialect == OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
                 ossie_sql_expr = dialect_expr
 
         if ossie_sql_expr is not None:
@@ -560,7 +566,7 @@ class OssieToMSIConverter:
         return first_expr
 
     @staticmethod
-    def _sql_dialect(dialect: OssieDialect) -> Optional[str]:
+    def _sql_dialect(dialect: str) -> Optional[str]:
         # SQLGlot also registers non-SQL expression languages; those are not SQL fallbacks.
         if dialect in {
             OssieDialect.DAX,
@@ -574,7 +580,7 @@ class OssieToMSIConverter:
         # The portable core's DATEADD/DATEDIFF unit-first syntax matches this reader.
         if dialect in {OssieDialect.ANSI_SQL, OssieDialect.OSSIE_SQL_2026}:
             return "snowflake"
-        reader = dialect.value.lower()
+        reader = dialect.lower()
         try:
             sqlglot.Dialect.get_or_raise(reader)
         except ValueError:

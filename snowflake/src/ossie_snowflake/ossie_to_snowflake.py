@@ -390,6 +390,12 @@ def _extract_expression(expression, field_name):
 
     dialects = expression.get("dialects")
     if not dialects:
+        if expression.get("sql") is not None:
+            warnings.warn(
+                f"Skipping field/metric '{field_name}': it has only a portable sql "
+                f"expression and no dialect entries"
+            )
+            return None
         raise OssieConversionError(
             f"Missing expression for field/metric '{field_name}'"
         )

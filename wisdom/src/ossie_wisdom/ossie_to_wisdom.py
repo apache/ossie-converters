@@ -150,7 +150,7 @@ class OssieToWisdomConverter:
 
     def _infer_dataset_dialect(self, dataset: OssieDataset) -> OssieDialect:
         for field in dataset.fields or []:
-            for entry in field.expression.dialects:
+            for entry in field.expression.dialects or []:
                 if entry.dialect in (OssieDialect.SNOWFLAKE, OssieDialect.DATABRICKS, OssieDialect.BIGQUERY):
                     return entry.dialect
         return OssieDialect.ANSI_SQL
@@ -203,6 +203,8 @@ class OssieToWisdomConverter:
         columns: List[dict] = []
         formulas: List[dict] = []
         for field in dataset.fields or []:
+            if not self._has_dialects(field.expression, f"{dataset.name}.{field.name}", issues):
+                continue
             expression = self._pick_expression(field.expression, dialect, f"{dataset.name}.{field.name}", issues)
             if field.ai_context is not None:
                 issues.append(
@@ -279,6 +281,15 @@ class OssieToWisdomConverter:
             return "", parts[0], parts[1]
         return "", "", source
 
+    def _has_dialects(self, expression: OssieExpression, element_name: str, issues: List[ConverterIssue]) -> bool:
+        # An expression that carries only `sql` has no dialect entry to pick from.
+        if expression.dialects:
+            return True
+        issues.append(
+            ConverterIssue(issue_type=ConverterIssueType.MISSING_DIALECT_EXPRESSION, element_name=element_name)
+        )
+        return False
+
     def _pick_expression(
         self, expression: OssieExpression, dialect: OssieDialect, element_name: str, issues: List[ConverterIssue]
     ) -> str:
@@ -308,6 +319,8 @@ class OssieToWisdomConverter:
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.AI_CONTEXT_DROPPED, element_name=metric.name)
                 )
+            if not self._has_dialects(metric.expression, metric.name, issues):
+                continue
             # Attach to a dataset first so the expression can be picked in that dataset's dialect.
             reference_text = " ".join(entry.expression for entry in metric.expression.dialects)
             dataset_name = self._find_referenced_dataset(reference_text, dataset_names)
