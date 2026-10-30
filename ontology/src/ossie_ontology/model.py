@@ -20,9 +20,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, get_args
+from typing import Protocol, get_args
 
-from ossie_ontology.spec import CoreVersion
+from ossie.models import OssieAIContext, OssieDialect, OssieVersion
 
 # ---------------------------------------------------------------------------
 # Builtin concept names.
@@ -64,10 +64,10 @@ class DataType(str, Enum):
         return self.value
 
 # ---------------------------------------------------------------------------
-# Free-form metadata mirroring spec
+# Free-form metadata, carried as the shared `ossie.models` type
 # ---------------------------------------------------------------------------
 
-AiContext = str | dict[str, Any]
+AiContext = OssieAIContext
 
 
 @dataclass
@@ -510,11 +510,16 @@ class DialectExpression:
 
 @dataclass
 class DialectExpressionSet:
-    """Runtime equivalent of spec.Expression — same logical expression rendered
-    in one or more dialects."""
+    """Runtime equivalent of `ossie.models.OssieExpression` — the portable `sql`
+    form (OSSIE_SQL_2026) and/or the same logical expression rendered in one or
+    more dialects."""
     dialects: list[DialectExpression] = field(default_factory=list)
+    sql: str | None = None
 
     def by_dialect(self, dialect: str) -> DialectExpression | None:
+        # The portable form wins over an OSSIE_SQL_2026 entry in `dialects`.
+        if dialect == OssieDialect.OSSIE_SQL_2026.value and self.sql is not None:
+            return DialectExpression(dialect=dialect, expression=self.sql)
         for d in self.dialects:
             if d.dialect == dialect:
                 return d
@@ -522,6 +527,8 @@ class DialectExpressionSet:
 
     @property
     def primary(self) -> DialectExpression | None:
+        if self.sql is not None:
+            return DialectExpression(dialect=OssieDialect.OSSIE_SQL_2026.value, expression=self.sql)
         return self.dialects[0] if self.dialects else None
 
 
@@ -751,7 +758,7 @@ class Metric:
 
 class SemanticModel:
     """Versioned core semantic model embedded in a single OntologyMapping."""
-    _version: CoreVersion
+    _version: OssieVersion
     _name: str
     _description: str | None
     _ai_context: AiContext | None
@@ -769,10 +776,10 @@ class SemanticModel:
         description: str | None = None,
         ai_context: AiContext | None = None,
         custom_extensions: list[CustomExtension] | None = None,
-        version: CoreVersion = "0.2.0.dev0",
+        version: OssieVersion = "0.2.0.dev0",
     ):
         # Checked at runtime too: callers outside a type checker pass any string.
-        (supported,) = get_args(CoreVersion)
+        (supported,) = get_args(OssieVersion)
         if version != supported:
             raise ValueError(
                 f"Unsupported semantic model version {version!r}; expected {supported!r}"
@@ -790,7 +797,7 @@ class SemanticModel:
         self._metric_name_map = {}
 
     @property
-    def version(self) -> CoreVersion:
+    def version(self) -> OssieVersion:
         return self._version
 
     @property
@@ -1072,7 +1079,7 @@ class OntologyComponent:
 
 
 # ---------------------------------------------------------------------------
-# Root semantic model (per OssieSpec)
+# Root semantic model (per ossie.models.OssieOntologyModel)
 # ---------------------------------------------------------------------------
 
 class OssieOntology:

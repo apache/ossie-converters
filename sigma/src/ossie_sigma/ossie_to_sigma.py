@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Apache Ossie (OssieDocument) -> Sigma data model spec (JSON)."""
+"""Apache Ossie (OssieSemanticModel) -> Sigma data model spec (JSON)."""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ from uuid import NAMESPACE_URL, uuid5
 from ossie import (
     OssieCustomExtension,
     OssieDataset,
-    OssieDocument,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 
@@ -39,7 +39,7 @@ from ossie_sigma.sigma_formula import sql_to_sigma_formula
 from ossie_sigma.spec_keys import MODEL_LEVEL_SPEC_KEYS
 
 # Objects a `SIGMA` custom_extensions vendor entry can be attached to.
-_SigmaExtensionHost = Union[OssieDataset, OssieField, OssieMetric, OssieRelationship, OssieDocument]
+_SigmaExtensionHost = Union[OssieDataset, OssieField, OssieMetric, OssieRelationship, OssieSemanticModel]
 
 _ID_NAMESPACE = uuid5(NAMESPACE_URL, "ossie.apache.org/converters/sigma")
 
@@ -122,7 +122,7 @@ def _resolve_formula(
             return translated
         detail = f"ANSI SQL expression {sql!r} has no Sigma formula equivalent"
     else:
-        dialects = ", ".join(d.dialect.value for d in expression.dialects) or "none"
+        dialects = ", ".join(d.dialect for d in expression.dialects) or "none"
         detail = f"no SIGMA or ANSI_SQL dialect expression to translate from (have: {dialects})"
 
     issues.append(
@@ -137,9 +137,9 @@ def _resolve_formula(
 
 
 class OssieToSigmaConverter:
-    """Converts an :class:`OssieDocument` into a Sigma data model spec (as plain JSON)."""
+    """Converts an :class:`OssieSemanticModel` into a Sigma data model spec (as plain JSON)."""
 
-    def convert(self, document: OssieDocument) -> ConverterResult[dict[str, Any]]:
+    def convert(self, document: OssieSemanticModel) -> ConverterResult[dict[str, Any]]:
         issues: list[ConverterIssue] = []
 
         model = document

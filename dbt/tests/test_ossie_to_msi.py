@@ -27,10 +27,10 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
+    OssieSemanticModel,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
@@ -843,7 +843,7 @@ _OSSIE_SQL_METRIC = (OssieDialect.OSSIE_SQL_2026, "SUM(orders.amount)")
 _ANSI_METRIC = (OssieDialect.ANSI_SQL, "SUM(orders.amount_ansi)")
 
 
-def _doc_with_metric_expression(expression: OssieExpression) -> OssieDocument:
+def _doc_with_metric_expression(expression: OssieExpression) -> OssieSemanticModel:
     return _ossie_doc(
         datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount")])],
         metrics=[OssieMetric(name="revenue", expression=expression)],

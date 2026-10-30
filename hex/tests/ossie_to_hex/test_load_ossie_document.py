@@ -115,7 +115,7 @@ def test_invalid_ossie_document(ctx: ExportContext, tmp_path: Path) -> None:
     assert result is None
     assert _problems(ctx, path) == snapshot(
         """\
-[FATAL] Invalid Ossie document: 3 validation errors for OssieDocument
+[FATAL] Invalid Ossie document: 3 validation errors for OssieSemanticModel
 name
   Field required [type=missing, input_value={'foo': 'bar'}, input_type=dict]
     For further information visit https://errors.pydantic.dev/2.13/v/missing

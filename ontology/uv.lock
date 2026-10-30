@@ -23,10 +23,29 @@ wheels = [
 ]
 
 [[package]]
+name = "apache-ossie"
+version = "0.2.0.dev0"
+source = { editable = "../ossie/python" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0" }]
+
+[[package]]
 name = "apache-ossie-ontology"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "apache-ossie" },
     { name = "ply" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -40,6 +59,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "apache-ossie", editable = "../ossie/python" },
     { name = "ply" },
     { name = "pydantic" },
     { name = "pyyaml" },

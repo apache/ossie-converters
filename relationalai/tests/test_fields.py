@@ -279,10 +279,11 @@ def _single_field_spec(tmp_path: Path, expression: str, datatype: str, columns: 
             "concept_mappings": [{
                 "concept": "Item",
                 "object_mappings": [{"referent_mappings": [{"relationship": key, "expression": f"ITEMS.{key}"}]}],
-                "link_mappings": [] if identify_by_flag else [{
+                # The schema gives `link_mappings` minItems 1, so it is left out when empty.
+                **({} if identify_by_flag else {"link_mappings": [{
                     "object_mapping": {"referent_mappings": [{"relationship": "nr", "expression": "ITEMS.nr"}]},
                     "children": [{"object_mapping": {"expression": "ITEMS.flag"}, "relationship": "flag"}],
-                }],
+                }]}),
             }],
         }],
     }

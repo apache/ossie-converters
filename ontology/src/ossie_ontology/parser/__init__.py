@@ -19,21 +19,18 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any
 
-import yaml
+from ossie.models import OssieOntologyModel
 
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 from ossie_ontology.expr.factory import FormulaParserFactory, MappingFormulaParserFactory
 from ossie_ontology.model import OssieOntology, FormulaFactory, MappingFormulaFactory
-from ossie_ontology.spec import OssieSpec
 
 
 class OssieParser:
     _model: OssieOntology | None
-    _spec: OssieSpec | None
+    _spec: OssieOntologyModel | None
     _debug: bool
 
     def __init__(self, debug: bool = False,
@@ -49,25 +46,24 @@ class OssieParser:
         self._mapping_formula_factory = mapping_formula_factory or MappingFormulaParserFactory()
 
     def parse(self, path: Path) -> OssieOntology:
-        # Ossie always expects a single spec file.
-        if not path.is_file():
-            raise ValueError(f"Expected a single Ossie spec file, but '{path}' is not a file")
-        raw = OssieParser.load_data(path)
-        self._spec = OssieSpec.model_validate(raw)
+        self._spec = OssieParser.load_data(path)
         self._model = SpecToOssieConverter(
             formula_factory=self._formula_factory, mapping_formula_factory=self._mapping_formula_factory
         ).convert(self._spec)
         return self._model
 
     @staticmethod
-    def load_data(path: Path) -> Any:
+    def load_data(path: Path) -> OssieOntologyModel:
+        # Ossie always expects a single spec file.
+        if not path.is_file():
+            raise ValueError(f"Expected a single Ossie spec file, but '{path}' is not a file")
         # Pin UTF-8 so parsing is reproducible regardless of the process locale.
         content = path.read_text(encoding="utf-8")
         if path.suffix.lower() == ".json":
-            return json.loads(content)
-        return yaml.safe_load(content)
+            return OssieOntologyModel.from_ossie_json(content)
+        return OssieOntologyModel.from_ossie_yaml(content)
 
-    def spec(self) -> OssieSpec:
+    def spec(self) -> OssieOntologyModel:
         spec = self._spec
         if spec is None:
             raise RuntimeError("You must call 'parse()' before accessing 'spec()'")

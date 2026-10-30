@@ -31,10 +31,12 @@ ontology:
       - name: paymentId
         roles:
           - concept: PaymentId
+        verbalizes: ['{CashPayment} has {PaymentId}']
         multiplicity: OneToOne
       - name: netAmount
         roles:
           - concept: Amount
+        verbalizes: ['{CashPayment} has {Amount}']
         multiplicity: ManyToOne
 ontology_mappings:
   - name: mapping
@@ -46,11 +48,11 @@ ontology_mappings:
           source: PAYMENTS
           fields:
             - name: id
-              expression: {}
+              expression: { sql: id }
             - name: cashReceived
-              expression: {}
+              expression: { sql: cashReceived }
             - name: change
-              expression: {}
+              expression: { sql: change }
     concept_mappings:
       - concept: CashPayment
         object_mappings:

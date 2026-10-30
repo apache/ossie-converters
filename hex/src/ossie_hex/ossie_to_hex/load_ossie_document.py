@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from pydantic import ValidationError
 
 from ..util.yaml import load_yaml
@@ -32,7 +32,7 @@ def load_ossie_document(
     *,
     document_path: str | Path,
     ctx: ExportContext,
-) -> OssieDocument | None:
+) -> OssieSemanticModel | None:
     """Parse file contents as an Ossie document.
 
     ``document_path`` is the path to a file, expected to be in Ossie YAML format.
@@ -123,11 +123,11 @@ def _validate_document_yaml(
     data: dict | None,
     *,
     ctx: ExportContext,
-) -> OssieDocument | None:
+) -> OssieSemanticModel | None:
     if data is None:
         return None
     try:
-        document = OssieDocument.model_validate(data)
+        document = OssieSemanticModel.model_validate(data)
     except ValidationError as e:
         ctx.fatal(f"Invalid Ossie document: {e}")
         return None

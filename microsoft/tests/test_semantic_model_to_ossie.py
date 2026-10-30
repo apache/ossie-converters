@@ -758,9 +758,9 @@ def test_output_validates_against_core_spec_schema(osi):
 
 
 def test_dax_is_a_spec_dialect():
-    with open(REPO_ROOT / "core-spec" / "ossie-schema.json", encoding="utf-8") as fh:
-        schema = json.load(fh)
-    assert "DAX" in schema["$defs"]["Dialect"]["enum"]
+    # The schema accepts any dialect string; well-known ones are catalogued here.
+    catalog = (REPO_ROOT / "extensions" / "dialects.md").read_text(encoding="utf-8")
+    assert "| `DAX` |" in catalog
 
 
 # --- lossless preservation (POWER_BI stash) --------------------------------

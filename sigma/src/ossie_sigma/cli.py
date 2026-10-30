@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from ossie_sigma.ossie_to_sigma import OssieToSigmaConverter
 from ossie_sigma.sigma_to_ossie import SigmaToOssieConverter
 
@@ -53,7 +53,7 @@ def _cmd_ossie_to_sigma(args: argparse.Namespace) -> None:
     output_path = Path(args.output)
 
     raw = yaml.safe_load(input_path.read_text())
-    document = OssieDocument.model_validate(raw)
+    document = OssieSemanticModel.model_validate(raw)
     result = OssieToSigmaConverter().convert(document)
 
     for issue in result.issues:

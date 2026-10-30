@@ -15,12 +15,38 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Reverse converter: OssieOntology (runtime) -> OssieSpec (Pydantic DTO).
+"""Reverse converter: OssieOntology (runtime) -> `ossie.models.OssieOntologyModel` (Pydantic DTO).
 
 Pairs with spec_to_ossie.SpecToOssieConverter so a full round-trip
 yaml -> spec -> model -> spec -> yaml is structurally stable."""
 
 from __future__ import annotations
+
+from typing import Any
+
+from ossie.models import (
+    OssieConcept,
+    OssieConceptMapping,
+    OssieConceptType,
+    OssieCustomExtension,
+    OssieDataType,
+    OssieDataset,
+    OssieDialectExpression,
+    OssieDimension,
+    OssieExpression,
+    OssieField,
+    OssieLinkMapping,
+    OssieMetric,
+    OssieMultiplicity,
+    OssieObjectMapping,
+    OssieOntologyMapping,
+    OssieOntologyModel,
+    OssieOntologyRelationship,
+    OssieReferentMapping,
+    OssieRelationship,
+    OssieRole,
+    OssieSemanticModel,
+)
 
 from ossie_ontology.model import (
     Concept,
@@ -42,44 +68,30 @@ from ossie_ontology.model import (
     Relationship,
     OssieOntology,
 )
-from ossie_ontology.spec import (
-    ConceptComponent,
-    ConceptMapping as SpecConceptMapping,
-    CustomExtension as SpecCustomExtension,
-    Dataset as SpecDataset,
-    DatasetField as SpecDatasetField,
-    DialectExpression as SpecDialectExpression,
-    Dimension as SpecDimension,
-    Expression as SpecExpression,
-    JoinPath as SpecJoinPath,
-    LinkMapping as SpecLinkMapping,
-    SemanticModel as SpecSemanticModel,
-    Metric as SpecMetric,
-    ObjectMapping as SpecObjectMapping,
-    OntologyMapping as SpecOntologyMapping,
-    OssieSpec,
-    ReferentMapping as SpecReferentMapping,
-    Relationship as SpecRelationship,
-    Role as SpecRole,
-)
+
+# The shared models leave an absent optional list as None, and serialization
+# omits only None, so an empty runtime list is written `... or None` to keep it
+# out of the YAML (and, where the schema says `minItems: 1`, valid).
 
 
 class OssieToSpecConverter:
     """Top-level reverse converter."""
 
     @staticmethod
-    def convert(model: OssieOntology) -> OssieSpec:
+    def convert(model: OssieOntology) -> OssieOntologyModel:
         ont = model.ontology
         ontology_mappings = [_convert_ontology_mapping(ontology_mapping) for ontology_mapping in model.ontology_mappings]
-        return OssieSpec(
-            version=model.version,
+        # Without a version the document takes the one the schema pins.
+        version: dict[str, Any] = {"version": model.version} if model.version is not None else {}
+        return OssieOntologyModel(
+            **version,
             name=model.name,
             description=model.description,
             ai_context=model.ai_context,
-            requires=[f.raw_expr for f in ont.requires],
+            requires=[f.raw_expr for f in ont.requires] or None,
             ontology=_convert_ontology_concepts(ont),
-            ontology_mappings=ontology_mappings,
-            prefixes=model.prefixes,
+            ontology_mappings=ontology_mappings or None,
+            prefixes=model.prefixes or None,
         )
 
 
@@ -87,8 +99,8 @@ class OssieToSpecConverter:
 # Ontology
 # ---------------------------------------------------------------------------
 
-def _convert_ontology_concepts(ont: OntologyComponent) -> list[ConceptComponent]:
-    components: list[ConceptComponent] = []
+def _convert_ontology_concepts(ont: OntologyComponent) -> list[OssieConcept]:
+    components: list[OssieConcept] = []
     # Group once: `ont.relationships` rebuilds a list on every access, so scanning
     # it per concept is O(concepts x relationships). Keyed on id() to keep the
     # identity comparison a per-concept scan would do.
@@ -103,40 +115,40 @@ def _convert_ontology_concepts(ont: OntologyComponent) -> list[ConceptComponent]
     return components
 
 
-def _convert_concept(concept: Concept, rels: list[Relationship]) -> ConceptComponent:
-    type_value: str | None = None
-    if isinstance(concept.type, ConceptType):
-        type_value = concept.type.value  # type: ignore[union-attr]
+def _convert_concept(concept: Concept, rels: list[Relationship]) -> OssieConcept:
+    if not isinstance(concept.type, ConceptType):
+        raise ValueError(f"Concept '{concept.name}' has no type; the schema requires one.")
     extends = [p.name for p in concept.extends] if concept.extends else None
 
-    return ConceptComponent(
+    return OssieConcept(
         concept=concept.name,
-        type=type_value,  # type: ignore[arg-type]
+        type=OssieConceptType(concept.type.value),
         description=concept.description,
         extends=extends,
-        identify_by=[rel.name for rel in concept.identify_by.values()],
-        derived_by=[f.raw_expr for f in concept.derived_by],
-        requires=[f.raw_expr for f in concept.requires],
-        relationships=[_convert_relationship(rel) for rel in rels],
+        identify_by=[rel.name for rel in concept.identify_by.values()] or None,
+        derived_by=[f.raw_expr for f in concept.derived_by] or None,
+        requires=[f.raw_expr for f in concept.requires] or None,
+        relationships=[_convert_relationship(rel) for rel in rels] or None,
         iri=concept.iri,
     )
 
 
-def _convert_relationship(rel: Relationship) -> SpecRelationship:
+def _convert_relationship(rel: Relationship) -> OssieOntologyRelationship:
     extra_roles = list(rel.roles)[1:]
-    roles = [SpecRole(concept=role.player.name, name=role.explicit_name) for role in extra_roles]
+    roles = [OssieRole(concept=role.player.name, name=role.explicit_name) for role in extra_roles]
 
-    multiplicity = rel.multiplicity.value if rel.multiplicity is not None else None
+    multiplicity = OssieMultiplicity(rel.multiplicity.value) if rel.multiplicity is not None else None
+    # Required by the schema, so written out even when empty.
     verbalizes = rel.verbalizes_raw if rel.verbalizes_raw is not None else []
 
-    return SpecRelationship(
+    return OssieOntologyRelationship(
         name=rel.name,
         description=rel.description,
-        roles=roles,
+        roles=roles or None,
         verbalizes=verbalizes,
-        multiplicity=multiplicity,  # type: ignore[arg-type]
-        derived_by=[f.raw_expr for f in rel.derived_by],
-        requires=[f.raw_expr for f in rel.requires],
+        multiplicity=multiplicity,
+        derived_by=[f.raw_expr for f in rel.derived_by] or None,
+        requires=[f.raw_expr for f in rel.requires] or None,
         iri=rel.iri,
     )
 
@@ -145,90 +157,91 @@ def _convert_relationship(rel: Relationship) -> SpecRelationship:
 # Semantic model
 # ---------------------------------------------------------------------------
 
-def _convert_semantic_model(semantic_model: SemanticModel) -> SpecSemanticModel:
-    return SpecSemanticModel(
+def _convert_semantic_model(semantic_model: SemanticModel) -> OssieSemanticModel:
+    return OssieSemanticModel(
         version=semantic_model.version,
         name=semantic_model.name,
         description=semantic_model.description,
         ai_context=semantic_model.ai_context,
         datasets=[_convert_dataset(ds) for ds in semantic_model.datasets],
-        relationships=[_convert_join_path(jp) for jp in semantic_model.join_paths],
-        metrics=[_convert_metric(metric) for metric in semantic_model.metrics],
-        custom_extensions=[_convert_custom_extension(ce) for ce in semantic_model.custom_extensions],
+        relationships=[_convert_join_path(jp) for jp in semantic_model.join_paths] or None,
+        metrics=[_convert_metric(metric) for metric in semantic_model.metrics] or None,
+        custom_extensions=[_convert_custom_extension(ce) for ce in semantic_model.custom_extensions] or None,
     )
 
 
-def _convert_dataset(ds: Dataset) -> SpecDataset:
-    return SpecDataset(
+def _convert_dataset(ds: Dataset) -> OssieDataset:
+    return OssieDataset(
         name=ds.name,
         source=ds.source,
         primary_key=ds.primary_key,
         unique_keys=ds.unique_keys,
         description=ds.description,
         ai_context=ds.ai_context,
-        fields=[_convert_dataset_field(fl) for fl in ds.fields],
-        custom_extensions=[_convert_custom_extension(ce) for ce in ds.custom_extensions],
+        fields=[_convert_dataset_field(fl) for fl in ds.fields] or None,
+        custom_extensions=[_convert_custom_extension(ce) for ce in ds.custom_extensions] or None,
     )
 
 
-def _convert_dataset_field(fl: DatasetField) -> SpecDatasetField:
-    return SpecDatasetField(
+def _convert_dataset_field(fl: DatasetField) -> OssieField:
+    return OssieField(
         name=fl.name,
         expression=_convert_expression(fl.expression),
-        datatype=fl.datatype.value if fl.datatype is not None else None,
+        datatype=OssieDataType(fl.datatype.value) if fl.datatype is not None else None,
         dimension=_convert_dimension(fl.dimension),
         label=fl.label,
         description=fl.description,
         ai_context=fl.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in fl.custom_extensions],
+        custom_extensions=[_convert_custom_extension(ce) for ce in fl.custom_extensions] or None,
     )
 
 
-def _convert_expression(es: DialectExpressionSet) -> SpecExpression:
-    return SpecExpression(
-        dialects=[SpecDialectExpression(dialect=d.dialect, expression=d.expression) for d in es.dialects]
+def _convert_expression(es: DialectExpressionSet) -> OssieExpression:
+    return OssieExpression(
+        sql=es.sql,
+        dialects=[OssieDialectExpression(dialect=d.dialect, expression=d.expression) for d in es.dialects] or None,
     )
 
 
-def _convert_dimension(dim: Dimension | None) -> SpecDimension | None:
+def _convert_dimension(dim: Dimension | None) -> OssieDimension | None:
     if dim is None:
         return None
-    return SpecDimension(is_time=dim.is_time)
+    return OssieDimension(is_time=dim.is_time)
 
 
-def _convert_join_path(jp: JoinPath) -> SpecJoinPath:
-    return SpecJoinPath(
+def _convert_join_path(jp: JoinPath) -> OssieRelationship:
+    return OssieRelationship(
         name=jp.name,
-        **{"from": jp.from_dataset.name},  # `from` is a reserved word in Python
+        from_dataset=jp.from_dataset.name,
         to=jp.to_dataset.name,
         from_columns=[from_col.name for from_col in jp.from_columns],
         to_columns=[to_col.name for to_col in jp.to_columns],
         ai_context=jp.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in jp.custom_extensions],
+        custom_extensions=[_convert_custom_extension(ce) for ce in jp.custom_extensions] or None,
     )
 
 
-def _convert_metric(metric: Metric) -> SpecMetric:
-    return SpecMetric(
+def _convert_metric(metric: Metric) -> OssieMetric:
+    return OssieMetric(
         name=metric.name,
         expression=_convert_expression(metric.expression),
         description=metric.description,
         ai_context=metric.ai_context,
-        datatype=metric.datatype.value if metric.datatype is not None else None,
-        custom_extensions=[_convert_custom_extension(ce) for ce in metric.custom_extensions],
+        datatype=OssieDataType(metric.datatype.value) if metric.datatype is not None else None,
+        custom_extensions=[_convert_custom_extension(ce) for ce in metric.custom_extensions] or None,
     )
 
 
-def _convert_custom_extension(ce: CustomExtension) -> SpecCustomExtension:
-    return SpecCustomExtension(vendor_name=ce.vendor_name, data=ce.data)
+def _convert_custom_extension(ce: CustomExtension) -> OssieCustomExtension:
+    return OssieCustomExtension(vendor_name=ce.vendor_name, data=ce.data)
 
 
 # ---------------------------------------------------------------------------
 # Ontology mapping (tree)
 # ---------------------------------------------------------------------------
 
-def _convert_ontology_mapping(ontology_mapping: OntologyMapping) -> SpecOntologyMapping:
-    return SpecOntologyMapping(
+def _convert_ontology_mapping(ontology_mapping: OntologyMapping) -> OssieOntologyMapping:
+    return OssieOntologyMapping(
         name=ontology_mapping.name,
         description=ontology_mapping.description,
         semantic_model=_convert_semantic_model(ontology_mapping.semantic_model),
@@ -236,30 +249,30 @@ def _convert_ontology_mapping(ontology_mapping: OntologyMapping) -> SpecOntology
     )
 
 
-def _convert_concept_mapping(concept_mapping: ConceptMapping) -> SpecConceptMapping:
-    return SpecConceptMapping(
+def _convert_concept_mapping(concept_mapping: ConceptMapping) -> OssieConceptMapping:
+    return OssieConceptMapping(
         concept=concept_mapping.concept.name,
-        object_mappings=[_convert_object_mapping(object_mapping) for object_mapping in concept_mapping.object_mappings],
-        link_mappings=[_convert_link_mapping(link_mapping) for link_mapping in concept_mapping.link_mappings],
+        object_mappings=[_convert_object_mapping(om) for om in concept_mapping.object_mappings] or None,
+        link_mappings=[_convert_link_mapping(lm) for lm in concept_mapping.link_mappings] or None,
     )
 
 
-def _convert_object_mapping(object_mapping: ObjectMapping) -> SpecObjectMapping:
+def _convert_object_mapping(object_mapping: ObjectMapping) -> OssieObjectMapping:
     referent_mappings = None
     if object_mapping.referent_mappings is not None:
         referent_mappings = [_convert_referent_mapping(rm) for rm in object_mapping.referent_mappings]
-    return SpecObjectMapping(
+    return OssieObjectMapping(
         concept=object_mapping.concept.name if object_mapping.concept is not None else None,
         expression=_render_mapping_expression(object_mapping.expression),
         referent_mappings=referent_mappings,
     )
 
 
-def _convert_referent_mapping(referent_mapping: ReferentMapping) -> SpecReferentMapping:
+def _convert_referent_mapping(referent_mapping: ReferentMapping) -> OssieReferentMapping:
     nested = None
     if referent_mapping.referent_mappings is not None:
         nested = [_convert_referent_mapping(child) for child in referent_mapping.referent_mappings]
-    return SpecReferentMapping(
+    return OssieReferentMapping(
         relationship=referent_mapping.relationship.name,
         expression=_render_mapping_expression(referent_mapping.expression),
         referent_mappings=nested,
@@ -282,11 +295,11 @@ def _render_mapping_expression(expr) -> str | None:
     return str(expr)
 
 
-def _convert_link_mapping(link_mapping: LinkMapping) -> SpecLinkMapping:
+def _convert_link_mapping(link_mapping: LinkMapping) -> OssieLinkMapping:
     children = None
     if link_mapping.children is not None:
         children = [_convert_link_mapping(child) for child in link_mapping.children]
-    return SpecLinkMapping(
+    return OssieLinkMapping(
         object_mapping=_convert_object_mapping(link_mapping.object_mapping),
         relationship=link_mapping.relationship.name if link_mapping.relationship is not None else None,
         children=children,

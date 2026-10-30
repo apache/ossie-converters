@@ -95,10 +95,12 @@ ontology:
   - name: firstName
     roles:
     - concept: String
+    verbalizes: ['{Employee} has first name {String}']
     multiplicity: ManyToOne
   - name: lastName
     roles:
     - concept: String
+    verbalizes: ['{Employee} has last name {String}']
     multiplicity: ManyToOne
 - concept: Contractor
   description: Employee with temporary contract.
@@ -133,6 +135,7 @@ ontology:
   - name: description
     roles:
     - concept: String
+    verbalizes: ['{Item} has description {String}']
     multiplicity: ManyToOne
   - name: itemToClass
     roles:
@@ -411,10 +414,12 @@ ontology:
   - name: type
     roles:
     - concept: String
+    verbalizes: ['{Payment} has type {String}']
     multiplicity: ManyToOne
   - name: amount
     roles:
     - concept: Decimal
+    verbalizes: ['{Payment} has amount {Decimal}']
     multiplicity: ManyToOne
 - concept: CardPayment
   description: Payment made by card.
@@ -425,10 +430,12 @@ ontology:
   - name: cardNumber
     roles:
     - concept: String
+    verbalizes: ['{CardPayment} has card number {String}']
     multiplicity: ManyToOne
   - name: cardHolderName
     roles:
     - concept: String
+    verbalizes: ['{CardPayment} has card holder name {String}']
     multiplicity: ManyToOne
 - concept: CashPayment
   description: Payment made in cash.
@@ -439,10 +446,12 @@ ontology:
   - name: cashReceived
     roles:
     - concept: Decimal
+    verbalizes: ['{CashPayment} has cash received {Decimal}']
     multiplicity: ManyToOne
   - name: change
     roles:
     - concept: Decimal
+    verbalizes: ['{CashPayment} has change {Decimal}']
     multiplicity: ManyToOne
 ontology_mappings:
 - name: retail_refactored_mapping

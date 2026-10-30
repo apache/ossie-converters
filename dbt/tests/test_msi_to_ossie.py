@@ -24,7 +24,7 @@ from syrupy.assertion import SnapshotAssertion
 
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType
 from ossie_dbt.filter_utils import _render_filter_template
-from ossie import OssieDataType, OssieDialect, OssieDocument
+from ossie import OssieDataType, OssieDialect, OssieSemanticModel
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
 from metricflow_semantic_interfaces.implementations.element_config import PydanticSemanticLayerElementConfig
@@ -66,19 +66,19 @@ from tests.helpers import (
 # ---------------------------------------------------------------------------
 
 
-def _fields(result: OssieDocument, dataset_idx: int = 0) -> list:
+def _fields(result: OssieSemanticModel, dataset_idx: int = 0) -> list:
     """Return fields for a dataset, asserting they exist."""
     fields = result.datasets[dataset_idx].fields
     assert fields is not None
     return fields
 
 
-def _field_expr(result: OssieDocument, field_idx: int = 0) -> str:
+def _field_expr(result: OssieSemanticModel, field_idx: int = 0) -> str:
     """Return the ANSI SQL expression for a field by index."""
     return _fields(result)[field_idx].expression.dialects[0].expression
 
 
-def _ossie_metrics(result: OssieDocument) -> list:
+def _ossie_metrics(result: OssieSemanticModel) -> list:
     """Return the document's Ossie metrics, asserting they exist."""
     metrics = result.metrics
     assert metrics is not None
@@ -1824,7 +1824,7 @@ class TestDatatypeMetadata:
     @staticmethod
     def _convert(
         config: Optional[dict], legacy_measure: bool = False, native_datatype: Optional[DataType] = None
-    ) -> OssieDocument:
+    ) -> OssieSemanticModel:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
             dimensions=[_dimension("status")],

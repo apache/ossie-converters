@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
@@ -34,7 +35,7 @@ def test_generated_semantic_model_has_core_document_version(tmp_path: Path):
         datasets=[dataset("widget", ["widget_id"])],
     )
 
-    document = OssieToSpecConverter.convert(model).dump_dict()
+    document = json.loads(OssieToSpecConverter.convert(model).to_ossie_json())
 
     assert document["version"] == "0.2.0.dev0"
     [mapping] = document["ontology_mappings"]

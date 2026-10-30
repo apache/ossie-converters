@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from ossie_wisdom.converter_issues import ConverterIssueType
 from ossie_wisdom.ossie_to_wisdom import OssieToWisdomConverter
 from ossie_wisdom.wisdom_to_ossie import WisdomToOssieConverter
@@ -80,7 +80,7 @@ def _cmd_ossie_to_wisdom(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    document = OssieDocument.model_validate(yaml.safe_load(input_path.read_text()))
+    document = OssieSemanticModel.model_validate(yaml.safe_load(input_path.read_text()))
     result = OssieToWisdomConverter().convert(document)
 
     _print_issues(result)

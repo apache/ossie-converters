@@ -23,10 +23,10 @@ from ossie import (
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
+    OssieSemanticModel,
 )
 
 from ossie import OssieRelationship
@@ -59,7 +59,7 @@ def test_foreign_origin_document_synthesizes_valid_spec():
     """An Ossie document never touched by Sigma (no SIGMA custom_extensions) must
     still convert to a structurally valid Sigma spec, with synthesized ids and
     formulas best-effort translated from ANSI SQL."""
-    document = OssieDocument.model_validate(
+    document = OssieSemanticModel.model_validate(
         yaml.safe_load((EXAMPLES_DIR / "tpcds_semantic_model.yaml").read_text())
     )
     result = OssieToSigmaConverter().convert(document)
@@ -85,7 +85,7 @@ def test_foreign_origin_document_synthesizes_valid_spec():
 
 
 def test_ids_are_deterministic_across_repeated_conversions():
-    document = OssieDocument.model_validate(
+    document = OssieSemanticModel.model_validate(
         yaml.safe_load((EXAMPLES_DIR / "tpcds_semantic_model.yaml").read_text())
     )
     spec_1 = OssieToSigmaConverter().convert(document).output
@@ -106,7 +106,7 @@ def test_synthesized_ids_are_stable_across_processes():
 def test_relationship_ids_are_scoped_by_owning_dataset():
     """Two unrelated relationships sharing a name, on different table pairs, must not
     collide onto the same synthesized Sigma relationship id."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.public.orders"),
@@ -137,7 +137,7 @@ def test_relationship_ids_are_scoped_by_owning_dataset():
 
 def test_legacy_semantic_model_wrapper_is_rejected():
     with pytest.raises(ValidationError, match="semantic_model"):
-        OssieDocument(semantic_model=[])
+        OssieSemanticModel(semantic_model=[])
 
 
 def test_relationship_column_arity_mismatch_is_recorded_not_silently_truncated():
@@ -145,7 +145,7 @@ def test_relationship_column_arity_mismatch_is_recorded_not_silently_truncated()
     only needs to be non-empty), so a compound-key relationship with unequal lengths
     is legal input. zip() truncates to the shorter array; that must be a recorded
     issue, not a silent drop of the extra key column(s)."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.public.orders"),
@@ -180,7 +180,7 @@ def test_relationship_arity_mismatch_element_names_are_scoped_by_owning_dataset(
     test_relationship_ids_are_scoped_by_owning_dataset); an arity-mismatch issue's
     element_name must be scoped the same way, or two unrelated relationships sharing a
     name on different table pairs become indistinguishable in the issue list."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.public.orders"),
@@ -236,7 +236,7 @@ def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula(
     """`formula` is required on every Sigma column and the data model API validates the
     whole document before applying any of it, so a placeholder would fail the entire
     upload rather than degrade one column."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -351,14 +351,14 @@ def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
 
 def test_synthesized_spec_carries_a_schema_version():
     """`schemaVersion` is required by the create/update endpoints."""
-    document = OssieDocument.model_validate(
+    document = OssieSemanticModel.model_validate(
         yaml.safe_load((EXAMPLES_DIR / "tpcds_semantic_model.yaml").read_text())
     )
     assert OssieToSigmaConverter().convert(document).output["schemaVersion"] == 1
 
 
 def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(

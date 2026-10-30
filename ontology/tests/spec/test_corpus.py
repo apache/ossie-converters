@@ -87,4 +87,4 @@ def test_structure_snapshot(spec_model: OssieOntology, snapshot):
 @pytest.mark.parametrize("spec_model", SPEC_NAMES, indirect=True, ids=SPEC_NAMES)
 def test_roundtrip_yaml_snapshot(spec_model: OssieOntology, snapshot):
     spec = OssieToSpecConverter.convert(spec_model)
-    snapshot.assert_match(spec.dump_yaml(), "roundtrip.yaml")
+    snapshot.assert_match(spec.to_ossie_yaml(), "roundtrip.yaml")

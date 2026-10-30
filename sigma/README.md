@@ -89,10 +89,10 @@ for issue in result.issues:
 Path("semantic_model.yaml").write_text(result.output.to_ossie_yaml())
 
 # Ossie -> Sigma
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 import yaml
 
-document = OssieDocument.model_validate(yaml.safe_load(Path("semantic_model.yaml").read_text()))
+document = OssieSemanticModel.model_validate(yaml.safe_load(Path("semantic_model.yaml").read_text()))
 result = OssieToSigmaConverter().convert(document)
 Path("data_model.json").write_text(json.dumps(result.output, indent=2))
 ```
@@ -101,7 +101,7 @@ Path("data_model.json").write_text(json.dumps(result.output, indent=2))
 
 | Sigma concept | Ossie concept | Notes |
 |---|---|---|
-| Data model (`name`, `description`) | `OssieDocument` root | `dataModelId`, `folderId`, `documentVersion`, `schemaVersion`, `createdAt`, `createdBy`, `updatedAt`, `updatedBy`, `ownerId`, `url` preserved in `custom_extensions` and written back on export |
+| Data model (`name`, `description`) | `OssieSemanticModel` root | `dataModelId`, `folderId`, `documentVersion`, `schemaVersion`, `createdAt`, `createdBy`, `updatedAt`, `updatedBy`, `ownerId`, `url` preserved in `custom_extensions` and written back on export |
 | Page | *(none)* | Ossie has no page/folder-of-elements concept, but `pages` is a required part of the spec, so page membership is preserved per-dataset in `custom_extensions` and rebuilt on export |
 | Element (`kind: table`) | `OssieDataset` | `source` = warehouse path joined with `.` for `warehouse-table`; the other five source kinds get a marker plus the native `source` block in `custom_extensions` |
 | Element (any other `kind`) | *not modeled* | Preserved verbatim in a model-level `custom_extensions` entry so `ossie-to-sigma` restores it unchanged |

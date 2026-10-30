@@ -107,9 +107,9 @@ ossie_yaml = result.output.to_ossie_yaml()
 
 # Apache Ossie → dbt
 import yaml
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 
-document = OssieDocument.model_validate(yaml.safe_load(Path("semantic_model.yaml").read_text()))
+document = OssieSemanticModel.model_validate(yaml.safe_load(Path("semantic_model.yaml").read_text()))
 result = OssieToMSIConverter().convert(document)
 manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 ```

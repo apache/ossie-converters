@@ -30,11 +30,11 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
 )
 from ossie_wisdom.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
 
@@ -64,7 +64,7 @@ RELATIONSHIP_TYPE_NOTES = {
 class WisdomToOssieConverter:
     """Converts a wisdom domain export dict into an Ossie Document."""
 
-    def convert(self, export: dict) -> ConverterResult[OssieDocument]:
+    def convert(self, export: dict) -> ConverterResult[OssieSemanticModel]:
         issues: List[ConverterIssue] = []
 
         domain = export.get("domain", {}).get("zsheet_json", {})
@@ -84,7 +84,7 @@ class WisdomToOssieConverter:
         dataset_names = {d.name for d in datasets}
         relationships = self._convert_relationships(domain, dataset_names, issues)
 
-        document = OssieDocument(
+        document = OssieSemanticModel(
             name=domain.get("ref", {}).get("name") or export.get("export_metadata", {}).get("domain_name", "domain"),
             description=domain.get("description") or None,
             ai_context=self._build_ai_context(domain),

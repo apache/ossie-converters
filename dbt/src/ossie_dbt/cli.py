@@ -29,7 +29,7 @@ from typing import Sequence
 
 import yaml
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from ossie_dbt.ossie_to_msi import OssieToMSIConverter
@@ -100,7 +100,7 @@ def _cmd_ossie_to_msi(args: argparse.Namespace) -> None:
     output_path = Path(args.output)
 
     raw = yaml.safe_load(input_path.read_text())
-    document = OssieDocument.model_validate(raw)
+    document = OssieSemanticModel.model_validate(raw)
     result = OssieToMSIConverter().convert(document)
     _print_issues(result.issues)
 
