@@ -44,6 +44,10 @@ converter/honeydew:
   - changed-files:
       - any-glob-to-any-file: 'honeydew/**'
 
+converter/linkml:
+  - changed-files:
+      - any-glob-to-any-file: 'linkml/**'
+
 converter/microsoft:
   - changed-files:
       - any-glob-to-any-file: 'microsoft/**'
