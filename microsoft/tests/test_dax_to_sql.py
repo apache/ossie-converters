@@ -26,6 +26,7 @@ a wrong translation is a silent wrong number on another engine.
 import warnings
 
 import pytest
+import sqlglot
 
 from ossie_microsoft._dax_to_sql import translate_measure
 from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
@@ -447,3 +448,34 @@ def test_a_refusal_deep_in_a_chain_names_only_the_measure_where_it_failed():
     assert sql is None
     assert reason.startswith("referenced measure [C0] is not translated:")
     assert reason.count("referenced measure") == 1
+
+
+@pytest.mark.parametrize(
+    ("dax", "sql"),
+    [
+        ("SUM('Sales'[Amount]) * .5", "SUM(Sales.Amount) * 0.5"),
+        ("SUM('Sales'[Amount]) * 2.", "SUM(Sales.Amount) * 2.0"),
+        ("SUM('Sales'[Amount]) * 1e3", "SUM(Sales.Amount) * 1e3"),
+        ("SUM('Sales'[Amount]) * 2.E-1", "SUM(Sales.Amount) * 2.0E-1"),
+        ("SUM('Sales'[Amount]) * -.5", "SUM(Sales.Amount) * -0.5"),
+        ("SUM('Sales'[Amount]) / .5", "SUM(Sales.Amount) / 0.5"),
+        ("SUM('Sales'[Amount]) * 1.25", "SUM(Sales.Amount) * 1.25"),
+    ],
+)
+def test_numeric_literals_are_written_in_a_form_every_sql_engine_reads(dax, sql):
+    translated, reason = translate_measure(dax, resolve, MEASURES)
+    assert (translated, reason) == (sql, None)
+    for dialect in (None, "databricks", "snowflake", "bigquery", "postgres", "duckdb"):
+        sqlglot.parse_one(translated, read=dialect)
+
+
+@pytest.mark.parametrize("dax", ['{(1, "a"), (2, "b")}', "{1, 2}"])
+def test_a_table_constructor_is_refused_by_name(dax):
+    sql, reason = translate_measure(dax, resolve, MEASURES)
+    assert sql is None
+    assert "a table constructor ({...}) is a table" in reason
+
+
+def test_divide_by_a_short_literal_is_normalised_too():
+    sql, reason = translate_measure("DIVIDE(SUM('Sales'[Amount]), .5)", resolve, MEASURES)
+    assert (sql, reason) == ("SUM(Sales.Amount) / NULLIF(0.5, 0)", None)
