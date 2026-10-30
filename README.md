@@ -37,6 +37,10 @@ git clone --recurse-submodules https://github.com/apache/ossie-converters.git
 git submodule update --init
 ```
 
+Repository-level cross-converter acceptance and pairwise checks live in
+[`interop/`](interop/README.md). The matrix registers all 19 converter projects,
+with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
+
 Contributions follow the Apache Ossie
 [contribution guide](https://github.com/apache/ossie/blob/main/CONTRIBUTING.md).
 

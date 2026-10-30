@@ -42,6 +42,7 @@ updates:
       - "/dbt"
       - "/gooddata"
       - "/honeydew"
+      - "/interop"
       - "/microsoft"
       - "/nvidia"
       - "/omni"
