@@ -51,6 +51,7 @@ updates:
       - "/palantir"
       - "/sigma"
       - "/snowflake"
+      - "/solid"
       - "/thoughtspot"
       - "/wisdom"
     schedule:
