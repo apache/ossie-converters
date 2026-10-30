@@ -28,6 +28,7 @@ from ossie import (
     OssieDocument,
     OssieExpression,
     OssieField,
+    OssieMetric,
     OssieSemanticModel,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
@@ -300,40 +301,67 @@ class OssieToMSIConverter:
     def _convert_metrics(self, ossie_sm: OssieSemanticModel) -> Tuple[List[PydanticMetric], List[ConverterIssue]]:
         metrics: List[PydanticMetric] = []
         issues: List[ConverterIssue] = []
+        # Dataset-scoped metrics reference their own dataset's fields by unqualified name, so each
+        # one is resolved against that dataset alone. MetricFlow metric names are global, but the
+        # spec only makes them unique within a dataset, so a name that is already taken is dropped.
+        to_convert: List[Tuple[OssieMetric, str, List[OssieDataset]]] = [
+            (metric, metric.name, ossie_sm.datasets) for metric in ossie_sm.metrics or []
+        ]
+        declared_names: Set[str] = {metric.name for metric in ossie_sm.metrics or []}
+        for dataset in ossie_sm.datasets:
+            for metric in dataset.metrics or []:
+                element_name = f"{dataset.name}.{metric.name}"
+                if metric.name in declared_names:
+                    issues.append(ConverterIssue(ConverterIssueType.DUPLICATE_METRIC_NAME_DROPPED, element_name))
+                    continue
+                declared_names.add(metric.name)
+                to_convert.append((metric, element_name, [dataset]))
+
         # Names of document metrics and of sub-metrics generated so far; generated names must not reuse them.
-        taken_names: Set[str] = {metric.name for metric in ossie_sm.metrics or []}
-        for metric in ossie_sm.metrics or []:
-            dialect_expr = self._get_dialect_expression(metric.expression, sql_only=True)
-            dialect = self._sql_dialect(dialect_expr.dialect) if dialect_expr is not None else None
-            if dialect_expr is None or dialect is None:
-                issues.append(
-                    ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
-                )
-                continue
-            # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
-            reserved_names = set(taken_names)
-            try:
-                metrics.extend(
-                    self._convert_metric(
-                        metric.name,
-                        dialect_expr.expression,
-                        metric.description,
-                        ossie_sm.datasets,
-                        dialect,
-                        taken_names=reserved_names,
-                    )
-                )
-                taken_names = reserved_names
-            except _UnresolvedRowCountDataset:
-                # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
-                issues.append(
-                    ConverterIssue(issue_type=ConverterIssueType.ROW_COUNT_METRIC_DROPPED, element_name=metric.name)
-                )
-            except _UnsupportedMetricExpression:
-                issues.append(
-                    ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
-                )
+        taken_names = set(declared_names)
+        for metric, element_name, datasets in to_convert:
+            self._append_metric(metric, element_name, datasets, metrics, issues, taken_names)
         return metrics, issues
+
+    def _append_metric(
+        self,
+        metric: OssieMetric,
+        element_name: str,
+        datasets: List[OssieDataset],
+        metrics: List[PydanticMetric],
+        issues: List[ConverterIssue],
+        taken_names: Set[str],
+    ) -> None:
+        """Convert one Ossie metric against *datasets*, adding it to *metrics* or an issue to *issues*.
+
+        Names of generated sub-metrics are added to *taken_names*.
+        """
+        dialect_expr = self._get_dialect_expression(metric.expression, sql_only=True)
+        dialect = self._sql_dialect(dialect_expr.dialect) if dialect_expr is not None else None
+        if dialect_expr is None or dialect is None:
+            issues.append(ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, element_name))
+            return
+        # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
+        reserved_names = set(taken_names)
+        try:
+            metrics.extend(
+                self._convert_metric(
+                    metric.name,
+                    dialect_expr.expression,
+                    metric.description,
+                    datasets,
+                    dialect,
+                    taken_names=reserved_names,
+                )
+            )
+            taken_names.update(reserved_names)
+        except _UnresolvedRowCountDataset:
+            # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
+            issues.append(
+                ConverterIssue(issue_type=ConverterIssueType.ROW_COUNT_METRIC_DROPPED, element_name=element_name)
+            )
+        except _UnsupportedMetricExpression:
+            issues.append(ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, element_name))
 
     def _convert_metric(
         self,
