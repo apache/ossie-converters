@@ -380,10 +380,10 @@ def test_flag_expands_measure_references_across_the_model(bim):
     assert list(_dialects(_metric(document, "Per Order"))) == ["DAX"]
 
 
-def test_a_literal_that_is_not_a_number_is_a_later_tier():
-    sql, reason = translate_measure('"not a number"', resolve, MEASURES)
-    assert sql is None
-    assert "string expressions are a later tier" in reason
+def test_a_text_literal_is_translated_with_quotes_escaped():
+    sql, reason = translate_measure('"it\'s ""quoted"""', resolve, MEASURES)
+    assert reason is None, reason
+    assert sql == "'it''s \"quoted\"'"
 
 
 def test_a_referenced_measure_that_does_not_parse_is_refused():
@@ -392,6 +392,206 @@ def test_a_referenced_measure_that_does_not_parse_is_refused():
     assert sql is None
     assert "referenced measure [Broken] could not be parsed" in reason
 
+
+# --- Logic and conditionals (PR3) --------------------------------------------
+
+LOGIC = dict(MEASURES, Margin="[Total Sales] - [Customers]")
+
+
+@pytest.mark.parametrize(
+    "dax, expected",
+    [
+        ("BLANK()", "NULL"),
+        ("TRUE()", "TRUE"),
+        ("COALESCE([Total Sales], 0)", "COALESCE(SUM(Sales.Amount), 0)"),
+        # Comparisons coerce a BLANK number to 0, as DAX does.
+        ("IF([Total Sales] > 1000, 1, 0)",
+         "CASE WHEN COALESCE(SUM(Sales.Amount), 0) > 1000 THEN 1 ELSE 0 END"),
+        # IF without a value if false returns BLANK.
+        ('IF([Total Sales] > 1000, "High")',
+         "CASE WHEN COALESCE(SUM(Sales.Amount), 0) > 1000 THEN 'High' END"),
+        # A numeric test is TRUE when non-zero; BLANK is FALSE.
+        ("IF([Total Sales], 1, 0)",
+         "CASE WHEN COALESCE(SUM(Sales.Amount), 0) <> 0 THEN 1 ELSE 0 END"),
+        ("IF(ISBLANK([Total Sales]), 0, [Total Sales])",
+         "CASE WHEN SUM(Sales.Amount) IS NULL THEN 0 ELSE SUM(Sales.Amount) END"),
+        ("IF.EAGER([Total Sales] = 0, BLANK(), 1)",
+         "CASE WHEN COALESCE(SUM(Sales.Amount), 0) = 0 THEN NULL ELSE 1 END"),
+        ('SWITCH(TRUE, [Total Sales] > 100, "A", [Total Sales] > 10, "B", "C")',
+         "CASE WHEN COALESCE(SUM(Sales.Amount), 0) > 100 THEN 'A' "
+         "WHEN COALESCE(SUM(Sales.Amount), 0) > 10 THEN 'B' ELSE 'C' END"),
+        ("SWITCH(TRUE(), [Customers] >= 5, 1)",
+         "CASE WHEN COALESCE(COUNT(Sales.Customer), 0) >= 5 THEN 1 END"),
+        ("[Total Sales] > 0 && [Customers] > 0",
+         "COALESCE(SUM(Sales.Amount), 0) > 0 AND COALESCE(COUNT(Sales.Customer), 0) > 0"),
+        ("OR([Total Sales] > 0, NOT([Customers] > 0))",
+         "COALESCE(SUM(Sales.Amount), 0) > 0 OR NOT COALESCE(COUNT(Sales.Customer), 0) > 0"),
+        ("[Total Sales] == BLANK()", "SUM(Sales.Amount) IS NOT DISTINCT FROM NULL"),
+        ("IF(TRUE, 1, 0)", "CASE WHEN TRUE THEN 1 ELSE 0 END"),
+        ("NOT [Total Sales] > 0", "NOT COALESCE(SUM(Sales.Amount), 0) > 0"),
+    ],
+)
+def test_translates_logic(dax, expected):
+    sql, reason = translate_measure(dax, resolve, LOGIC)
+    assert reason is None, reason
+    assert sql == expected
+
+
+@pytest.mark.parametrize(
+    "dax, fragment",
+    [
+        ('SWITCH([Customers], 1, "one", "many")', "SWITCH matching a value"),
+        ('IF([Total Sales] > 0, "High", 0)', "results of different types"),
+        ('"a" = "b"', "comparison on a text value"),
+        ("ISBLANK([Total Sales]) + 1", "arithmetic or comparison on a boolean"),
+        ("IF(ISBLANK([Total Sales]), TRUE(), BLANK()) && TRUE()", "logical operand"),
+        ("IF('Sales'[Amount] > 0, 1, 0)", "bare column reference"),
+        ("COALESCE([Total Sales])", "at least two arguments"),
+        ('IF("yes", 1, 0)', "is not a condition"),
+        ("NOT(TRUE(), FALSE())", "NOT takes exactly one argument"),
+        ("ISBLANK()", "ISBLANK takes exactly one argument"),
+        ("ISBLANK(TRUE())", "ISBLANK of a boolean"),
+        ("SWITCH(TRUE, 1)", "needs at least one condition and result"),
+        ("{1, 2}", "later tier"),
+    ],
+)
+def test_logic_refusals_carry_a_reason(dax, fragment):
+    sql, reason = translate_measure(dax, resolve, LOGIC)
+    assert sql is None
+    assert fragment in reason
+
+
+@pytest.mark.parametrize(
+    "dax, rows, dax_result",
+    [
+        # BLANK > 0 is FALSE in DAX (BLANK compares as 0), so the else branch.
+        ("IF(SUM('Sales'[Amount]) > 0, 1, 0)", [], 0),
+        # BLANK = 0 is TRUE in DAX.
+        ("IF(SUM('Sales'[Amount]) = 0, 1, 0)", [], 1),
+        # BLANK == 0 is FALSE (strict), BLANK == BLANK is TRUE.
+        ("IF(SUM('Sales'[Amount]) == 0, 1, 0)", [], 0),
+        ("IF(SUM('Sales'[Amount]) == BLANK(), 1, 0)", [], 1),
+        # IF without a value if false returns BLANK.
+        ("IF(SUM('Sales'[Amount]) > 0, 1)", [], None),
+        # A BLANK numeric test is FALSE.
+        ("IF(SUM('Sales'[Amount]), 1, 0)", [], 0),
+        ("IF(SUM('Sales'[Amount]), 1, 0)", [(5.0, "a")], 1),
+        ("COALESCE(SUM('Sales'[Amount]), 7)", [], 7),
+        ("SWITCH(TRUE, SUM('Sales'[Amount]) > 10, 2, SUM('Sales'[Amount]) > 1, 1, 0)",
+         [(5.0, "a")], 1),
+    ],
+)
+def test_logic_sql_matches_dax_blank_semantics(dax, rows, dax_result):
+    sql, reason = translate_measure(dax, resolve, LOGIC)
+    assert reason is None, reason
+    assert _evaluate(sql, rows) == dax_result
+
+
+@pytest.mark.parametrize("dax", [
+    'SWITCH(TRUE, [Total Sales] > 100, "A", "C")',
+    "[Total Sales] > 0 && NOT([Customers] = 0)",
+    "[Total Sales] == BLANK()",
+])
+def test_logic_sql_parses(dax):
+    sqlglot = pytest.importorskip("sqlglot")
+    sql, reason = translate_measure(dax, resolve, LOGIC)
+    assert reason is None, reason
+    sqlglot.parse_one(sql)
+
+
+# --- Math (PR3b): translated only for never-BLANK arguments ------------------
+
+
+@pytest.mark.parametrize(
+    "dax, expected",
+    [
+        ("ABS(COALESCE([Total Sales], 0))", "ABS(COALESCE(SUM(Sales.Amount), 0))"),
+        ("SIGN(-3)", "SIGN(-3)"),
+        ("SQRT(16)", "SQRT(16)"),
+        ("POWER(2, 3) + 1", "POWER(2, 3) + 1"),
+        ("EXP(0)", "EXP(0)"),
+        ("LN(1)", "LN(1)"),
+        # DAX LOG(number, base) defaults to base 10; the spec writes LOG(base, x).
+        ("LOG(100)", "LOG10(100)"),
+        ("LOG(8, 2)", "LOG(2, 8)"),
+        ("LOG10(1000)", "LOG10(1000)"),
+        ("INT(-8.9)", "FLOOR(-8.9)"),
+        ("TRUNC(-8.9)", "TRUNC(-8.9, 0)"),
+        ("ROUNDDOWN(3.14159, 2)", "TRUNC(3.14159, 2)"),
+        ("QUOTIENT(-10, 3)", "TRUNC(CAST(-10 AS DOUBLE) / 3, 0)"),
+        ("MOD(-3, 2)", "-3 - 2 * FLOOR(CAST(-3 AS DOUBLE) / 2)"),
+        ("PI()", "PI()"),
+        ("DEGREES(PI())", "DEGREES(PI())"),
+        ("VAR s = COALESCE([Total Sales], 0) RETURN SQRT(s)",
+         "SQRT(COALESCE(SUM(Sales.Amount), 0))"),
+    ],
+)
+def test_translates_math(dax, expected):
+    sql, reason = translate_measure(dax, resolve, LOGIC)
+    assert reason is None, reason
+    assert sql == expected
+
+
+@pytest.mark.parametrize(
+    "dax, fragment",
+    [
+        ("ABS([Total Sales])", "may be BLANK"),
+        ("ROUND(2.5, 0)", "ties half away from zero"),
+        ("ROUNDUP(2.1, 0)", "ROUNDUP"),
+        ("CEILING(2.1, 1)", "significance"),
+        ("FLOOR(2.1, 1)", "significance"),
+        ("POWER(2)", "POWER takes 2 argument(s)"),
+        ("ABS(TRUE())", "boolean"),
+        ("MROUND(7, 2)", "not translated yet"),
+    ],
+)
+def test_math_refusals_carry_a_reason(dax, fragment):
+    sql, reason = translate_measure(dax, resolve, LOGIC)
+    assert sql is None
+    assert fragment in reason
+
+
+def _evaluate_math(sql):
+    """Run a constant math expression in SQLite. SQLite has no two-argument TRUNC, so the
+    spec's TRUNC(x, d) (truncate toward zero to d decimals) is registered for the test."""
+    import math
+    import sqlite3
+
+    def trunc(x, d):
+        factor = 10 ** d
+        return math.trunc(x * factor) / factor
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.create_function("TRUNC", 2, trunc)
+        return connection.execute(f"SELECT {sql}").fetchone()[0]
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "dax, dax_result",
+    [
+        # MOD takes the sign of the divisor (Microsoft's examples: MOD(3,2)=1, MOD(-3,-2)=-1).
+        ("MOD(3, 2)", 1),
+        ("MOD(-3, -2)", -1),
+        ("MOD(-3, 2)", 1),
+        ("MOD(3, -2)", -1),
+        ("QUOTIENT(-10, 3)", -3),
+        ("QUOTIENT(10, 3)", 3),
+        ("INT(-8.9)", -9),
+        ("TRUNC(-8.9)", -8),
+        ("ROUNDDOWN(3.14159, 2)", 3.14),
+        ("LOG(100)", 2),
+        ("LOG(8, 2)", 3),
+        ("POWER(2, 3)", 8),
+        ("ABS(-2.5)", 2.5),
+    ],
+)
+def test_math_sql_matches_dax_results(dax, dax_result):
+    sql, reason = translate_measure(dax, resolve, LOGIC)
+    assert reason is None, reason
+    assert _evaluate_math(sql) == pytest.approx(dax_result)
 
 # --- Robustness: size and depth limits (review on #27) -----------------------
 
@@ -447,3 +647,13 @@ def test_a_refusal_deep_in_a_chain_names_only_the_measure_where_it_failed():
     assert sql is None
     assert reason.startswith("referenced measure [C0] is not translated:")
     assert reason.count("referenced measure") == 1
+
+
+def test_the_size_cap_also_covers_mod_repeating_its_operands():
+    # MOD writes both operands twice (n - d * FLOOR(n / d)), so nesting doubles the SQL.
+    expr = "COALESCE(SUM(Sales[Amount]), 0)"
+    for _ in range(25):
+        expr = f"MOD({expr}, 7)"
+    sql, reason = translate_measure(expr, resolve)
+    assert sql is None
+    assert "too large to translate exactly" in reason

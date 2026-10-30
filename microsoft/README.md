@@ -430,8 +430,14 @@ names the reason.
 Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
 `Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
 `BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
-other measures; and `VAR` / `RETURN`. Every other DAX function is refused with a reason
-from a per-function registry, for example:
+other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
+`BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
+compares a BLANK number as 0, so `BLANK = 0` is TRUE; strict `==` does not); and math
+functions (`ABS`, `SQRT`, `POWER`, `LOG`, `INT`, `TRUNC`, `MOD`, `QUOTIENT`, trigonometry,
+...) when their argument can never be BLANK, for example `ABS(COALESCE([Sales], 0))`,
+since what they return for BLANK is not documented. `ROUND` is not translated: DAX
+rounds ties half away from zero, which the spec's `ROUND` does not guarantee. Every other
+DAX function is refused with a reason from a per-function registry, for example:
 
 ```
 [table 'Sales' measure 'YTD'] DAX measure kept as-is; not translated to OSSIE_SQL_2026
