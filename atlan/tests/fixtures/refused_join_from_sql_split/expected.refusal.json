@@ -1,0 +1,3 @@
+{
+ "reason": "join read from SQL with no declared cardinality; only declared many_to_one joins are written"
+}

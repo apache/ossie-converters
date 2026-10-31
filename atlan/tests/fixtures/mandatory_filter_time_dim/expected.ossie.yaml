@@ -1,0 +1,88 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 0.2.0.dev0
+name: mandatory_filter_time_dim
+description: COUNT DISTINCT with a mandatory filter and a time dimension
+datasets:
+- name: store_returns
+  source: TPCDS.PUBLIC.STORE_RETURNS
+  fields:
+  - name: sr_returned_date
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_RETURNED_DATE
+      - dialect: ANSI_SQL
+        expression: SR_RETURNED_DATE
+    dimension:
+      is_time: true
+    datatype: Date
+    description: Day the return was filed.
+  - name: store_name
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: STORE_NAME
+      - dialect: ANSI_SQL
+        expression: STORE_NAME
+    dimension:
+      is_time: false
+    datatype: String
+    description: Store the return belongs to.
+  - name: sr_return_status
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_RETURN_STATUS
+      - dialect: ANSI_SQL
+        expression: SR_RETURN_STATUS
+    dimension:
+      is_time: false
+    datatype: String
+    description: open, closed or void.
+  - name: sr_ticket_number
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_TICKET_NUMBER
+      - dialect: ANSI_SQL
+        expression: SR_TICKET_NUMBER
+metrics:
+- name: open_returns
+  expression:
+    dialects:
+    - dialect: OSSIE_SQL_2026
+      expression: COUNT(DISTINCT CASE WHEN (store_returns.sr_return_status <> 'void') THEN store_returns.sr_ticket_number
+        END)
+    - dialect: ANSI_SQL
+      expression: COUNT(DISTINCT CASE WHEN (store_returns.sr_return_status <> 'void') THEN store_returns.sr_ticket_number
+        END)
+  datatype: Integer
+  description: Number of distinct return tickets, excluding voided returns
+  ai_context:
+    instructions: 'Grain: return ticket. Counts: Store returns that are not void. Unit: returns. Re-aggregation:
+      none.'
+  custom_extensions:
+  - vendor_name: ATLAN
+    data: '{"registry": {"id": "metric_synth_open_returns", "definition_version": 1}, "agent_context":
+      {"grain": "return ticket", "population": "Store returns that are not void", "unit": "returns", "reaggregation":
+      "none", "sql_dialect": "snowflake", "dimensions": ["store_returns.sr_returned_date", "store_returns.store_name",
+      "store_returns.sr_return_status"], "timeframe_field": "store_returns.sr_returned_date"}}'
+custom_extensions:
+- vendor_name: ATLAN
+  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

@@ -1,0 +1,79 @@
+{
+ "defective_return_pct_defective_pct": {
+  "name": "defective_return_pct_defective_pct",
+  "description": "Share of defective returns among classified returns, and the count of classified returns. This part: defective_pct = ROUND(COUNT(CASE WHEN STORE_RETURNS.SR_RETURN_REASON = 'defective' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN STORE_RETURNS.SR_RETURN_REASON IN ('defective', 'changed_mind') THEN 1 END), 0), 1).",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "ROUND(COUNT(CASE WHEN m.SR_RETURN_REASON = 'defective' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN m.SR_RETURN_REASON IN ('defective', 'changed_mind') THEN 1 END), 0), 1)",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "defective_return_pct_defective_pct",
+    "datatype": "integer"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [
+    "m.SR_RETURNED_DATE >= '2026-04-01'",
+    "m.SR_RETURNED_DATE < '2026-07-01'"
+   ],
+   "examples": [
+    {
+     "sql": "SELECT ROUND(COUNT(CASE WHEN SR_RETURN_REASON='defective' THEN 1 END)*100.0/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END),0),1) AS defective_pct FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_RETURNED_DATE >= '2026-04-01' AND SR_RETURNED_DATE < '2026-07-01'",
+     "source": "ossie"
+    }
+   ],
+   "grain": "aggregate over entire filtered date range",
+   "population": "Store returns with a reason of 'defective' or 'changed_mind'",
+   "exclusions": [
+    "returns with other reasons are excluded from the denominator"
+   ]
+  }
+ },
+ "defective_return_pct_classified_returns": {
+  "name": "defective_return_pct_classified_returns",
+  "description": "Share of defective returns among classified returns, and the count of classified returns. This part: classified_returns = COUNT(CASE WHEN STORE_RETURNS.SR_RETURN_REASON IN ('defective', 'changed_mind') THEN 1 END).",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT(CASE WHEN m.SR_RETURN_REASON IN ('defective', 'changed_mind') THEN 1 END)",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "defective_return_pct_classified_returns",
+    "datatype": "integer"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [
+    "m.SR_RETURNED_DATE >= '2026-04-01'",
+    "m.SR_RETURNED_DATE < '2026-07-01'"
+   ],
+   "examples": [],
+   "grain": "aggregate over entire filtered date range",
+   "population": "Store returns with a reason of 'defective' or 'changed_mind'",
+   "exclusions": [
+    "returns with other reasons are excluded from the denominator"
+   ]
+  }
+ }
+}

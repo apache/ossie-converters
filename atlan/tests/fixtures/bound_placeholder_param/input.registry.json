@@ -1,0 +1,80 @@
+{
+ "id": "metric_synth_csat",
+ "kind": "metric",
+ "app": "metric",
+ "name": "CSAT",
+ "display_name": "CSAT",
+ "description": "Share of good scores among all good or bad survey answers",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "metric:builder:0002",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "ratio",
+    "reaggregation": "none",
+    "zero_denominator": "null"
+   },
+   "output": {
+    "alias": "CSAT",
+    "datatype": "decimal",
+    "unit": "percent"
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "Answer Date",
+     "kind": "time",
+     "sql": "TPCDS.PUBLIC.CUSTOMER_SURVEY.ANSWERED_AT",
+     "datatype": "date",
+     "required_join": null,
+     "description": "When the survey was answered."
+    }
+   ],
+   "filters": [
+    "TPCDS.PUBLIC.CUSTOMER_SURVEY.ANSWERED_AT >= DATEADD(day, -{{window_days}}, CURRENT_TIMESTAMP)",
+    "TPCDS.PUBLIC.CUSTOMER_SURVEY.CHANNEL = 'store'"
+   ],
+   "mandatory_filters": [
+    "TPCDS.PUBLIC.CUSTOMER_SURVEY.SCORE IN ('good', 'bad')"
+   ],
+   "examples": [
+    {
+     "question": "What is the CSAT for store surveys over the last 30 days?",
+     "sql": "SELECT ROUND(COUNT(CASE WHEN SCORE = 'good' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) FROM TPCDS.PUBLIC.CUSTOMER_SURVEY WHERE SCORE IN ('good','bad') AND CHANNEL = 'store' AND ANSWERED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)",
+     "source": "metric_builder"
+    }
+   ],
+   "exclusions": [],
+   "grain": "TPCDS.PUBLIC.CUSTOMER_SURVEY.SURVEY_ID",
+   "population": "Survey answers with a good or bad score",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "ROUND(COUNT(CASE WHEN TPCDS.PUBLIC.CUSTOMER_SURVEY.SCORE = 'good' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN TPCDS.PUBLIC.CUSTOMER_SURVEY.SCORE IN ('good', 'bad') THEN 1 END), 0), 1)",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.CUSTOMER_SURVEY",
+    "alias": "Survey Answers",
+    "entity": "TPCDS.PUBLIC.CUSTOMER_SURVEY",
+    "parameters": [
+     {
+      "name": "window_days",
+      "datatype": "integer",
+      "default": 30
+     }
+    ]
+   },
+   "depends_on": [
+    "CSAT Responses"
+   ]
+  },
+  "validation_warnings": []
+ }
+}

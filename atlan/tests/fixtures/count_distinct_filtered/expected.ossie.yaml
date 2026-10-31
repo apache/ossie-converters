@@ -1,0 +1,68 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 0.2.0.dev0
+name: count_distinct_filtered
+description: COUNT(DISTINCT CASE ...)
+datasets:
+- name: item
+  source: TPCDS.PUBLIC.ITEM
+  fields:
+  - name: i_category
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: I_CATEGORY
+      - dialect: ANSI_SQL
+        expression: I_CATEGORY
+  - name: i_brand
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: I_BRAND
+      - dialect: ANSI_SQL
+        expression: I_BRAND
+  - name: i_manufact_id
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: I_MANUFACT_ID
+      - dialect: ANSI_SQL
+        expression: I_MANUFACT_ID
+metrics:
+- name: book_manufacturer_count
+  expression:
+    dialects:
+    - dialect: OSSIE_SQL_2026
+      expression: COUNT(DISTINCT CASE WHEN (item.i_category = 'Books') AND (NOT item.i_brand LIKE '%importo%')
+        THEN item.i_manufact_id END)
+    - dialect: ANSI_SQL
+      expression: COUNT(DISTINCT CASE WHEN (item.i_category = 'Books') AND (NOT item.i_brand LIKE '%importo%')
+        THEN item.i_manufact_id END)
+  datatype: Integer
+  description: Distinct manufacturers of items in the Books category, excluding one brand family
+  ai_context:
+    instructions: 'Grain: one row per distinct manufacturer. Counts: Items in the Books category. Excludes:
+      brands containing ''importo''.'
+  custom_extensions:
+  - vendor_name: ATLAN
+    data: '{"registry": {"id": "metric_synth_book_manufacturer_count", "definition_version": 1}, "agent_context":
+      {"grain": "one row per distinct manufacturer", "population": "Items in the Books category", "exclusions":
+      ["brands containing ''importo''"], "sql_dialect": "snowflake"}}'
+custom_extensions:
+- vendor_name: ATLAN
+  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

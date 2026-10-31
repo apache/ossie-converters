@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_last_store_sale_at",
+ "kind": "metric",
+ "app": "metric",
+ "name": "last_store_sale_at",
+ "display_name": "Last Store Sale At",
+ "description": "Timestamp of the most recent store sale",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:last_store_sale_at",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "max"
+   },
+   "output": {
+    "alias": "last_store_sale_at",
+    "datatype": "timestamp"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "table-level",
+   "population": "All store sales",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "MAX(SS_SOLD_TIMESTAMP)",
+   "source": {
+    "sql": "SELECT * FROM TPCDS.PUBLIC.STORE_SALES",
+    "table": null,
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

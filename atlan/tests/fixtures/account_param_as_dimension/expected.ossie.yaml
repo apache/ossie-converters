@@ -1,0 +1,93 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 0.2.0.dev0
+name: account_param_as_dimension
+description: a per-account parameter with no default becomes a dimension on that column
+datasets:
+- name: store_returns
+  source: TPCDS.PUBLIC.STORE_RETURNS
+  fields:
+  - name: store
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_STORE_SK
+      - dialect: ANSI_SQL
+        expression: SR_STORE_SK
+    dimension:
+      is_time: false
+    datatype: String
+    description: The store the return is attributed to.
+  - name: return_date
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_RETURNED_DATE
+      - dialect: ANSI_SQL
+        expression: SR_RETURNED_DATE
+    dimension:
+      is_time: true
+    datatype: Date
+    description: When the return was filed.
+  - name: sr_resolved_at
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_RESOLVED_AT
+      - dialect: ANSI_SQL
+        expression: SR_RESOLVED_AT
+  - name: sr_return_status
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SR_RETURN_STATUS
+      - dialect: ANSI_SQL
+        expression: SR_RETURN_STATUS
+metrics:
+- name: resolved_returns
+  expression:
+    dialects:
+    - dialect: OSSIE_SQL_2026
+      expression: COUNT_IF(CASE WHEN ((NOT store_returns.sr_resolved_at IS NULL OR LOWER(store_returns.sr_return_status)
+        IN ('resolved', 'closed'))) AND (COALESCE(store_returns.sr_resolved_at, store_returns.return_date)
+        >= DATEADD(DAY, -30, CURRENT_TIMESTAMP())) THEN (NOT store_returns.sr_resolved_at IS NULL OR LOWER(store_returns.sr_return_status)
+        IN ('resolved', 'closed')) END)
+    - dialect: ANSI_SQL
+      expression: COUNT_IF(CASE WHEN ((NOT store_returns.sr_resolved_at IS NULL OR LOWER(store_returns.sr_return_status)
+        IN ('resolved', 'closed'))) AND (COALESCE(store_returns.sr_resolved_at, store_returns.return_date)
+        >= DATEADD(DAY, -30, CURRENT_TIMESTAMP())) THEN (NOT store_returns.sr_resolved_at IS NULL OR LOWER(store_returns.sr_return_status)
+        IN ('resolved', 'closed')) END)
+  datatype: Integer
+  description: Returns resolved for one store in a window
+  ai_context:
+    instructions: 'Grain: TPCDS.PUBLIC.STORE_RETURNS.SR_TICKET_NUMBER. Counts: Returns that reached a
+      resolved or closed state. Unit: returns. Re-aggregation: sum.'
+    examples:
+    - How many returns did store 42 resolve in the last 30 days?
+  custom_extensions:
+  - vendor_name: ATLAN
+    data: '{"registry": {"id": "metric_synth_resolved_returns", "definition_version": 1}, "agent_context":
+      {"grain": "TPCDS.PUBLIC.STORE_RETURNS.SR_TICKET_NUMBER", "population": "Returns that reached a resolved
+      or closed state", "unit": "returns", "reaggregation": "sum", "sql_dialect": "snowflake", "dimensions":
+      ["store_returns.store", "store_returns.return_date"], "parameters": [{"name": "window_days", "datatype":
+      "integer", "default": 30}], "examples": [{"question": "How many returns did store 42 resolve in
+      the last 30 days?", "sql": "SELECT COUNT(*) FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_STORE_SK =
+      42 AND SR_RESOLVED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)"}]}}'
+custom_extensions:
+- vendor_name: ATLAN
+  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
