@@ -80,6 +80,7 @@ class OssieToSpecConverter:
             ontology=_convert_ontology_concepts(ont),
             ontology_mappings=ontology_mappings,
             prefixes=model.prefixes,
+            annotations=model.annotations,
         )
 
 
@@ -119,12 +120,16 @@ def _convert_concept(concept: Concept, rels: list[Relationship]) -> ConceptCompo
         requires=[f.raw_expr for f in concept.requires],
         relationships=[_convert_relationship(rel) for rel in rels],
         iri=concept.iri,
+        annotations=concept.annotations,
     )
 
 
 def _convert_relationship(rel: Relationship) -> SpecRelationship:
     extra_roles = list(rel.roles)[1:]
-    roles = [SpecRole(concept=role.player.name, name=role.explicit_name) for role in extra_roles]
+    roles = [
+        SpecRole(concept=role.player.name, name=role.explicit_name, annotations=role.annotations)
+        for role in extra_roles
+    ]
 
     multiplicity = rel.multiplicity.value if rel.multiplicity is not None else None
     verbalizes = rel.verbalizes_raw if rel.verbalizes_raw is not None else []
@@ -138,6 +143,7 @@ def _convert_relationship(rel: Relationship) -> SpecRelationship:
         derived_by=[f.raw_expr for f in rel.derived_by],
         requires=[f.raw_expr for f in rel.requires],
         iri=rel.iri,
+        annotations=rel.annotations,
     )
 
 

@@ -468,6 +468,36 @@ def test_one_column_can_key_an_entity_both_ways(behaviours_dir: Path):
     assert store_nr.datatype is None
 
 
+def test_annotations_reach_the_model(behaviours_dir: Path):
+    """Every level that accepts `annotations` keeps them on its model object."""
+    model = OssieParser().parse(behaviours_dir / "annotations.yaml")
+
+    assert model.annotations == {"dc:title": "Friend of a Friend (FOAF) vocabulary"}
+
+    person = model.ontology.lookup_concept("Person")
+    assert person.annotations["owl:equivalentClass"] == "http://schema.org/Person"
+
+    name = model.ontology.lookup_concept_relationship(person, "name")
+    assert name.annotations["rdfs:subPropertyOf"] == "rdfs:label"
+
+    acquaintance = model.ontology.lookup_concept_relationship(person, "knows").role("acquaintance")
+    assert acquaintance.annotations["source"]["vocabulary"] == "foaf"
+
+
+def test_annotations_survive_a_round_trip(behaviours_dir: Path):
+    """Annotated data the spec does not interpret comes back out unchanged.
+
+    Compares the whole document, so a level that parses `annotations` but drops
+    them on the way out fails here. `exclude_defaults` keeps them out of documents
+    that never had any, which the corpus snapshots pin.
+    """
+    path = behaviours_dir / "annotations.yaml"
+
+    dumped = OssieToSpecConverter.convert(OssieParser().parse(path)).dump_dict()
+
+    assert dumped == yaml.safe_load(path.read_text())
+
+
 @pytest.mark.parametrize("datatype", [None, "Integer"])
 def test_one_column_can_key_two_value_types(tmp_path: Path, datatype: str | None):
     """One column of site ids keys both Store (`StoreNr`) and Warehouse
