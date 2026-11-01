@@ -226,6 +226,13 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
             ds["metrics"] = dataset_metrics[ds["name"]]
     if metrics:
         model["metrics"] = metrics
+    _declare_key_fields(
+        cubes, {ds["name"]: ds.setdefault("fields", []) for ds in model["datasets"]},
+        {ds["name"]: ds.get("primary_key") for ds in model["datasets"]},
+        relationships, source_dialect)
+    for ds in model["datasets"]:
+        if not ds["fields"]:
+            del ds["fields"]
 
     # Model-level stash: the views verbatim (minus natively mapped properties),
     # the mapped view's identity, non-canonical file paths, and any file with no
@@ -698,6 +705,46 @@ def _yields_a_same_named_field(dim):
     """
     return not (snake(dim.get("type") or "") in ("geo", "switch")
                 or dim.get("sub_query"))
+
+
+def _declare_key_fields(cubes, fields_by_ds, keys_by_ds, relationships, source_dialect):
+    """Declare a field for every key and join column no field of that name covers.
+
+    Ossie's `primary_key` and relationship columns name dataset *fields*, but a Cube
+    join can read a raw column no dimension exposes. Each such column becomes a bare
+    key-only field named after the column, typed like the dimension that reads it and
+    marked in the stash so export does not turn it into a dimension. A field already
+    carrying the column's name, such as a computed key dimension, stands for it as is.
+
+    `fields_by_ds` maps each dataset name to its field list, which is extended in place.
+    """
+    needed = {name: list(columns or ()) for name, columns in keys_by_ds.items()}
+    for rel in relationships or ():
+        needed.setdefault(rel["from"], []).extend(rel["from_columns"])
+        needed.setdefault(rel["to"], []).extend(rel["to_columns"])
+    for name, columns in needed.items():
+        fields = fields_by_ds[name]
+        have = {f["name"] for f in fields}
+        for column in dict.fromkeys(columns):
+            if column in have:
+                continue
+            field = {"name": column, "expression": {"dialects": [{
+                "dialect": source_dialect or DIALECT_ANSI, "expression": column}]}}
+            datatype = _column_datatype(cubes, name, column)
+            if datatype:
+                field["datatype"] = datatype
+            write_stash(field, {"key_only": True})
+            fields.append(field)
+            have.add(column)
+
+
+def _column_datatype(cubes, cname, column):
+    """The Ossie datatype of the dimension reading `column`, or None when none does."""
+    for dim in _as_named_list(cubes[cname].get("dimensions"),
+                              f"cube '{cname}' dimensions"):
+        if _column_of(cubes, cname, dim["name"]) == column:
+            return DIM_TYPE_TO_DATATYPE.get(snake(dim.get("type") or "string"))
+    return None
 
 
 def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
