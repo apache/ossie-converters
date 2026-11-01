@@ -61,6 +61,7 @@ ossie/**
 **/node_modules/**
 **/.venv/**
 **/target/**
+interop/.runs/**
 
 # Files that are themselves license/notice
 **/LICENSE
