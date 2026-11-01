@@ -758,9 +758,12 @@ def test_output_validates_against_core_spec_schema(osi):
 
 
 def test_dax_is_a_spec_dialect():
+    jsonschema = pytest.importorskip("jsonschema")
+
     with open(REPO_ROOT / "core-spec" / "ossie-schema.json", encoding="utf-8") as fh:
         schema = json.load(fh)
-    assert "DAX" in schema["$defs"]["Dialect"]["enum"]
+    # The spec no longer enumerates dialects: any non-empty string is valid, DAX included.
+    jsonschema.validate("DAX", {"$ref": "#/$defs/Dialect", "$defs": schema["$defs"]})
 
 
 # --- lossless preservation (POWER_BI stash) --------------------------------

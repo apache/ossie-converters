@@ -273,6 +273,9 @@ def pick_expression(ossie_expression, preferred=None):
     to the connection's database, so e.g. SNOWFLAKE SQL is valid on a Snowflake-
     backed Omni model), then ANSI_SQL. Returns None if neither is present (the
     caller warns and skips).
+
+    When neither is present the portable `sql` form (OSSIE_SQL_2026) is used, then
+    an OSSIE_SQL_2026 entry in `dialects`.
     """
     dialects = {
         d.get("dialect"): d.get("expression")
@@ -283,6 +286,10 @@ def pick_expression(ossie_expression, preferred=None):
         expr = dialects.get(preferred)
     if expr is None:
         expr = dialects.get(DIALECT_ANSI)
+    if expr is None:
+        expr = (ossie_expression or {}).get("sql")
+    if expr is None:
+        expr = dialects.get("OSSIE_SQL_2026")
     if expr is not None and not isinstance(expr, str):
         raise ConversionError(
             f"expression must be a string, got {type(expr).__name__}")

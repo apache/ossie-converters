@@ -513,8 +513,12 @@ class DialectExpressionSet:
     """Runtime equivalent of spec.Expression — same logical expression rendered
     in one or more dialects."""
     dialects: list[DialectExpression] = field(default_factory=list)
+    # Portable OSSIE_SQL_2026 expression; authoritative over a same-dialect entry in `dialects`.
+    sql: str | None = None
 
     def by_dialect(self, dialect: str) -> DialectExpression | None:
+        if self.sql is not None and dialect == "OSSIE_SQL_2026":
+            return DialectExpression(dialect=dialect, expression=self.sql)
         for d in self.dialects:
             if d.dialect == dialect:
                 return d
@@ -522,7 +526,11 @@ class DialectExpressionSet:
 
     @property
     def primary(self) -> DialectExpression | None:
-        return self.dialects[0] if self.dialects else None
+        if self.dialects:
+            return self.dialects[0]
+        if self.sql is not None:
+            return DialectExpression(dialect="OSSIE_SQL_2026", expression=self.sql)
+        return None
 
 
 @dataclass

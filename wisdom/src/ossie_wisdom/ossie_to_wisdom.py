@@ -150,9 +150,9 @@ class OssieToWisdomConverter:
 
     def _infer_dataset_dialect(self, dataset: OssieDataset) -> OssieDialect:
         for field in dataset.fields or []:
-            for entry in field.expression.dialects:
+            for entry in field.expression.dialects or []:
                 if entry.dialect in (OssieDialect.SNOWFLAKE, OssieDialect.DATABRICKS, OssieDialect.BIGQUERY):
-                    return entry.dialect
+                    return OssieDialect(entry.dialect)
         return OssieDialect.ANSI_SQL
 
     def _split_ai_context(self, model: OssieSemanticModel, issues: List[ConverterIssue]) -> Tuple[str, List[dict]]:
@@ -282,7 +282,7 @@ class OssieToWisdomConverter:
     def _pick_expression(
         self, expression: OssieExpression, dialect: OssieDialect, element_name: str, issues: List[ConverterIssue]
     ) -> str:
-        by_dialect = {entry.dialect: entry.expression for entry in expression.dialects}
+        by_dialect = {entry.dialect: entry.expression for entry in expression.dialects or []}
         if dialect in by_dialect:
             return by_dialect[dialect]
         if OssieDialect.ANSI_SQL in by_dialect:
@@ -293,7 +293,7 @@ class OssieToWisdomConverter:
         issues.append(
             ConverterIssue(issue_type=ConverterIssueType.MISSING_DIALECT_EXPRESSION, element_name=element_name)
         )
-        return expression.dialects[0].expression
+        return expression.dialects[0].expression if expression.dialects else ""
 
     def _is_bare_column(self, expression: str, name: str) -> bool:
         return expression in (name, f'"{name}"', f"`{name}`")
@@ -309,7 +309,7 @@ class OssieToWisdomConverter:
                     ConverterIssue(issue_type=ConverterIssueType.AI_CONTEXT_DROPPED, element_name=metric.name)
                 )
             # Attach to a dataset first so the expression can be picked in that dataset's dialect.
-            reference_text = " ".join(entry.expression for entry in metric.expression.dialects)
+            reference_text = " ".join(entry.expression for entry in metric.expression.dialects or [])
             dataset_name = self._find_referenced_dataset(reference_text, dataset_names)
             if dataset_name is None:
                 dataset_name = dataset_names[0]

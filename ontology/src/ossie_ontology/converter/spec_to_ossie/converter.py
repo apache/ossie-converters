@@ -529,7 +529,8 @@ def _convert_custom_extension(ce: SpecCustomExtension) -> CustomExtension:
 
 def _convert_expression(expr: SpecExpression) -> DialectExpressionSet:
     return DialectExpressionSet(
-        dialects=[_convert_dialect_expression(d) for d in expr.dialects]
+        dialects=[_convert_dialect_expression(d) for d in expr.dialects],
+        sql=expr.sql,
     )
 
 
