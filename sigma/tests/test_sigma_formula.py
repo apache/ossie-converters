@@ -242,8 +242,7 @@ def test_text_round_trips():
 
 
 def test_reverse_translation_gives_up_on_non_text_casts():
-    # Only a cast to text has a Sigma equivalent; numeric and date casts are not mapped.
-    assert sql_to_sigma_formula('CAST("A" AS INT)') is None
+    # Date and boolean casts are not mapped.
     assert sql_to_sigma_formula('CAST("A" AS DATE)') is None
     assert sql_to_sigma_formula('CAST("A" AS BOOLEAN)') is None
     # Integer and DECIMAL/NUMBER casts round to a scale, which Number() does not.
@@ -251,14 +250,14 @@ def test_reverse_translation_gives_up_on_non_text_casts():
     assert sql_to_sigma_formula('CAST("A" AS DECIMAL)') is None
     assert sql_to_sigma_formula('CAST("A" AS NUMBER(10, 2))') is None
     assert sql_to_sigma_formula('CAST("A" AS FLOAT(10))') is None
+    # A sized text type truncates, which Text() does not.
+    assert sql_to_sigma_formula('CAST("A" AS CHAR(1))') is None
+    assert sql_to_sigma_formula('CAST("A" AS VARCHAR(10))') is None
 
 
 def test_number_round_trips():
     sql = to_ansi_sql(parse_formula("Number([A]) * 2"), dataset_alias="T")
     assert sql_to_sigma_formula(sql, dataset_alias="T") == "(Number([A]) * 2)"
-    # A sized text type truncates, which Text() does not.
-    assert sql_to_sigma_formula('CAST("A" AS CHAR(1))') is None
-    assert sql_to_sigma_formula('CAST("A" AS VARCHAR(10))') is None
 
 
 def test_reverse_translation_gives_up_on_count_star():
