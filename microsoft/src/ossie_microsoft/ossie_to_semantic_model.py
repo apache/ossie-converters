@@ -63,6 +63,7 @@ from ._common import (
     foreign_vendor_extensions,
     prune,
     read_stash,
+    sql_identifier_name,
     warn,
     warn_unsupported,
 )
@@ -607,7 +608,9 @@ def _dataset_column_index(dataset):
         if expressions:
             dialect, expression = _preferred_expression(expressions)
             if dialect != DIALECT_DAX:
-                candidate = expression.strip().strip('"').strip("`").strip("[]")
+                candidate = sql_identifier_name(expression)
+                if candidate is None:
+                    candidate = expression.strip().strip('"').strip("`").strip("[]")
                 if IDENTIFIER_RE.match(candidate):
                     aliases.add(candidate)
         for alias in aliases:
@@ -649,6 +652,12 @@ def _source_column(expressions, name, stash):
         # A preserved source column the source query exposes under a name that is not a
         # bare SQL identifier, still unedited. Replay it rather than reparse it.
         return expression
+
+    delimited = sql_identifier_name(expression)
+    if delimited is not None:
+        # The import wrote this name as one quoted ANSI identifier. Read it back, so the
+        # TMSL source column is the original name and the quoting never leaks out.
+        return delimited
 
     candidate = expression.strip().strip('"').strip("`").strip("[]")
     if IDENTIFIER_RE.match(candidate):

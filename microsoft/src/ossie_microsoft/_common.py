@@ -91,6 +91,50 @@ AUTO_DATE_TABLE_RE = re.compile(r"^(LocalDateTable_|DateTableTemplate_)")
 # `sourceColumn`) or a computed expression (which does not).
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+
+def sql_identifier(name):
+    """Write a column name as one ANSI SQL identifier.
+
+    A TMSL ``sourceColumn`` may hold anything the source query exposes -- spaces,
+    parentheses, a leading ``!`` or ``#``. Written bare, such a name is not one SQL
+    identifier: the field expression then parses as a fragment of SQL and the Ossie
+    validator reports a syntax error. Double-quote it instead, doubling an embedded
+    double quote as the SQL standard requires, so the expression stays one column
+    reference and reads back unchanged.
+    """
+    if IDENTIFIER_RE.match(name):
+        return name
+    return '"' + name.replace('"', '""') + '"'
+
+
+def sql_identifier_name(expression):
+    """Read back a name written by :func:`sql_identifier`, or return None.
+
+    Only a lone double-quoted identifier is decoded. A computed SQL expression --
+    including one that merely starts and ends with a quote, such as ``"a" + "b"`` --
+    is not a name and yields None.
+    """
+    text = expression.strip()
+    if len(text) < 2 or text[0] != '"' or text[-1] != '"':
+        return None
+    value = []
+    index = 1
+    end = len(text) - 1
+    while index < end:
+        char = text[index]
+        if char != '"':
+            value.append(char)
+            index += 1
+        elif index + 1 < end and text[index + 1] == '"':
+            value.append('"')
+            index += 2
+        else:
+            # An undoubled quote closes the identifier before the end: this is not
+            # one delimited name but a computed expression.
+            return None
+    return "".join(value)
+
+
 # ---------------------------------------------------------------------------
 # Constructs neither model can represent
 # ---------------------------------------------------------------------------

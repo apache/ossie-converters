@@ -54,6 +54,7 @@ from ._common import (
     is_date_only_format,
     make_expression,
     read_stash,
+    sql_identifier,
     text,
     warn,
     warn_unsupported,
@@ -429,7 +430,12 @@ def _convert_column(column, table_scope):
         # into SQL, so no expression semantics are invented.
         expression = make_expression(text(column.get("expression", "")), DIALECT_DAX)
     else:
-        expression = make_expression(column.get("sourceColumn") or name, DIALECT_ANSI)
+        # A `sourceColumn` is a name in the table's source query, not a SQL expression.
+        # Quote it when it is not a bare SQL identifier so the field expression parses
+        # as one column reference instead of a fragment of SQL.
+        expression = make_expression(
+            sql_identifier(column.get("sourceColumn") or name), DIALECT_ANSI
+        )
 
     field = {"name": name, "expression": expression}
 
@@ -453,9 +459,9 @@ def _convert_column(column, table_scope):
     else:
         source_column = column.get("sourceColumn") or name
         if not IDENTIFIER_RE.match(source_column):
-            # A TMSL `sourceColumn` may hold anything the source query exposes,
-            # including spaces or a leading digit. Preserve it so the export replays it
-            # verbatim instead of trying to read it back as a SQL identifier.
+            # The expression now quotes this name, but keep the undecorated form in the
+            # stash: an author who strips the quotes is still replaying a name, and the
+            # export prefers the preserved value over re-parsing the expression.
             stash["sourceColumn"] = source_column
     if not _is_reversible_datatype(column.get("dataType"), datatype):
         # The portable type does not map back to this exact TMSL type, so keep the

@@ -19,6 +19,9 @@
 
 import json
 import logging
+import os
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 
@@ -26,12 +29,21 @@ import pytest
 import yaml
 
 from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
-from ossie_microsoft._common import VENDOR, make_expression, read_stash, write_stash
+from ossie_microsoft._common import (
+    VENDOR,
+    make_expression,
+    read_stash,
+    sql_identifier_name,
+    write_stash,
+)
 from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The apache/ossie checkout (the `ossie` git submodule): core-spec/, examples/, ...
 REPO_ROOT = Path(__file__).resolve().parents[2] / "ossie"
+# The spec validator is a script, not an installed module; point at this checkout in a
+# test run that keeps apache/ossie elsewhere (OSSIE_VALIDATOR) and skip when absent.
+VALIDATOR = Path(os.environ.get("OSSIE_VALIDATOR", REPO_ROOT / "validation" / "validate.py"))
 
 
 def _dataset(model, name):
@@ -315,6 +327,155 @@ def test_plain_column_uses_source_column_as_sql(model):
     assert _expression(amount, "ANSI_SQL") == "amount"
     assert amount["datatype"] == "Decimal"
     assert amount["description"] == "Extended sales amount"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "!Даты (Период)",
+        "Статья движения денежных средств",
+        "A/B",
+        "#hash",
+        "!leading",
+        '!Состояния_документов_"Заявка" (Состояние)',
+        "1 leading digit",
+    ],
+    ids=lambda name: name,
+)
+def test_a_source_column_that_is_not_a_sql_identifier_is_quoted_and_round_trips(name):
+    # A `sourceColumn` is a name in the source query, not a SQL expression: spaces,
+    # parentheses, `/`, a leading `!` or `#`, or a digit all occur in real models.
+    bim = {
+        "name": "quoted_source_column",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [
+                        {"name": name, "dataType": "string", "sourceColumn": name}
+                    ],
+                }
+            ]
+        },
+    }
+
+    ossie = build_ossie_document(bim)
+    field = _field(_dataset(ossie, "T"), name)
+    assert _expression(field, "ANSI_SQL") == '"' + name.replace('"', '""') + '"'
+
+    column = convert_ossie_to_semantic_model(ossie)["model"]["tables"][0]["columns"][0]
+    assert column["name"] == name
+    assert column["sourceColumn"] == name
+
+
+def test_a_computed_sql_expression_is_not_read_back_as_a_column_name():
+    # Only a lone quoted identifier is a name; a computed expression that happens to
+    # start and end with a quote must keep being treated as one.
+    bim = {
+        "name": "computed",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [
+                        {"name": "A", "dataType": "string", "sourceColumn": "a"},
+                        {"name": "B", "dataType": "string", "sourceColumn": "b"},
+                    ],
+                }
+            ]
+        },
+    }
+    ossie = build_ossie_document(bim)
+    field = _field(_dataset(ossie, "T"), "A")
+    field["expression"]["dialects"][0]["expression"] = '"a" + "b"'
+
+    column = convert_ossie_to_semantic_model(ossie)["model"]["tables"][0]["columns"][0]
+    assert "sourceColumn" not in column
+
+    assert sql_identifier_name('"a" + "b"') is None
+    assert sql_identifier_name('"a""b"') == 'a"b'
+    assert sql_identifier_name("a") is None
+
+
+def test_a_calculated_column_keeps_its_dax_even_with_a_non_identifier_name():
+    name = "Итог (шт.)"
+    expression = "SUM(T[Amount])"
+    bim = {
+        "name": "calculated_quoted_name",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [
+                        {
+                            "name": name,
+                            "type": "calculated",
+                            "dataType": "double",
+                            "expression": expression,
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+    ossie = build_ossie_document(bim)
+    field = _field(_dataset(ossie, "T"), name)
+    assert _expression(field, "DAX") == expression
+    assert "ANSI_SQL" not in [d["dialect"] for d in field["expression"]["dialects"]]
+
+    column = convert_ossie_to_semantic_model(ossie)["model"]["tables"][0]["columns"][0]
+    assert column["type"] == "calculated"
+    assert column["expression"] == expression
+    assert "sourceColumn" not in column
+
+
+@pytest.mark.skipif(
+    not VALIDATOR.exists(),
+    reason="apache/ossie checkout with validation/validate.py is not available",
+)
+def test_a_quoted_source_column_passes_the_ossie_validator(tmp_path):
+    names = [
+        "!Даты (Период)",
+        "Статья движения денежных средств",
+        "A/B",
+        "#hash",
+        "!leading",
+        '!Состояния_документов_"Заявка" (Состояние)',
+    ]
+    bim = {
+        "name": "validator_quoted_names",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [
+                        {"name": name, "dataType": "string", "sourceColumn": name}
+                        for name in names
+                    ],
+                }
+            ]
+        },
+    }
+    document = tmp_path / "model.yaml"
+    document.write_text(
+        yaml.safe_dump(build_ossie_document(bim), allow_unicode=True), encoding="utf-8"
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(VALIDATOR), str(document)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    if result.returncode != 0 and "ModuleNotFoundError" in output:
+        # The validator is a PEP 723 script with its own dependency list; a test run
+        # that has the checkout but not those packages cannot exercise it.
+        pytest.skip("the validator's script dependencies are not installed")
+    assert result.returncode == 0, output
+    assert "Validation PASSED" in result.stdout
 
 
 def test_dax_string_literal_remains_a_calculated_column():
