@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -146,9 +147,17 @@ _ENV_FAILURE_MARKERS = ("No solution found", "Failed to spawn", "no such command
 
 
 def run(argv, cwd=None):
-    """Run `argv`, or return a synthetic failure rather than raising."""
+    """Run `argv`, or return a synthetic failure rather than raising.
+
+    Converters print UTF-8 (model names, quoted identifiers). Decoding with the console's
+    code page instead, as Python does by default on Windows, would garble or fail on it,
+    so the child is put in UTF-8 mode and its output decoded as UTF-8, with any invalid
+    byte replaced rather than raised.
+    """
     try:
         return subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              env={**os.environ, "PYTHONUTF8": "1"},
                               timeout=_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(argv, 1, "", f"timed out after {_TIMEOUT_S}s")
@@ -173,7 +182,7 @@ def load_fixtures(fixtures_dir):
     if not manifest.exists():
         sys.exit(f"no manifest.yaml in {fixtures_dir}")
     fixtures = []
-    for line in manifest.read_text().splitlines():
+    for line in manifest.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line.startswith("- {id:") and "file:" in line:
             fields = {
@@ -218,7 +227,7 @@ def entry_point(cwd, script):
     A line parser rather than tomllib, so the script also runs on Python 3.10.
     """
     in_scripts = False
-    for line in (cwd / "pyproject.toml").read_text().splitlines():
+    for line in (cwd / "pyproject.toml").read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped.startswith("["):
             in_scripts = stripped == "[project.scripts]"
@@ -296,7 +305,7 @@ def missing_path_dependency(cwd):
     pyproject = cwd / "pyproject.toml"
     if not pyproject.exists():
         return None
-    for match in _PATH_DEPENDENCY.finditer(pyproject.read_text()):
+    for match in _PATH_DEPENDENCY.finditer(pyproject.read_text(encoding="utf-8")):
         target = (cwd / match.group(1)).resolve()
         if not (target / "pyproject.toml").exists():
             return match.group(1)
@@ -410,7 +419,7 @@ def main(argv=None):
                     reports.append({"variant": variant, "rejected": True, "detail": detail})
                     continue
                 diagnostics = work / "diagnostics.txt"
-                diagnostics.write_text(log)
+                diagnostics.write_text(log, encoding="utf-8")
                 report = grade(grader, args.grader_python, fixture, returned,
                                diagnostics, converter.name)
                 report["variant"] = variant

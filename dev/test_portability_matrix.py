@@ -114,3 +114,18 @@ def test_converters_with_a_path_dependency_find_it_in_this_checkout():
 def test_missing_fixtures_explain_the_submodule(tmp_path):
     with pytest.raises(SystemExit, match="git submodule update --remote ossie"):
         pm.main(["--fixtures", str(tmp_path)])
+
+
+def test_run_decodes_utf8_output_and_replaces_invalid_bytes():
+    script = (
+        "import sys; sys.stdout.buffer.write('Umsatz \u20ac'.encode('utf-8') + b' \\xff')"
+    )
+    result = pm.run([sys.executable, "-c", script])
+    assert result.returncode == 0
+    assert result.stdout == "Umsatz \u20ac \ufffd"
+
+
+def test_run_puts_the_child_in_utf8_mode():
+    result = pm.run([sys.executable, "-c", "import sys; print(sys.flags.utf8_mode)"])
+    assert result.stdout.strip() == "1"
+
