@@ -130,9 +130,15 @@ def _project(text=_MODEL, view="sales", **kwargs):
 
 
 def _surface(out):
-    """({dataset: {field names}}, {metric names}) of a projected model."""
+    """({dataset: {field names}}, {metric names}) of a projected model.
+
+    Key-only fields, which declare a key or join column the view does not expose, are
+    not part of the surface.
+    """
     model = model_of(out)
-    fields = {ds["name"]: set(by_name(ds.get("fields"))) for ds in model["datasets"]}
+    fields = {ds["name"]: {name for name, field in by_name(ds.get("fields")).items()
+                           if not stash_of(field).get("key_only")}
+              for ds in model["datasets"]}
     return fields, set(by_name(model.get("metrics")))
 
 
@@ -1440,9 +1446,11 @@ def _check_projection(seed):
     assert source == "fact"
     assert_ossie_is_valid(out, f"projection (seed {seed})")
     model = model_of(out)
-    fields = {f["name"] for ds in model["datasets"] for f in ds.get("fields") or []}
+    fields = {f["name"] for ds in model["datasets"] for f in ds.get("fields") or []
+              if not stash_of(f).get("key_only")}
     metrics = {m["name"] for m in model.get("metrics") or []}
-    # Exactly the surface: nothing hidden published, nothing published missing.
+    # Exactly the surface, bar key-only fields: nothing hidden published, nothing
+    # published missing.
     assert fields | metrics == surface
     assert not fields & metrics
     for metric in model.get("metrics") or []:
