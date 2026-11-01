@@ -138,6 +138,12 @@ def _convert_model(model, dialect, base_cube, issues):
         cube_names[ds_name] = sanitize_name(
             ds_name, f"Model '{name}': dataset", taken)
         taken.add(cube_names[ds_name].lower())
+    # A key-only field stands in for a key or join column no dimension exposes. The
+    # keys and joins still name that column, so it comes back as raw SQL, not a dimension.
+    for ds in dataset_list:
+        if ds.get("fields"):
+            ds["fields"] = [f for f in ds["fields"]
+                            if not read_stash(f).get("key_only")]
     datasets = {ds["name"]: ds for ds in dataset_list}
 
     relationships = model.get("relationships") or []

@@ -39,6 +39,11 @@ datasets:
       - dialect: DATABRICKS
         expression: o_orderkey
     description: Order identifier
+  - name: o_custkey
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: o_custkey
   - name: o_orderdate
     expression:
       dialects:
@@ -56,6 +61,11 @@ datasets:
   unique_keys:
   - - c_custkey
   fields:
+  - name: c_custkey
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: c_custkey
   - name: c_name
     expression:
       dialects:
