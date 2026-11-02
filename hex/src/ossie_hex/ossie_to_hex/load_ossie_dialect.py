@@ -25,10 +25,6 @@ def load_ossie_dialect(
     *,
     ctx: ExportContext,
 ) -> OssieDialect:
-    # Even though OssieDocument specifies `dialects` as a top-level field, this isn't
-    # technically part of the core spec. So we don't use it. Otherwise we would validate
-    # against it and pick the first as a fallback.
-
     if isinstance(ossie_dialect, OssieDialect):
         return ossie_dialect
     elif isinstance(ossie_dialect, str):
