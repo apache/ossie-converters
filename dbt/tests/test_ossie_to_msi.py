@@ -556,6 +556,8 @@ class TestOssieToMSIMetricConversion:
         assert len(simple_metrics) == 2
         names = {m.name for m in simple_metrics}
         assert names == {"ratio_numerator", "ratio_denominator"}
+        assert all(m.type_params.is_private for m in simple_metrics)
+        assert next(m for m in result.metrics if m.name == "ratio").type_params.is_private is False
 
     def test_ratio_sub_metric_names_pass_metricflow_validation(self) -> None:
         """MetricFlow rejects names containing a double underscore, so generated names must not use one."""
@@ -595,6 +597,8 @@ class TestOssieToMSIMetricConversion:
         names = [m.name for m in result.metrics]
         assert len(names) == len(set(names))
         assert set(names) == {"ratio", "ratio_numerator", "ratio_numerator_2", "ratio_denominator"}
+        assert next(m for m in result.metrics if m.name == "ratio_numerator").type_params.is_private is False
+        assert next(m for m in result.metrics if m.name == "ratio_numerator_2").type_params.is_private
 
     def test_ratio_sub_metric_name_does_not_reuse_a_generated_name(self) -> None:
         """A metric named like another ratio's generated helper keeps its name; the helper moves aside."""
@@ -1269,6 +1273,89 @@ class TestOssieToMSIReviewRegressions:
 
 
 class TestOssieToMSIRoundTrip:
+    def test_ratio_round_trips_do_not_accumulate_generated_metrics(self) -> None:
+        """Private MetricFlow helpers must not leak into Ossie or consume names on the next pass."""
+        doc = _ossie_doc(
+            datasets=[
+                _ossie_dataset(
+                    "orders",
+                    fields=[_ossie_field("amount"), _ossie_field("order_id")],
+                    primary_key=["order_id"],
+                )
+            ],
+            metrics=[
+                _ossie_metric("avg_order_value", "SUM(orders.amount) / COUNT(DISTINCT orders.order_id)")
+            ],
+        )
+
+        canonical_expression = None
+        for _ in range(3):
+            forward = OssieToMSIConverter().convert(doc)
+            assert forward.issues == []
+            assert {m.name for m in forward.output.metrics} == {
+                "avg_order_value",
+                "avg_order_value_numerator",
+                "avg_order_value_denominator",
+            }
+            assert {m.name for m in forward.output.metrics if m.type_params.is_private} == {
+                "avg_order_value_numerator",
+                "avg_order_value_denominator",
+            }
+
+            backward = MSIToOssieConverter().convert(forward.output)
+            assert backward.issues == []
+            assert [m.name for m in backward.output.metrics or []] == ["avg_order_value"]
+            expression = backward.output.metrics[0].expression.dialects[0].expression
+            if canonical_expression is not None:
+                assert expression == canonical_expression
+            canonical_expression = expression
+            doc = backward.output
+
+    def test_ratio_helpers_do_not_hide_document_metrics_with_colliding_names(self) -> None:
+        doc = _ossie_doc(
+            datasets=[
+                _ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("order_id")])
+            ],
+            metrics=[
+                _ossie_metric("avg", "SUM(amount) / COUNT(order_id)"),
+                _ossie_metric("avg_numerator", "SUM(amount)"),
+                _ossie_metric("second_avg", "SUM(amount) / COUNT(order_id)"),
+            ],
+        )
+
+        forward = OssieToMSIConverter().convert(doc)
+        assert forward.issues == []
+        assert next(m for m in forward.output.metrics if m.name == "avg_numerator").type_params.is_private is False
+        assert next(m for m in forward.output.metrics if m.name == "avg_numerator_2").type_params.is_private
+
+        backward = MSIToOssieConverter().convert(forward.output)
+        assert backward.issues == []
+        assert {m.name for m in backward.output.metrics or []} == {"avg", "avg_numerator", "second_avg"}
+
+    def test_nested_ratio_helpers_are_inlined_without_false_warnings(self) -> None:
+        doc = _ossie_doc(
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("order_id")])],
+            metrics=[
+                _ossie_metric(
+                    "nested_avg",
+                    "(SUM(orders.amount) / COUNT(orders.order_id)) / SUM(orders.amount)",
+                )
+            ],
+        )
+
+        forward = OssieToMSIConverter().convert(doc)
+        assert forward.issues == []
+        assert {m.name for m in forward.output.metrics if m.type_params.is_private} == {
+            "nested_avg_numerator",
+            "nested_avg_numerator_numerator",
+            "nested_avg_numerator_denominator",
+            "nested_avg_denominator",
+        }
+
+        backward = MSIToOssieConverter().convert(forward.output)
+        assert backward.issues == []
+        assert [m.name for m in backward.output.metrics or []] == ["nested_avg"]
+
     def test_sum_over_case_round_trip_does_not_double_aggregate(self) -> None:
         expression = "SUM(CASE WHEN orders.status = 'paid' THEN amount ELSE 0 END)"
         original = _ossie_doc(
@@ -1367,21 +1454,16 @@ class TestOssieToMSIRoundTrip:
         ossie_doc = MSIToOssieConverter().convert(msi).output
 
         expressions = {m.name: m.expression.dialects[0].expression for m in ossie_doc.metrics or []}
+        assert set(expressions) == {"order_count", "avg_order_value"}
         assert expressions["order_count"] == "SUM(1)"
         assert "SUM(1)" in expressions["avg_order_value"]
 
-        # The first round trip already flattened the ratio into independent metrics (numerator,
-        # denominator, and the ratio's own expression string). Only the ones that are still row
-        # counts drop here: the denominator (SUM(1), ambiguous) and the ratio itself, which depends
-        # on it. The numerator (SUM(orders.amount), not a row count) is a valid metric on its own
-        # and survives, same as it would have before any of this.
+        # Ratio helpers are now private and never exported as standalone Ossie metrics. The next
+        # forward pass drops the ambiguous row count and the ratio that depends on it, without
+        # leaking its otherwise valid numerator as a new public metric.
         again = OssieToMSIConverter().convert(ossie_doc)
-        assert [m.name for m in again.output.metrics] == ["avg_order_value_numerator"]
-        assert {i.element_name for i in again.issues} == {
-            "order_count",
-            "avg_order_value",
-            "avg_order_value_denominator",
-        }
+        assert again.output.metrics == []
+        assert {i.element_name for i in again.issues} == {"order_count", "avg_order_value"}
 
     def test_discrete_percentile_survives_round_trip(self) -> None:
         """A PERCENTILE_DISC metric keeps use_discrete_percentile through MSI -> Ossie -> MSI."""

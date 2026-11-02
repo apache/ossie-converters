@@ -163,6 +163,7 @@ class MSIToOssieConverter:
         expression_cache: Dict[Tuple[str, Optional[str]], str] = {}
 
         ossie_metrics: List[OssieMetric] = []
+        inlined_ratios: set[str] = set()
         for metric in manifest.metrics:
             if metric.type is MetricType.CONVERSION:
                 issues.append(
@@ -208,6 +209,8 @@ class MSIToOssieConverter:
                     datatype=self._resolve_datatype(metric.datatype, metric.config),
                 )
             )
+            if metric.type is MetricType.RATIO:
+                inlined_ratios.add(metric.name)
             if len(manifest.semantic_models) > 1 and self._aggregates_a_constant(metric):
                 # SUM(1) and the like carry no column, so the semantic model the metric belonged to
                 # cannot be written into the Ossie expression. Converting it back refuses rather than
@@ -218,6 +221,20 @@ class MSIToOssieConverter:
                         element_name=metric.name,
                     )
                 )
+
+        # A private MetricFlow helper is not lost if its only consumers are ratios
+        # whose expressions were successfully inlined into visible Ossie metrics.
+        # Retain the warning for unused private metrics, non-ratio consumers, and
+        # inputs of ratios that were dropped; retain original issue ordering.
+        inlined_private_inputs = self._private_inputs_covered_by_ratios(manifest.metrics, inlined_ratios)
+        issues = [
+            issue
+            for issue in issues
+            if not (
+                issue.issue_type is ConverterIssueType.PRIVATE_METRIC_DROPPED
+                and issue.element_name in inlined_private_inputs
+            )
+        ]
 
         return ConverterResult(
             output=OssieDocument(
@@ -324,6 +341,53 @@ class MSIToOssieConverter:
     def _build_metric_index(metrics: Sequence[Metric]) -> Dict[str, Metric]:
         """Map metric name to Metric for recursive resolution."""
         return {metric.name: metric for metric in metrics}
+
+    @staticmethod
+    def _private_inputs_covered_by_ratios(metrics: Sequence[Metric], inlined_ratios: set[str]) -> set[str]:
+        """Private inputs are preserved only when every use is in an inlined ratio.
+
+        A private ratio can itself be a generated input of another ratio, so
+        walk that chain outward from successfully exported public ratios. Other
+        consumers (DERIVED or CUMULATIVE) deliberately prevent suppression.
+        """
+        consumers: Dict[str, set[str]] = defaultdict(set)
+        for metric in metrics:
+            params = metric.type_params
+            if metric.type is MetricType.RATIO:
+                inputs = [params.numerator, params.denominator]
+            elif metric.type is MetricType.DERIVED:
+                inputs = list(params.metrics or [])
+            elif metric.type is MetricType.CUMULATIVE:
+                cumulative = params.cumulative_type_params
+                inputs = [cumulative.metric] if cumulative is not None and cumulative.metric is not None else []
+            else:
+                inputs = []
+            for input_metric in inputs:
+                if input_metric is not None:
+                    consumers[input_metric.name].add(metric.name)
+
+        covered_ratios = set(inlined_ratios)
+        while True:
+            covered_nested_ratios = {
+                metric.name
+                for metric in metrics
+                if metric.type is MetricType.RATIO
+                and metric.type_params.is_private
+                and metric.name not in covered_ratios
+                and consumers.get(metric.name)
+                and consumers[metric.name] <= covered_ratios
+            }
+            if not covered_nested_ratios:
+                break
+            covered_ratios.update(covered_nested_ratios)
+
+        return {
+            metric.name
+            for metric in metrics
+            if metric.type_params.is_private
+            and consumers.get(metric.name)
+            and consumers[metric.name] <= covered_ratios
+        }
 
     @staticmethod
     def _lookup_metric(metric_index: Dict[str, Metric], name: str, context: str) -> Metric:
