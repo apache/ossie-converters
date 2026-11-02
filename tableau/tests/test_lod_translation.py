@@ -161,7 +161,6 @@ def test_convert_keeps_viz_dependent_shapes_as_losses(formula):
         "LOOKUP(SUM([amt]), -1)", "LOOKUP(AVG([amt]), -2)",
         "INDEX()+RANK(SUM([amt]))",
         "IIF(INDEX()>0, 1, 0)", "IF FIRST()=0 THEN SUM([amt]) END",
-        "{FIXED [amt] : [amt]}", "{FIXED [amt] : [amt]} * 2",
         "INDEX()>1", "LOOKUP(SUM([amt]), -1) IS NULL",
         "WINDOW_COUNT(SUM([amt]))",
         "RANK_PERCENTILE(SUM([amt]))", "LOOKUP(SUM([amt]), FIRST())",
@@ -171,6 +170,8 @@ def test_convert_keeps_viz_dependent_shapes_as_losses(formula):
         assert "sql_unreconciled" not in ks
     else:
         assert "sql_unreconciled" in ks
+    if formula.startswith("{FIXED [amt] : [amt]}"):  # Tableau rejects a non-aggregate FIXED body (golden truth)
+        assert any("FIXED body is not an aggregate" in x.detail for x in r.losses if x.kind == "sql_unreconciled")
     dialects = {str(getattr(d.dialect, "value", d.dialect)) for d in r.document.metrics[0].expression.dialects}
     assert "TABLEAU" in dialects and "SNOWFLAKE" in dialects and "ANSI_SQL" in dialects and "BIGQUERY" in dialects
 

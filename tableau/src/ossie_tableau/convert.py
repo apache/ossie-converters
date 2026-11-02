@@ -114,7 +114,7 @@ LOD_VIZ_SHAPE = re.compile(
     re.I)
 # Whole-formula shapes whose window SQL matches table-across on a fixed sort (BQ + SF live gates).
 # INCLUDE/EXCLUDE, PREVIOUS_VALUE, and offset/mismatched WINDOW_* stay sql_unreconciled.
-# {FIXED [d]: [field]} is reconciled after FIRST_VALUE (not MAX) + first-row-per-partition truth.
+# {FIXED [d]: [field]} (non-aggregate body) is not reconciled: Tableau rejects it ("formula is invalid", VDS 400).
 # 22–24 (INDEX()>1, LOOKUP IS NULL, WINDOW_COUNT, LOOKUP FIRST()) after BQ 49/49 + SF 37/37.
 # RANK* (all five, default/'asc'/'desc', ties and NULLs) match Tableau-exported golden CSVs on both SF and BQ SQL.
 _RECONCILED_VIZ = re.compile(
@@ -136,12 +136,11 @@ _RECONCILED_VIZ = re.compile(
     rf"|IIF\s*\(\s*INDEX\s*\(\s*\)\s*>\s*{_NUM}\s*,\s*{_NUM}\s*,\s*{_NUM}\s*\)"
     rf"|IF\s+FIRST\s*\(\s*\)\s*=\s*0\s+THEN\s+{_TC_AGG}\s+END"
     rf"|\{{\s*FIXED\s+{_LOD_DIMS}\s*:\s*{_AGG1}\s*\}}\s*[+\-*/]\s*{_NUM}"
-    rf"|\{{\s*FIXED\s+{_LOD_DIMS}\s*:\s*{_TC_REF}\s*\}}"
-    rf"|\{{\s*FIXED\s+{_LOD_DIMS}\s*:\s*{_TC_REF}\s*\}}\s*[+\-*/]\s*{_NUM}"
     rf")\s*$",
     re.I)
 _TC_ATOM_RE = re.compile(_TC_ATOM, re.I)
 _BARE_WINDOW_RE = re.compile(rf"\bWINDOW_\w+\s*\(\s*{_TC_REF}\s*[,)]", re.I)
+_BARE_FIXED_RE = re.compile(rf"\{{\s*FIXED\s+{_LOD_DIMS}\s*:\s*{_TC_REF}\s*\}}", re.I)
 _LOD_ATOM_RE = re.compile(_LOD_ATOM, re.I)
 _FOLD_BIN = re.compile(rf"(?:@|{_NUM})\s*[+\-*/]\s*(?:@|{_NUM})")
 _FOLD_PAREN = re.compile(r"\(\s*@\s*\)")
@@ -1678,6 +1677,8 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                         detail += "; TWB table-calc " + ", ".join(tc_extras)
                     if _BARE_WINDOW_RE.search(m):
                         detail += "; WINDOW_* argument is not an aggregate"
+                    if _BARE_FIXED_RE.search(m):
+                        detail += "; FIXED body is not an aggregate (Tableau rejects this formula)"
                     losses.append(Loss("sql_unreconciled", label, detail))
             else:
                 sq = _sql_dialect(out, "" if len(tables) > 1 else (tables[0].name if tables else None), mname, losses)
