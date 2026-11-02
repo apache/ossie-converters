@@ -400,7 +400,7 @@ class _P:
             return sign * int(float(n.name))
         raise Untranslatable("window offset must be an integer literal")
 
-    def _rows_window(self, body, start: int, end: int, count: bool = False):
+    def _rows_window(self, agg: exp.Expression, start: int, end: int) -> exp.Expression:
         def bound(n: int) -> str:
             if n < 0:
                 return f"{-n} PRECEDING"
@@ -408,11 +408,30 @@ class _P:
                 return f"{n} FOLLOWING"
             return "CURRENT ROW"
         w = sqlglot.parse_one(f"SUM(x) OVER (ROWS BETWEEN {bound(start)} AND {bound(end)})")
-        inner = self._unwrap_single_agg(body) if count else self._unwrap_node(body)
-        w.set("this", exp.Count(this=inner) if count else inner)
+        w.set("this", agg)
         if (o := self._order_clause()) is not None:
             w.set("order", o)
         return w
+
+    def _row_grain(self, body: exp.Expression) -> exp.Expression:
+        """Per-viz-row value of an aggregate expression at row grain: SUM/AVG/MIN/MAX/MEDIAN(col) -> col,
+        COUNT/COUNTD(col) -> 0/1, so an outer WINDOW_* aggregate is not nested inside another aggregate."""
+        def sub(n: exp.Expression) -> exp.Expression:
+            if not isinstance(n, _AGG):
+                return n
+            arg = self._unwrap_node(n.this) if n.this is not None else None
+            if isinstance(n, exp.Count):
+                if isinstance(arg, exp.Star):
+                    return exp.Literal.number(1)
+                if isinstance(arg, exp.Distinct) and len(arg.expressions) == 1:
+                    arg = self._unwrap_node(arg.expressions[0])
+                if isinstance(arg, exp.Column):
+                    return sqlglot.parse_one("CASE WHEN x IS NULL THEN 0 ELSE 1 END").transform(
+                        lambda c: arg.copy() if isinstance(c, exp.Column) else c)
+            elif isinstance(n, (exp.Sum, exp.Avg, exp.Min, exp.Max, exp.Median)) and isinstance(arg, exp.Column):
+                return arg.copy()
+            raise Untranslatable(f"WINDOW_* over {n.key.upper()} has no row-grain form")
+        return body.copy().transform(sub)
 
     def _rank_window(self, body, fn: str):
         key = self._unwrap_single_agg(body)
@@ -551,21 +570,30 @@ class _P:
                 end = self._signed_int()
             self.need(")")
             self._addr()
-            if start is not None:
-                return self._rows_window(body, start, end, count=name == "WINDOW_COUNT"), t
-            inner = self._unwrap_node(body)
+            if name == "TOTAL":
+                if start is not None:
+                    raise Untranslatable("TOTAL takes one argument")
+                return self._window(body, [], allow_nonagg=True), t
             outer_cls = {
                 "WINDOW_SUM": exp.Sum, "WINDOW_AVG": exp.Avg, "WINDOW_MIN": exp.Min,
                 "WINDOW_MAX": exp.Max, "WINDOW_COUNT": exp.Count,
-            }.get(name)
-            mismatch = {(exp.Sum, exp.Avg), (exp.Avg, exp.Sum), (exp.Min, exp.Max), (exp.Max, exp.Min)}
-            if outer_cls is not None and isinstance(inner, _AGG) and (outer_cls, type(inner)) in mismatch:
-                # Nested OVER is illegal in SF/BQ SELECT. Row-grain two-stage: unwrap inner agg, apply outer window.
-                self.notes.append("mismatched WINDOW: outer window of unwrapped inner (row-grain two-stage)")
-                return exp.Window(this=outer_cls(this=self._unwrap_single_agg(inner))), t
-            if name == "WINDOW_COUNT":
-                return self._window(exp.Count(this=self._unwrap_single_agg(body)), [], allow_nonagg=True), t
-            return self._window(body, [], allow_nonagg=True), t
+            }[name]
+            if any(isinstance(n, exp.Window) for n in body.walk()):
+                raise Untranslatable(f"{name} over a table calculation")
+            inner = self._unwrap_node(body)
+            if not any(isinstance(n, _AGG) for n in body.walk()):
+                # Tableau requires an aggregate argument; keep the outer window, flag it (sql_unreconciled)
+                self.notes.append(f"{name} argument is not an aggregate")
+                agg = outer_cls(this=inner.copy())
+            elif outer_cls is exp.Sum and isinstance(inner, exp.Count) and not isinstance(inner.this, exp.Distinct):
+                agg = inner  # WINDOW_SUM(COUNT(x)) == COUNT(x) OVER (...); COUNTD is per-row 0/1, not distinct
+            else:
+                if isinstance(inner, _AGG) and type(inner) is not outer_cls:
+                    self.notes.append("mismatched WINDOW: outer window of unwrapped inner (row-grain two-stage)")
+                agg = outer_cls(this=self._row_grain(inner))
+            if start is not None:
+                return self._rows_window(agg, start, end), t
+            return exp.Window(this=agg), t
         if name in ("RANK", "RANK_DENSE", "RANK_UNIQUE", "RANK_PERCENTILE"):
             if self.op(")"):
                 raise Untranslatable(f"{name} needs an argument")

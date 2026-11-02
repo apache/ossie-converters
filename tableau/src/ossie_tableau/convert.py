@@ -118,7 +118,7 @@ _RECONCILED_VIZ = re.compile(
     rf"|INDEX\s*\(\s*\)\s*\+\s*RANK(?:_DENSE|_UNIQUE)?\s*\(\s*{_TC_BODY}\s*\)"
     rf"|RANK(?:_DENSE|_UNIQUE)?\s*\(\s*{_TC_BODY}\s*\)"
     rf"|RANK_PERCENTILE\s*\(\s*{_TC_BODY}\s*\)"
-    rf"|WINDOW_COUNT\s*\(\s*{_TC_BODY}(?:\s*,\s*-?\d+\s*,\s*-?\d+)?\s*\)"
+    rf"|WINDOW_COUNT\s*\(\s*{_TC_AGG}(?:\s*,\s*-?\d+\s*,\s*-?\d+)?\s*\)"
     rf"|LOOKUP\s*\(\s*{_TC_BODY}\s*,\s*{_NUM}\s*\)(?:\s+IS\s+NULL)?"
     rf"|LOOKUP\s*\(\s*{_TC_BODY}\s*,\s*FIRST\s*\(\s*\)\s*\)"
     rf"|IIF\s*\(\s*INDEX\s*\(\s*\)\s*>\s*{_NUM}\s*,\s*{_NUM}\s*,\s*{_NUM}\s*\)"
@@ -129,6 +129,7 @@ _RECONCILED_VIZ = re.compile(
     rf")\s*$",
     re.I)
 _TC_ATOM_RE = re.compile(_TC_ATOM, re.I)
+_BARE_WINDOW_RE = re.compile(rf"\bWINDOW_\w+\s*\(\s*{_TC_REF}\s*[,)]", re.I)
 _LOD_ATOM_RE = re.compile(_LOD_ATOM, re.I)
 _FOLD_BIN = re.compile(rf"(?:@|{_NUM})\s*[+\-*/]\s*(?:@|{_NUM})")
 _FOLD_PAREN = re.compile(r"\(\s*@\s*\)")
@@ -1598,6 +1599,8 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                     detail = "best-effort window SQL (table-wide OVER); not reconciled against Tableau Compute Using"
                     if otype:
                         detail += f"; TWB ordering-type={otype}"
+                    if _BARE_WINDOW_RE.search(m):
+                        detail += "; WINDOW_* argument is not an aggregate"
                     losses.append(Loss("sql_unreconciled", label, detail))
             else:
                 sq = _sql_dialect(out, "" if len(tables) > 1 else (tables[0].name if tables else None), mname, losses)

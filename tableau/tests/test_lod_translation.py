@@ -293,3 +293,58 @@ def test_tableau_to_sql_translations():
     assert "OVER" in (tableau_to_sql("{INCLUDE [QTY] : SUM([T].[QTY])}", fs, None) or "")
     assert tableau_to_sql("SOMEFUNC([QTY])", fs, "T") is None
     assert tableau_to_sql("[MISSING] + 1", fs, "T") is None
+
+
+_WIN_FNS = ["SUM", "AVG", "MIN", "MAX", "COUNT"]
+_WIN_ARGS = {"matched": "{fn}([a])", "mismatched": "{other}([a])", "bare": "[a]"}
+
+
+@pytest.mark.parametrize("fn", _WIN_FNS)
+@pytest.mark.parametrize("arg", sorted(_WIN_ARGS))
+@pytest.mark.parametrize("frame", ["", ", -2, 0", ", -1, 1"])
+def test_window_keeps_outer_function(fn, arg, frame):
+    import sqlglot
+    from sqlglot import exp
+    other = "AVG" if fn == "SUM" else "SUM"
+    body = _WIN_ARGS[arg].format(fn=fn, other=other)
+    t = translate(f"WINDOW_{fn}({body}{frame})", order=[exp.column("id")])
+    w = sqlglot.parse_one(t.sql).find(exp.Window)
+    assert w is not None
+    assert w.this.sql().upper().startswith(fn + "("), t.sql
+    if frame:
+        assert "PRECEDING" in t.sql.upper() and "ORDER BY" in t.sql.upper()
+    for d in ("snowflake", "bigquery"):
+        sqlglot.parse_one(sqlglot.transpile(t.sql, write=d)[0], read=d)
+    assert any("not an aggregate" in n for n in t.notes) == (arg == "bare")
+
+
+@pytest.mark.parametrize("formula,want", [
+    ("WINDOW_MAX(SUM([a]))", "MAX(a) OVER ()"),
+    ("WINDOW_AVG(SUM([a]), -2, 0)", "AVG(a) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)"),
+    ("WINDOW_SUM([a])", "SUM(a) OVER ()"),
+    ("WINDOW_SUM(SUM([a]) / SUM([b]))", "SUM(a / b) OVER ()"),
+    ("WINDOW_SUM(COUNTD([a]))", "SUM(CASE WHEN a IS NULL THEN 0 ELSE 1 END) OVER ()"),
+])
+def test_window_outer_exact_sql(formula, want):
+    from sqlglot import exp
+    assert translate(formula, order=[exp.column("id")]).sql == want
+
+
+def test_window_count_of_count_is_null_aware():
+    sql = translate("WINDOW_COUNT(COUNT([a]), -1, 1)", order=[__import__("sqlglot").exp.column("id")]).sql.upper()
+    assert sql.startswith("COUNT(CASE WHEN A IS NULL THEN 0 ELSE 1 END) OVER")
+    assert "1 PRECEDING AND 1 FOLLOWING" in sql
+
+
+@pytest.mark.parametrize("formula", ["WINDOW_SUM(PERCENTILE([a], 0.5))", "WINDOW_SUM(RUNNING_SUM(SUM([a])))"])
+def test_window_without_row_grain_form_is_untranslatable(formula):
+    with pytest.raises(Untranslatable):
+        translate(formula)
+
+
+@pytest.mark.parametrize("formula", ["WINDOW_SUM([amt])", "WINDOW_AVG([amt], -2, 0)", "WINDOW_COUNT([amt])"])
+def test_convert_bare_window_is_unreconciled(formula):
+    r = _convert_calc(formula)
+    assert len(r.document.metrics) == 1
+    un = [x.detail for x in r.losses if x.kind == "sql_unreconciled"]
+    assert un and "not an aggregate" in un[0]

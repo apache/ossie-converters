@@ -105,3 +105,30 @@ def test_between_roundtrip_is_semantically_equal(s):
         for yv in range(4):
             env = {"x": xv, "y": yv}
             assert _ev(sqlglot.parse_one(s), env) == _ev(sqlglot.parse_one(back), env), (s, back)
+
+
+_win_fn = st.sampled_from(["SUM", "AVG", "MIN", "MAX", "COUNT"])
+_win_arg = st.one_of(st.sampled_from(["[a]", "[b]"]),
+                     st.tuples(st.sampled_from(["SUM", "AVG", "MIN", "MAX", "COUNT", "COUNTD", "MEDIAN"]),
+                               st.sampled_from(["[a]", "[b]"])).map(lambda t: f"{t[0]}({t[1]})"))
+
+
+@settings(max_examples=200, deadline=None)
+@given(_win_fn, _win_arg, st.one_of(st.none(), st.tuples(st.integers(-5, 0), st.integers(0, 5))))
+def test_window_outer_function_and_frame_survive(fn, arg, frame):
+    import sqlglot
+    from sqlglot import exp
+    tail = f", {frame[0]}, {frame[1]}" if frame else ""
+    sql = translate(f"WINDOW_{fn}({arg}{tail})", order=[exp.column("id")]).sql
+    w = sqlglot.parse_one(sql).find(exp.Window)
+    outer = "COUNT" if fn == "SUM" and arg.startswith("COUNT(") else fn  # WINDOW_SUM(COUNT(x)) == COUNT(x) OVER
+    assert w.this.sql().upper().startswith(outer + "("), sql
+    assert "DISTINCT" not in sql.upper(), sql  # a row-grain COUNTD is 0/1 per row
+    for d in ("snowflake", "bigquery"):
+        sqlglot.parse_one(sqlglot.transpile(sql, write=d)[0], read=d)
+    if frame:
+        spec = w.args["spec"]
+        bound = lambda v, side: "CURRENT ROW" if v == 0 else f"{abs(v)} {side}"
+        assert spec.sql().upper() == f"ROWS BETWEEN {bound(frame[0], 'PRECEDING')} AND {bound(frame[1], 'FOLLOWING')}", sql
+    else:
+        assert "ROWS" not in sql.upper()
