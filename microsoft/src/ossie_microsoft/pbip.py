@@ -23,20 +23,14 @@ model as TMSL (``model.bim``) is read with the existing BIM import instead.
 """
 
 import json
-import re
 from pathlib import Path
 from typing import NoReturn
 
-from ._common import LOGGER, ConversionError, warn
+from ._common import LOGGER, ConversionError
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
 from .tom import TomUnavailableError, deserialize_tmdl_documents
 
 _LOAD_FIRST = ("database.tmdl", "model.tmdl")
-# The folders TOM's TMDL serializer writes below ``definition/``, one document per
-# object. A ``.tmdl`` file anywhere else is not part of the model.
-_TMDL_FOLDERS = frozenset({"tables", "roles", "cultures", "perspectives"})
-# The first declaration of a folder document: ``table Orders``, ``table 'Order Lines'``.
-_DECLARATION_RE = re.compile(r"^\s*\w+\s+('(?:[^']|'')*'|\S+)")
 
 
 def resolve_definition_dir(path: Path) -> Path:
@@ -94,33 +88,17 @@ def tmdl_documents(definition_dir: Path) -> list[tuple[str, str]]:
         raise ConversionError(f"{definition_dir} has no database.tmdl")
 
     found: list[tuple[str, str]] = []
-    declared: dict[tuple[str, str], str] = {}
     for file in definition_dir.rglob("*.tmdl"):
         relative = file.relative_to(definition_dir)
         # `.Hidden.tmdl` is a real TOM table file. Skip hidden directories
         # such as `.pbi`, not file names.
         if any(part.startswith(".") for part in relative.parts[:-1]):
             continue
-        parts = relative.parts
-        if len(parts) > 2 or (len(parts) == 2 and parts[0] not in _TMDL_FOLDERS):
-            warn(f"file '{relative.as_posix()}'",
-                 "not in the TMDL folder layout; not loaded")
-            continue
-        text = file.read_text(encoding="utf-8-sig")
-        if len(parts) == 2:
-            # A leftover copy (`tables/Orders.backup.tmdl`) declares an object a second
-            # time; name both files rather than leave TOM to report a duplicate.
-            name = _declared_name(text)
-            if name is not None:
-                key = (parts[0], name)
-                if key in declared:
-                    raise ConversionError(
-                        f"{declared[key]} and {relative.as_posix()} both declare {name}; "
-                        "remove the leftover copy"
-                    )
-                declared[key] = relative.as_posix()
+        # Every document goes to TOM, which merges partial declarations
+        # (`tables/Orders.tmdl` plus `tables/Orders.measures.tmdl`) and reports real
+        # conflicts. The list is logged so it is visible what was loaded.
         LOGGER.debug("loading TMDL document %s", relative.as_posix())
-        found.append((relative.as_posix(), text))
+        found.append((relative.as_posix(), file.read_text(encoding="utf-8-sig")))
 
     def sort_key(item: tuple[str, str]) -> tuple[int, str]:
         logical = item[0]
@@ -164,15 +142,6 @@ def reraise_tom_load_failure(exc: BaseException) -> NoReturn:
     if isinstance(exc, TomUnavailableError):
         raise ConversionError(str(exc)) from exc
     raise ConversionError(getattr(exc, "Message", str(exc))) from exc
-
-
-def _declared_name(text: str) -> str | None:
-    for line in text.splitlines():
-        if not line.strip() or line.lstrip().startswith("///"):
-            continue
-        match = _DECLARATION_RE.match(line)
-        return match.group(1) if match else None
-    return None
 
 
 def _definition_from_pbip(pbip: Path) -> Path:

@@ -119,10 +119,9 @@ project root is not an input. A `.pbip` is followed through `datasetReference.by
 `model.bim` instead of `definition/`, or a `.pbip` that points at one) is read through
 that `model.bim`. A folder with both is refused as ambiguous.
 
-Only the layout TOM itself writes is loaded: the documents directly in `definition/`
-and one level below in `tables/`, `roles/`, `cultures/` and `perspectives/`. Any other
-`.tmdl` file is skipped with a warning. Two files in the same folder that declare the
-same object (a leftover `tables/Orders.backup.tmdl`, say) are an error naming both.
+Every `.tmdl` file under `definition/` (outside hidden folders such as `.pbi/`) is passed
+to TOM, which merges partial declarations of one object across files and reports real
+conflicts; the loaded files are logged at debug level on the `ossie_microsoft` logger.
 The report path in the `.pbip` and its `byPath` must stay inside the project folder.
 
 ```bash
