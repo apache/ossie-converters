@@ -252,6 +252,11 @@ def test_reverse_translation_gives_up_on_non_text_casts():
         ("In([A], 1, 2, 3)", '"A" IN (1, 2, 3)'),
         ('In([A], "a")', "\"A\" IN ('a')"),
         ("Not In([A], 1, 2)", 'NOT "A" IN (1, 2)'),
+        ("In([A], -1, 0)", '"A" IN (-1, 0)'),
+        ("In([A], True, False)", '"A" IN (TRUE, FALSE)'),
+        ("In([A] Or [B], False)", '("A" OR "B") IN (FALSE)'),
+        ("In([A] = [B], True)", '("A" = "B") IN (TRUE)'),
+        ("In([A] + 1, 2)", '"A" + 1 IN (2)'),
     ],
 )
 def test_in_translates_both_ways(formula, sql):
@@ -272,6 +277,7 @@ def test_in_gives_up_outside_a_literal_list():
     assert to_ansi_sql(parse_formula("In([A], [B])")) is None
     assert to_ansi_sql(parse_formula("In([A], 1, Null())")) is None
     assert to_ansi_sql(parse_formula("In([A])")) is None
+    assert to_ansi_sql(parse_formula('In([A], -"x")')) is None
     assert sql_to_sigma_formula('"A" IN ("B", "C")') is None
     assert sql_to_sigma_formula('"A" IN (1, NULL)') is None
     assert sql_to_sigma_formula('"A" IN (SELECT 1)') is None

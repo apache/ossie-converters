@@ -391,7 +391,7 @@ _PRECEDENCE: tuple[tuple[tuple[type, ...], int], ...] = (
     ((exp.Or,), 1),
     ((exp.And,), 2),
     ((exp.Not,), 3),
-    ((exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.Is, exp.Like), 4),
+    ((exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.Is, exp.Like, exp.In), 4),
     ((exp.DPipe,), 5),
     ((exp.Add, exp.Sub), 6),
     ((exp.Mul, exp.Div, exp.Mod), 7),
@@ -561,9 +561,15 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
     if name == "in" and len(args) >= 2:
         # Only a list of non-null literals: a NULL candidate makes SQL IN return
         # NULL on a miss where Sigma's In() returns False.
-        if not all(isinstance(a, Literal) for a in args[1:]):
+        if not all(
+            isinstance(a, Literal)
+            or (isinstance(a, UnaryOp) and a.op == "-" and isinstance(a.operand, Literal) and a.operand.kind == "number")
+            for a in args[1:]
+        ):
             raise _NotTranslatable("In() candidates must be literals")
-        return exp.In(this=built[0], expressions=built[1:])
+        # IN binds like a comparison, so `[A] Or [B]` must keep its parentheses.
+        this = _maybe_paren(built[0], _binding_power(exp.In()), tighter=True)
+        return exp.In(this=this, expressions=built[1:])
     if name == "isnull" and len(args) == 1:
         return exp.Is(this=built[0], expression=exp.Null())
     if name == "isnotnull" and len(args) == 1:
@@ -732,7 +738,12 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         candidates = node.expressions
         if node.args.get("query") or node.args.get("unnest") or node.args.get("field") or not candidates:
             raise _NotTranslatable("IN over a subquery has no Sigma equivalent")
-        if not all(isinstance(c, exp.Literal) for c in candidates):
+        # sqlglot keeps TRUE/FALSE as exp.Boolean and -1 as exp.Neg(Literal).
+        if not all(
+            isinstance(c, (exp.Literal, exp.Boolean))
+            or (isinstance(c, exp.Neg) and isinstance(c.this, exp.Literal) and not c.this.is_string)
+            for c in candidates
+        ):
             raise _NotTranslatable("IN candidates other than non-null literals are not mapped")
         rendered = [_render_sql_node(c, dataset_alias) for c in [node.this, *candidates]]
         return f"In({', '.join(rendered)})"
