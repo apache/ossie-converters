@@ -41,9 +41,7 @@ def test_output_file_reports_dump_error(
     output = tmp_path / "out"
     output.write_text("existing file", encoding="utf-8")
 
-    hex_project, problems = convert_ossie_to_hex(
-        minimal_ossie_input, output, dialect="ANSI_SQL"
-    )
+    hex_project, problems = convert_ossie_to_hex(minimal_ossie_input, output)
 
     assert hex_project is not None
     assert hex_project.resources
@@ -70,9 +68,7 @@ def test_output_permission_failure_reports_dump_error(
 
     monkeypatch.setattr(Path, "mkdir", deny_mkdir)
 
-    hex_project, problems = convert_ossie_to_hex(
-        minimal_ossie_input, output, dialect="ANSI_SQL"
-    )
+    hex_project, problems = convert_ossie_to_hex(minimal_ossie_input, output)
 
     assert hex_project is not None
     assert hex_project.resources
@@ -86,7 +82,7 @@ def test_missing_input_does_not_create_output(tmp_path: Path) -> None:
     output = tmp_path / "nested" / "out"
     missing = tmp_path / "missing.yml"
 
-    hex_project, problems = convert_ossie_to_hex(missing, output, dialect="ANSI_SQL")
+    hex_project, problems = convert_ossie_to_hex(missing, output)
 
     assert hex_project is None
     message = problems_snapshot(problems, include_causes=True)
@@ -152,9 +148,7 @@ def test_selected_dialect_is_used_when_loading_and_converting(
             )
         )
     if dialect is None:
-        assert problems_snapshot(problems) == snapshot(
-            "[INFO] No Ossie dialect specified; using ANSI_SQL"
-        )
+        assert problems_snapshot(problems) == snapshot("")
     else:
         assert problems_snapshot(problems) == snapshot("")
 
@@ -373,9 +367,6 @@ resources:
     expr_sql: s_number_employees
 """)
     assert problems_snapshot(problems, include_causes=True) == snapshot("""\
-[INFO] No Ossie dialect specified; using ANSI_SQL
-Cause: []
-
 [WARNING] Missing. Hex requires a datatype. Using default 'String'.
 Cause: ['datasets', 'date_dim', 'fields', 'd_quarter_name', 'datatype']
 

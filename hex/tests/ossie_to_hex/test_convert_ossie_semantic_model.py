@@ -95,7 +95,7 @@ def customers() -> OssieDataset:
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     return ctx
 
 

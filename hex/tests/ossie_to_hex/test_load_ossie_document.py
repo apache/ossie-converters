@@ -20,7 +20,6 @@ from textwrap import dedent
 
 import pytest
 from inline_snapshot import snapshot
-from ossie import OssieDialect
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.load_ossie_document import load_ossie_document
@@ -30,7 +29,7 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(None)
     return ctx
 
 

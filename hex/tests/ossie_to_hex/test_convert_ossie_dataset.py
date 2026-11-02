@@ -28,7 +28,7 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("foo", "foo")
     ctx.hex_ids.set_for_field("foo", "id", "id")
     return ctx

@@ -31,11 +31,11 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
     return ctx
 
 
 def test_only_validates_preferred_field_variant(ctx: ExportContext) -> None:
+    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
     expression = Quick.expression(
         [
             ("DAX", "SELECT FROM"),  # Invalid, unused.
@@ -50,6 +50,7 @@ def test_only_validates_preferred_field_variant(ctx: ExportContext) -> None:
 
 
 def test_reports_invalid_preferred_variant(ctx: ExportContext) -> None:
+    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
     expression = Quick.expression(
         [
             ("DAX", "SELECT FROM"),  # Invalid, unused.
@@ -69,6 +70,7 @@ Cause: ['dialects', 'ANSI_SQL', 'expression']\
 
 
 def test_only_validates_preferred_dialect(ctx: ExportContext) -> None:
+    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
     field_names = [("foo", "bar")]
     expression = Quick.expression(
         [
@@ -84,6 +86,7 @@ def test_only_validates_preferred_dialect(ctx: ExportContext) -> None:
 
 
 def test_reports_metric_expression_with_invalid_reference(ctx: ExportContext) -> None:
+    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
     field_names = [("foo", "bar")]
     expression = Quick.expression(
         [

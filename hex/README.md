@@ -58,8 +58,7 @@ Options:
 - `-i, --input <file>` — Required. Ossie YAML file to export.
 - `-o, --output <directory>` — Optional. Directory where Hex YAML files are
   written. If omitted, the current working directory is used.
-- `-d, --dialect <dialect>` — Optional. Ossie dialect to pick from Ossie
-  expressions. If omitted, `ANSI_SQL` is used.
+- `-d, --dialect <dialect>` — Optional. Prefer this dialect of Ossie expressions.
 - `-v, --verbose` — Optional. Show a grouped problem summary. Repeat the flag
   (`-vv`) to show every occurrence with its conversion phase and cause path.
 
@@ -90,8 +89,7 @@ Options:
 - `input` — Required. Ossie YAML file to export.
 - `output` — Optional. Directory where Hex YAML files are written. If omitted,
   no files are written.
-- `dialect` — Optional. Ossie dialect to pick from Ossie expressions. If
-  omitted, `ANSI_SQL` is preferred, falling back to the first available variant.
+- `dialect` — Optional. Prefer this dialect of Ossie expressions.
 
 Returns: a tuple of
 

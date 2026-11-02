@@ -32,13 +32,14 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> Iterator[ExportContext]:
     ctx = ExportContext()
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(None)
     with ctx.phase_scope("load"):
         yield ctx
 
 
 @pytest.mark.parametrize("preferred", ["ANSI_SQL", "SNOWFLAKE"])
 def test_picks_preferred_variant(ctx: ExportContext, preferred: str) -> None:
+    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
     preferred_dialect = Quick.dialect(preferred)
     ctx.set_ossie_dialect(preferred_dialect)
     expression = Quick.expression(
@@ -84,6 +85,4 @@ def test_falls_back_to_first_variant_when_preferred_and_ansi_are_missing(
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     assert result is expression.dialects[0]
-    assert problems_snapshot(ctx.problems) == snapshot(
-        "[WARNING] Preferred dialect OssieDialect.ANSI_SQL not found for expression; using fallback dialect OssieDialect.BIGQUERY"
-    )
+    assert problems_snapshot(ctx.problems) == snapshot("")

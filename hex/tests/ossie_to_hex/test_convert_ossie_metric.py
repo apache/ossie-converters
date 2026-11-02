@@ -37,7 +37,7 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("bar", "bar")
     ctx.hex_ids.set_for_field("bar", "baz", "baz")
     ctx.hex_ids.set_for_metric("foo", "foo")
@@ -217,7 +217,7 @@ def test_reports_missing_source_model() -> None:
     foo = Quick.metric("foo", "Integer", [("ANSI_SQL", "bar.baz")])
 
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_metric("foo", "foo")
     analysis = MetricAnalysis("foo", parse_one("bar.baz"), None, ("bar",))
     ctx.analysis.set_for_metric(analysis.name, analysis)

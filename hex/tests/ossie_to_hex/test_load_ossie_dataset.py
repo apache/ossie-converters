@@ -16,7 +16,7 @@
 # under the License.
 
 import pytest
-from ossie import OssieDataset, OssieDialect
+from ossie import OssieDataset
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.load_ossie_dataset import load_ossie_dataset
@@ -26,7 +26,7 @@ from tests.ossie_to_hex.utils import Quick
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(None)
     return ctx
 
 

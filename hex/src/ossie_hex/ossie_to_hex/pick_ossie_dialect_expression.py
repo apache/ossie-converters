@@ -33,18 +33,19 @@ def pick_ossie_dialect_expression(
     """
     fallback: OssieDialectExpression | None = None
     for entry in ossie_dialect_expressions:
-        if entry.dialect == ctx.ossie_dialect:
+        if ctx.ossie_dialect is not None and entry.dialect == ctx.ossie_dialect:
             return entry
         # fallback preference: (1) ansi sql, (2) first in the list
         elif entry.dialect == OssieDialect.ANSI_SQL or fallback is None:
             fallback = entry
-    if ctx.current_phase_name == "load":
-        if fallback is not None:
-            ctx.warn(
-                f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
-            )
-        else:
-            ctx.error(
-                f"Preferred dialect {ctx.ossie_dialect} not found for expression and no fallback dialect found"
-            )
+    if ctx.current_phase_name == "load":  # noqa: SIM102
+        if ctx.ossie_dialect is not None:
+            if fallback is not None:
+                ctx.warn(
+                    f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
+                )
+            else:
+                ctx.error(
+                    f"Preferred dialect {ctx.ossie_dialect} not found for expression and no fallback dialect found"
+                )
     return fallback
