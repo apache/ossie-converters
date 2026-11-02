@@ -1,0 +1,93 @@
+version: 0.2.0.dev0
+name: metric_complex_fields
+description: Example of metric view
+datasets:
+- name: nation
+  source: psql_tpch_nation
+  fields:
+  - name: nation_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: n_name
+- name: orders
+  source: psql_tpch_orders
+  fields:
+  - name: order_date
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: o_orderdate
+  - name: order_dim_extra
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: (o_orderkey+5)
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"fields_dimension":{"order_date": "orders_dim","order_dim_extra": "orders_dim"}}'
+- name: customer
+  source: psql_tpch_customer
+  fields:
+  - name: customer_address_full
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: concat(customer.c_address, '-', nation.n_name)
+  - name: customer_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: c_name
+  - name: customer_address
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: c_address
+  - name: customer_comment
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: c_comment
+  - name: generic_attribute
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: (o_orderkey-1)
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"fields_dimension":{"customer_address_full": "customer_dim","customer_name":
+      "customer_dim","customer_address": "customer_dim","customer_comment": "customer_dim","generic_attribute":
+      "customer_dim"}}'
+relationships:
+- name: psql_tpch_nation_psql_tpch_customer
+  from: customer
+  to: nation
+  from_columns: [c_nationkey]
+  to_columns: [n_nationkey]
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"folder":"/associations"}'
+- name: psql_tpch_customer_psql_tpch_orders
+  from: orders
+  to: customer
+  from_columns: [o_custkey]
+  to_columns: [c_custkey]
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"folder":"/associations"}'
+metrics:
+- name: count_order_keys
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: count(orders.o_orderkey)
+- name: order_average_value
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: avg(orders.o_totalprice)
+custom_extensions:
+- vendor_name: DENODO
+  data: '{"folder": "/3. views", "context": {"I18N": "us_pst"}, "tags": ["sales_data",
+    "sensitive"]}'
