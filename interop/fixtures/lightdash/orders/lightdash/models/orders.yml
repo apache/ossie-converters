@@ -1,0 +1,59 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+type: model
+name: orders
+description: One row per order
+sql_from: analytics.public.orders
+primary_key: order_id
+joins:
+  - join: customers
+    sql_on: ${orders.customer_id} = ${customers.customer_id}
+    relationship: many-to-one
+dimensions:
+  - name: order_id
+    type: number
+    sql: ${TABLE}.order_id
+  - name: customer_id
+    type: number
+    sql: ${TABLE}.customer_id
+    metrics:
+      unique_customers:
+        type: count_distinct
+  - name: status
+    type: string
+    sql: ${TABLE}.status
+  - name: ordered_at
+    type: timestamp
+    sql: ${TABLE}.ordered_at
+  - name: amount
+    type: number
+    sql: ${TABLE}.amount
+    metrics:
+      total_amount:
+        type: sum
+        label: Total amount
+        format: usd
+      average_amount:
+        type: average
+metrics:
+  completed_amount:
+    type: sum
+    sql: CASE WHEN ${TABLE}.status = 'completed' THEN ${TABLE}.amount ELSE 0 END
+  amount_per_customer:
+    type: number
+    sql: SUM(${TABLE}.amount) / NULLIF(COUNT(DISTINCT ${customers.customer_id}), 0)

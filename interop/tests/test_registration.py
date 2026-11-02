@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
     [
         "gooddata",
         "honeydew",
+        "lightdash",
         "microsoft",
         "nvidia",
         "omni",
@@ -65,6 +66,7 @@ def test_registered_native_sources_have_real_members(name):
         "gooddata",
         "hex",
         "honeydew",
+        "lightdash",
         "microsoft",
         "nvidia",
         "omni",
@@ -78,7 +80,7 @@ def test_registered_native_sources_have_real_members(name):
     ],
 )
 def test_metadata_and_logs_do_not_establish_native_content(tmp_path, fmt):
-    directory = fmt in ("hex", "honeydew", "omni", "thoughtspot")
+    directory = fmt in ("hex", "honeydew", "lightdash", "omni", "thoughtspot")
     file = tmp_path / (
         "empty.table.tml"
         if fmt == "thoughtspot"

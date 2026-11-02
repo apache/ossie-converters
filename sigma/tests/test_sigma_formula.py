@@ -95,6 +95,9 @@ from ossie_sigma.sigma_formula import (
         ),
         ("NullIf([A], 0)", "T", 'NULLIF("A", 0)'),
         ("Text([Employee Number])", "T", 'CAST("Employee Number" AS VARCHAR)'),
+        ("Number([A])", "T", 'CAST("A" AS DOUBLE)'),
+        # Sigma's Int() rounds down, so it is FLOOR rather than CAST AS INT.
+        ("Int([A])", "T", 'FLOOR("A")'),
         (
             "CountDistinctIf(Text([Employee Number]) & [Region], [Hours] > 0)",
             "T",
@@ -193,6 +196,9 @@ def test_is_plain_column_ref():
         ('SUM("A") / NULLIF(SUM("B"), 0)', "T", "(Sum([A]) / NullIf(Sum([B]), 0))"),
         ('CAST("A" AS VARCHAR)', "T", "Text([A])"),
         ('CAST("A" AS TEXT)', "T", "Text([A])"),
+        ('CAST("A" AS DOUBLE)', "T", "Number([A])"),
+        ('CAST("A" AS FLOAT)', "T", "Number([A])"),
+        ('CAST("A" AS REAL)', "T", "Number([A])"),
         ('CAST("A" AS VARCHAR) || "B"', "T", "Text([A]) & [B]"),
         ('CAST("A" AS VARCHAR) || CAST("B" AS VARCHAR)', "T", "Text([A]) & Text([B])"),
     ],
@@ -236,10 +242,14 @@ def test_text_round_trips():
 
 
 def test_reverse_translation_gives_up_on_non_text_casts():
-    # Only a cast to text has a Sigma equivalent; numeric and date casts are not mapped.
-    assert sql_to_sigma_formula('CAST("A" AS INT)') is None
+    # Date and boolean casts are not mapped.
     assert sql_to_sigma_formula('CAST("A" AS DATE)') is None
     assert sql_to_sigma_formula('CAST("A" AS BOOLEAN)') is None
+    # Integer and DECIMAL/NUMBER casts round to a scale, which Number() does not.
+    assert sql_to_sigma_formula('CAST("A" AS INT)') is None
+    assert sql_to_sigma_formula('CAST("A" AS DECIMAL)') is None
+    assert sql_to_sigma_formula('CAST("A" AS NUMBER(10, 2))') is None
+    assert sql_to_sigma_formula('CAST("A" AS FLOAT(10))') is None
     # A sized text type truncates, which Text() does not.
     assert sql_to_sigma_formula('CAST("A" AS CHAR(1))') is None
     assert sql_to_sigma_formula('CAST("A" AS VARCHAR(10))') is None
@@ -281,6 +291,11 @@ def test_in_gives_up_outside_a_literal_list():
     assert sql_to_sigma_formula('"A" IN ("B", "C")') is None
     assert sql_to_sigma_formula('"A" IN (1, NULL)') is None
     assert sql_to_sigma_formula('"A" IN (SELECT 1)') is None
+
+
+def test_number_round_trips():
+    sql = to_ansi_sql(parse_formula("Number([A]) * 2"), dataset_alias="T")
+    assert sql_to_sigma_formula(sql, dataset_alias="T") == "(Number([A]) * 2)"
 
 
 def test_reverse_translation_gives_up_on_count_star():

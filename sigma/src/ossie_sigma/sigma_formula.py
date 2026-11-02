@@ -570,6 +570,11 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
         # IN binds like a comparison, so `[A] Or [B]` must keep its parentheses.
         this = _maybe_paren(built[0], _binding_power(exp.In()), tighter=True)
         return exp.In(this=this, expressions=built[1:])
+    if name == "number" and len(args) == 1:
+        return exp.Cast(this=built[0], to=exp.DataType.build("DOUBLE"))
+    if name == "int" and len(args) == 1:
+        # Sigma's Int() rounds down (Int(-3.2) = -4), which is FLOOR, not CAST AS INT.
+        return exp.Floor(this=built[0])
     if name == "isnull" and len(args) == 1:
         return exp.Is(this=built[0], expression=exp.Null())
     if name == "isnotnull" and len(args) == 1:
@@ -784,6 +789,10 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         # target types fall through to the not-translatable error below.
         if node.to.is_type(*exp.DataType.TEXT_TYPES) and not node.to.expressions:
             return f"Text({_render_sql_node(node.this, dataset_alias)})"
+        # An unsized floating-point cast is Number(). Integer and DECIMAL/NUMBER casts
+        # round to a scale (DECIMAL and NUMBER default to scale 0), so they are not.
+        if node.to.is_type(*exp.DataType.FLOAT_TYPES) and not node.to.expressions:
+            return f"Number({_render_sql_node(node.this, dataset_alias)})"
 
     if isinstance(node, exp.CurrentDate):
         return "Today()"
