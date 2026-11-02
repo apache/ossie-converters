@@ -71,7 +71,9 @@ class ConverterIssueType(Enum):
     # dataset does not join, so Lightdash can't resolve the reference.
     FIELD_REFERENCE_UNJOINED = "FIELD_REFERENCE_UNJOINED"
     # Import: two metrics share a name after qualification with their model
-    # name. The later one gets a suffix.
+    # name. Export: two metrics map to the same Lightdash name on one model
+    # (`revenue` and `orders_revenue` both strip to `revenue`). The later one
+    # is renamed, so it is not lost.
     METRIC_NAME_COLLISION = "METRIC_NAME_COLLISION"
     # Import: the metric's `filters` are kept for Lightdash only. The Ossie
     # expression is unfiltered, so other consumers compute a different number.
@@ -114,7 +116,7 @@ ISSUE_EXPLANATIONS = {
     ConverterIssueType.ALIAS_REFERENCE_FLATTENED: "${alias.column} now points at the joined model; which join was meant is lost",
     ConverterIssueType.DIALECT_UNAVAILABLE: "neither --dialect, OSSIE_SQL_2026 nor ANSI_SQL offered; first available dialect used",
     ConverterIssueType.FIELD_REFERENCE_UNJOINED: "expression names a dataset this model does not join; emitted as is",
-    ConverterIssueType.METRIC_NAME_COLLISION: "still a duplicate after <model>_<metric>; suffixed",
+    ConverterIssueType.METRIC_NAME_COLLISION: "two metrics map to one name on the same model; the later one is renamed",
     ConverterIssueType.METRIC_FILTER_NOT_PORTABLE: "filters kept for Lightdash only; other tools see the unfiltered aggregate",
     ConverterIssueType.ROW_FILTER_NOT_PORTABLE: "sql_filter / required_filters kept for Lightdash only; other tools see all rows",
     ConverterIssueType.DIMENSION_TYPE_DEFAULTED: "no datatype on the field; dimension type set to string",

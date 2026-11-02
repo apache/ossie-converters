@@ -198,6 +198,15 @@ _SOURCE_IDENTIFIER = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:""|[^"])+"|`(?:``|[^`])+`|
 _SOURCE_PATH_RE = re.compile(rf"{_SOURCE_IDENTIFIER}(?:\s*\.\s*{_SOURCE_IDENTIFIER})*")
 
 
+def _metric_names(model: Dict[str, Any], columns: Dict[str, Dict[str, Any]]) -> Set[str]:
+    """Gets the Lightdash metric names already defined on a model: its own
+    metrics and the metrics of its columns, which share one namespace."""
+    names = set((model.get("meta") or {}).get("metrics") or {})
+    for column in columns.values():
+        names.update((column.get("meta") or {}).get("metrics") or {})
+    return names
+
+
 def _model_name_for(dataset: OssieDataset) -> str:
     """Derives the model name: a simple source's table name, otherwise the dataset name.
 
@@ -568,14 +577,8 @@ class OssieToLightdashConverter:
         extension_data = _lightdash_extension_data(metric, issues)
 
         target_dataset = self._resolve_target_dataset(
-            expression, dataset_names, references_by_dataset
+            expression, dataset_names, references_by_dataset, extension_data.get("model")
         )
-        # An expression that names no dataset can still be placed when the
-        # extension records which model it came from.
-        stashed_model = extension_data.get("model")
-        if target_dataset is None and stashed_model in dataset_names:
-            if not referenced_datasets(expression, set(dataset_names)):
-                target_dataset = stashed_model
         if target_dataset is None:
             issues.append(
                 ConverterIssue(
@@ -638,32 +641,61 @@ class OssieToLightdashConverter:
                 else metric.name
             )
 
+        # Lightdash scopes metric names per model, across the model's own
+        # metrics and its columns' metrics. Two Ossie metrics can map to one
+        # name (`revenue` and `orders_revenue` on `orders` both strip to
+        # `revenue`), and the later one must not overwrite the earlier one.
+        # It keeps its full Ossie name when that is free, else a suffix.
+        model = models_by_dataset[target_dataset]
+        taken = _metric_names(model, columns_by_dataset[target_dataset])
+        if lightdash_name in taken:
+            candidate = metric.name
+            suffix = 2
+            while candidate in taken:
+                candidate = f"{metric.name}_{suffix}"
+                suffix += 1
+            issues.append(
+                ConverterIssue(
+                    issue_type=ConverterIssueType.METRIC_NAME_COLLISION,
+                    element_name=f"{metric.name} (as {lightdash_name!r} on {target_dataset!r}; renamed to {candidate!r})",
+                )
+            )
+            lightdash_name = candidate
+
         if target_column is not None:
             column = columns_by_dataset[target_dataset][target_column]
             metrics = column.setdefault("meta", {}).setdefault("metrics", {})
-            metrics[lightdash_name] = definition
         else:
-            model = models_by_dataset[target_dataset]
             metrics = model.setdefault("meta", {}).setdefault("metrics", {})
-            metrics[lightdash_name] = definition
+        metrics[lightdash_name] = definition
 
     @staticmethod
     def _resolve_target_dataset(
         expression: str,
         dataset_names: List[str],
         references_by_dataset: Dict[str, JoinReferences],
+        stashed_model: Any = None,
     ) -> Optional[str]:
         """Selects the dataset whose model holds the metric.
 
-        A metric that spans several datasets goes on the one that joins all
-        the others directly, because Lightdash resolves ``${other.column}``
-        only against the joins the model declares, never transitively.
+        The model the metric came from, when the extension records one, wins
+        as long as it can reach every referenced dataset through its joins.
+        A metric on ``orders`` that only reads ``customers`` columns must go
+        back on ``orders``: on ``customers`` the same SQL aggregates over a
+        different set of rows. Without a usable stashed model, the metric
+        goes on the dataset that joins all the others directly, because
+        Lightdash resolves ``${other.column}`` only against the joins the
+        model declares, never transitively.
 
         Returns:
             The dataset name, or None when no dataset joins every referenced
             dataset.
         """
         referenced = referenced_datasets(expression, set(dataset_names))
+        if stashed_model in dataset_names and referenced - {stashed_model} <= set(
+            references_by_dataset.get(stashed_model, {})
+        ):
+            return stashed_model
         if len(referenced) == 0:
             return dataset_names[0] if len(dataset_names) == 1 else None
         if len(referenced) == 1:

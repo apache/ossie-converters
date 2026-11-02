@@ -122,8 +122,13 @@ def parse_aggregation(expression: str) -> Optional[ParsedAggregation]:
         The parsed aggregation, or None for any other shape (``COUNT(*)``,
         arithmetic between aggregations, unknown functions).
     """
+    # The regex is anchored by the closing parenthesis of `WITHIN GROUP (...)`,
+    # so `PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x) + PERCENTILE_CONT(q)
+    # WITHIN GROUP (ORDER BY y)` also matches, with everything between the
+    # first `ORDER BY` and the last `)` as the operand. The same balance check
+    # the other aggregations use rejects that operand.
     percentile_match = _PERCENTILE_RE.match(expression)
-    if percentile_match:
+    if percentile_match and _is_single_call_body(percentile_match.group("inner")):
         percentile = float(percentile_match.group("fraction")) * 100
         if percentile.is_integer():
             percentile = int(percentile)
@@ -184,6 +189,40 @@ def qualifier_of(column_ref: str) -> Optional[str]:
     return None
 
 
+# A single-quoted SQL string literal, or a double-quoted segment: a string
+# literal in BigQuery, a quoted identifier elsewhere. A doubled quote is an
+# escaped quote. Neither kind holds a dataset reference.
+_QUOTED_RE = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
+
+
+def _reference_pattern(dataset_names) -> "re.Pattern[str]":
+    """Compiles the pattern of a ``dataset.column`` reference to one of
+    ``dataset_names``.
+
+    The lookbehind keeps ``orders`` in ``warehouse.orders.id`` from matching:
+    there it is a schema, not a dataset. There is no lookahead, because
+    ``orders.address.city`` is a column followed by a struct field and must
+    match.
+    """
+    alternatives = "|".join(re.escape(name) for name in dataset_names)
+    return re.compile(rf"(?<![\w.])({alternatives})\.(\w+)")
+
+
+def _sub_outside_literals(
+    pattern: "re.Pattern[str]", replace: Callable[["re.Match[str]"], str], expression: str
+) -> str:
+    """Applies ``pattern.sub(replace, …)`` to the parts of ``expression``
+    that are not quoted, and copies the quoted parts verbatim."""
+    parts: List[str] = []
+    position = 0
+    for quoted in _QUOTED_RE.finditer(expression):
+        parts.append(pattern.sub(replace, expression[position : quoted.start()]))
+        parts.append(quoted.group(0))
+        position = quoted.end()
+    parts.append(pattern.sub(replace, expression[position:]))
+    return "".join(parts)
+
+
 def ossie_sql_to_lightdash(
     expression: str, dataset: str, references: Optional[Dict[str, str]] = None
 ) -> str:
@@ -192,7 +231,9 @@ def ossie_sql_to_lightdash(
     ``dataset.column`` becomes ``${TABLE}.column``. A dataset in
     ``references`` (joined from ``dataset``) becomes
     ``${<join reference>.column}``, where the join reference is the joined
-    model's name or its alias.
+    model's name or its alias. Text inside string literals and a dataset
+    name that is part of a longer path (``warehouse.orders.id``) are left as
+    they are.
     """
     # The dataset's own mapping is applied last, so a join reference can't
     # override it. In a self-join (`employees` joined as `manager`), the
@@ -206,8 +247,7 @@ def ossie_sql_to_lightdash(
             return f"${{TABLE}}.{column}"
         return f"${{{reference}.{column}}}"
 
-    alternatives = "|".join(re.escape(name) for name in names)
-    return re.sub(rf"\b({alternatives})\.(\w+)", replace, expression)
+    return _sub_outside_literals(_reference_pattern(names), replace, expression)
 
 
 def has_non_portable_reference(sql: str) -> bool:
@@ -309,9 +349,18 @@ def qualify_bare_columns(sql: str, dataset: str, columns, *, dialect: str = "ANS
 
 
 def referenced_datasets(expression: str, dataset_names: set) -> set:
-    """Gets the subset of ``dataset_names`` that ``expression`` references."""
+    """Gets the subset of ``dataset_names`` that ``expression`` references.
+
+    A dataset named only inside a string literal, or as part of a longer
+    path (``warehouse.orders.id``), is not referenced.
+    """
+    if not dataset_names:
+        return set()
     found = set()
-    for match in re.finditer(r"([A-Za-z_]\w*)\.\w+", expression):
-        if match.group(1) in dataset_names:
-            found.add(match.group(1))
+
+    def record(match: "re.Match[str]") -> str:
+        found.add(match.group(1))
+        return match.group(0)
+
+    _sub_outside_literals(_reference_pattern(dataset_names), record, expression)
     return found

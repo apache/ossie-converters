@@ -243,9 +243,12 @@ The graph part becomes relationships, and a chained join produces the edge
 between the two models it names. The explore part is stored verbatim in the
 dataset's extension and restored, so the explore comes back exactly and other
 consumers read the graph. Lightdash doesn't resolve `${other.column}`
-transitively, so a metric that spans datasets is placed on the model that
-joins every referenced dataset directly. When no such model exists, the
-metric is dropped with an issue.
+transitively, so a metric goes back on the model it came from (recorded as
+`model` in its extension) when that model joins every referenced dataset
+directly, which keeps a metric on `orders` that only reads `customers`
+columns aggregating over `orders` rows. A metric without a usable `model` is
+placed on the model that joins every referenced dataset directly. When no
+such model exists, the metric is dropped with an issue.
 
 **Query-time evaluation.** Lightdash evaluates project parameters, user
 attributes, and Liquid templating when a query runs. No other consumer can, so
@@ -290,7 +293,10 @@ dataset is unrestricted).
   `ALIAS_REFERENCE_FLATTENED` issue.
 - A name that still collides after qualification (model `orders` with metric
   `x_total` versus model `orders_x` with metric `total`) gets a suffix and a
-  `METRIC_NAME_COLLISION` issue.
+  `METRIC_NAME_COLLISION` issue. On export, two Ossie metrics that map to one
+  Lightdash name on the same model (`revenue` and `orders_revenue` both strip
+  to `revenue`) raise the same issue, and the later one keeps its full Ossie
+  name instead of overwriting the earlier one.
 - On export, the synonyms and examples of a structured `ai_context` become
   extra `ai_hint` lines. On import, `ai_hint` becomes a plain instruction
   string.
@@ -331,7 +337,7 @@ On export: `CROSS_DATASET_METRIC_DROPPED`, `FIELD_REFERENCE_UNJOINED`,
 `TIME_ROLE_NOT_REPRESENTABLE`, `DIMENSION_TYPE_DEFAULTED`,
 `COLUMN_META_NOT_REPRESENTABLE`, `CATALOG_MODEL_MISSING`, `DIALECT_UNAVAILABLE`,
 `RELATIONSHIP_COLUMNS_MISMATCHED`, `EXTENSION_DATA_INVALID`,
-`FOREIGN_EXTENSION_IGNORED`.
+`FOREIGN_EXTENSION_IGNORED`, `METRIC_NAME_COLLISION`.
 
 ## Development
 

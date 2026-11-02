@@ -913,3 +913,258 @@ class TestReviewFindings:
         assert _column(model, "name_upper")["meta"]["dimension"]["sql"] == "UPPER(${TABLE}.name)"
         assert _column(model, "id")["meta"]["metrics"]["headcount"] == {"type": "count_distinct"}
         assert result.issues == []
+
+
+class TestSecondReviewFindings:
+    """Regressions from the second round of the apache/ossie-converters#7 review."""
+
+    def test_cross_model_metric_goes_back_on_the_model_it_came_from(self):
+        """A metric on `orders` whose expression reads only `customers`
+        columns must export on `orders` again: on `customers` the same SQL
+        aggregates over a different set of rows."""
+        document = _document()
+        tampered = document.model_copy(deep=True).model_copy(
+            update={
+                "metrics": [
+                    OssieMetric(
+                        name="orders_customer_count",
+                        expression=_ansi("COUNT(DISTINCT customers.customer_id)"),
+                        custom_extensions=[
+                            OssieCustomExtension(
+                                vendor_name="LIGHTDASH",
+                                data=json.dumps({"name": "customer_count", "model": "orders"}),
+                            )
+                        ],
+                    )
+                ]
+            }
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        assert _model(result.output, "orders")["meta"]["metrics"] == {
+            "customer_count": {"type": "count_distinct", "sql": "${customers.customer_id}"}
+        }
+        assert "metrics" not in _model(result.output, "customers").get("meta", {})
+        assert result.issues == []
+
+    def test_stashed_model_that_cannot_reach_a_dataset_falls_back_to_the_heuristic(self):
+        """`customers` does not join `orders`, so a metric stashed on
+        `customers` that reads `orders` goes on `orders` as before."""
+        document = _document()
+        tampered = document.model_copy(deep=True).model_copy(
+            update={
+                "metrics": [
+                    OssieMetric(
+                        name="customers_order_total",
+                        expression=_ansi("SUM(orders.amount)"),
+                        custom_extensions=[
+                            OssieCustomExtension(
+                                vendor_name="LIGHTDASH",
+                                data=json.dumps({"name": "order_total", "model": "customers"}),
+                            )
+                        ],
+                    )
+                ]
+            }
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        assert _column(_model(result.output, "orders"), "amount")["meta"]["metrics"] == {
+            "order_total": {"type": "sum"}
+        }
+        assert result.issues == []
+
+    def test_cross_model_metric_round_trips_to_its_own_model(self):
+        """Lightdash -> Ossie -> Lightdash keeps a metric on the model that
+        declares it, even when its SQL only references the joined model."""
+        project = {
+            "version": 2,
+            "models": [
+                {
+                    "name": "orders",
+                    "meta": {
+                        "joins": [
+                            {
+                                "join": "customers",
+                                "sql_on": "${orders.customer_id} = ${customers.customer_id}",
+                            }
+                        ],
+                        "metrics": {
+                            "active_customers": {
+                                "type": "count_distinct",
+                                "sql": "${customers.customer_id}",
+                            },
+                            "customer_tenure": {
+                                "type": "number",
+                                "sql": "SUM(${customers.tenure_days}) / NULLIF(COUNT(${customers.customer_id}), 0)",
+                            },
+                        },
+                    },
+                    "columns": [{"name": "customer_id"}, {"name": "amount"}],
+                },
+                {
+                    "name": "customers",
+                    "columns": [{"name": "customer_id"}, {"name": "tenure_days"}],
+                },
+            ],
+        }
+        imported = LightdashToOssieConverter().convert(
+            project, schema="marts", semantic_model_name="sales"
+        )
+        assert imported.issues == []
+        exported = OssieToLightdashConverter().convert(imported.output)
+        assert exported.issues == []
+        assert _model(exported.output, "orders")["meta"]["metrics"] == {
+            "active_customers": {"type": "count_distinct", "sql": "${customers.customer_id}"},
+            "customer_tenure": {
+                "type": "number",
+                "sql": "SUM(${customers.tenure_days}) / NULLIF(COUNT(${customers.customer_id}), 0)",
+            },
+        }
+        assert "metrics" not in _model(exported.output, "customers").get("meta", {})
+
+    def test_compound_percentile_expression_is_a_sql_metric(self):
+        """Two percentiles added together are not one `percentile` metric."""
+        document = _document()
+        expression = (
+            "PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY orders.amount)"
+            " - PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY orders.amount)"
+        )
+        tampered = document.model_copy(deep=True).model_copy(
+            update={"metrics": [OssieMetric(name="amount_spread", expression=_ansi(expression))]}
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        assert "metrics" not in _column(_model(result.output, "orders"), "amount").get("meta", {})
+        assert _model(result.output, "orders")["meta"]["metrics"] == {
+            "amount_spread": {
+                "type": "number",
+                "sql": (
+                    "PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY ${TABLE}.amount)"
+                    " - PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY ${TABLE}.amount)"
+                ),
+            }
+        }
+        assert result.issues == []
+
+    def test_metrics_that_strip_to_the_same_name_are_both_kept(self):
+        """`revenue` and `orders_revenue` on `orders` both want the Lightdash
+        name `revenue`. The second keeps its full name and is reported, rather
+        than overwriting the first."""
+        document = _document()
+        tampered = document.model_copy(deep=True).model_copy(
+            update={
+                "metrics": [
+                    OssieMetric(name="revenue", expression=_ansi("SUM(orders.amount)")),
+                    OssieMetric(
+                        name="orders_revenue",
+                        expression=_ansi("SUM(orders.amount) - SUM(orders.completed_count)"),
+                    ),
+                ]
+            }
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        orders = _model(result.output, "orders")
+        assert _column(orders, "amount")["meta"]["metrics"] == {"revenue": {"type": "sum"}}
+        assert orders["meta"]["metrics"] == {
+            "orders_revenue": {
+                "type": "number",
+                "sql": "SUM(${TABLE}.amount) - SUM(${TABLE}.completed_count)",
+            }
+        }
+        collisions = [
+            issue.element_name
+            for issue in result.issues
+            if issue.issue_type is ConverterIssueType.METRIC_NAME_COLLISION
+        ]
+        assert len(collisions) == 1
+        assert collisions[0].startswith("orders_revenue ")
+        assert "'revenue'" in collisions[0] and "'orders_revenue'" in collisions[0]
+
+    def test_metric_names_from_the_extension_that_collide_are_suffixed(self):
+        """When the colliding name comes from the extension, the full Ossie
+        name can collide too, so the metric gets a suffix."""
+        document = _document()
+        named = lambda name: [  # noqa: E731
+            OssieCustomExtension(vendor_name="LIGHTDASH", data=json.dumps({"name": name}))
+        ]
+        tampered = document.model_copy(deep=True).model_copy(
+            update={
+                "metrics": [
+                    OssieMetric(name="revenue", expression=_ansi("SUM(orders.amount)")),
+                    OssieMetric(
+                        name="revenue_2",
+                        expression=_ansi("MAX(orders.amount)"),
+                        custom_extensions=named("revenue"),
+                    ),
+                    OssieMetric(
+                        name="revenue_3",
+                        expression=_ansi("MIN(orders.amount)"),
+                        custom_extensions=named("revenue_2"),
+                    ),
+                ]
+            }
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        assert _column(_model(result.output, "orders"), "amount")["meta"]["metrics"] == {
+            "revenue": {"type": "sum"},
+            "revenue_2": {"type": "max"},
+            "revenue_3": {"type": "min"},
+        }
+        assert [
+            issue.issue_type for issue in result.issues
+        ] == [ConverterIssueType.METRIC_NAME_COLLISION] * 2
+
+    def test_string_literals_and_longer_paths_are_not_rewritten(self):
+        """`orders` inside a string literal is data, and `orders` inside
+        `warehouse.orders.id` is a schema; neither is a dataset reference."""
+        document = _document()
+        expression = (
+            "SUM(CASE WHEN orders.status = 'see orders.total' "
+            "THEN warehouse.orders.id ELSE 0 END)"
+        )
+        tampered = document.model_copy(deep=True).model_copy(
+            update={"metrics": [OssieMetric(name="literal_metric", expression=_ansi(expression))]}
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        assert _model(result.output, "orders")["meta"]["metrics"] == {
+            "literal_metric": {
+                "type": "sum",
+                "sql": (
+                    "CASE WHEN ${TABLE}.status = 'see orders.total' "
+                    "THEN warehouse.orders.id ELSE 0 END"
+                ),
+            }
+        }
+        assert result.issues == []
+
+    def test_a_dataset_named_only_in_a_literal_is_not_a_cross_dataset_reference(self):
+        """A dimension whose SQL mentions `customers` inside a string must not
+        raise FIELD_REFERENCE_UNJOINED, and a metric that does so must not be
+        dropped as cross-dataset."""
+        document = _document()
+        tampered = document.model_copy(deep=True)
+        tampered = tampered.model_copy(
+            update={
+                "relationships": [],
+                "metrics": [
+                    OssieMetric(
+                        name="orders_label_count",
+                        expression=_ansi("COUNT(CASE WHEN orders.status = 'customers.vip' THEN 1 END)"),
+                    )
+                ],
+            }
+        )
+        tampered.datasets[0].fields.append(
+            OssieField(
+                name="source_note",
+                expression=_ansi("'from customers.table' || orders.status"),
+                dimension=OssieDimension(),
+            )
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        orders = _model(result.output, "orders")
+        assert _column(orders, "source_note")["meta"]["dimension"]["sql"] == (
+            "'from customers.table' || ${TABLE}.status"
+        )
+        assert orders["meta"]["metrics"]["label_count"]["sql"] == (
+            "CASE WHEN ${TABLE}.status = 'customers.vip' THEN 1 END"
+        )
+        assert result.issues == []
