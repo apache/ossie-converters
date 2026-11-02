@@ -17,6 +17,8 @@
 
 """Dataset-scoped metric export, namespace resolution and round-trip fidelity."""
 
+import json
+
 import pytest
 import yaml
 from _cube_gate import (
@@ -213,7 +215,7 @@ def test_field_sanitization_cannot_create_duplicate_local_metric_names():
     )
     ds["fields"][1]["name"] = "Gross Amount"
     files, issues = export(model(ds))
-    assert any("sanitization would collide" in issue.detail for issue in issues)
+    assert any("restored field names would collide" in issue.detail for issue in issues)
     returned, _ = convert_cube_to_ossie(files)
     assert_ossie_is_valid(returned, "sanitized local namespace")
     restored = yaml.safe_load(returned)["datasets"][0]
@@ -239,6 +241,163 @@ def test_explicit_native_overrides_survive_local_metric_import():
     assert parse_files(export(yaml.safe_load(returned))[0]) == parse_files(files)
 
 
+@pytest.mark.parametrize("source_dialect", [None, "ANSI_SQL"])
+@pytest.mark.parametrize(
+    "bad_expression",
+    [
+        {},
+        {"dialects": None},
+        {"dialects": {}},
+        {"dialects": "ANSI_SQL"},
+        {"dialects": []},
+        {"dialects": [None]},
+        {"dialects": ["SUM(amount)"]},
+        {"dialects": [{}]},
+        {"dialects": [{"dialect": [], "expression": "SUM(amount)"}]},
+        {"dialects": [{"dialect": "ANSI_SQL", "expression": None}]},
+        {"dialects": [{"dialect": "ANSI_SQL", "expression": ""}]},
+        {"dialects": [{"dialect": "unknown", "expression": "SUM(amount)"}]},
+    ],
+)
+def test_malformed_parked_expressions_fall_back_to_native_import(
+    bad_expression, source_dialect
+):
+    files, _ = export(model(dataset(metrics=[metric()])))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    origin = native["cubes"][0]["measures"][0]["meta"]["ossie"]["dataset_metric"]
+    origin["expression"] = bad_expression
+    files[path] = yaml.safe_dump(native)
+    returned, issues = convert_cube_to_ossie(files, source_dialect=source_dialect)
+    document = yaml.safe_load(returned)
+    assert not document["datasets"][0].get("metrics")
+    assert document["metrics"][0]["expression"] == expression("SUM(orders.amount)")
+    assert any("origin metadata no longer matches" in issue.detail for issue in issues)
+
+
+@pytest.mark.parametrize("whitespace", [" ", "\n\t", "\r\n  "])
+def test_leading_whitespace_does_not_shift_local_field_replacements(whitespace):
+    ds = dataset(metrics=[metric(sql=whitespace + 'SUM("Net Amount") + MAX(id)  ')])
+    ds["fields"][1]["name"] = "Net Amount"
+    files, _ = export(model(ds))
+    assert measures(files)["total_amount"]["sql"] == (
+        "SUM({CUBE.net_amount}) + MAX({CUBE}.id)"
+    )
+    returned, _ = convert_cube_to_ossie(files)
+    assert parse_files(export(yaml.safe_load(returned))[0]) == parse_files(files)
+
+
+@pytest.mark.parametrize(
+    "dialect,quote",
+    [("ANSI_SQL", '"'), ("SNOWFLAKE", '"'), ("DATABRICKS", "`"), ("BIGQUERY", "`")],
+)
+def test_sanitized_intrinsic_names_remain_quoted_fields(dialect, quote):
+    ds = dataset(metrics=[metric()])
+    ds["fields"][1]["name"] = "Current Date"
+    ds["metrics"][0]["expression"] = expression(
+        f"MIN({quote}Current Date{quote})", dialect
+    )
+    files, _ = export(model(ds))
+    assert measures(files)["total_amount"]["sql"] == "{CUBE.current_date}"
+    for _ in range(2):
+        returned, _ = convert_cube_to_ossie(files)
+        back = yaml.safe_load(returned)
+        assert back["datasets"][0]["metrics"][0]["expression"] == expression(
+            f"MIN({quote}current_date{quote})", dialect
+        )
+        next_files, _ = export(back)
+        assert parse_files(next_files) == parse_files(files)
+        files = next_files
+
+
+@pytest.mark.parametrize("key_name", ["id_pk", "ID_PK", "id_pk_2"])
+def test_synthetic_primary_key_names_avoid_allocated_measures(key_name):
+    ds = dataset(metrics=[metric(key_name)])
+    ds["fields"][0]["expression"] = expression("LOWER(email)")
+    files, _ = export(model(ds))
+    cube = yaml.safe_load(files["model/cubes/orders.yml"])["cubes"][0]
+    key = next(d for d in cube["dimensions"] if d.get("primary_key"))
+    assert key["name"].lower() != key_name.lower()
+    assert key["sql"] == "id"
+    assert key["public"] is False
+    assert key_name in measures(files)
+    returned, _ = convert_cube_to_ossie(files)
+    assert yaml.safe_load(returned)["datasets"][0]["primary_key"] == ["id"]
+    assert parse_files(export(yaml.safe_load(returned))[0]) == parse_files(files)
+
+
+@validator_gate
+@pytest.mark.parametrize("renamed_coordinates", [False, True])
+def test_geo_coordinates_restore_the_fields_emitted_by_import(renamed_coordinates):
+    ds = dataset(
+        metrics=[metric("location", "AVG(lat_field)"), metric("location_latitude")]
+    )
+    for part, source, name in [
+        ("latitude", "lat", "lat_field"),
+        ("longitude", "lon", "lon_field"),
+    ]:
+        ds["fields"].append(
+            {
+                "name": name if renamed_coordinates else f"location_{part}",
+                "expression": expression(source),
+                "datatype": "Float",
+                "dimension": {},
+                "custom_extensions": [
+                    {
+                        "vendor_name": "CUBE",
+                        "data": json.dumps(
+                            {"_v": 1, "geo": {"of": "location", "part": part}}
+                        ),
+                    }
+                ],
+            }
+        )
+    if not renamed_coordinates:
+        ds["metrics"] = [metric("location", "AVG(location_latitude)")]
+    files, _ = export(model(ds))
+    assert measures(files)["orders__location"]["sql"] == "{CUBE}.lat"
+    for _ in range(2):
+        returned, _ = convert_cube_to_ossie(files)
+        assert_ossie_is_valid(returned, "dataset metric over a geo coordinate")
+        back = yaml.safe_load(returned)
+        locals = by_name(back["datasets"][0]["metrics"])
+        assert "location" in locals
+        assert locals["location"]["expression"] == expression("AVG(location_latitude)")
+        fields = by_name(back["datasets"][0]["fields"])
+        assert not fields.keys() & locals.keys()
+        next_files, _ = export(back)
+        assert parse_files(next_files) == parse_files(files)
+        files = next_files
+
+
+def test_authored_native_name_override_survives_with_view_references():
+    local = metric()
+    local["custom_extensions"] = [
+        {"vendor_name": "CUBE", "data": '{"_v": 1, "name": "native_total"}'}
+    ]
+    files, _ = export(model(dataset(metrics=[local])))
+    assert "native_total" in measures(files)
+    files["model/views/curated.yml"] = yaml.safe_dump(
+        {
+            "views": [
+                {
+                    "name": "curated",
+                    "cubes": [{"join_path": "orders", "includes": ["native_total"]}],
+                }
+            ]
+        }
+    )
+    for _ in range(2):
+        returned, _ = convert_cube_to_ossie(files)
+        back = yaml.safe_load(returned)
+        restored = back["datasets"][0]["metrics"][0]
+        assert restored["name"] == "total_amount"
+        assert stash_of(restored)["name"] == "native_total"
+        next_files, _ = export(back)
+        assert parse_files(next_files) == parse_files(files)
+        files = next_files
+
+
 @pytest.mark.parametrize(
     "dialect,quote",
     [
@@ -259,7 +418,9 @@ def test_quoted_local_fields_resolve_in_the_selected_dialect(dialect, quote):
     assert "{CUBE.net_amount}" in measure["sql"]
     returned, _ = convert_cube_to_ossie(files)
     back = yaml.safe_load(returned)
-    normalized_sql = sql.replace(f"{quote}Net Amount{quote}", "net_amount")
+    normalized_sql = sql.replace(
+        f"{quote}Net Amount{quote}", f"{quote}net_amount{quote}"
+    )
     assert back["datasets"][0]["metrics"][0]["expression"] == expression(
         normalized_sql, dialect
     )
@@ -403,3 +564,37 @@ def test_local_and_model_metrics_compile_together_in_cube():
         )
     )
     assert_cube_compiles(files, "dataset-scoped metrics")
+
+
+@cube_gate
+def test_review_regressions_compile_in_cube_with_preserved_view_references():
+    ds = dataset(
+        metrics=[metric("id_pk"), metric("first_date", ' \n MIN("Current Date")')]
+    )
+    ds["fields"][0]["expression"] = expression("LOWER(email)")
+    ds["fields"].append(
+        {
+            "name": "Current Date",
+            "expression": expression("created_at"),
+            "datatype": "Date",
+        }
+    )
+    ds["metrics"][1]["custom_extensions"] = [
+        {"vendor_name": "CUBE", "data": '{"_v": 1, "name": "native_date"}'}
+    ]
+    files, _ = export(model(ds))
+    files["model/views/curated.yml"] = yaml.safe_dump(
+        {
+            "views": [
+                {
+                    "name": "curated",
+                    "cubes": [{"join_path": "orders", "includes": ["native_date"]}],
+                }
+            ]
+        }
+    )
+    assert_cube_compiles(files, "review regressions")
+    returned, _ = convert_cube_to_ossie(files)
+    next_files, _ = export(yaml.safe_load(returned))
+    assert parse_files(next_files) == parse_files(files)
+    assert_cube_compiles(next_files, "review regressions after import/export")

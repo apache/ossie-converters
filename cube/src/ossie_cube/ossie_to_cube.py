@@ -349,6 +349,10 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     pk_names = []
     computed_keys = set(stash.get("computed_primary_key") or [])
     taken = {d["name"].lower() for d in dimensions}
+    # Measures have already been allocated. A private key dimension can choose a
+    # new name, whereas renaming those measures here would break view references.
+    taken.update(m["name"].lower() for m in (measures or []))
+    taken.update(n.lower() for n in plan.members)
     # `plan.primary_key`, not the dataset's own field: the plan is where the fallback to
     # `unique_keys` is resolved, and every stage has to agree on the answer.
     for entry in plan.primary_key:
@@ -1218,6 +1222,9 @@ def _qualify_dataset_metric(expr, dialect, dataset, fields, scope, renamed_field
     from words in the SQL. Raw source columns and metric references are not legal
     in the dataset-scoped namespace.
     """
+    # The parser strips its input; replacements must use the same source text so
+    # identifier offsets still point at the original column spans.
+    expr = expr.strip()
     tree = parse_expression(expr, dialect)
     if (tree is None or tree.find(sqlglot.exp.Query, sqlglot.exp.Command) is not None
             or any(t.token_type is sqlglot.TokenType.SEMICOLON
@@ -1226,8 +1233,8 @@ def _qualify_dataset_metric(expr, dialect, dataset, fields, scope, renamed_field
     field_names = lookup_map(fields)
     quote = "`" if dialect in BACKTICK_DIALECTS else '"'
 
-    def reference(name):
-        return (name if is_referenceable_name(name)
+    def reference(name, quoted=False):
+        return (name if not quoted and is_referenceable_name(name)
                 else quote + name.replace(quote, quote * 2) + quote)
 
     replacements = {}
@@ -1252,7 +1259,7 @@ def _qualify_dataset_metric(expr, dialect, dataset, fields, scope, renamed_field
         field = (renamed_fields or {}).get(field, field)
         replacements[start, end + 1] = (
             reference(dataset) + "." + reference(field) if dataset is not None
-            else reference(field))
+            else reference(field, quoted=bool(ident.args.get("quoted"))))
     for (start, end), replacement in sorted(replacements.items(), reverse=True):
         expr = expr[:start] + replacement + expr[end:]
     return expr
@@ -1265,8 +1272,21 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
     # including COUNT(*) and other expressions with no field reference.
     refs = _MetricReferences({}, dialect, tables, lambda: None, model_name,
                              {}, set(cube_names.values()), issues)
-    restored_names = {c: {normalize_identifier(n) for n in p.names.values()}
-                      for c, p in plan.items()}
+    # Import splits merged geo dimensions back into coordinate fields. Those
+    # names, rather than the merged member name, define the restored namespace.
+    restored_fields = {}
+    for ds_name, ds in datasets.items():
+        target = cube_names[ds_name]
+        restored_fields[target] = {}
+        for field in ds.get("fields") or []:
+            fname = field["name"]
+            if fname in plan[target].dropped:
+                continue
+            member = plan[target].names[fname]
+            geo = read_stash(field).get("geo")
+            restored_fields[target][fname] = f"{member}_{geo['part']}" if geo else member
+    restored_names = {c: {normalize_identifier(n) for n in fields.values()}
+                      for c, fields in restored_fields.items()}
     for ds_name, metric, scope in _dataset_metrics(datasets):
         target = cube_names[ds_name]
         expr, used = pick_expression(metric.get("expression"), dialect)
@@ -1307,7 +1327,7 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
             {"dialect": used, "expression": qualified}]}}
         _apply_measure_metadata(translated, measure, stash, used)
         restored_expression = metric["expression"]
-        aliases = {field: member for field, member in plan[target].names.items()
+        aliases = {field: member for field, member in restored_fields[target].items()
                    if field != member}
         if aliases:
             # Fields re-import under their sanitized Cube identifiers. A local
@@ -1338,13 +1358,18 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
                 local_name, suffix = f"{mname}_{suffix}", suffix + 1
             issues.add(
                 IssueType.APPROXIMATED, scope,
-                f"field-name sanitization would collide with this metric's name; "
+                f"restored field names would collide with this metric's name; "
                 f"the restored dataset metric is named '{local_name}'")
         restored_names[target].add(normalize_identifier(local_name))
         origin = {"name": local_name, "expression": restored_expression,
                   "signature": measure_signature(measure)}
-        overrides = {k: stash[k] for k in ("sql", "type", "filters", "measure")
+        overrides = {k: stash[k] for k in ("name", "sql", "type", "filters", "measure")
                      if k in stash}
+        if local_name != metric["name"] and local_name != mname:
+            # A restored field (for example a geo half) can occupy the original
+            # local metric name without occupying its Cube measure name. Keep
+            # that native identity when the Ossie-only name must change.
+            overrides.setdefault("name", mname)
         if overrides:
             origin["overrides"] = overrides
         measure.setdefault("meta", {}).setdefault("ossie", {})["dataset_metric"] = (

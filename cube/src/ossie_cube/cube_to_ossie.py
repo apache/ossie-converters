@@ -41,10 +41,12 @@ from ._common import (
     CALCULATED_MEASURE_TYPES,
     DEFAULT_MODEL_NAME,
     DIALECT_ANSI,
+    DIALECT_OSSIE_SQL,
     DATATYPE_TO_DIM_TYPE,
     DIM_TYPE_TO_DATATYPE,
     JINJA_RE,
     OSSIE_VERSION,
+    SQL_DIALECT_READERS,
     ConversionError,
     classify_metric_expression,
     cube_file,
@@ -1858,11 +1860,30 @@ def _field_owners_of(member_names):
     return owners
 
 
+def _valid_dataset_metric_expression(expression):
+    """Check the parked expression's shape before replacing valid native SQL.
+
+    Metadata is deliberately outside the definition signature, so even an
+    unchanged measure can carry a damaged origin. Non-SQL alternatives remain
+    opaque, but every alternative must still have the Ossie expression shape.
+    """
+    if not isinstance(expression, dict) or set(expression) != {"dialects"}:
+        return False
+    entries = expression["dialects"]
+    dialects = {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL, "MDX", "TABLEAU", "MAQL",
+                "SIGMA", "THOUGHTSPOT", "DAX", "HOLISTICS_AQL"}
+    return isinstance(entries, list) and bool(entries) and all(
+        isinstance(entry, dict) and set(entry) == {"dialect", "expression"}
+        and isinstance(entry["dialect"], str) and entry["dialect"] in dialects
+        and isinstance(entry["expression"], str) and bool(entry["expression"].strip())
+        for entry in entries)
+
+
 def _dataset_metric_of(measure):
     """Restore origins only while the native measure still matches its export."""
     origin = parked_of(measure.get("meta")).get("dataset_metric")
     if (isinstance(origin, dict) and isinstance(origin.get("name"), str)
-            and origin["name"] and isinstance(origin.get("expression"), dict)
+            and origin["name"] and _valid_dataset_metric_expression(origin.get("expression"))
             and isinstance(origin.get("overrides", {}), dict)
             and origin.get("signature") == measure_signature(measure)):
         return origin
