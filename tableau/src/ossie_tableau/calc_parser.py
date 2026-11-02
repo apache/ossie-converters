@@ -121,11 +121,19 @@ def _bin(cls, l, r):
     return cls(this=wrap(l, False), expression=wrap(r, True))
 
 
+# RANK_MODIFIED / RANK_PERCENTILE give a tie the last position: COUNT(*) of rows up to and including its peers.
+_RANK_FNS = {
+    "RANK": "RANK()", "RANK_DENSE": "DENSE_RANK()", "RANK_UNIQUE": "ROW_NUMBER()",
+    "RANK_MODIFIED": "COUNT(*)", "RANK_PERCENTILE": "COUNT(*)",
+}
+
+
 class _P:
     def __init__(self, formula: str, resolve: Resolver, wh: Warehouse = DEFAULT,
                  order: list[exp.Expression] | None = None,
-                 metric_names: set[str] | None = None):
+                 metric_names: set[str] | None = None, rank_desc: bool | None = None):
         self.wh = wh
+        self.rank_desc = rank_desc
         self.toks = _lex(formula)
         self.i = 0
         self.resolve = resolve
@@ -433,11 +441,23 @@ class _P:
             raise Untranslatable(f"WINDOW_* over {n.key.upper()} has no row-grain form")
         return body.copy().transform(sub)
 
-    def _rank_window(self, body, fn: str):
+    def _rank_window(self, body, name: str, desc: bool):
+        """Tableau ranks non-NULL values only: a NULL key ranks NULL and is not counted in RANK_PERCENTILE's N.
+        NULL keys get their own partition, so no dialect's NULL ordering can shift a non-NULL rank."""
         key = self._unwrap_single_agg(body)
-        w = sqlglot.parse_one(f"{fn}() OVER ()")
-        w.set("order", exp.Order(expressions=[exp.Ordered(this=key, desc=True)]))
-        return w
+        w = sqlglot.parse_one(f"{_RANK_FNS[name]} OVER ()")
+        keys = [exp.Ordered(this=key.copy(), desc=desc)]
+        if name == "RANK_UNIQUE":  # ties break in addressing order
+            keys += [exp.Ordered(this=c.copy()) for c in self.order]
+        w.set("order", exp.Order(expressions=keys))
+        w.set("partition_by", [exp.Paren(this=exp.Is(this=key.copy(), expression=exp.Null()))])
+        if _RANK_FNS[name].startswith("COUNT"):
+            w.set("spec", exp.WindowSpec(kind="RANGE", start="UNBOUNDED", start_side="PRECEDING", end="CURRENT ROW"))
+        if name == "RANK_PERCENTILE":
+            n = exp.Window(this=exp.Count(this=key.copy()))
+            w = sqlglot.parse_one("COALESCE(CAST(w - 1 AS DOUBLE) / NULLIF(n - 1, 0), 0)").transform(
+                lambda c: (w if c.name == "w" else n).copy() if isinstance(c, exp.Column) else c)
+        return exp.Case(ifs=[exp.If(this=exp.Not(this=exp.Is(this=key.copy(), expression=exp.Null())), true=w)])
 
     def _lag_window(self, body: exp.Expression, n: int) -> exp.Expression:
         src = self._unwrap_single_agg(body)
@@ -594,17 +614,21 @@ class _P:
             if start is not None:
                 return self._rows_window(agg, start, end), t
             return exp.Window(this=agg), t
-        if name in ("RANK", "RANK_DENSE", "RANK_UNIQUE", "RANK_PERCENTILE"):
+        if name in _RANK_FNS:
             if self.op(")"):
                 raise Untranslatable(f"{name} needs an argument")
             body, _ = self.expr()
+            # explicit 'asc'/'desc' > TWB rank-options > Tableau default (RANK_PERCENTILE ascends, the rest descend)
+            desc = name != "RANK_PERCENTILE" if self.rank_desc is None else self.rank_desc
+            if self.op(","):
+                lit, _ = self.expr()
+                word = lit.name.lower() if isinstance(lit, exp.Literal) and lit.is_string else None
+                if word not in ("asc", "desc"):
+                    raise Untranslatable(f"{name} direction must be 'asc' or 'desc'")
+                desc = word == "desc"
             self.need(")")
             self._addr()
-            fn = {
-                "RANK": "RANK", "RANK_DENSE": "DENSE_RANK", "RANK_UNIQUE": "ROW_NUMBER",
-                "RANK_PERCENTILE": "PERCENT_RANK",
-            }[name]
-            return self._rank_window(body, fn), "num"
+            return self._rank_window(body, name, desc), "num"
         if name == "INDEX":
             self.need(")")
             self._addr()
@@ -756,8 +780,10 @@ def _iso_datetime_text(text: str, date_only: bool) -> str:
 
 
 def translate(formula: str, resolve: Resolver | None = None, wh: Warehouse = DEFAULT,
-              order: list[exp.Expression] | None = None, metric_names: set[str] | None = None) -> Translation:
-    p = _P(formula, resolve or _default_resolve, wh, order=order, metric_names=metric_names)
+              order: list[exp.Expression] | None = None, metric_names: set[str] | None = None,
+              rank_desc: bool | None = None) -> Translation:
+    """`rank_desc` is a TWB `rank-options` direction; it overrides the RANK* default but not an explicit 'asc'/'desc'."""
+    p = _P(formula, resolve or _default_resolve, wh, order=order, metric_names=metric_names, rank_desc=rank_desc)
     tree, t = p.parse()
     return Translation(tree, t, p.notes, any(isinstance(n, _AGG) for n in tree.walk()), wh.sqlglot_dialect)
 

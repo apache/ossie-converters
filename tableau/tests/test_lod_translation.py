@@ -74,7 +74,7 @@ def test_running_family_stays_untranslatable(formula):
 
 @pytest.mark.parametrize("formula,needle", [
     ("WINDOW_COUNT(SUM([a]))", "COUNT"),
-    ("RANK_PERCENTILE(SUM([a]))", "PERCENT_RANK"),
+    ("RANK_PERCENTILE(SUM([a]))", "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"),
     ("LOOKUP(SUM([a]), FIRST())", "FIRST_VALUE"),
     ("INDEX()>1", "ROW_NUMBER"),
     ("LOOKUP(SUM([a]), -1) IS NULL", "LAG"),
@@ -147,6 +147,7 @@ def test_convert_parks_brace_lod_metric(formula):
     "INDEX()>1", "LOOKUP(SUM([amt]), -1) IS NULL",
     "WINDOW_COUNT(SUM([amt]))",
     "RANK_PERCENTILE(SUM([amt]))", "LOOKUP(SUM([amt]), FIRST())",
+    "RANK_MODIFIED(SUM([amt]))", "RANK(SUM([amt]), 'asc')", "RANK_PERCENTILE(SUM([amt]), 'desc')",
 ])
 def test_convert_keeps_viz_dependent_shapes_as_losses(formula):
     r = _convert_calc(formula)
@@ -164,6 +165,7 @@ def test_convert_keeps_viz_dependent_shapes_as_losses(formula):
         "INDEX()>1", "LOOKUP(SUM([amt]), -1) IS NULL",
         "WINDOW_COUNT(SUM([amt]))",
         "RANK_PERCENTILE(SUM([amt]))", "LOOKUP(SUM([amt]), FIRST())",
+        "RANK_MODIFIED(SUM([amt]))", "RANK(SUM([amt]), 'asc')", "RANK_PERCENTILE(SUM([amt]), 'desc')",
     ) or formula.startswith("{FIXED [amt]: SUM") or formula.startswith("{FIXED [amt]: AVG")
     if quiet:
         assert "sql_unreconciled" not in ks
@@ -348,3 +350,142 @@ def test_convert_bare_window_is_unreconciled(formula):
     assert len(r.document.metrics) == 1
     un = [x.detail for x in r.losses if x.kind == "sql_unreconciled"]
     assert un and "not an aggregate" in un[0]
+
+
+_RANK_FN_SQL = {"RANK": "RANK()", "RANK_DENSE": "DENSE_RANK()", "RANK_UNIQUE": "ROW_NUMBER()",
+                "RANK_MODIFIED": "COUNT(*)", "RANK_PERCENTILE": "COUNT(*)"}
+
+
+@pytest.mark.parametrize("fn", sorted(_RANK_FN_SQL))
+@pytest.mark.parametrize("arg,desc", [("", None), (", 'asc'", False), (", 'desc'", True), (", 'DESC'", True)])
+def test_rank_direction_and_window(fn, arg, desc):
+    import sqlglot
+    from sqlglot import exp
+    t = translate(f"{fn}(SUM([a]){arg})", order=[exp.column("id")])
+    want_desc = (fn != "RANK_PERCENTILE") if desc is None else desc
+    tree = sqlglot.parse_one(t.sql)
+    assert isinstance(tree, exp.Case) and "NOT a IS NULL" in tree.args["ifs"][0].this.sql()
+    w = next(x for x in tree.find_all(exp.Window) if x.args.get("order"))
+    assert w.this.sql().upper() == _RANK_FN_SQL[fn]
+    assert w.args["partition_by"][0].sql() == "(a IS NULL)"
+    first = w.args["order"].expressions[0]
+    assert first.this.sql() == "a" and bool(first.args.get("desc")) == want_desc, t.sql
+    assert ("RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW" in t.sql) == (fn in ("RANK_MODIFIED", "RANK_PERCENTILE"))
+    assert ("id" in [o.this.sql() for o in w.args["order"].expressions[1:]]) == (fn == "RANK_UNIQUE")
+    for d in ("snowflake", "bigquery"):
+        sqlglot.parse_one(sqlglot.transpile(t.sql, write=d)[0], read=d)
+
+
+@pytest.mark.parametrize("fn", sorted(_RANK_FN_SQL))
+def test_twb_rank_options_override_default_but_not_literal(fn):
+    import sqlglot
+    from sqlglot import exp
+
+    def desc(formula, rank_desc):
+        w = next(x for x in sqlglot.parse_one(translate(formula, rank_desc=rank_desc).sql).find_all(exp.Window)
+                 if x.args.get("order"))
+        return bool(w.args["order"].expressions[0].args.get("desc"))
+    assert desc(f"{fn}(SUM([a]))", True) is True
+    assert desc(f"{fn}(SUM([a]))", False) is False
+    assert desc(f"{fn}(SUM([a]), 'asc')", True) is False
+    assert desc(f"{fn}(SUM([a]), 'desc')", False) is True
+
+
+def test_rank_percentile_exact_sql():
+    assert translate("RANK_PERCENTILE(SUM([a]))").sql == (
+        "CASE WHEN NOT a IS NULL THEN COALESCE(CAST(COUNT(*) OVER (PARTITION BY (a IS NULL) ORDER BY a ASC "
+        "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) - 1 AS DOUBLE) / NULLIF(COUNT(a) OVER () - 1, 0), 0) END")
+    assert "PERCENT_RANK" not in translate("RANK_PERCENTILE(SUM([a]), 'desc')").sql
+
+
+@pytest.mark.parametrize("formula", ["RANK(SUM([a]), 'up')", "RANK_DENSE(SUM([a]), 1)", "RANK()",
+                                     "RANK_PERCENTILE(SUM([a]), [b])"])
+def test_rank_bad_direction_is_untranslatable(formula):
+    with pytest.raises(Untranslatable):
+        translate(formula)
+
+
+def test_rank_semantics_execute_in_sqlite():
+    import sqlite3
+    import sqlglot
+    from sqlglot import exp
+    con = sqlite3.connect(":memory:")
+    con.execute("create table t (id integer, a real)")
+    con.executemany("insert into t values (?, ?)", [(1, 5.0), (2, None), (3, 5.0), (4, 2.0), (5, 9.0)])
+    want = {  # Tableau: NULL ranks NULL and is not in N; ties take the first (RANK) or last (MODIFIED/PERCENTILE) slot
+        "RANK(SUM([a]))": [2, None, 2, 4, 1], "RANK_DENSE(SUM([a]))": [2, None, 2, 3, 1],
+        "RANK_UNIQUE(SUM([a]))": [2, None, 3, 4, 1], "RANK_MODIFIED(SUM([a]))": [3, None, 3, 4, 1],
+        "RANK_PERCENTILE(SUM([a]))": [2 / 3, None, 2 / 3, 0.0, 1.0], "RANK(SUM([a]), 'asc')": [2, None, 2, 1, 4],
+    }
+    for formula, ranks in want.items():
+        sql = sqlglot.transpile(translate(formula, order=[exp.column("id")]).sql, write="sqlite")[0]
+        got = [r[0] for r in con.execute(f"select {sql} from t order by id").fetchall()]
+        assert [g is None for g in got] == [w is None for w in ranks], (formula, got)
+        assert [g for g in got if g is not None] == pytest.approx([w for w in ranks if w is not None]), (formula, got)
+
+
+_TC_TWB = """<workbook><datasources>{ds}</datasources><worksheets><worksheet name='w'><table><view>
+  <datasource-dependencies datasource='ds1'>
+    <column-instance column='[Calculation_1]' derivation='User' name='[usr:Calculation_1:qk]' type='quantitative'>
+      <table-calc {attrs}>{kids}</table-calc>
+    </column-instance>
+    <column-instance column='[amt]' derivation='Sum' name='[rank:sum:amt:qk]' type='quantitative'>
+      <table-calc ordering-type='Table' rank-options='Dense,Ascending' type='Rank' />
+    </column-instance>
+  </datasource-dependencies></view></table></worksheet></worksheets></workbook>"""
+
+
+def _convert_twb(tmp_path, formula, attrs="ordering-type='Columns'", kids=""):
+    import xml.etree.ElementTree as ET
+    from ossie_tableau.convert import convert_file
+    from .test_units import BASE, calc, ds
+    ds_xml = ET.tostring(ds(BASE, calc(formula)), encoding="unicode")
+    p = tmp_path / "w.twb"
+    p.write_text(_TC_TWB.format(ds=ds_xml, attrs=attrs, kids=kids))
+    r = convert_file(p)[0]
+    sf = next(d.expression for d in r.document.metrics[0].expression.dialects
+              if str(getattr(d.dialect, "value", d.dialect)) == "SNOWFLAKE")
+    return r, sf
+
+
+def test_twb_rank_options_set_direction(tmp_path):
+    _, sf = _convert_twb(tmp_path, "RANK(SUM([amt]))", "ordering-type='Columns' rank-options='Competition,Ascending'")
+    assert "ORDER BY amt ASC" in sf.replace('"', "")
+    _, sf = _convert_twb(tmp_path, "RANK(SUM([amt]), 'desc')", "rank-options='Competition,Ascending'")
+    assert "ORDER BY amt DESC" in sf.replace('"', "")
+
+
+def test_quick_calc_table_calc_does_not_leak_onto_calcs(tmp_path):
+    r, sf = _convert_twb(tmp_path, "RANK(SUM([amt]))")
+    assert "ORDER BY amt DESC" in sf.replace('"', "")
+    assert "sql_unreconciled" not in {x.kind for x in r.losses}
+
+
+@pytest.mark.parametrize("attrs,kids,needle", [
+    ("ordering-type='CellInPane'", "", "ordering-type=CellInPane"),
+    ("ordering-type='Columns' type='PctTotal'", "", "type=PctTotal"),
+    ("ordering-type='Columns' window-options='Absolute' from='-2' to='0'", "", "window-options=Absolute, from=-2, to=0"),
+    ("ordering-type='Columns'", "<sort direction='DESC' using='[ds1].[amt]' />", "sort=DESC"),
+])
+def test_unmodelled_table_calc_settings_reach_the_loss(tmp_path, attrs, kids, needle):
+    r, _ = _convert_twb(tmp_path, "RANK(SUM([amt]))", attrs, kids)
+    un = [x.detail for x in r.losses if x.kind == "sql_unreconciled"]
+    assert un and needle in un[0], un
+
+
+def test_table_calc_owners():
+    import xml.etree.ElementTree as ET
+    from ossie_tableau.convert import table_calc_meta, table_calc_options
+    root = ET.fromstring("""<workbook>
+      <column name='[Calculation_9]'><calculation class='tableau' formula='TOTAL(SUM([a]))'>
+        <table-calc ordering-type='Rows' /></calculation></column>
+      <column-instance column='[Calculation_1]' derivation='User' name='[usr:Calculation_1:qk]'>
+        <table-calc ordering-field='[ds].[Region]' ordering-type='Field' rank-options='Dense,Descending' /></column-instance>
+      <column-instance column='[b]' derivation='Sum' name='[pcto:sum:b:qk]'>
+        <table-calc ordering-field='[ds].[Other]' ordering-type='Field' type='PctTotal' /></column-instance>
+    </workbook>""")
+    keys, types = table_calc_meta(root)
+    assert keys == {"Calculation_1": ["Region"]} and types == {"Calculation_9": "Rows", "Calculation_1": "Field"}
+    opts = table_calc_options(root)
+    assert opts["Calculation_1"] == {"rank_desc": True, "extras": []}
+    assert "b" not in opts and "*" not in opts

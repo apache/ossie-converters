@@ -132,3 +132,22 @@ def test_window_outer_function_and_frame_survive(fn, arg, frame):
         assert spec.sql().upper() == f"ROWS BETWEEN {bound(frame[0], 'PRECEDING')} AND {bound(frame[1], 'FOLLOWING')}", sql
     else:
         assert "ROWS" not in sql.upper()
+
+
+@settings(max_examples=150, deadline=None)
+@given(st.sampled_from(["RANK", "RANK_DENSE", "RANK_UNIQUE", "RANK_MODIFIED", "RANK_PERCENTILE"]),
+       st.sampled_from(["SUM", "AVG", "MIN", "MAX"]), st.sampled_from([None, "asc", "desc", "ASC", "Desc"]),
+       st.sampled_from([None, True, False]))
+def test_rank_order_direction_follows_spec(fn, agg, word, twb_desc):
+    import sqlglot
+    from sqlglot import exp
+    tail = f", '{word}'" if word else ""
+    sql = translate(f"{fn}({agg}([a]){tail})", order=[exp.column("id")], rank_desc=twb_desc).sql
+    # explicit literal > TWB rank-options > Tableau default (RANK_PERCENTILE ascends, the rest descend)
+    want = word.lower() == "desc" if word else (fn != "RANK_PERCENTILE" if twb_desc is None else twb_desc)
+    tree = sqlglot.parse_one(sql)
+    w = next(x for x in tree.find_all(exp.Window) if x.args.get("order"))
+    assert bool(w.args["order"].expressions[0].args.get("desc")) == want, sql
+    assert isinstance(tree, exp.Case) and agg not in sql.upper(), sql
+    for d in ("snowflake", "bigquery"):
+        sqlglot.parse_one(sqlglot.transpile(sql, write=d)[0], read=d)

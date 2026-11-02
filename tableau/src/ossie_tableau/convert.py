@@ -80,9 +80,12 @@ _TC_REF = r"\[[^\[\]]+\]"
 _TC_AGG = rf"(?:SUM|AVG|MIN|MAX|COUNT|COUNTD|MEDIAN)\s*\(\s*{_TC_REF}\s*\)"
 _TC_BODY = rf"(?:{_TC_AGG}|{_TC_REF})"
 _NUM = r"-?\d+(?:\.\d+)?"
+# RANK* with its optional 'asc'/'desc' argument; masked() blanks the string literal, leaving `, <spaces>`
+_RANK = r"RANK(?:_DENSE|_UNIQUE|_MODIFIED|_PERCENTILE)?"
+_RANK_ARGS = rf"\(\s*{_TC_BODY}\s*(?:,\s*)?\)"
 _TC_ATOM = (
     rf"(?:RUNNING_SUM\s*\(\s*{_TC_BODY}\s*\)"
-    rf"|RANK(?:_DENSE|_UNIQUE|_PERCENTILE)?\s*\(\s*{_TC_BODY}\s*\)"
+    rf"|{_RANK}\s*{_RANK_ARGS}"
     rf"|WINDOW_COUNT\s*\(\s*{_TC_BODY}(?:\s*,\s*-?\d+\s*,\s*-?\d+)?\s*\)"
     rf"|INDEX\s*\(\s*\)"
     rf"|FIRST\s*\(\s*\)"
@@ -112,7 +115,8 @@ LOD_VIZ_SHAPE = re.compile(
 # Whole-formula shapes whose window SQL matches table-across on a fixed sort (BQ + SF live gates).
 # INCLUDE/EXCLUDE, PREVIOUS_VALUE, and offset/mismatched WINDOW_* stay sql_unreconciled.
 # {FIXED [d]: [field]} is reconciled after FIRST_VALUE (not MAX) + first-row-per-partition truth.
-# 22–24 (INDEX()>1, LOOKUP IS NULL, WINDOW_COUNT, RANK_PERCENTILE, LOOKUP FIRST()) after BQ 49/49 + SF 37/37.
+# 22–24 (INDEX()>1, LOOKUP IS NULL, WINDOW_COUNT, LOOKUP FIRST()) after BQ 49/49 + SF 37/37.
+# RANK* (all five, default/'asc'/'desc', ties and NULLs) match Tableau-exported golden CSVs on both SF and BQ SQL.
 _RECONCILED_VIZ = re.compile(
     rf"^\s*(?:"
     rf"SIZE\s*\(\s*\)(?:\s*\*\s*{_NUM})?"
@@ -124,9 +128,8 @@ _RECONCILED_VIZ = re.compile(
     rf"|FIRST\s*\(\s*\)\s*-\s*LAST\s*\(\s*\)"
     rf"|\(\s*INDEX\s*\(\s*\)\s*\+\s*{_NUM}\s*\)\s*\*\s*SIZE\s*\(\s*\)"
     rf"|\(\s*FIRST\s*\(\s*\)\s*-\s*{_NUM}\s*\)\s*\+\s*SIZE\s*\(\s*\)"
-    rf"|INDEX\s*\(\s*\)\s*\+\s*RANK(?:_DENSE|_UNIQUE)?\s*\(\s*{_TC_BODY}\s*\)"
-    rf"|RANK(?:_DENSE|_UNIQUE)?\s*\(\s*{_TC_BODY}\s*\)"
-    rf"|RANK_PERCENTILE\s*\(\s*{_TC_BODY}\s*\)"
+    rf"|INDEX\s*\(\s*\)\s*\+\s*{_RANK}\s*{_RANK_ARGS}"
+    rf"|{_RANK}\s*{_RANK_ARGS}"
     rf"|WINDOW_COUNT\s*\(\s*{_TC_AGG}(?:\s*,\s*-?\d+\s*,\s*-?\d+)?\s*\)"
     rf"|LOOKUP\s*\(\s*{_TC_BODY}\s*,\s*{_NUM}\s*\)(?:\s+IS\s+NULL)?"
     rf"|LOOKUP\s*\(\s*{_TC_BODY}\s*,\s*FIRST\s*\(\s*\)\s*\)"
@@ -414,6 +417,62 @@ def _read_xml(path: Path) -> ET.Element:
     return _read_all_xml(path)[0][1]
 
 
+def _last_ref(s: str) -> str:
+    parts = re.findall(r"\[([^\]]+)\]", s)
+    return parts[-1] if parts else s
+
+
+def _table_calc_owners(root: ET.Element):
+    """Yield (calc local name, `<table-calc>`). The owner is the `field` attr, else the enclosing calculation's
+    column, else a User-derivation column-instance's column, else "*" (an unowned worksheet setting).
+    A quick table calc (`[rank:sum:X:qk]`) addresses a pill, not a calc formula, so it is skipped."""
+    parent = {c: p for p in root.iter() for c in p}
+    for tc in root.iter():
+        if _tag(tc) != "table-calc":
+            continue
+        p = parent.get(tc)
+        if tc.get("field"):
+            yield _last_ref(tc.get("field")), tc
+        elif p is not None and _tag(p) == "calculation" and _tag(parent.get(p, p)) == "column":
+            yield _last_ref(parent[p].get("name") or ""), tc
+        elif p is not None and _tag(p) == "column-instance":
+            if p.get("derivation") == "User" and p.get("column"):
+                yield _last_ref(p.get("column")), tc
+        else:
+            yield "*", tc
+
+
+_KNOWN_ORDERING = {"", "Columns", "Rows", "Field"}
+
+
+def table_calc_options(root: ET.Element) -> dict[str, dict]:
+    """Per-calc `<table-calc>` options beyond ordering: {name: {"rank_desc": bool | None, "extras": [str]}}.
+
+    `rank-options` ("Competition,Descending") sets the RANK* direction. Settings the SQL does not model
+    (type, window-options, from/to, aggregation, a `<sort>` child, an ordering-type other than
+    Columns/Rows/Field) are listed in `extras` so the loss can say so; `<sort direction>` orders the
+    addressing partition, not the rank, so it is an extra too."""
+    out: dict[str, dict] = {}
+    for name, tc in _table_calc_owners(root):
+        o = out.setdefault(name, {"rank_desc": None, "extras": []})
+        ro = (tc.get("rank-options") or "").split(",")
+        if len(ro) == 2 and ro[1].strip() in ("Ascending", "Descending"):
+            o["rank_desc"] = ro[1].strip() == "Descending"
+        extras = []
+        if (t := tc.get("type") or "") not in ("", "None", "Custom"):
+            extras.append(f"type={t}")
+        for a in ("window-options", "from", "to", "aggregation"):
+            if tc.get(a):
+                extras.append(f"{a}={tc.get(a)}")
+        if (ot := (tc.get("ordering-type") or "").strip()) not in _KNOWN_ORDERING:
+            extras.append(f"ordering-type={ot}")
+        for s in tc:
+            if _tag(s) == "sort":
+                extras.append(f"sort={s.get('direction') or '?'}")
+        o["extras"] += [e for e in extras if e not in o["extras"]]
+    return out
+
+
 def table_calc_meta(root: ET.Element) -> tuple[dict[str, list[str]], dict[str, str]]:
     """Parse `<table-calc>` only. Do not invent Compute Using from Columns/Rows.
 
@@ -423,19 +482,12 @@ def table_calc_meta(root: ET.Element) -> tuple[dict[str, list[str]], dict[str, s
     """
     keys: dict[str, list[str]] = {}
     types: dict[str, str] = {}
-    for tc in root.iter():
-        if _tag(tc) != "table-calc":
-            continue
-        field = tc.get("field") or ""
-        fp = re.findall(r"\[([^\]]+)\]", field)
-        name = fp[-1] if fp else (field or "*")
+    for name, tc in _table_calc_owners(root):
         otype = (tc.get("ordering-type") or "").strip()
         if otype:
             types[name] = otype
-        ordering = tc.get("ordering-field") or ""
-        parts = re.findall(r"\[([^\]]+)\]", ordering)
-        if parts:
-            keys[name] = [parts[-1]]
+        if ordering := tc.get("ordering-field") or "":
+            keys[name] = [_last_ref(ordering)]
     return keys, types
 
 
@@ -817,7 +869,7 @@ def _make_sql_resolver(ds_fields: dict, wh: Warehouse = DEFAULT, addressing: dic
         return OssieDialectExpression(dialect=OssieDialect[wh.ossie_dialect], expression=sql)
 
     def sql_dialects(tab: str, home: str | None, label: str, losses: list, quiet: bool = False,
-                     order_names: list[str] | None = None) -> list:
+                     order_names: list[str] | None = None, rank_desc: bool | None = None) -> list:
         """SNOWFLAKE + ANSI_SQL + BIGQUERY."""
         refresh()
 
@@ -828,7 +880,7 @@ def _make_sql_resolver(ds_fields: dict, wh: Warehouse = DEFAULT, addressing: dic
         order = _order_exprs(resolve, home, order_names)
         out: list = []
         try:
-            t = translate(tab, resolve, SF_WH, order=order, metric_names=metric_names)
+            t = translate(tab, resolve, SF_WH, order=order, metric_names=metric_names, rank_desc=rank_desc)
         except (Untranslatable, sqlglot.errors.SqlglotError):
             return []
         if t.notes and not quiet:
@@ -836,7 +888,7 @@ def _make_sql_resolver(ds_fields: dict, wh: Warehouse = DEFAULT, addressing: dic
         out.append(OssieDialectExpression(dialect=OssieDialect.SNOWFLAKE, expression=t.tree.sql("snowflake")))
         out.append(OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=t.tree.sql()))
         try:
-            tb = translate(tab, resolve, BQ_WH, order=order, metric_names=metric_names)
+            tb = translate(tab, resolve, BQ_WH, order=order, metric_names=metric_names, rank_desc=rank_desc)
             bq_sql = tb.sql
             if "FIRST_VALUE" in bq_sql.upper():
                 bq_sql = bq_sql.replace(" NULLS LAST", "")
@@ -857,7 +909,7 @@ def _warehouse_of(ds: ET.Element) -> Warehouse:
 
 def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.Element] | None = None, inline_parameters: bool = False,
                        warehouse: Warehouse | None = None, addressing: dict[str, list[str]] | None = None,
-                       ordering_types: dict[str, str] | None = None) -> Result:
+                       ordering_types: dict[str, str] | None = None, calc_options: dict[str, dict] | None = None) -> Result:
     wh = warehouse or _warehouse_of(ds)
     losses: list[Loss] = []
     ds_name = ds.get("caption") or ds.get("name") or ds.get("formatted-name") or "datasource"
@@ -962,6 +1014,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
     ds_fields: dict[str, list[OssieField]] = {}
     addr = addressing or {}
     otypes = ordering_types or {}
+    copts = calc_options or {}
     metric_name_set: set[str] = set()
     _sql_dialect, _sql_dialects = _make_sql_resolver(ds_fields, wh, addr, metric_name_set)
     foreign_by_path: dict[str, list[OssieCustomExtension]] = {}
@@ -1598,16 +1651,21 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 "names": stash.pack("field_names", {"name": mname, "label": None}, {"local": iname, "caption": c.get("caption")})})
             extra: list = []
             if table_calc_shape or viz_shape:
+                opts = copts.get(iname) or copts.get(label) or {}
                 extra = _sql_dialects(
                     out, tables[0].name if tables else None, mname, losses, quiet=True,
-                    order_names=addr.get(iname) or addr.get(label) or addr.get("*"),
+                    order_names=addr.get(iname) or addr.get(label) or addr.get("*"), rank_desc=opts.get("rank_desc"),
                 )
                 # Brace / {FIXED : AGG} (lod_total) plus SIZE and {FIXED [d]: AGG} * n (it_sql_reconcile). Other viz shapes keep SQL + a loud loss.
-                if extra and not (window_shape and "{" in m) and not _RECONCILED_VIZ.match(m):
+                # TWB table-calc settings the SQL does not model make even a reconciled shape unreconciled.
+                tc_extras = opts.get("extras") or []
+                if extra and (tc_extras or not (window_shape and "{" in m) and not _RECONCILED_VIZ.match(m)):
                     otype = otypes.get(iname) or otypes.get(label) or otypes.get("*")
                     detail = "best-effort window SQL (table-wide OVER); not reconciled against Tableau Compute Using"
                     if otype:
                         detail += f"; TWB ordering-type={otype}"
+                    if tc_extras:
+                        detail += "; TWB table-calc " + ", ".join(tc_extras)
                     if _BARE_WINDOW_RE.search(m):
                         detail += "; WINDOW_* argument is not an aggregate"
                     losses.append(Loss("sql_unreconciled", label, detail))
@@ -1797,6 +1855,7 @@ def convert_file(path: str | Path, inline_parameters: bool = False, warehouse: W
             dss = _kids(container, "datasource") if container is not None else []
         params: list[ET.Element] = []
         addr, otypes = table_calc_meta(root)
+        copts = table_calc_options(root)
         for ds in dss:
             if ds.get("name") == "Parameters":
                 params = _kids(ds, "column")
@@ -1806,7 +1865,7 @@ def convert_file(path: str | Path, inline_parameters: bool = False, warehouse: W
         for ds in dss:
             if ds.get("name") != "Parameters":
                 ds_names[len(results)] = ds.get("name", "")
-                results.append(convert_datasource(ds, p.name, params, inline_parameters, warehouse, addr, otypes))
+                results.append(convert_datasource(ds, p.name, params, inline_parameters, warehouse, addr, otypes, copts))
                 sig = _ds_signature(ds)
                 if sig and sig in seen:
                     results[-1].losses.append(Loss("duplicate_datasource", results[-1].datasource,
