@@ -46,16 +46,17 @@ def pick_ossie_dialect_expression(
             )
         ):
             fallback = entry
-    if ctx.current_phase_name == "load":  # noqa: SIM102
-        if ctx.ossie_dialect is not None:
-            if fallback is not None:
-                ctx.warn(
-                    f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
-                )
-            else:
-                ctx.error(
-                    f"Preferred dialect {ctx.ossie_dialect} not found for expression and no fallback dialect found"
-                )
+    if ctx.current_phase_name == "load":
+        if fallback is None:
+            ctx.error("No dialect found for expression")
+        elif ctx.ossie_dialect is not None and fallback.dialect not in (
+            PORTABLE_OSSIE_DIALECT,
+            LEGACY_PORTABLE_OSSIE_DIALECT,
+        ):
+            # explicit preference is missing and fallback is non-portable
+            ctx.warn(
+                f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
+            )
     return fallback
 
 

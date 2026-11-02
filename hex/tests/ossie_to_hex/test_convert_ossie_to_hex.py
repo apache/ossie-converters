@@ -523,3 +523,80 @@ Cause: ['ai_context']
 [WARNING] Not supported
 Cause: ['custom_extensions']\
 """)
+
+
+def test_mixed_dialects_without_preference_produce_no_warnings(tmp_path: Path) -> None:
+    dataset = Quick.dataset(
+        "things",
+        "public.things",
+        [
+            ("foo", "Integer", [("OSSIE_SQL_2026", "foo")]),
+            ("bar", "Integer", [("ANSI_SQL", "bar")]),
+            ("quo", "Integer", [("SNOWFLAKE", "quo")]),
+        ],
+    )
+    metric = Quick.metric("total", "Integer", [("OSSIE_SQL_2026", "SUM(things.foo)")])
+    model = Quick.semantic_model("mixed", [dataset], [metric], [])
+    source = tmp_path / "model.yml"
+    source.write_text(
+        dump_yaml(model.model_dump(mode="json", exclude_none=True)), encoding="utf-8"
+    )
+
+    project, problems = convert_ossie_to_hex(source)
+
+    assert project is not None
+    resource = project.resources[0]
+    assert isinstance(resource, HexModel)
+    assert [dimension.expr_sql for dimension in resource.dimensions] == [
+        "foo",
+        "bar",
+        "quo",
+    ]
+    assert resource.measures[0].func_sql == "SUM(${foo})"
+    assert not problems
+
+
+def test_mixed_dialects_warn_only_for_nonportable_fallbacks(tmp_path: Path) -> None:
+    dataset = Quick.dataset(
+        "things",
+        "public.things",
+        [
+            ("foo", "Integer", [("OSSIE_SQL_2026", "foo")]),
+            ("bar", "Integer", [("ANSI_SQL", "bar")]),
+            ("quo", "Integer", [("SNOWFLAKE", "quo")]),
+            ("qat", "Integer", [("BIGQUERY", "qat")]),
+        ],
+    )
+    metric = Quick.metric("total", "Integer", [("OSSIE_SQL_2026", "SUM(things.foo)")])
+    model = Quick.semantic_model("mixed", [dataset], [metric], [])
+    source = tmp_path / "model.yml"
+    source.write_text(
+        dump_yaml(model.model_dump(mode="json", exclude_none=True)), encoding="utf-8"
+    )
+
+    project, problems = convert_ossie_to_hex(source, dialect="BIGQUERY")
+
+    assert project is not None
+    resource = project.resources[0]
+    assert isinstance(resource, HexModel)
+    assert [dimension.expr_sql for dimension in resource.dimensions] == [
+        "foo",
+        "bar",
+        "quo",
+        "qat",
+    ]
+    assert resource.measures[0].func_sql == "SUM(${foo})"
+    assert len(problems) == 1
+    assert problems[0].severity == "warning"
+    assert problems[0].cause_path == [
+        "datasets",
+        "things",
+        "fields",
+        "quo",
+        "expression",
+        "dialects",
+    ]
+    assert problems[0].message == (
+        "Preferred dialect OssieDialect.BIGQUERY not found for expression; "
+        "using fallback dialect OssieDialect.SNOWFLAKE"
+    )
