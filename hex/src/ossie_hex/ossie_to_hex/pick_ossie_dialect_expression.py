@@ -32,24 +32,19 @@ def pick_ossie_dialect_expression(
 
     Returns a dialect expression or None if no fallback is found.
     """
-    fallback: OssieDialectExpression | None = None
+    # the pydantic model definition guarantees at least one entry
+    fallback = ossie_dialect_expressions[0]
     for entry in ossie_dialect_expressions:
         if ctx.ossie_dialect is not None and entry.dialect == ctx.ossie_dialect:
             return entry
         # fallback preference: (1) portable dialect, (2) first in the list
-        elif (
-            fallback is None
-            or entry.dialect == PORTABLE_OSSIE_DIALECT
-            or (
-                entry.dialect == LEGACY_PORTABLE_OSSIE_DIALECT
-                and fallback.dialect != PORTABLE_OSSIE_DIALECT
-            )
+        elif entry.dialect == PORTABLE_OSSIE_DIALECT or (
+            entry.dialect == LEGACY_PORTABLE_OSSIE_DIALECT
+            and fallback.dialect != PORTABLE_OSSIE_DIALECT
         ):
             fallback = entry
-    if ctx.current_phase_name == "load":
-        if fallback is None:
-            ctx.error("No dialect found for expression")
-        elif ctx.ossie_dialect is not None and fallback.dialect not in (
+    if ctx.current_phase_name == "load":  # noqa: SIM102 preferable to maintain single block for phase behavior umbrella
+        if ctx.ossie_dialect is not None and fallback.dialect not in (
             PORTABLE_OSSIE_DIALECT,
             LEGACY_PORTABLE_OSSIE_DIALECT,
         ):
