@@ -56,6 +56,7 @@ public class OssieModel {
         private List<Dataset> datasets = new ArrayList<>();
         private List<Relationship> relationships = new ArrayList<>();
         private List<Metric> metrics = new ArrayList<>();
+        private boolean hadAiContext;
 
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
@@ -71,6 +72,9 @@ public class OssieModel {
 
         public List<Metric> getMetrics() { return metrics; }
         public void setMetrics(List<Metric> metrics) { this.metrics = metrics; }
+
+        public boolean hadAiContext() { return hadAiContext; }
+        public void setHadAiContext(boolean hadAiContext) { this.hadAiContext = hadAiContext; }
     }
 
     public static class Dataset {

@@ -83,6 +83,23 @@ from ossie_sigma.sigma_formula import (
         ('DateAdd([D], 3, "day")', "T", "DATE_ADD(\"D\", 3, 'DAY')"),
         ('DateDiff([Start], [End], "month")', "T", 'DATEDIFF("End", "Start", MONTH)'),
         ("If([A] = [B], Null(), [A])", "T", 'CASE WHEN "A" = "B" THEN NULL ELSE "A" END'),
+        # Sigma's If() returns Null when the else argument is omitted.
+        ("If([A] > 0, [B])", "T", 'CASE WHEN "A" > 0 THEN "B" END'),
+        # Sigma's If() is variadic: condition/value pairs, then an optional else.
+        ("If([A] > 1, 1, [A] > 0, 2)", "T", 'CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 END'),
+        ("If([A] > 1, 1, [A] > 0, 2, 3)", "T", 'CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 ELSE 3 END'),
+        (
+            "If([A] > 2, 1, [A] > 1, 2, [A] > 0, 3, 4)",
+            "T",
+            'CASE WHEN "A" > 2 THEN 1 WHEN "A" > 1 THEN 2 WHEN "A" > 0 THEN 3 ELSE 4 END',
+        ),
+        ("NullIf([A], 0)", "T", 'NULLIF("A", 0)'),
+        ("Text([Employee Number])", "T", 'CAST("Employee Number" AS VARCHAR)'),
+        (
+            "CountDistinctIf(Text([Employee Number]) & [Region], [Hours] > 0)",
+            "T",
+            'COUNT(DISTINCT CASE WHEN "Hours" > 0 THEN CAST("Employee Number" AS VARCHAR) || "Region" END)',
+        ),
         ("Percentile([X], 0.75)", "T", 'PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "X")'),
         ("StdDev([X])", "T", 'STDDEV_SAMP("X")'),
         ("-[X]", "T", '-"X"'),
@@ -118,7 +135,12 @@ def test_renders_to_a_warehouse_dialect_from_the_same_tree():
         'DateAdd([D], 1, "fortnight")',
         # Arities the mapping does not claim to cover.
         "Left([Name])",
-        "If([A], 1)",
+        "If([A])",
+        # A literal where a condition belongs: not a valid condition/value list.
+        "If([A], 1, 2, 3)",
+        'If([A] > 0, 1, "x", 2, 3)',
+        # Text() of a geography value (e.g. MakePoint) has no SQL mapping yet.
+        "Text(MakePoint(179, 90))",
     ],
 )
 def test_untranslatable_functions_return_none(formula):
@@ -162,12 +184,65 @@ def test_is_plain_column_ref():
         ('-(- "A")', "T", "-(-[A])"),
         ('-("A" || "B")', "T", "-([A] & [B])"),
         ('-("A" + "B")', "T", "-(([A] + [B]))"),
+        ("NULL", "T", "Null()"),
+        ('CASE WHEN "A" > 0 THEN "B" END', "T", "If(([A] > 0), [B])"),
+        ('CASE WHEN "A" > 0 THEN "B" ELSE NULL END', "T", "If(([A] > 0), [B], Null())"),
+        ('CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 END', "T", "If(([A] > 1), 1, ([A] > 0), 2)"),
+        ('CASE WHEN "A" > 1 THEN 1 WHEN "A" > 0 THEN 2 ELSE 3 END', "T", "If(([A] > 1), 1, ([A] > 0), 2, 3)"),
+        ('NULLIF("A", 0)', "T", "NullIf([A], 0)"),
+        ('SUM("A") / NULLIF(SUM("B"), 0)', "T", "(Sum([A]) / NullIf(Sum([B]), 0))"),
+        ('CAST("A" AS VARCHAR)', "T", "Text([A])"),
+        ('CAST("A" AS TEXT)', "T", "Text([A])"),
+        ('CAST("A" AS VARCHAR) || "B"', "T", "Text([A]) & [B]"),
+        ('CAST("A" AS VARCHAR) || CAST("B" AS VARCHAR)', "T", "Text([A]) & Text([B])"),
     ],
 )
 def test_reverse_translation_basic(sql, dataset_alias, expected):
     result = sql_to_sigma_formula(sql, dataset_alias=dataset_alias)
     assert result == expected
     assert parse_formula(result) is not None
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "Null()",
+        "If([A] > 0, [B])",
+        "If([A] > 0, [B], Null())",
+        "If([A] = 0, Null(), [A])",
+        "If([A] > 1, 1, [A] > 0, 2)",
+        "If([A] > 1, 1, [A] > 0, Null(), 3)",
+        "NullIf([A], 0)",
+        "CountIf([A] > 0)",
+    ],
+)
+def test_null_returning_formulas_round_trip(formula):
+    # Every SQL form the forward direction emits must translate back to Sigma.
+    sql = to_ansi_sql(parse_formula(formula), dataset_alias="T")
+    back = sql_to_sigma_formula(sql, dataset_alias="T")
+    assert back is not None
+    assert to_ansi_sql(parse_formula(back), dataset_alias="T") == sql
+
+
+def test_reverse_translation_gives_up_on_simple_case():
+    # CASE <expr> WHEN <value> compares against an operand; Sigma's If() has no such form.
+    assert sql_to_sigma_formula('CASE "A" WHEN 1 THEN 2 END', dataset_alias="T") is None
+
+
+def test_text_round_trips():
+    sql = to_ansi_sql(parse_formula("Text([A]) & [B]"), dataset_alias="T")
+    back = sql_to_sigma_formula(sql, dataset_alias="T")
+    assert back == "Text([A]) & [B]"
+
+
+def test_reverse_translation_gives_up_on_non_text_casts():
+    # Only a cast to text has a Sigma equivalent; numeric and date casts are not mapped.
+    assert sql_to_sigma_formula('CAST("A" AS INT)') is None
+    assert sql_to_sigma_formula('CAST("A" AS DATE)') is None
+    assert sql_to_sigma_formula('CAST("A" AS BOOLEAN)') is None
+    # A sized text type truncates, which Text() does not.
+    assert sql_to_sigma_formula('CAST("A" AS CHAR(1))') is None
+    assert sql_to_sigma_formula('CAST("A" AS VARCHAR(10))') is None
 
 
 def test_reverse_translation_gives_up_on_count_star():

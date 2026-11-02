@@ -26,11 +26,23 @@ import pytest
 from ossie_ontology.model import OssieOntology
 from ossie_ontology.parser import OssieParser
 
-# Test inputs are vendored under tests/fixtures/ so the suite runs even when the
-# repo-level examples/ directory isn't present (e.g. from an sdist/wheel or a
-# subset checkout). tests/test_examples_in_sync.py guards against drift from the
-# canonical examples/ copies.
-_FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+# Test inputs are vendored under tests/fixtures/ so the suite runs without the
+# apache/ossie examples. specs/flights.yaml and specs/flights.semantic_model.yaml
+# are snapshots of apache/ossie's examples/flights*.yaml and are deliberately not
+# kept in sync with them: the suite tests against this version even if the
+# canonical examples drift.
+#
+# Sorted by what a file is for, because the suites read them differently:
+#   specs/       full ontologies the snapshot suites render end to end
+#   behaviours/  one spec per behaviour, asserted directly rather than snapshotted
+#   validation/  formulas that must parse, or must fail with a stated message
+#
+# relationalai/'s suite reads specs/ from here too, so a change to a spec there
+# also moves its PyRel snapshots.
+_TESTS_DIR = Path(__file__).resolve().parent
+_FIXTURES_DIR = _TESTS_DIR / "fixtures"
+_SPECS_DIR = _FIXTURES_DIR / "specs"
+_BEHAVIOURS_DIR = _FIXTURES_DIR / "behaviours"
 
 # The snapshot files under tests/snapshots/ carry the ASF license header inline,
 # so that a source-release audit (Apache RAT) finds a header on every file in the
@@ -92,10 +104,51 @@ def fixtures_dir() -> Path:
 
 
 @pytest.fixture(scope="session")
+def specs_dir() -> Path:
+    """Full ontologies: flights, retail, tpch, AutoOntologyTPCH."""
+    return _SPECS_DIR
+
+
+@pytest.fixture(scope="session")
+def behaviours_dir() -> Path:
+    """One spec per behaviour, each asserted on directly."""
+    return _BEHAVIOURS_DIR
+
+
+@pytest.fixture(scope="session")
+def validation_dir() -> Path:
+    """Formulas that must parse, or must fail with a stated message."""
+    return _FIXTURES_DIR / "validation"
+
+
+@pytest.fixture(scope="session")
 def flights_path(fixtures_dir: Path) -> Path:
-    return fixtures_dir / "flights.yaml"
+    """The reference corpus: read by the spec snapshots, the
+    parser round-trip tests, and test_reasoner for its composite reference scheme
+    (Runway is identified by designator *and* airport).
+
+    Its note lives here rather than in the file, because the file is a snapshot
+    of apache/ossie's examples/flights.yaml -- retail.yaml and tpch.yaml are
+    test-only and carry theirs inline.
+    """
+    return _SPECS_DIR / "flights.yaml"
 
 
 @pytest.fixture
 def flights_model(flights_path: Path) -> OssieOntology:
     return OssieParser().parse(flights_path)
+
+# The corpus the snapshot suites run over. relationalai/tests/conftest.py keeps
+# the same list for its PyRel snapshots. `flights` also keeps the named fixtures
+# above, since several tests assert on it directly.
+SPEC_NAMES = ["flights", "retail", "tpch", "AutoOntologyTPCH"]
+
+
+@pytest.fixture
+def spec_model(request) -> OssieOntology:
+    """The parsed ontology for the spec named by an indirect parametrize.
+
+    Built with the default factories, so formulas arrive parsed and validated:
+    the grammar lives in `ossie_ontology.expr` and depends only on `ply`.
+    """
+    return OssieParser().parse(_SPECS_DIR / f"{request.param}.yaml")

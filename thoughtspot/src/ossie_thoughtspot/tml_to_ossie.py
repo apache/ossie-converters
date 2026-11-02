@@ -148,8 +148,8 @@ _REGULAR_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 #: Words a bare column reference cannot be, however regular its spelling.
 #:
-#: Two sources, because each covers the other's blind spot and neither alone
-#: is enough:
+#: Three sources, because each covers the others' blind spots and no one of
+#: them is enough:
 #:
 #: * The words **sqlglot rejects** as a bare column reference. That is the
 #:   parser `validation/validate.py` runs, so one of these left unquoted does
@@ -163,11 +163,23 @@ _REGULAR_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #:   the validator passing says nothing about whether a warehouse will run it.
 #:   These are the 25 the parser alone would have missed, among them `ORDER`,
 #:   `GROUP`, `TABLE`, `USER` and `NULL`.
+#: * The **niladic functions**, which parse perfectly well and mean something
+#:   else. `SELECT CURRENT_DATE` is valid SQL in every engine and returns
+#:   today's date, not the column of that name, so a ThoughtSpot column called
+#:   `CURRENT_DATE` silently reports the wrong value rather than failing. This
+#:   is the worst of the three classes precisely because nothing complains:
+#:   the other two are caught by a parser, this one is only caught by reading
+#:   the answer. Raised by @jbonofre reviewing apache/ossie#463.
 #:
-#: `tests/test_tml_to_ossie_fields.py` re-derives the first source from the
-#: installed sqlglot and asserts this set still covers it, so a sqlglot upgrade
-#: that reserves a new word fails loudly rather than quietly emitting an
-#: expression the validator rejects.
+#: `tests/test_tml_to_ossie_fields.py` re-derives the first and third sources
+#: from the installed sqlglot and asserts this set still covers them, so an
+#: upgrade that reserves a new word, or teaches sqlglot a new niladic
+#: function, fails loudly rather than quietly emitting a bad expression.
+#:
+#: The oracle that test uses is "does `SELECT <word>` parse **as a column**",
+#: not "does it parse". That distinction is the whole of the third bullet:
+#: the first version of this guard asked only whether parsing succeeded, so
+#: every niladic function passed it while being exactly the bug.
 #:
 #: Deliberately NOT the whole ANSI:2016 reserved list (~450 words). That would
 #: quote `YEAR`, `MONTH` and `VALUE` -- ordinary ThoughtSpot column names --
@@ -177,13 +189,19 @@ _REGULAR_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SQL_RESERVED = frozenset({
     "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "BETWEEN", "BY", "CASE", "CHECK",
     "CREATE", "CROSS", "DEFAULT", "DESC", "DISTINCT", "DROP", "ELSE", "END",
-    "EXCEPT", "EXISTS", "FALSE", "FOR", "FROM", "FULL", "GLOB", "GRANT",
-    "GROUP", "HAVING", "ILIKE", "IN", "INNER", "INSERT", "INTERSECT", "INTO",
-    "IS", "JOIN", "LATERAL", "LEFT", "LIKE", "LIMIT", "NOT", "NOTNULL", "NULL",
-    "OFFSET", "ON", "OR", "ORDER", "OUTER", "PARTITIONED_BY", "PRIMARY",
-    "QUALIFY", "REGEXP", "RETURNING", "REVOKE", "RIGHT", "RLIKE", "ROLLBACK",
-    "SELECT", "SOME", "STRAIGHT_JOIN", "TABLE", "THEN", "TRUE", "UNCACHE",
-    "UNION", "UNIQUE", "USER", "USING", "WHEN", "WHERE", "WITH", "XOR",
+    "EXCEPT", "EXISTS", "FALSE", "FETCH", "FOR", "FROM", "FULL", "GLOB",
+    "GRANT", "GROUP", "HAVING", "ILIKE", "IN", "INNER", "INSERT", "INTERSECT",
+    "INTO", "IS", "JOIN", "LATERAL", "LEFT", "LIKE", "LIMIT", "NOT", "NOTNULL",
+    "NULL", "OFFSET", "ON", "OR", "ORDER", "OUTER", "PARTITIONED_BY",
+    "PRIMARY", "QUALIFY", "REGEXP", "RETURNING", "REVOKE", "RIGHT", "RLIKE",
+    "ROLLBACK", "SELECT", "SOME", "STRAIGHT_JOIN", "TABLE", "TABLESAMPLE",
+    "THEN", "TRUE", "UNCACHE", "UNION", "UNIQUE", "USER", "USING", "WHEN",
+    "WHERE", "WITH", "XOR",
+    # Niladic functions -- see the third bullet above. These parse as a
+    # function call, not a column, so they are a wrong answer rather than an
+    # error. `CURRENT_DATE` needs no parentheses in any major engine.
+    "CURRENT_CATALOG", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+    "CURRENT_USER", "LOCALTIME", "LOCALTIMESTAMP", "SESSION_USER",
 })
 
 
@@ -849,6 +867,17 @@ _AGGREGATION = {
 #: of rows.
 _COUNT_AGGREGATIONS = frozenset({"COUNT", "COUNT_DISTINCT"})
 
+#: The Ossie datatypes `SUM` is meaningful over. Used only to decide whether
+#: ThoughtSpot's *implicit* SUM default may be applied to a MEASURE column that
+#: declares no `aggregation` -- never to second-guess an aggregation the
+#: document actually states, which is the author's instruction and is emitted
+#: whatever its column's type.
+#:
+#: `Boolean` is excluded deliberately. Some warehouses will sum it as 0/1, but
+#: ThoughtSpot does not model it as numeric and the result of guessing wrong is
+#: a number nobody asked for.
+_SUMMABLE_DATATYPES = frozenset({"Integer", "Decimal", "Float"})
+
 #: The three TML shapes a metric can arrive as (the stash's `shape` key), so a
 #: return trip can reproduce the source shape instead of collapsing every metric
 #: into the same one. The values themselves live in constants.py
@@ -1186,6 +1215,57 @@ def convert_metric(
         )
         metric: dict = {"name": metric_name}
         field_ref = identifiers.format_column_ref(table_name, column_name)
+        # The implicit SUM default is only safe over a column SUM means
+        # something for. A VARCHAR or DATE column marked MEASURE with no
+        # `aggregation` key would otherwise come out as `sum ( [t::col] )`,
+        # which is not a valid metric -- raised by @jbonofre reviewing
+        # apache/ossie#463 as the cost of the default this converter now
+        # applies.
+        #
+        # Only a *declared, known, non-summable* type declines it. An absent
+        # or unmapped type leaves the default in place: the point of the
+        # default is that ThoughtSpot applies SUM when nothing says otherwise,
+        # and withholding it on a column whose type we merely cannot read
+        # would reintroduce the raw-per-row bug the default exists to fix.
+        #
+        # An aggregation the document STATES is never second-guessed here,
+        # whatever the column's type -- that is the author's instruction, and
+        # `count ( [t::name] )` over a VARCHAR is perfectly ordinary.
+        if aggregation is not None and aggregation_is_default:
+            declared = _physical_datatype(
+                table_name, column_name, table_lookup, IssueLog(),
+                object_ref=object_ref, kind="metric",
+            )
+            if declared is not None and declared not in _SUMMABLE_DATATYPES:
+                log.add(
+                    code="TS-METRIC-AGGREGATION-DEFAULT-NOT-SUMMABLE",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"column {display_name!r} is a MEASURE with no "
+                        f"aggregation, but its type is {declared}, which SUM "
+                        f"is not meaningful over; ThoughtSpot's implicit SUM "
+                        f"default is not applied and the metric is emitted "
+                        f"unaggregated. Set an explicit aggregation on the "
+                        f"column if one is intended"
+                    ),
+                    object_ref=object_ref,
+                )
+                aggregation, aggregation_raw = None, "NONE"
+                # Declining is only half the job. The source column carries no
+                # `aggregation` key, and absent means SUM to ThoughtSpot -- so
+                # emitting the metric unaggregated and saying nothing else puts
+                # the SUM straight back on the return trip, and the document in
+                # between disagrees with both ends of it. Recording the decline
+                # as a load-bearing NONE makes the returned TML say `NONE`
+                # explicitly, which is the one spelling all three agree on.
+                #
+                # This deliberately does NOT reproduce the source byte-for-byte:
+                # the source had no key and the return has `aggregation: NONE`.
+                # That is a repair, not a drift -- a MEASURE column ThoughtSpot
+                # would SUM over a VARCHAR is not a model that works, and the
+                # alternative is to hand back the same broken one. Raised by
+                # @jbonofre reviewing apache/ossie-converters#18.
+                explicit_none_is_load_bearing = True
         if aggregation is None:
             dialects = expression_entries(
                 field_ref, resolve, log, object_ref=object_ref, kind="metric"
@@ -1330,6 +1410,41 @@ def convert_metric(
         else:
             # A genuinely scalar expr: the column aggregation is load-bearing, so
             # compose it.
+            #
+            # When that aggregation is the IMPLICIT default rather than a stated
+            # one, this is the one place the summability guard above cannot
+            # follow. A formula declares no type anywhere in TML -- neither
+            # `columns[]` nor `formulas[]` has a `data_type` key -- so there is
+            # nothing to read, and nothing in this package can supply it: the
+            # forward catalog's `variant` types 37 of 146 constructs and
+            # describes the pass-through SQL op kind rather than a return type,
+            # and `expressions/reverse.py` carries no return types at all.
+            # So `sum ( concat ( [t::a] , [t::b] ) )` is composable here and
+            # cannot be ruled out the way a VARCHAR column can.
+            #
+            # Declining instead would be worse: a formula NEVER has a declared
+            # type, so "decline when untyped" means never defaulting any scalar
+            # formula, which contradicts the rule the default exists to serve.
+            # So it composes, and says that it did so without being able to
+            # check. Measured across 31 real models: all 128 formula-backed
+            # MEASURE columns carry an explicit aggregation, so this reports on
+            # nothing in that corpus -- it is a hole being closed honestly
+            # rather than a common case being made noisy. Raised by @jbonofre
+            # reviewing apache/ossie-converters#18.
+            if aggregation_is_default:
+                log.add(
+                    code="TS-METRIC-AGGREGATION-DEFAULT-UNTYPED-FORMULA",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"column {display_name!r} has no explicit aggregation, so "
+                        f"ThoughtSpot's implicit SUM default is composed around "
+                        f"its formula; a formula declares no datatype in TML, so "
+                        f"unlike a physical column this cannot be checked for "
+                        f"summability. If the expression does not return a "
+                        f"number, set an explicit aggregation on the column"
+                    ),
+                    object_ref=object_ref,
+                )
             metric_shape = METRIC_SHAPE_SCALAR_FORMULA_PLUS_AGGREGATION
             dialects = _compose_aggregate_entries(
                 expr, aggregation_raw, resolve, log, object_ref=object_ref

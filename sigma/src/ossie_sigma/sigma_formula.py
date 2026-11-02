@@ -535,10 +535,29 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
     if name in ("stddev", "standarddeviation") and len(args) == 1:
         return exp.func("STDDEV_SAMP", built[0])
 
-    if name == "if" and len(args) == 3:
-        return _case(built[0], built[1], built[2])
+    if name == "if" and len(args) >= 2:
+        # Sigma's If() is variadic: If(c1, v1, c2, v2, ..., [else]). An odd
+        # argument count means the last argument is the else value.
+        has_else = len(built) % 2 == 1
+        pairs = built[:-1] if has_else else built
+        # A number or string in a condition position means the call is not a
+        # valid condition/value list, e.g. If([A], 1, 2, 3); emitting
+        # CASE WHEN 2 THEN 3 would be invalid SQL, so leave it untranslated.
+        for cond in args[0 : len(pairs) : 2]:
+            if isinstance(cond, Literal) and cond.kind != "boolean":
+                raise _NotTranslatable(f"If() condition is a {cond.kind} literal")
+        return exp.Case(
+            ifs=[exp.If(this=pairs[i], true=pairs[i + 1]) for i in range(0, len(pairs), 2)],
+            default=built[-1] if has_else else None,
+        )
+    if name == "nullif" and len(args) == 2:
+        return exp.Nullif(this=built[0], expression=built[1])
     if name == "ifnull" and len(args) == 2:
         return exp.Coalesce(this=built[0], expressions=[built[1]])
+    if name == "text" and len(args) == 1:
+        # The value is the same, but the text can differ: Sigma's Text() and the
+        # engine's CAST may format numbers and dates differently.
+        return exp.Cast(this=built[0], to=exp.DataType.build("VARCHAR"))
     if name == "isnull" and len(args) == 1:
         return exp.Is(this=built[0], expression=exp.Null())
     if name == "isnotnull" and len(args) == 1:
@@ -654,6 +673,9 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Boolean):
         return "TRUE" if node.this else "FALSE"
 
+    if isinstance(node, exp.Null):
+        return "Null()"
+
     if isinstance(node, exp.Count):
         inner = node.this
         if isinstance(inner, exp.Distinct) and len(inner.expressions) == 1:
@@ -709,15 +731,33 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Case):
         ifs = node.args.get("ifs", [])
         default = node.args.get("default")
-        if len(ifs) == 1 and default is not None:
-            cond = _render_sql_node(ifs[0].this, dataset_alias)
-            then = _render_sql_node(ifs[0].args["true"], dataset_alias)
-            otherwise = _render_sql_node(default, dataset_alias)
-            return f"If({cond}, {then}, {otherwise})"
-        raise _NotTranslatable("Multi-branch CASE has no single Sigma If() equivalent")
+        if node.args.get("this") is not None:
+            raise _NotTranslatable("Simple CASE <expr> WHEN ... has no Sigma If() equivalent")
+        if not ifs:
+            raise _NotTranslatable("CASE with no WHEN branches")
+        parts = []
+        for branch in ifs:
+            parts.append(_render_sql_node(branch.this, dataset_alias))
+            parts.append(_render_sql_node(branch.args["true"], dataset_alias))
+        # Sigma's If() is variadic and returns Null when the else argument is
+        # omitted, matching CASE without ELSE.
+        if default is not None:
+            parts.append(_render_sql_node(default, dataset_alias))
+        return f"If({', '.join(parts)})"
+
+    if isinstance(node, exp.Nullif):
+        # Sigma has a native NullIf(), which evaluates its first argument once.
+        return f"NullIf({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expression, dataset_alias)})"
 
     if isinstance(node, exp.Coalesce) and len(node.expressions) == 1:
         return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"
+
+    if isinstance(node, exp.Cast):
+        # Only a cast to an unsized text type has a Sigma equivalent (Text()). A
+        # length such as CHAR(1) truncates, which Text() would not; that and other
+        # target types fall through to the not-translatable error below.
+        if node.to.is_type(*exp.DataType.TEXT_TYPES) and not node.to.expressions:
+            return f"Text({_render_sql_node(node.this, dataset_alias)})"
 
     if isinstance(node, exp.CurrentDate):
         return "Today()"

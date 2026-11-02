@@ -41,9 +41,9 @@ uv sync
 ### Optional TOM validation and TMDL serialization
 
 Microsoft's Tabular Object Model (TOM) can load and structurally validate exported
-`model.bim` files and serialize them to canonical TMDL entirely offline. It is
-deliberately optional because TOM is proprietary Microsoft-licensed software. TMSL
-conversion remains independent of .NET.
+`model.bim` files, serialize them to canonical TMDL, and read a split TMDL Power BI
+project back into TMSL, entirely offline. It is deliberately optional because TOM is
+proprietary Microsoft-licensed software. TMSL conversion remains independent of .NET.
 
 ```bash
 uv sync --extra tom
@@ -110,6 +110,24 @@ ossie-microsoft import -i model.bim  -o model.yaml   # Power BI -> Apache Ossie
 ossie-microsoft export -i model.yaml -o model.bim    # Apache Ossie -> Power BI
 ```
 
+Power BI projects saved as split TMDL can be imported too. Pass a `.pbip` file, a
+semantic model folder that contains `definition/`, or that `definition` folder. The
+project root is not an input. A `.pbip` is followed through `datasetReference.byPath`.
+`byConnection` and a project stored as TMSL are outside this path. It needs the
+[optional TOM setup](#optional-tom-validation-and-tmdl-serialization). Importing
+`model.bim` does not.
+
+```bash
+ossie-microsoft import -i "Report.pbip" -o model.yaml
+ossie-microsoft import -i "Report.SemanticModel" -o model.yaml
+ossie-microsoft import -i "Report.SemanticModel/definition" -o model.yaml
+```
+
+The existing `--translate-dax` option also applies to these project inputs. It is
+off by default, preserving DAX expressions unless translation is requested.
+
+TOM ignores a `ref table` whose file is missing, and it does so without a warning.
+
 With no `-o`, the result is written to stdout.
 
 Everything the converter could not carry across faithfully is reported on stderr:
@@ -126,10 +144,13 @@ in the Power BI stash for round trip, but not represented in the Apache Ossie do
 | --- | --- |
 | `--strict` | exit non-zero if anything could not be converted faithfully |
 | `-q`, `--quiet` | suppress the report |
+| `--translate-dax` | `import` only: also translate DAX measures to `OSSIE_SQL_2026` where the translation is exact (off by default) |
 
-`--strict` is the useful mode in a pipeline that must not silently degrade a model. The
-output file is still written, so a failing run can be inspected. Both flags are accepted
-before or after the subcommand.
+`--strict` exits non-zero when the converter reports a construct it could not represent.
+It does not check that every TMDL `ref` has a definition, or validate DAX expressions.
+Missing input files and invalid TMDL still fail the command. When a conversion produces
+warnings, the output file is still written so the result can be inspected. Both flags
+are accepted before or after the subcommand.
 
 ### Library
 
@@ -138,7 +159,11 @@ import json
 
 import yaml
 
-from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
+from ossie_microsoft import (
+    convert_ossie_to_semantic_model,
+    convert_semantic_model_to_ossie,
+    import_powerbi_project,
+)
 
 with open("model.bim", encoding="utf-8-sig") as fh:
     ossie_yaml = convert_semantic_model_to_ossie(json.load(fh))
@@ -154,6 +179,10 @@ print(tmdl)
 
 # The import direction also accepts model.bim JSON text or a TMDL document.
 ossie_yaml = convert_semantic_model_to_ossie(tmdl)
+
+ossie_yaml = import_powerbi_project("Report.pbip")
+# Optionally translate supported DAX measures to SQL, keeping DAX as a fallback.
+ossie_yaml = import_powerbi_project("Report.pbip", translate_dax=True)
 ```
 
 `output_format` accepts `"TMSL"` (the default) or `"TMDL"`, case-insensitively.
@@ -201,6 +230,8 @@ expressions and retains their original dialect and text in annotations.
 Concretely:
 
 - A Power BI measure becomes a metric with a `DAX` dialect expression, not a SQL one.
+  With the opt-in `--translate-dax`, a measure whose translation is exact also gets an
+  `OSSIE_SQL_2026` expression, with the DAX kept beside it (see below).
 - On export, a metric becomes a measure from `DAX` or a supported SQL-to-DAX
   translation. Untranslatable SQL gets a warning and an annotated `BLANK()` measure.
 - A field expression becomes a TMSL `sourceColumn` only when it is a plain column
@@ -363,8 +394,11 @@ when fewer than two non-blank rows remain, where SQL yields NULL or 0.
 
 `ANSI_SQL`, `OSSIE_SQL_2026`, `SNOWFLAKE`, `DATABRICKS` and `BIGQUERY` expressions are
 parsed; `MDX`, `TABLEAU` and `MAQL` are not SQL and are not attempted.
-For multi-dialect expressions, export prefers `DAX`, then `ANSI_SQL`, then
-`OSSIE_SQL_2026`, then another readable SQL dialect. It does not try another
+For multi-dialect expressions, export prefers `DAX`, then the portable `sql` form (read
+as `OSSIE_SQL_2026`), then an `ANSI_SQL` entry, then an `OSSIE_SQL_2026` entry, then
+another readable SQL dialect. The `sql` form ranks above the `dialects` entries because
+the spec makes it the primary form, so a stale `ANSI_SQL` copy next to an edited `sql`
+is not exported. It does not try another
 dialect after a selected expression fails translation: the failure is reported
 and the original expression is retained in annotations rather than assuming
 independently authored alternatives are equivalent.
@@ -384,6 +418,28 @@ A calculated *field* whose expression is not already DAX is only translated for
 unambiguous string concatenation. Other expressions become annotated `BLANK()`
 columns. These placeholders are **not correct computed values**: review converter
 warnings and supply a DAX expression before using the exported model for analysis.
+
+### DAX measures (opt-in `--translate-dax`)
+
+By default an imported measure keeps only its DAX. With `--translate-dax`, the import
+also translates a measure to `OSSIE_SQL_2026` when the translation is exact, and keeps
+the original DAX as a second dialect, so nothing is lost and Power BI export still uses
+the DAX. A measure that cannot be translated exactly stays DAX only, with a warning that
+names the reason.
+
+Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
+`Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
+`BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
+other measures; and `VAR` / `RETURN`. Every other DAX function is refused with a reason
+from a per-function registry, for example:
+
+```
+[table 'Sales' measure 'YTD'] DAX measure kept as-is; not translated to OSSIE_SQL_2026
+(TOTALYTD needs window measures (time intelligence), which the Apache Ossie
+specification does not define yet)
+```
+
+`_dax_to_sql.py` documents each rule and each refusal.
 
 ## Testing
 

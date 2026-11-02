@@ -124,8 +124,14 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 | `PRIVATE_METRIC_DROPPED` | Ossie has no visibility modifiers |
 | `NATURAL_ENTITY_DROPPED` | Ossie has no natural-key entity type |
 | `CUMULATIVE_SEMANTICS_LOSS` | Window/grain semantics cannot be expressed in an Ossie expression string; the base aggregation is preserved |
+| `NON_PORTABLE_METRIC_SEMANTICS` | A metric uses window, grain, offset, time-spine, or conversion semantics that Ossie cannot represent; the metric is dropped |
 | `AMBIGUOUS_REFERENCE_METRIC_DROPPED` | An input metric is listed more than once under one reference with differing filters, so the expression reference is ambiguous; give each occurrence a distinct alias |
 | `CONSTANT_METRIC_SEMANTIC_MODEL_LOSS` | A metric over a constant, such as a row count (`SUM(1)`), has no column to carry its semantic model; recorded when the manifest has more than one, since converting it back will refuse it |
+
+Ossie `datatype` attributes use native MetricFlow datatype annotations when present,
+falling back to `config.meta.ossie.datatype` annotations on dimensions, entities,
+measures, and metrics in source dbt models, carried into `semantic_manifest.json`
+by `dbt parse`.
 
 **Ossie → MSI** reconstructs a best-effort MSI manifest from Ossie's simpler schema. Nothing is dropped for supported inputs, but Ossie carries less structural information than MSI, so the converter makes the following choices:
 
@@ -134,7 +140,7 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 - `COUNT(*)` / `COUNT(<dataset>.*)` → `count` SIMPLE metric with `expr: '1'`, because MetricFlow cannot render a bare `*` inside a count. The counted dataset comes from the qualifier, so with more than one dataset write `COUNT(orders.*)`; a bare `COUNT(*)`, or a qualifier that matches no dataset, is skipped with a `ROW_COUNT_METRIC_DROPPED` warning
 - `SUM(<constant>)` (e.g. `SUM(1)`) keeps its constant, but has no column to place it in a dataset: with more than one dataset it is skipped with `ROW_COUNT_METRIC_DROPPED`
 - `COUNT(DISTINCT *)`, `COUNT(DISTINCT 1)` and the like, anywhere in an expression, are skipped with `ROW_COUNT_METRIC_DROPPED`: they count whether any row exists, not how many
-- `(expr_a) / (expr_b)` → RATIO metric with auto-generated sub-metrics
+- `(expr_a) / (expr_b)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended
 - A root aggregate over a scalar SQL expression (for example,
   `SUM(CASE WHEN ... THEN amount ELSE 0 END)`) → SIMPLE metric with the
   scalar expression in `expr` and the root function in `agg`

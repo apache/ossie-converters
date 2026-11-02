@@ -208,9 +208,10 @@ and is labelled `BIGQUERY`. SQL is not transpiled. During column qualification,
 BigQuery paths such as `` `orders.amount` `` are spelled as `` orders.`amount` ``;
 native comments are removed before inlining, while quoted literals stay intact.
 
-Explicit dialect selection also validates every emitted SQL expression in its declared
-dialect before returning or writing output. Malformed, empty and multiple-statement
-expressions, and SQL commands used as expressions, raise a `ConversionError` with context.
+With `--source-dialect`, every emitted SQL expression is validated in its declared
+dialect. An unparseable expression is a hard `ConversionError` before output is returned
+or written. Empty and multiple-statement expressions, and SQL commands used as
+expressions, also raise a `ConversionError` with context.
 Original Ossie expressions restored
 from `meta.ossie` retain their own dialects and are validated accordingly; restored
 non-SQL dialects remain opaque. This checks SQL syntax, not warehouse execution or
@@ -218,8 +219,12 @@ the existence of physical columns. One source dialect applies to the whole impor
 import models from different warehouse dialects separately. Dialects absent from the
 specification, such as T-SQL, cannot be selected.
 
-Omitting `--source-dialect` preserves the existing `ANSI_SQL` labels and permissive
-import behavior. Export prefers `ANSI_SQL` with `--dialect` prepending a warehouse dialect (e.g.
+Omitting `--source-dialect` preserves the existing `ANSI_SQL` labels. Ordinary import
+keeps its legacy permissive fallback: unparseable SQL can pass through without a
+syntax-validation error. Other conversion requirements, including column attribution
+checks during view projection, still apply.
+
+Export prefers `ANSI_SQL` with `--dialect` prepending a warehouse dialect (e.g.
 `SNOWFLAKE` for a Snowflake-backed Cube model). `OSSIE_SQL_2026`, Ossie's portable
 SQL, is ANSI-compatible and taken next; its label is kept in `meta.ossie.dialect` so
 re-import hands it back unchanged.
