@@ -1287,7 +1287,7 @@ class TestConverterIssues:
         assert result.issues[0].issue_type == ConverterIssueType.PRIVATE_METRIC_DROPPED
         assert result.issues[0].element_name == "revenue_internal"
 
-    def test_private_metric_inlined_only_into_ratio_has_no_loss_warning(self) -> None:
+    def test_private_metric_inlined_only_into_ratio_still_reports_visibility_loss(self) -> None:
         sm = semantic_model_with_guaranteed_meta(name="orders")
         numerator = _metric_with_agg(
             "revenue_internal", AggregationType.SUM, "amount", "orders", is_private=True
@@ -1312,7 +1312,10 @@ class TestConverterIssues:
             _manifest(semantic_models=[sm], metrics=[numerator, denominator, ratio])
         )
 
-        assert result.issues == []
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.PRIVATE_METRIC_DROPPED, "revenue_internal"),
+            ConverterIssue(ConverterIssueType.PRIVATE_METRIC_DROPPED, "count_internal"),
+        ]
         assert [m.name for m in _ossie_metrics(result.output)] == ["average_revenue"]
         assert "SUM(orders.amount)" in _ossie_metrics(result.output)[0].expression.dialects[0].expression
 

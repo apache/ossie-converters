@@ -31,6 +31,7 @@ from ossie import (
     OssieSemanticModel,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
+from ossie_dbt.ratio_helpers import mark_ratio_helpers
 from ossie_dbt.expression_utils import (
     ROW_COUNT_EXPR,
     _extract_agg_info,
@@ -313,16 +314,16 @@ class OssieToMSIConverter:
             # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
             reserved_names = set(taken_names)
             try:
-                metrics.extend(
-                    self._convert_metric(
-                        metric.name,
-                        dialect_expr.expression,
-                        metric.description,
-                        ossie_sm.datasets,
-                        dialect,
-                        taken_names=reserved_names,
-                    )
+                converted = self._convert_metric(
+                    metric.name,
+                    dialect_expr.expression,
+                    metric.description,
+                    ossie_sm.datasets,
+                    dialect,
+                    taken_names=reserved_names,
                 )
+                mark_ratio_helpers(converted)
+                metrics.extend(converted)
                 taken_names = reserved_names
             except _UnresolvedRowCountDataset:
                 # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
@@ -344,7 +345,6 @@ class OssieToMSIConverter:
         dialect: str = "",
         *,
         taken_names: Optional[Set[str]] = None,
-        is_private: bool = False,
     ) -> List[PydanticMetric]:
         """Return one or more PydanticMetric objects for the given Ossie expression.
 
@@ -353,8 +353,9 @@ class OssieToMSIConverter:
 
         Multiple metrics are returned when a RATIO metric requires auto-generated
         sub-metrics for its numerator and denominator. These internal helpers
-        are private so a reverse conversion does not export them as public
-        Ossie metrics. Their names are added to `taken_names`, which holds
+        remain publicly queryable for compatibility. Provenance is attached to
+        the top-level ratio so reverse conversion can recognize unchanged helpers.
+        Their names are added to `taken_names`, which holds
         every metric name already in use.
         """
         if taken_names is None:
@@ -383,7 +384,6 @@ class OssieToMSIConverter:
                     description=description,
                     type=MetricType.SIMPLE,
                     type_params=PydanticMetricTypeParams(
-                        is_private=is_private,
                         expr=col,
                         metric_aggregation_params=PydanticMetricAggregationParams(
                             semantic_model=semantic_model_name,
@@ -407,17 +407,16 @@ class OssieToMSIConverter:
             num_name = _unique_metric_name(f"{name}_numerator", taken_names)
             den_name = _unique_metric_name(f"{name}_denominator", taken_names)
             num_metrics = self._convert_metric(
-                num_name, num_expr, None, datasets, dialect, taken_names=taken_names, is_private=True
+                num_name, num_expr, None, datasets, dialect, taken_names=taken_names
             )
             den_metrics = self._convert_metric(
-                den_name, den_expr, None, datasets, dialect, taken_names=taken_names, is_private=True
+                den_name, den_expr, None, datasets, dialect, taken_names=taken_names
             )
             ratio_metric = PydanticMetric(
                 name=name,
                 description=description,
                 type=MetricType.RATIO,
                 type_params=PydanticMetricTypeParams(
-                    is_private=is_private,
                     numerator=PydanticMetricInput(name=num_name, filter=None, alias=None),
                     denominator=PydanticMetricInput(name=den_name, filter=None, alias=None),
                 ),
