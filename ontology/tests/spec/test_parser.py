@@ -29,11 +29,17 @@ from pydantic import ValidationError
 
 from ossie_ontology.converter.ossie_to_spec.converter import (
     OssieToSpecConverter,
+    _convert_expression as ossie_to_spec_expression,
     _convert_ontology_concepts,
 )
+from ossie_ontology.converter.spec_to_ossie.converter import (
+    _convert_expression as spec_to_ossie_expression,
+)
+from ossie_ontology.expr.sql import field_expression
 from ossie_ontology.model import (
     Concept,
     ConceptType,
+    DatasetField,
     DataType,
     Formula,
     OntologyComponent,
@@ -42,6 +48,8 @@ from ossie_ontology.model import (
     RelationshipMultiplicity,
 )
 from ossie_ontology.parser import OssieParser
+from ossie_ontology.spec import DialectExpression as SpecDialectExpression
+from ossie_ontology.spec import Expression as SpecExpression
 
 
 # ----- Document-level metadata ------------------------------------------
@@ -816,3 +824,43 @@ def test_a_document_without_iris_dumps_neither_field(tmp_path: Path):
 
     assert "iri:" not in dumped
     assert "prefixes:" not in dumped
+
+
+# ----- the top-level `sql` of an expression -----------------------------
+
+def test_a_field_with_only_sql_is_read_from_it():
+    """Read without its `sql`, such a field had no dialect and fell back to
+    the column it is named after."""
+    expression = spec_to_ossie_expression(SpecExpression(sql="amount * 1.1"))
+    field = DatasetField(name="amount_usd", expression=expression)
+
+    assert field_expression(field, ("SNOWFLAKE", "ANSI_SQL")) == "amount * 1.1"
+
+
+def test_the_top_level_sql_wins_over_an_ossie_sql_entry():
+    expression = spec_to_ossie_expression(
+        SpecExpression(
+            sql="amount * 1.1",
+            dialects=[
+                SpecDialectExpression(dialect="OSSIE_SQL_2026", expression="amount"),
+                SpecDialectExpression(dialect="SNOWFLAKE", expression="amount * 1.2"),
+            ],
+        )
+    )
+
+    assert [(d.dialect, d.expression) for d in expression.dialects] == [
+        ("OSSIE_SQL_2026", "amount * 1.1"),
+        ("SNOWFLAKE", "amount * 1.2"),
+    ]
+
+
+def test_a_field_with_only_sql_is_written_back_with_its_expression():
+    """Written without its `sql`, such a field was saved as `expression: {}`,
+    which the core schema rejects."""
+    written = ossie_to_spec_expression(
+        spec_to_ossie_expression(SpecExpression(sql="amount * 1.1"))
+    )
+
+    assert written.model_dump(exclude_none=True) == {
+        "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "amount * 1.1"}]
+    }
