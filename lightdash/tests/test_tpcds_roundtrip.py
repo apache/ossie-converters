@@ -36,6 +36,7 @@ from ossie_lightdash import (
     LightdashToOssieConverter,
     OssieToLightdashConverter,
 )
+from ossie_lightdash.expression_utils import qualify_bare_columns
 
 from tests.conftest import TPCDS_PATH
 
@@ -145,6 +146,16 @@ class TestTpcdsRoundtrip:
             for metric in original.metrics or []
             if metric.name not in dropped
         }
+        # A dataset-scoped metric names its fields unqualified and comes back
+        # as a model-scoped metric with `dataset.field` references.
+        for dataset in original.datasets:
+            for metric in dataset.metrics or []:
+                original_metrics[metric.name] = qualify_bare_columns(
+                    metric.expression.dialects[0].expression,
+                    dataset.name,
+                    [field.name for field in dataset.fields or []],
+                )
+        assert "total_quantity" in original_metrics
         # Re-imported metrics carry Lightdash's `<model>_<metric>` id as their
         # Ossie name; the original name is the stashed Lightdash name.
         roundtripped_metrics = {

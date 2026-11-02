@@ -175,7 +175,10 @@ def test_lightdash_model_files_import_and_round_trip(tmp_path):
     assert {(r.from_dataset, r.to) for r in roundtripped.relationships} == {
         (r.from_dataset, r.to) for r in original.relationships
     }
-    assert len(roundtripped.metrics) == len(original.metrics)
+    # A dataset-scoped metric comes back model-scoped, so count both.
+    assert len(roundtripped.metrics) == len(original.metrics) + sum(
+        len(dataset.metrics or []) for dataset in original.datasets
+    )
 
 
 @pytest.mark.parametrize("output_format", ["lightdash-yml", "dbt-meta"])

@@ -75,7 +75,7 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 |---|---|
 | Cube, Databricks, dbt | Existing CLI runners; focused semantic regressions retained |
 | GoodData | API adapter for declarative LDM JSON, using the converter's serialization helpers |
-| Honeydew, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
+| Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |

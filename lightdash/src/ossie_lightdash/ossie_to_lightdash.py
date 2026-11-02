@@ -33,6 +33,8 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from sqlglot.errors import SqlglotError
+
 from ossie import (
     OssieDataset,
     OssieDialect,
@@ -53,6 +55,7 @@ from ossie_lightdash.expression_utils import (
     ossie_sql_to_lightdash,
     parse_aggregation,
     qualifier_of,
+    qualify_bare_columns,
     referenced_datasets,
     strip_qualifier,
 )
@@ -392,6 +395,19 @@ class OssieToLightdashConverter:
                 references_by_dataset,
                 issues,
             )
+        # A dataset-scoped metric (`datasets[].metrics`) belongs to its
+        # dataset and names that dataset's fields unqualified.
+        for dataset in datasets:
+            for metric in dataset.metrics or []:
+                self._convert_metric(
+                    metric,
+                    [dataset.name for dataset in datasets],
+                    models_by_dataset,
+                    columns_by_dataset,
+                    references_by_dataset,
+                    issues,
+                    scope_dataset=dataset.name,
+                )
 
         for dataset_name, joins in joins_by_dataset.items():
             models_by_dataset[dataset_name].setdefault("meta", {})["joins"] = joins
@@ -572,13 +588,36 @@ class OssieToLightdashConverter:
         columns_by_dataset: Dict[str, Dict[str, Dict[str, Any]]],
         references_by_dataset: Dict[str, JoinReferences],
         issues: List[ConverterIssue],
+        scope_dataset: Optional[str] = None,
     ) -> None:
+        """Converts one metric into a Lightdash metric on the model that holds it.
+
+        ``scope_dataset`` is set for a dataset-scoped metric. Its expression
+        names the dataset's fields unqualified (``SUM(ss_quantity)``), so the
+        fields are qualified first and the metric always goes on that model.
+        A model-scoped metric names fields as ``dataset.field`` and goes on
+        the model ``_resolve_target_dataset`` selects.
+        """
         expression = self._pick_expression(metric.expression, metric.name, issues)
         extension_data = _lightdash_extension_data(metric, issues)
 
-        target_dataset = self._resolve_target_dataset(
-            expression, dataset_names, references_by_dataset, extension_data.get("model")
-        )
+        if scope_dataset is not None:
+            target_dataset: Optional[str] = scope_dataset
+            try:
+                expression = qualify_bare_columns(
+                    expression,
+                    scope_dataset,
+                    columns_by_dataset[scope_dataset],
+                    dialect=self._dialect.name,
+                )
+            except (ValueError, SqlglotError):
+                # Lightdash resolves a bare column name against the model's
+                # own table, so the expression still works as written.
+                pass
+        else:
+            target_dataset = self._resolve_target_dataset(
+                expression, dataset_names, references_by_dataset, extension_data.get("model")
+            )
         if target_dataset is None:
             issues.append(
                 ConverterIssue(

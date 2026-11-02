@@ -1168,3 +1168,76 @@ class TestSecondReviewFindings:
             "CASE WHEN ${TABLE}.status = 'customers.vip' THEN 1 END"
         )
         assert result.issues == []
+
+
+class TestDatasetScopedMetrics:
+    """`datasets[].metrics` (core-spec 0.2.0.dev0) export like model-scoped
+    metrics, always on their own dataset's model."""
+
+    def _document(self, *metrics):
+        document = _document()
+        datasets = [
+            document.datasets[0].model_copy(update={"metrics": list(metrics)}),
+            *document.datasets[1:],
+        ]
+        return document.model_copy(update={"datasets": datasets, "metrics": []})
+
+    def test_aggregation_over_a_field_becomes_a_column_metric(self):
+        document = self._document(
+            OssieMetric(name="total_amount", expression=_ansi("SUM(amount)"), description="Total")
+        )
+        result = OssieToLightdashConverter().convert(document)
+        assert _column(_model(result.output, "orders"), "amount")["meta"]["metrics"] == {
+            "total_amount": {"description": "Total", "type": "sum"}
+        }
+        assert result.issues == []
+
+    def test_expression_fields_are_qualified_with_table(self):
+        document = self._document(
+            OssieMetric(
+                name="amount_per_customer",
+                expression=_ansi("SUM(amount) / NULLIF(COUNT(DISTINCT customer_id), 0)"),
+            ),
+            OssieMetric(
+                name="orders_completed_amount",
+                expression=_ansi("SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END)"),
+            ),
+        )
+        result = OssieToLightdashConverter().convert(document)
+        assert _model(result.output, "orders")["meta"]["metrics"] == {
+            "amount_per_customer": {
+                "type": "number",
+                "sql": "SUM(${TABLE}.amount) / NULLIF(COUNT(DISTINCT ${TABLE}.customer_id), 0)",
+            },
+            "completed_amount": {
+                "type": "sum",
+                "sql": "CASE WHEN ${TABLE}.status = 'completed' THEN ${TABLE}.amount ELSE 0 END",
+            },
+        }
+        assert result.issues == []
+
+    def test_dataset_scoped_metric_stays_on_its_dataset(self):
+        """Even with no dataset reference in the expression, and more than one
+        dataset in the document, the metric is placed, not dropped."""
+        document = self._document(OssieMetric(name="order_count", expression=_ansi("COUNT(*)")))
+        result = OssieToLightdashConverter().convert(document)
+        assert _model(result.output, "orders")["meta"]["metrics"] == {
+            "order_count": {"type": "number", "sql": "COUNT(*)"}
+        }
+        assert "metrics" not in _model(result.output, "customers").get("meta", {})
+        assert result.issues == []
+
+    def test_dataset_scoped_metric_round_trips_as_a_model_scoped_metric(self):
+        document = self._document(
+            OssieMetric(name="total_amount", expression=_ansi("SUM(amount)"))
+        )
+        exported = OssieToLightdashConverter().convert(document)
+        reimported = LightdashToOssieConverter().convert(
+            exported.output, database="analytics_db", schema="marts", semantic_model_name="sales"
+        )
+        assert reimported.issues == []
+        metrics = {
+            metric.name: metric.expression.dialects[0].expression
+            for metric in reimported.output.metrics
+        }
+        assert metrics == {"orders_total_amount": "SUM(orders.amount)"}
