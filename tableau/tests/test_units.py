@@ -58,7 +58,7 @@ def test_fcp_prefixed_tags_are_normalised():
         "<_.fcp.ObjectModelEncapsulateLegacy.true...relation name='t' table='[s].[t]' type='table'/>"
         + recs("t", [("a", "string")]) + "</_.fcp.ObjectModelEncapsulateLegacy.true...connection></datasource>")
     r = convert_datasource(x)
-    assert r.document.datasets[0].source == "s.t"
+    assert r.document.datasets[0].source == '"s"."t"'
     assert r.stats["fields"] == 1
 
 
@@ -113,7 +113,7 @@ def test_calc_classification(formula, datatype, expected):
 def test_rawsql_becomes_snowflake_field():
     r = convert_datasource(ds(BASE, calc("RAWSQL_STR('UPPER(%1)', [name])", "string", caption="Up")))
     f = _fields_by_name(r)["Up"]
-    assert [(d.dialect.value, d.expression) for d in f.expression.dialects] == [("SNOWFLAKE", "UPPER((name))")]
+    assert [(d.dialect.value, d.expression) for d in f.expression.dialects] == [("SNOWFLAKE", 'UPPER(("name"))')]
     assert "rawsql_translated" in kinds(r) and r.stats["unconverted_calcs"] == 0
 
 
@@ -293,12 +293,12 @@ def test_a2_union_distinct_and_mismatch_fallback():
     assert "UNION ALL" not in r.document.datasets[0].source and "UNION" in r.document.datasets[0].source
     r = convert_datasource(ds(_union([("x", "string")], [("y", "string")])))
     (d,) = r.document.datasets
-    assert d.source == 'SELECT "x", NULL AS "y" FROM s.a UNION ALL SELECT NULL AS "x", "y" FROM s.b'
+    assert d.source == 'SELECT "x", NULL AS "y" FROM "s"."a" UNION ALL SELECT NULL AS "x", "y" FROM "s"."b"'
     assert "union" in kinds(r)
     bare = ("<relation type='union' all='true' name='U'><relation connection='c' name='a' table='[s].[a]' type='table'/>"
             "<relation connection='c' name='b' table='[s].[b]' type='table'/></relation>")
     r = convert_datasource(ds(bare))
-    assert r.document.datasets[0].source == "s.a" and "union" in kinds(r)
+    assert r.document.datasets[0].source == '"s"."a"' and "union" in kinds(r)
 
 
 @pytest.mark.parametrize("text,refs", [
@@ -452,7 +452,7 @@ def test_c2_fcp_chain_prefix():
         "<datasource name='d'><_.fcp.A.true..._.fcp.B.false...connection class='snowflake'>"
         "<_.fcp.A.true..._.fcp.B.false...relation name='t' table='[s].[t]' type='table'/>" + recs("t", [("a", "string")]) +
         "</_.fcp.A.true..._.fcp.B.false...connection></datasource>")
-    assert convert_datasource(x).document.datasets[0].source == "s.t"
+    assert convert_datasource(x).document.datasets[0].source == '"s"."t"'
 
 
 @pytest.mark.parametrize("t", ["spatial", "tuple", "table"])

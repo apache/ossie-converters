@@ -40,6 +40,7 @@ class Warehouse:
     database_attribute: str = "dbname"  # connection attribute that carries Connection.database
     quote: str = '"'  # identifier quote character
     default_server: str = ""  # used when no server is given (BigQuery has a single endpoint)
+    fold: str | None = None  # "upper" when the warehouse folds unquoted identifiers to upper case
 
     @property
     def dialect_preference(self) -> tuple[str, str]:
@@ -55,6 +56,7 @@ SNOWFLAKE = Warehouse(
     sqlglot_dialect="snowflake",
     ossie_dialect="SNOWFLAKE",
     extra_attributes=("warehouse",),
+    fold="upper",
 )
 
 # Attribute set read from a Tableau-saved BigQuery connection (corpus: reviews.twb). `authentication="oauth"` is not confirmed
@@ -106,5 +108,8 @@ nulls of on or order outer over partition preceding proto range recursive respec
 tablesample then to treat true unbounded union unnest using when where window with within""".split())
 
 
-def needs_quote(name: str) -> bool:
-    return not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) or name.lower() in RESERVED
+def needs_quote(name: str, wh: Warehouse | None = None) -> bool:
+    """True when `name` must be quoted to keep its exact spelling; with `wh`, also when the warehouse would fold its case."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) or name.lower() in RESERVED:
+        return True
+    return wh is not None and wh.fold == "upper" and name != name.upper()

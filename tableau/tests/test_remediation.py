@@ -250,7 +250,7 @@ def test_bin_with_literal_size_becomes_floor_field():
     r = _bin_ds("<column name='[B]' caption='AmtBin' datatype='integer' role='dimension'>"
                 "<calculation class='bin' formula='[amt]' size='50' peg='0'/></column>")
     assert _expr(r, "AmtBin") == "FLOOR([amt] / 50) * 50"
-    assert _expr(r, "AmtBin", "ANSI_SQL") == "FLOOR(amt / 50) * 50"
+    assert _expr(r, "AmtBin", "ANSI_SQL") == 'FLOOR("amt" / 50) * 50'
     (loss,) = [x for x in r.losses if x.kind == "bin"]
     assert loss.category == "approximated"
 
@@ -276,7 +276,7 @@ def test_categorical_bin_becomes_case_field():
                 "<bin value='&quot;A&quot;'><value>&quot;x&quot;</value><value>&quot;y&quot;</value></bin>"
                 "<bin value='&quot;B&quot;'><value>&quot;z&quot;</value></bin></calculation></column>")
     assert _expr(r, "Grp") == 'IF [name] IN ("x", "y") THEN "A" ELSEIF [name] IN ("z") THEN "B" ELSE [name] END'
-    assert _expr(r, "Grp", "ANSI_SQL") == "CASE WHEN name IN ('x', 'y') THEN 'A' WHEN name IN ('z') THEN 'B' ELSE name END"
+    assert _expr(r, "Grp", "ANSI_SQL") == """CASE WHEN "name" IN ('x', 'y') THEN 'A' WHEN "name" IN ('z') THEN 'B' ELSE "name" END"""
     assert any(x.kind == "categorical_bin" and x.category == "approximated" for x in r.losses)
 
 
@@ -329,7 +329,7 @@ def test_union_member_sources_are_database_qualified():
         "<relation connection='c' name='b' table='[S].[b]' type='table'><columns><column name='x' datatype='string' ordinal='0'/></columns></relation>"
         "</relation></connection></datasource>")
     r = convert_datasource(x)
-    assert r.document.datasets[0].source == "SELECT * FROM DB.S.a UNION ALL SELECT * FROM DB.S.b"
+    assert r.document.datasets[0].source == 'SELECT * FROM DB.S."a" UNION ALL SELECT * FROM DB.S."b"'
 
 
 def test_bin_calculation_restored_byte_stable():

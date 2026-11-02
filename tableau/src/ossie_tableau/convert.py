@@ -323,8 +323,15 @@ def _unique(base: str, used: set[str]) -> str:
     return n
 
 
-def _sql_col(name: str) -> str:
-    return name if not needs_quote(name) else '"' + name.replace('"', '""') + '"'
+def _sql_col(name: str, wh: Warehouse | None = None) -> str:
+    return name if not needs_quote(name, wh) else '"' + name.replace('"', '""') + '"'
+
+
+def _quote_path(src: str, wh: Warehouse) -> str:
+    """Quote each segment of a plain `db.schema.table` source whose case the warehouse would fold; custom SQL is left as is."""
+    if wh.fold is None or not src or re.match(r"(?is)^\(?\s*(select|with)\b", src.strip()) or '"' in src or "`" in src:
+        return src
+    return ".".join(_sql_col(p, wh) for p in src.split("."))
 
 
 @dataclass
@@ -497,9 +504,9 @@ def table_calc_addressing(root: ET.Element) -> dict[str, list[str]]:
     return keys
 
 
-def _union_source(rel: ET.Element, losses: list[Loss], conns: dict[str, dict] | None = None) -> str:
+def _union_source(rel: ET.Element, losses: list[Loss], conns: dict[str, dict] | None = None, wh: Warehouse = GENERIC) -> str:
     members = [m for m in rel if _tag(m) == "relation"]
-    sources = [_qualify(_source_of(m), m, conns or {}, losses, m.get("name", "")) for m in members]
+    sources = [_quote_path(_qualify(_source_of(m), m, conns or {}, losses, m.get("name", "")), wh) for m in members]
     colsets = []
     for m in members:
         ce = next((e for e in m if _tag(e) == "columns"), None)
@@ -610,7 +617,7 @@ def _mapped_columns(ds: ET.Element, conn: ET.Element | None, relation: str) -> l
     return out
 
 
-def _tables(ds: ET.Element, losses: list[Loss], joins: list[tuple[ET.Element, str]]) -> tuple[list[_Table], ET.Element | None]:
+def _tables(ds: ET.Element, losses: list[Loss], joins: list[tuple[ET.Element, str]], wh: Warehouse = GENERIC) -> tuple[list[_Table], ET.Element | None]:
     conn = _kid(ds, "connection")
     og = _kid(ds, "object-graph")
     conns = _conn_attrs(ds)
@@ -633,7 +640,8 @@ def _tables(ds: ET.Element, losses: list[Loss], joins: list[tuple[ET.Element, st
                         oid = m.findtext("{*}object-id") or next((x.text for x in m if _tag(x) == "object-id"), None)
                         if oid and _strip(oid) == obj.get("id"):
                             cols.append((m.findtext("remote-name") or "", m.findtext("local-type") or "string"))
-            src = _union_source(rel, losses, conns) if rel.get("type") == "union" else _qualify(_source_of(rel), rel, conns, losses, rel.get("name", ""))
+            src = (_union_source(rel, losses, conns, wh) if rel.get("type") == "union"
+               else _quote_path(_qualify(_source_of(rel), rel, conns, losses, rel.get("name", "")), wh))
             tables.append(_Table(obj.get("caption") or rel.get("name", ""), rel.get("name", ""), src, obj.get("id", ""), cols, connection=rel.get("connection", ""),
                                 ai_context=_read_ai_context(obj)))
         return tables, og
@@ -661,7 +669,8 @@ def _tables(ds: ET.Element, losses: list[Loss], joins: list[tuple[ET.Element, st
                 cols.append((c.get("name", ""), c.get("datatype", "string")))
         if not cols:
             cols = _mapped_columns(ds, conn, rel.get("name", ""))
-        src = _union_source(rel, losses, conns) if rel.get("type") == "union" else _qualify(_source_of(rel), rel, conns, losses, rel.get("name", ""))
+        src = (_union_source(rel, losses, conns, wh) if rel.get("type") == "union"
+               else _quote_path(_qualify(_source_of(rel), rel, conns, losses, rel.get("name", "")), wh))
         tables.append(_Table(rel.get("name", ""), rel.get("name", ""), src, "", cols, connection=rel.get("connection", "")))
     return tables, None
 
@@ -914,9 +923,12 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
     losses: list[Loss] = []
     ds_name = ds.get("caption") or ds.get("name") or ds.get("formatted-name") or "datasource"
     joins: list[tuple[ET.Element, str]] = []
-    tables, og = _tables(ds, losses, joins)
-    res = Result(None, losses, source_file, ds_name)
     classes = {e.get("class") for e in ds.iter() if _tag(e) == "connection" and e.get("class")}
+    unknown_cls = sorted(classes - FILE_CLASSES - NON_WAREHOUSE_CLASSES - {w.tableau_class for w in WAREHOUSES.values()})
+    if unknown_cls and warehouse is None:
+        wh = GENERIC
+    tables, og = _tables(ds, losses, joins, wh)
+    res = Result(None, losses, source_file, ds_name)
     if not tables:
         if "sqlproxy" in classes:
             losses.append(Loss("published_datasource", ds_name, "reference to a published datasource; its tables are defined on the server"))
@@ -924,9 +936,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
             losses.append(Loss("no_tables", ds_name, "no table relations found"))
         return res
 
-    unknown_cls = sorted(classes - FILE_CLASSES - NON_WAREHOUSE_CLASSES - {w.tableau_class for w in WAREHOUSES.values()})
     if unknown_cls and warehouse is None:
-        wh = GENERIC
         losses.append(Loss("unknown_warehouse", ds_name, f"connection class(es) {', '.join(unknown_cls)} are not registered warehouses; translated as generic ANSI SQL"))
     target_dialect = OssieDialect[wh.ossie_dialect]
     for rel in ds.iter():
@@ -1070,7 +1080,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
             caption = info.get("caption") if info is not None else None
             fields.append(OssieField(
                 name=fname,
-                expression=OssieExpression(dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=_sql_col(remote))]),
+                expression=OssieExpression(dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=_sql_col(remote, wh))]),
                 dimension=dimension,
                 label=final_label,
                 description=_description(info) if info is not None else None,
@@ -1284,7 +1294,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
         t, remote = hit
         add_field(iname, c, t, [
             OssieDialectExpression(dialect=OssieDialect.TABLEAU, expression=f"FLOOR([{t.field_names[remote]}] / {size}) * {size}"),
-            OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=f"FLOOR({_sql_col(remote)} / {size}) * {size}")], calc)
+            OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=f"FLOOR({_sql_col(remote, wh)} / {size}) * {size}")], calc)
         if sp:
             bin_params.update(PARAM_REF_RE.findall(sp))
             detail = f"bin size taken from parameter {sp} (current value {size}); the field does not follow later parameter changes"
@@ -1325,7 +1335,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
         tq = lambda x: '"' + x.replace('"', '\\"') + '"'  # noqa: E731
         sq = lambda x: "'" + x.replace("'", "''") + "'"  # noqa: E731
         tab = "IF " + " ELSEIF ".join(f"{tcol} IN ({', '.join(tq(v) for v in lv)}) THEN {tq(lab)}" for lab, lv in parsed) + f" ELSE {tcol} END"
-        sql = "CASE " + " ".join(f"WHEN {_sql_col(remote)} IN ({', '.join(sq(v) for v in lv)}) THEN {sq(lab)}" for lab, lv in parsed) + f" ELSE {_sql_col(remote)} END"
+        sql = "CASE " + " ".join(f"WHEN {_sql_col(remote, wh)} IN ({', '.join(sq(v) for v in lv)}) THEN {sq(lab)}" for lab, lv in parsed) + f" ELSE {_sql_col(remote, wh)} END"
         dialects = [OssieDialectExpression(dialect=OssieDialect.TABLEAU, expression=tab),
                     OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=sql)]
         if wh.sqlglot_dialect != "snowflake":
@@ -1375,7 +1385,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
             if ref in resolve:
                 t, remote = resolve[ref]
                 tabs.add(t.name)
-                subs.append(f"({_sql_col(remote)})")
+                subs.append(f"({_sql_col(remote, wh)})")
             elif (k := internal_of.get(ref)) in emitted:
                 et, ename, _dt = emitted[k]
                 ef = next((x for x in ds_fields[et.name] if x.name == ename), None)

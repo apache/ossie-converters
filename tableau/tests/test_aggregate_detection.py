@@ -35,16 +35,17 @@ def _sql(r, dialect="SNOWFLAKE"):
     return next(d.expression for d in ex if str(getattr(d.dialect, "value", d.dialect)) == dialect)
 
 
+# BASE is a Snowflake connection with lower-case remote names, so every column is quoted to keep its case.
 @pytest.mark.parametrize("formula,sql", [
-    ("STDEV([amt])", "STDDEV((amt))"),
-    ("STDEVP([amt])", "STDDEV_POP((amt))"),
-    ("VAR([amt])", "VARIANCE((amt))"),
-    ("VARP([amt])", "VARIANCE_POP((amt))"),
-    ("PERCENTILE([amt], 0.9)", "PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY (amt))"),
-    ("CORR([amt], [odd col])", 'CORR((amt), ("odd col"))'),
-    ("COVAR([amt], [odd col])", 'COVAR_SAMP((amt), ("odd col"))'),
-    ("COVARP([amt], [odd col])", 'COVAR_POP((amt), ("odd col"))'),
-    ("ATTR([amt])", "MIN((amt))"),
+    ("STDEV([amt])", 'STDDEV(("amt"))'),
+    ("STDEVP([amt])", 'STDDEV_POP(("amt"))'),
+    ("VAR([amt])", 'VARIANCE(("amt"))'),
+    ("VARP([amt])", 'VARIANCE_POP(("amt"))'),
+    ("PERCENTILE([amt], 0.9)", 'PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY ("amt"))'),
+    ("CORR([amt], [odd col])", 'CORR(("amt"), ("odd col"))'),
+    ("COVAR([amt], [odd col])", 'COVAR_SAMP(("amt"), ("odd col"))'),
+    ("COVARP([amt], [odd col])", 'COVAR_POP(("amt"), ("odd col"))'),
+    ("ATTR([amt])", 'MIN(("amt"))'),
 ])
 def test_every_aggregate_becomes_a_metric(formula, sql):
     r = convert_datasource(ds(BASE, calc(formula)))
