@@ -1,0 +1,143 @@
+version: 0.2.0.dev0
+name: example9_metric
+datasets:
+- name: psql_tpch_customer
+  source: psql_tpch_customer
+  fields:
+  - name: customer_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_customer.c_name
+  - name: full_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: concat(psql_tpch_customer.c_name, '_', psql_tpch_customer.c_address)
+  - name: customer_address
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_customer.c_address
+- name: psql_tpch_nation
+  source: psql_tpch_nation
+  fields:
+  - name: nation_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_nation.n_name
+- name: psql_tpch_region
+  source: psql_tpch_region
+  fields:
+  - name: region_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_region.r_name
+- name: psql_tpch_lineitem
+  source: psql_tpch_lineitem
+  fields:
+  - name: line_number
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_lineitem.l_linenumber
+  - name: return_flag
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_lineitem.l_returnflag
+  - name: line_status
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_lineitem.l_linestatus
+- name: psql_tpch_orders
+  source: psql_tpch_orders
+  fields:
+  - name: order_id
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_orders.o_orderkey
+- name: psql_tpch_supplier
+  source: psql_tpch_supplier
+  fields:
+  - name: id_supplier
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_supplier.s_suppkey
+  - name: supplier_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_supplier.s_name
+  - name: supplier_addres
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: psql_tpch_supplier.s_address
+relationships:
+- name: psql_tpch_region_nation
+  from: psql_tpch_nation
+  to: psql_tpch_region
+  from_columns: [r_regionkey]
+  to_columns: [n_regionkey]
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"from_columns": {"relation": "+"}}'
+- name: psql_tpch_nation_customer
+  from: psql_tpch_customer
+  to: psql_tpch_nation
+  from_columns: [n_nationkey]
+  to_columns: [c_nationkey]
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"from_columns": {"relation": "1"}}'
+- name: psql_tpch_customer_orders
+  from: psql_tpch_orders
+  to: psql_tpch_customer
+  from_columns: [c_custkey]
+  to_columns: [o_custkey]
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"from_columns": {"relation": "0,1"}}'
+- name: psql_tpch_orders_lineitem
+  from: psql_tpch_lineitem
+  to: psql_tpch_orders
+  from_columns: [o_orderkey]
+  to_columns: [l_orderkey]
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"from_columns": {"relation": "+"}}'
+- name: psql_tpch_nation_supplier
+  from: psql_tpch_nation
+  to: psql_tpch_supplier
+  from_columns: [s_nationkey]
+  to_columns: [n_nationkey]
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"from_columns": {"relation": "+"}}'
+metrics:
+- name: count_nations
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: count(psql_tpch_nation.n_nationkey)
+- name: count_orders
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: count(psql_tpch_orders.o_orderkey)
+- name: total_order_price
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: sum(psql_tpch_orders.o_totalprice)
+- name: n_supplier
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: count(psql_tpch_supplier.s_suppkey)

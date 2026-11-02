@@ -131,6 +131,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `LIGHTDASH` | Lightdash semantic layer (model files, or dbt `meta`) |
 | `ATACCAMA` | Ataccama ONE catalog metadata |
 | `SOLID` | Solid semantic model |
+| `DENODO`    | Denodo Metric Views |
 
 [`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped spoke. It reads one Snowflake semantic view, writes one Ossie document, writes a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. It does not call `snowflake` (Cortex Analyst export only) or `wisdom` (that spoke drops synonyms and field or metric `ai_context`).
 
