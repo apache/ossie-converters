@@ -27,7 +27,8 @@ def pick_ossie_dialect_expression(
 ) -> OssieDialectExpression | None:
     """Pick an Ossie dialect expression from a list of Ossie dialect expressions.
 
-    Prefers to pick the current dialect, then falls back to ANSI SQL, then the first in the list.
+    Prefers to pick the current dialect, then falls back to a portable dialect,
+    then the first in the list.
 
     Returns a dialect expression or None if no fallback is found.
     """
@@ -35,8 +36,15 @@ def pick_ossie_dialect_expression(
     for entry in ossie_dialect_expressions:
         if ctx.ossie_dialect is not None and entry.dialect == ctx.ossie_dialect:
             return entry
-        # fallback preference: (1) ansi sql, (2) first in the list
-        elif entry.dialect == OssieDialect.ANSI_SQL or fallback is None:
+        # fallback preference: (1) portable dialect, (2) first in the list
+        elif (
+            fallback is None
+            or entry.dialect == PORTABLE_OSSIE_DIALECT
+            or (
+                entry.dialect == LEGACY_PORTABLE_OSSIE_DIALECT
+                and fallback.dialect != PORTABLE_OSSIE_DIALECT
+            )
+        ):
             fallback = entry
     if ctx.current_phase_name == "load":  # noqa: SIM102
         if ctx.ossie_dialect is not None:
@@ -49,3 +57,14 @@ def pick_ossie_dialect_expression(
                     f"Preferred dialect {ctx.ossie_dialect} not found for expression and no fallback dialect found"
                 )
     return fallback
+
+
+PORTABLE_OSSIE_DIALECT = OssieDialect.OSSIE_SQL_2026
+"""The canonical portable dialect of Ossie."""
+
+LEGACY_PORTABLE_OSSIE_DIALECT = OssieDialect.ANSI_SQL
+"""The legacy portable dialect of Ossie.
+
+A significant subset of converters still output ANSI_SQL as if it were the
+portable, default dialect of Ossie.
+"""

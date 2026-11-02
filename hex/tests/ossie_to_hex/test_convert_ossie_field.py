@@ -49,7 +49,7 @@ def ctx() -> Iterator[ExportContext]:
 
 def test_preserve_name(ctx: ExportContext) -> None:
     name = "foo"
-    foo = Quick.field(name, "String", [("ANSI_SQL", "foo")])
+    foo = Quick.field(name, "String", [("OSSIE_SQL_2026", "foo")])
     result = convert_ossie_field(foo, ctx=ctx)
     assert result is not None
     assert result.id == name
@@ -62,7 +62,7 @@ def test_preserve_label_description(ctx: ExportContext) -> None:
     foo = Quick.field(
         "foo",
         "String",
-        [("ANSI_SQL", "foo")],
+        [("OSSIE_SQL_2026", "foo")],
         label=label,
         description=description,
     )
@@ -75,7 +75,7 @@ def test_preserve_label_description(ctx: ExportContext) -> None:
 
 def test_defaults_to_string_datatype(ctx: ExportContext) -> None:
     datatype = None
-    foo = Quick.field("foo", datatype, [("ANSI_SQL", "foo")])
+    foo = Quick.field("foo", datatype, [("OSSIE_SQL_2026", "foo")])
     result = convert_ossie_field(foo, ctx=ctx)
     assert result is not None
     assert result.type == HexDataType.STRING
@@ -87,7 +87,7 @@ def test_does_not_warn_about_dimension_is_time_with_temporal(
 ) -> None:
     datatype = "Date"
     dimension = OssieDimension(is_time=True)
-    foo = Quick.field("foo", datatype, [("ANSI_SQL", "foo")], dimension=dimension)
+    foo = Quick.field("foo", datatype, [("OSSIE_SQL_2026", "foo")], dimension=dimension)
     convert_ossie_field(foo, ctx=ctx)
     assert not ctx.problems
 
@@ -95,14 +95,16 @@ def test_does_not_warn_about_dimension_is_time_with_temporal(
 def test_warns_about_dimension_is_time_when_not_temporal(ctx: ExportContext) -> None:
     datatype = "Integer"
     dimension = OssieDimension(is_time=True)
-    foo = Quick.field("foo", datatype, [("ANSI_SQL", "foo")], dimension=dimension)
+    foo = Quick.field("foo", datatype, [("OSSIE_SQL_2026", "foo")], dimension=dimension)
     convert_ossie_field(foo, ctx=ctx)
     assert problems_snapshot(ctx.problems) == snapshot("[WARNING] Not supported")
 
 
 def test_warns_about_ai_context(ctx: ExportContext) -> None:
     ai_context = OssieAIContextObject(synonyms=("bar", "baz"))
-    foo = Quick.field("foo", "String", [("ANSI_SQL", "foo")], ai_context=ai_context)
+    foo = Quick.field(
+        "foo", "String", [("OSSIE_SQL_2026", "foo")], ai_context=ai_context
+    )
     convert_ossie_field(foo, ctx=ctx)
     assert problems_snapshot(ctx.problems) == snapshot("[WARNING] Not supported")
 
@@ -112,7 +114,7 @@ def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
     foo = Quick.field(
         "foo",
         "String",
-        [("ANSI_SQL", "foo")],
+        [("OSSIE_SQL_2026", "foo")],
         custom_extensions=[custom_extension],
     )
     convert_ossie_field(foo, ctx=ctx)
@@ -120,7 +122,7 @@ def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
 
 
 def test_converts_expression(ctx: ExportContext) -> None:
-    foo = Quick.field("foo", "String", [("ANSI_SQL", "foo")])
+    foo = Quick.field("foo", "String", [("OSSIE_SQL_2026", "foo")])
     result = convert_ossie_field(foo, ctx=ctx)
     assert result is not None
     assert result.expr_sql == snapshot("foo")

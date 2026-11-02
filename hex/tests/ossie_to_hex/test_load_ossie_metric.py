@@ -37,7 +37,7 @@ def test_returns_metric_with_valid_expression(ctx: ExportContext) -> None:
     foo = Quick.metric(
         "foo",
         "Integer",
-        [("ANSI_SQL", "SUM(1)")],
+        [("OSSIE_SQL_2026", "SUM(1)")],
     )
     result = load_ossie_metric(foo, field_names=field_names, ctx=ctx)
     assert result == foo
@@ -49,14 +49,14 @@ def test_preserves_metric_with_invalid_expression(ctx: ExportContext) -> None:
     foo = Quick.metric(
         "foo",
         "Integer",
-        [("ANSI_SQL", "SELECT FROM")],
+        [("OSSIE_SQL_2026", "SELECT FROM")],
     )
     result = load_ossie_metric(foo, field_names=field_names, ctx=ctx)
     assert result == foo
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot("""\
 [ERROR] Unable to parse: Expected table name but got None. Line 1, Col: 11.
   SELECT \x1b[4mFROM\x1b[0m
-Cause: ['foo', 'expression', 'dialects', 'ANSI_SQL', 'expression']\
+Cause: ['foo', 'expression', 'dialects', 'OSSIE_SQL_2026', 'expression']\
 """)
 
 
@@ -68,7 +68,7 @@ def test_preserves_invalid_selected_expression_with_valid_alternative(
         "foo",
         "Integer",
         [
-            ("ANSI_SQL", "SELECT FROM"),
+            ("OSSIE_SQL_2026", "SELECT FROM"),
             ("SNOWFLAKE", "SUM(1)"),
         ],
     )
@@ -77,7 +77,7 @@ def test_preserves_invalid_selected_expression_with_valid_alternative(
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot("""\
 [ERROR] Unable to parse: Expected table name but got None. Line 1, Col: 11.
   SELECT \x1b[4mFROM\x1b[0m
-Cause: ['foo', 'expression', 'dialects', 'ANSI_SQL', 'expression']\
+Cause: ['foo', 'expression', 'dialects', 'OSSIE_SQL_2026', 'expression']\
 """)
 
 
@@ -86,7 +86,7 @@ def test_returns_metric_with_valid_reference(ctx: ExportContext) -> None:
     foo = Quick.metric(
         "foo",
         "Integer",
-        [("ANSI_SQL", "orders.amount")],
+        [("OSSIE_SQL_2026", "orders.amount")],
     )
     result = load_ossie_metric(foo, field_names=field_names, ctx=ctx)
     assert result == foo
@@ -101,7 +101,7 @@ def test_preserves_invalid_selected_reference_with_valid_alternative(
         "foo",
         "Integer",
         [
-            ("ANSI_SQL", "foo.amount"),
+            ("OSSIE_SQL_2026", "foo.amount"),
             ("SNOWFLAKE", "orders.amount"),
         ],
     )
@@ -109,7 +109,7 @@ def test_preserves_invalid_selected_reference_with_valid_alternative(
     assert result == foo
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot("""\
 [ERROR] Field expression references field not in semantic model: foo.amount
-Cause: ['foo', 'expression', 'dialects', 'ANSI_SQL']\
+Cause: ['foo', 'expression', 'dialects', 'OSSIE_SQL_2026']\
 """)
 
 
@@ -118,13 +118,13 @@ def test_preserves_metric_with_invalid_reference(ctx: ExportContext) -> None:
     foo = Quick.metric(
         "foo",
         "Integer",
-        [("ANSI_SQL", "foo.amount")],
+        [("OSSIE_SQL_2026", "foo.amount")],
     )
     result = load_ossie_metric(foo, field_names=field_names, ctx=ctx)
     assert result == foo
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot("""\
 [ERROR] Field expression references field not in semantic model: foo.amount
-Cause: ['foo', 'expression', 'dialects', 'ANSI_SQL']\
+Cause: ['foo', 'expression', 'dialects', 'OSSIE_SQL_2026']\
 """)
 
 
@@ -133,7 +133,7 @@ def test_defaults_to_number_datatype(ctx: ExportContext) -> None:
     foo = Quick.metric(
         "foo",
         None,
-        [("ANSI_SQL", "SUM(1)")],
+        [("OSSIE_SQL_2026", "SUM(1)")],
     )
     result = load_ossie_metric(foo, field_names=field_names, ctx=ctx)
     assert result is not None

@@ -35,11 +35,11 @@ def ctx() -> ExportContext:
 
 
 def test_only_validates_preferred_field_variant(ctx: ExportContext) -> None:
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(OssieDialect.OSSIE_SQL_2026)
     expression = Quick.expression(
         [
             ("DAX", "SELECT FROM"),  # Invalid, unused.
-            ("ANSI_SQL", "id"),  # Valid, preferred.
+            ("OSSIE_SQL_2026", "id"),  # Valid, preferred.
         ]
     )
 
@@ -50,11 +50,11 @@ def test_only_validates_preferred_field_variant(ctx: ExportContext) -> None:
 
 
 def test_reports_invalid_preferred_variant(ctx: ExportContext) -> None:
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(OssieDialect.OSSIE_SQL_2026)
     expression = Quick.expression(
         [
             ("DAX", "SELECT FROM"),  # Invalid, unused.
-            ("ANSI_SQL", "SELECT FROM"),  # Invalid, preferred.
+            ("OSSIE_SQL_2026", "SELECT FROM"),  # Invalid, preferred.
             ("SNOWFLAKE", "id"),  # Valid, unused.
         ]
     )
@@ -65,17 +65,17 @@ def test_reports_invalid_preferred_variant(ctx: ExportContext) -> None:
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot("""\
 [ERROR] Unable to parse: Expected table name but got None. Line 1, Col: 11.
   SELECT \x1b[4mFROM\x1b[0m
-Cause: ['dialects', 'ANSI_SQL', 'expression']\
+Cause: ['dialects', 'OSSIE_SQL_2026', 'expression']\
 """)
 
 
 def test_only_validates_preferred_dialect(ctx: ExportContext) -> None:
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(OssieDialect.OSSIE_SQL_2026)
     field_names = [("foo", "bar")]
     expression = Quick.expression(
         [
             ("DAX", "SUM(foo[missing])"),  # Invalid reference, unused.
-            ("ANSI_SQL", "SUM(foo.bar)"),  # Valid, preferred.
+            ("OSSIE_SQL_2026", "SUM(foo.bar)"),  # Valid, preferred.
         ]
     )
 
@@ -86,12 +86,12 @@ def test_only_validates_preferred_dialect(ctx: ExportContext) -> None:
 
 
 def test_reports_metric_expression_with_invalid_reference(ctx: ExportContext) -> None:
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(OssieDialect.OSSIE_SQL_2026)
     field_names = [("foo", "bar")]
     expression = Quick.expression(
         [
             ("DAX", "SELECT FROM"),  # Invalid syntax, unused.
-            ("ANSI_SQL", "SUM(foo.missing)"),  # Invalid reference, preferred.
+            ("OSSIE_SQL_2026", "SUM(foo.missing)"),  # Invalid reference, preferred.
             ("SNOWFLAKE", "SUM(foo.bar)"),  # Valid, unused.
         ]
     )
@@ -101,5 +101,5 @@ def test_reports_metric_expression_with_invalid_reference(ctx: ExportContext) ->
     assert result is expression
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot("""\
 [ERROR] Field expression references field not in semantic model: foo.missing
-Cause: ['dialects', 'ANSI_SQL']\
+Cause: ['dialects', 'OSSIE_SQL_2026']\
 """)

@@ -36,7 +36,7 @@ def test_returns_field_with_valid_expression(ctx: ExportContext) -> None:
     foo = Quick.field(
         "foo",
         "String",
-        [("ANSI_SQL", "foo")],
+        [("OSSIE_SQL_2026", "foo")],
     )
     result = load_ossie_field(foo, ctx=ctx)
     assert result is not None
@@ -49,7 +49,7 @@ def test_preserves_field_with_invalid_expression(ctx: ExportContext) -> None:
     foo = Quick.field(
         "foo",
         "String",
-        [("ANSI_SQL", "SELECT FROM")],
+        [("OSSIE_SQL_2026", "SELECT FROM")],
     )
     result = load_ossie_field(foo, ctx=ctx)
     assert result == foo
@@ -60,7 +60,7 @@ def test_defaults_to_string_datatype(ctx: ExportContext) -> None:
     foo = Quick.field(
         "foo",
         None,
-        [("ANSI_SQL", "foo")],
+        [("OSSIE_SQL_2026", "foo")],
     )
     result = load_ossie_field(foo, ctx=ctx)
     assert result is not None

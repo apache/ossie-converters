@@ -34,19 +34,19 @@ def ctx() -> ExportContext:
 orders = Quick.dataset(
     "orders",
     "public.orders",
-    [("amount", "Decimal", [("ANSI_SQL", "amount")])],
+    [("amount", "Decimal", [("OSSIE_SQL_2026", "amount")])],
 )
 
 customers = Quick.dataset(
     "customers",
     "public.customers",
-    [("id", "String", [("ANSI_SQL", "id")])],
+    [("id", "String", [("OSSIE_SQL_2026", "id")])],
 )
 
 total_amount = Quick.metric(
     "total_amount",
     "Integer",
-    [("ANSI_SQL", "orders.amount")],
+    [("OSSIE_SQL_2026", "orders.amount")],
 )
 
 orders_to_customers = Quick.relationship(
@@ -96,7 +96,7 @@ def test_invalid_metric_expression(ctx: ExportContext) -> None:
     bad = Quick.metric(
         "bad",
         "Integer",
-        [("ANSI_SQL", "orders.missing")],
+        [("OSSIE_SQL_2026", "orders.missing")],
     )
     foo = Quick.semantic_model("foo", datasets, [bad, *metrics], relationships)
     result = load_ossie_semantic_model(foo, ctx=ctx)
@@ -105,6 +105,6 @@ def test_invalid_metric_expression(ctx: ExportContext) -> None:
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot(
         """\
 [ERROR] Field expression references field not in semantic model: orders.missing
-Cause: ['metrics', 'bad', 'expression', 'dialects', 'ANSI_SQL']\
+Cause: ['metrics', 'bad', 'expression', 'dialects', 'OSSIE_SQL_2026']\
 """
     )

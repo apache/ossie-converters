@@ -141,26 +141,26 @@ def test_invalid_members(ctx: ExportContext, tmp_path: Path) -> None:
                 datatype: Integer
                 expression:
                   dialects:
-                    - dialect: ANSI_SQL
+                    - dialect: OSSIE_SQL_2026
                       expression: amount
               - name: broken
                 datatype: Integer
                 expression:
                   dialects:
-                    - dialect: ANSI_SQL
+                    - dialect: OSSIE_SQL_2026
                       expression: SELECT FROM
         metrics:
           - name: total
             datatype: Integer
             expression:
               dialects:
-                - dialect: ANSI_SQL
+                - dialect: OSSIE_SQL_2026
                   expression: SUM(orders.amount)
           - name: broken_total
             datatype: Integer
             expression:
               dialects:
-                - dialect: ANSI_SQL
+                - dialect: OSSIE_SQL_2026
                   expression: SUM(orders.missing)
         relationships:
           - name: broken_relation
@@ -185,13 +185,13 @@ datasets:
   - name: amount
     expression:
       dialects:
-      - dialect: ANSI_SQL
+      - dialect: OSSIE_SQL_2026
         expression: amount
     datatype: Integer
   - name: broken
     expression:
       dialects:
-      - dialect: ANSI_SQL
+      - dialect: OSSIE_SQL_2026
         expression: SELECT FROM
     datatype: Integer
 relationships: []
@@ -199,24 +199,24 @@ metrics:
 - name: total
   expression:
     dialects:
-    - dialect: ANSI_SQL
+    - dialect: OSSIE_SQL_2026
       expression: SUM(orders.amount)
   datatype: Integer
 - name: broken_total
   expression:
     dialects:
-    - dialect: ANSI_SQL
+    - dialect: OSSIE_SQL_2026
       expression: SUM(orders.missing)
   datatype: Integer
 """)
     assert problems_snapshot(ctx.problems, include_causes=True) == snapshot("""\
 [ERROR] Unable to parse: Expected table name but got None. Line 1, Col: 11.
   SELECT \x1b[4mFROM\x1b[0m
-Cause: ['datasets', 'orders', 'fields', 'broken', 'expression', 'dialects', 'ANSI_SQL', 'expression']
+Cause: ['datasets', 'orders', 'fields', 'broken', 'expression', 'dialects', 'OSSIE_SQL_2026', 'expression']
 
 [ERROR] Could not resolve dataset name: 'missing'.
 Cause: ['relationships', 'broken_relation', 'to']
 
 [ERROR] Field expression references field not in semantic model: orders.missing
-Cause: ['metrics', 'broken_total', 'expression', 'dialects', 'ANSI_SQL']\
+Cause: ['metrics', 'broken_total', 'expression', 'dialects', 'OSSIE_SQL_2026']\
 """)

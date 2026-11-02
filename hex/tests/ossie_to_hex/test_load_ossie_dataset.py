@@ -35,7 +35,7 @@ def foo() -> OssieDataset:
     return Quick.dataset(
         name="foo",
         source="public.foo",
-        fields=[("id", "String", [("ANSI_SQL", "id")])],
+        fields=[("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
 
 
@@ -43,7 +43,7 @@ def test_keeps_valid_fields(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         name="foo",
         source="public.foo",
-        fields=[("id", "String", [("ANSI_SQL", "id")])],
+        fields=[("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = load_ossie_dataset(foo, ctx=ctx)
     assert result.name == foo.name
@@ -59,8 +59,8 @@ def test_preserves_fields_with_invalid_expressions(ctx: ExportContext) -> None:
         name="foo",
         source="public.foo",
         fields=[
-            ("good", "String", [("ANSI_SQL", "id")]),
-            ("bad", "String", [("ANSI_SQL", "SELECT FROM")]),
+            ("good", "String", [("OSSIE_SQL_2026", "id")]),
+            ("bad", "String", [("OSSIE_SQL_2026", "SELECT FROM")]),
         ],
     )
     result = load_ossie_dataset(foo, ctx=ctx)

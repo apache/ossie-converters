@@ -93,7 +93,7 @@ Cause: []""")
     assert not output.parent.exists()
 
 
-@pytest.mark.parametrize("dialect", [None, "ANSI_SQL", "SNOWFLAKE"])
+@pytest.mark.parametrize("dialect", [None, "OSSIE_SQL_2026", "SNOWFLAKE"])
 def test_selected_dialect_is_used_when_loading_and_converting(
     tmp_path: Path, dialect: str | None
 ) -> None:
@@ -106,7 +106,7 @@ def test_selected_dialect_is_used_when_loading_and_converting(
                 "Integer",
                 [
                     ("DAX", "IF(bar[amount] > 0, bar[amount], 0)"),
-                    ("ANSI_SQL", "CASE WHEN amount > 0 THEN amount ELSE 0 END"),
+                    ("OSSIE_SQL_2026", "CASE WHEN amount > 0 THEN amount ELSE 0 END"),
                     ("SNOWFLAKE", "IFF(amount > 0, amount, 0)"),
                 ],
             )
@@ -118,7 +118,7 @@ def test_selected_dialect_is_used_when_loading_and_converting(
         [
             ("DAX", "SUMX(bar, IF(bar[amount] > 0, bar[amount], 0))"),
             (
-                "ANSI_SQL",
+                "OSSIE_SQL_2026",
                 "SUM(CASE WHEN bar.amount > 0 THEN bar.amount ELSE 0 END)",
             ),
             ("SNOWFLAKE", "SUM(IFF(bar.amount > 0, bar.amount, 0))"),

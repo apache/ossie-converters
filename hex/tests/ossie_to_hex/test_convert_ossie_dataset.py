@@ -39,7 +39,7 @@ def test_preserve_name(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         name,
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -52,7 +52,7 @@ def test_preserve_description(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         description=description,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -66,7 +66,7 @@ def test_detects_table_source(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         source,
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -80,7 +80,7 @@ def test_detects_query_source(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         source,
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -94,7 +94,7 @@ def test_warns_about_empty_source(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         source,
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -125,7 +125,7 @@ def test_single_primary_key_marks_field_unique(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         primary_key=primary_key,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -141,7 +141,7 @@ def test_warns_about_composite_primary_key(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         primary_key=primary_key,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -157,7 +157,7 @@ def test_single_unique_key_marks_field_unique(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         unique_keys=unique_keys,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -173,7 +173,7 @@ def test_warns_about_composite_unique_key(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         unique_keys=unique_keys,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -189,7 +189,7 @@ def test_warns_about_ai_context(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         ai_context=ai_context,
     )
     convert_ossie_dataset(foo, ctx=ctx)
@@ -201,7 +201,7 @@ def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         custom_extensions=[custom_extension],
     )
     convert_ossie_dataset(foo, ctx=ctx)
@@ -212,7 +212,7 @@ def test_empty_measures_relations(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
