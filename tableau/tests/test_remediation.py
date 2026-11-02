@@ -24,7 +24,7 @@ import pytest
 from ossie_tableau.convert import convert_datasource
 from ossie_tableau.losses import KNOWN_KINDS
 from ossie_tableau.tds_writer import SnowflakeConn, write_tds
-from .test_units import BASE, ds, kinds, rel, recs
+from .test_units import BASE, calc, ds, kinds, rel, recs
 
 pytestmark = pytest.mark.unit
 CONN = SnowflakeConn("a.snowflakecomputing.com", "WH", "DB", "SCH", "R", "U")
@@ -611,6 +611,16 @@ def test_cross_dataset_untranslated_keeps_tableau_only():
     assert m.expression.dialects[0].expression.startswith("SUM([a].[x])")
     assert not any(d.dialect.value in ("SNOWFLAKE", "ANSI_SQL", "BIGQUERY") for d in m.expression.dialects)
     assert "sql_untranslated" in {x.kind for x in r.losses}
+
+
+@pytest.mark.parametrize("formula", ["PERCENTILE([amt], 0.5)", "MEDIAN([amt])"])
+def test_bare_aggregate_without_bigquery_form_records_sql_untranslated(formula):
+    x = ET.fromstring(f"<datasource name='d'><connection class='bigquery'>{BASE}</connection>"
+                      + calc(formula) + "</datasource>")
+    r = convert_datasource(x)
+    m = next(m for m in r.document.metrics if m.name == "C")
+    assert [d.dialect.value for d in m.expression.dialects] == ["TABLEAU"]
+    assert ("sql_untranslated", "C") in {(x.kind, x.name) for x in r.losses}
 
 
 def test_unknown_datasource_child_survives_round_trip():

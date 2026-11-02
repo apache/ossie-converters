@@ -1555,7 +1555,6 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 reasons.append("non_numeric_result")
             out = None
             inlined: list[str] = []
-            need_sql = False
             if not reasons:
                 def sub(ref: str) -> str | None:
                     k = internal_of.get(ref)
@@ -1621,9 +1620,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                     i += 1
                 out = "".join(parts)
                 if not reasons and AGG_RE.search(BARE_AGG_RE.sub("", m)):
-                    if _sql_dialect(out, None, label, []) is not None:
-                        pass
-                    else:
+                    if _sql_dialect(out, None, label, []) is None:
                         hf = _helper_aggregate(out, tables)
                         sq_in = _sql_dialect(hf[1], hf[2].name, label, losses) if hf else None
                         if hf is not None and sq_in is not None:
@@ -1636,8 +1633,6 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                             ))
                             losses.append(Loss("aggregate_expression_helper", label, f"aggregate of an expression emitted as {agg} of helper field {t0.name}.{hname}"))
                             out = f"{agg}([{t0.name}].[{hname}])"
-                        else:
-                            need_sql = True
                 if not reasons:
                     for mm in NUMERIC_AGG_RE.finditer(m):
                         refs_here = formula_refs(formula[mm.start():mm.end()])
@@ -1683,7 +1678,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
             else:
                 sq = _sql_dialect(out, "" if len(tables) > 1 else (tables[0].name if tables else None), mname, losses)
                 extra = [sq] if sq is not None else []
-                if need_sql and sq is None:
+                if sq is None:
                     losses.append(Loss("sql_untranslated", label, "warehouse SQL could not be produced; TABLEAU expression kept"))
             if window_shape and not viz_shape:
                 losses.append(Loss("lod_translated", label, "level-of-detail/TOTAL aggregate emitted with its window SQL" if extra
