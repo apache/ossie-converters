@@ -65,7 +65,7 @@ Options:
 Example:
 
 ```bash
-ossie-hex export -i ossie.yaml -o hex/ --dialect snowflake
+ossie-hex export -i ossie.yaml -o hex/
 ```
 
 ### Python API
@@ -80,7 +80,6 @@ from ossie_hex import convert_ossie_to_hex
 hex_project, problems = convert_ossie_to_hex(
     input="ossie.yaml",
     output="hex/",
-    dialect="snowflake",
 )
 ```
 
