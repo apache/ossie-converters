@@ -49,9 +49,16 @@ def test_needs_quote_follows_the_warehouse_fold(name, sf, bq):
 
 
 def _resolved(sql: str, dialect: str, fold_upper: bool) -> str:
-    """The column name the warehouse looks up for `sql`."""
-    ident = sqlglot.parse_one(sql, read=dialect).find(exp.Identifier)
-    return ident.name if ident.quoted or not fold_upper else ident.name.upper()
+    """The column name the warehouse looks up for `sql` used as a select item."""
+    col = sqlglot.parse_one(f"SELECT {sql} FROM t", read=dialect).selects[0]
+    assert isinstance(col, exp.Column), (sql, col)
+    return col.this.name if col.this.quoted or not fold_upper else col.this.name.upper()
+
+
+@pytest.mark.parametrize("word", sorted(k for k in sqlglot.tokens.Tokenizer.KEYWORDS if k.replace("_", "").isalpha()))
+def test_every_sqlglot_keyword_column_resolves_to_itself(word):
+    for wh, fold in ((SNOWFLAKE, True), (GENERIC, False)):
+        assert _resolved(_sql_col(word, wh), "snowflake" if fold else "", fold) == word, wh.name
 
 
 @settings(max_examples=300, deadline=None)

@@ -100,12 +100,17 @@ class Connection:
     extra: dict[str, str] = field(default_factory=dict)
 
 
-# Words reserved by ANSI SQL, Snowflake or BigQuery; a column or table with one of these names must be quoted.
-RESERVED = frozenset("""all and any array as asc between by case cast collate contains create cross cube current default define desc
-distinct else end enum escape except exclude exists extract false fetch following for from full group grouping groups
-hash having if ignore in inner intersect interval into is join lateral left like limit lookup merge natural new no not null
-nulls of on or order outer over partition preceding proto range recursive respect right rollup rows select set some struct
-tablesample then to treat true unbounded union unnest using when where window with within""".split())
+# Words reserved by ANSI SQL, Snowflake or BigQuery, plus words sqlglot parses as an operator, statement or niladic
+# function (CURRENT_DATE, XOR, ...); a column or table with one of these names must be quoted.
+RESERVED = frozenset("""account all alter and any array as asc between by case cast check collate column connect connection
+constraint contains create cross cube current current_catalog current_date current_time current_timestamp current_user
+database default define delete desc distinct drop else end enum escape except exclude exists extract false fetch following
+for from full glob grant group grouping groups gscluster hash having if ignore ilike in increment inner insert intersect
+interval into is issue join lateral left like limit localtime localtimestamp lookup merge minus natural new no not notnull
+null nulls of on or order organization outer over partition partitioned_by preceding proto qualify range recursive regexp
+respect returning revoke right rlike rollback rollup row rows sample schema select session_user set some start
+straight_join struct table tablesample then to treat trigger true try_cast unbounded uncache union unique unnest update
+using values view when whenever where window with within xor""".split())
 
 
 def needs_quote(name: str, wh: Warehouse | None = None) -> bool:
