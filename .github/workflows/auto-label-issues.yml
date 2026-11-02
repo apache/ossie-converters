@@ -71,12 +71,11 @@ jobs:
             const found = labelsForIssue(context.payload.issue, names);
 
             await ensureLabel('needs-triage', 'e11d48', 'Issue needs triage by a maintainer');
+            // The New converter form applies this label itself, but GitHub drops form
+            // labels that don't exist yet, so make sure it exists.
+            await ensureLabel('new-converter', '5319e7', 'Request or proposal for a new converter');
             for (const label of found) {
-              if (label === 'new-converter') {
-                await ensureLabel(label, '5319e7', 'Request or proposal for a new converter');
-              } else {
-                await ensureLabel(label, '0e8a16', '');
-              }
+              await ensureLabel(label, '0e8a16', '');
             }
 
             await github.rest.issues.addLabels({

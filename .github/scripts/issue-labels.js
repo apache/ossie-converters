@@ -19,13 +19,6 @@
 // .github/workflows/auto-label-issues.yml; kept free of GitHub API calls so it
 // can be run locally with plain node.
 
-// Names that mean a converter but don't contain its directory name.
-const ALIASES = {
-  'power bi': 'microsoft',
-  powerbi: 'microsoft',
-  metricflow: 'dbt',
-};
-
 // Converter names from the converter/* labels in .github/labeler.yml, parsed the
 // same way auto-label-prs.yml reads its label list.
 function converterNames(labelerText) {
@@ -36,25 +29,16 @@ function converterNames(labelerText) {
     .map(label => label.slice('converter/'.length));
 }
 
-function escapeRegExp(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// Matches term as a whole word; '-' counts as part of a word so that "wisdom"
-// does not match inside "wisdom-semantic-view".
-function mentions(text, term) {
-  return new RegExp(`(^|[^a-z0-9-])${escapeRegExp(term)}([^a-z0-9-]|$)`).test(text);
-}
-
-function labelsForIssue({ title, body }, names) {
+// Returns the converter/<name> labels for an issue filed through a bug report or
+// feature request form. Issue forms render a dropdown as "### Converter" followed
+// by the selected options, comma-separated, or "_No response_". Values that aren't
+// a converter, such as the "N/A" option, add no label. The new-converter label
+// comes from the New converter form's own front matter.
+function labelsForIssue({ body }, names) {
   const known = new Set(names);
   const labels = new Set();
-  body = body || '';
 
-  // Issue forms render a dropdown as "### Converter" followed by the selected
-  // options, comma-separated, or "_No response_". Values that aren't a
-  // converter, such as the "N/A" option, add no label.
-  const field = body.match(/^###[ \t]+Converter[ \t]*\r?\n(?:[ \t]*\r?\n)*([^\r\n]+)/m);
+  const field = (body || '').match(/^###[ \t]+Converter[ \t]*\r?\n(?:[ \t]*\r?\n)*([^\r\n]+)/m);
   if (field) {
     for (const raw of field[1].split(',')) {
       const value = raw.trim().toLowerCase();
@@ -62,23 +46,6 @@ function labelsForIssue({ title, body }, names) {
         labels.add(`converter/${value}`);
       }
     }
-  } else if (!/^###[ \t]+Converter[ \t]*$/m.test(body)) {
-    // Not filed through a form: fall back to converter names in the title.
-    const text = (title || '').toLowerCase();
-    for (const name of names) {
-      if (mentions(text, name)) {
-        labels.add(`converter/${name}`);
-      }
-    }
-    for (const [alias, name] of Object.entries(ALIASES)) {
-      if (known.has(name) && mentions(text, alias)) {
-        labels.add(`converter/${name}`);
-      }
-    }
-  }
-
-  if (/^###[ \t]+Platform[ \t]*$/m.test(body)) {
-    labels.add('new-converter');
   }
 
   return [...labels];

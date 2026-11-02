@@ -19,8 +19,8 @@ name: New converter
 description: Propose or request a converter for a platform that does not have one yet.
 labels: [new-converter]
 body:
-  # auto-label-issues.yml recognizes this form by its "Platform" heading and applies
-  # new-converter itself, since GitHub drops form labels that do not exist yet.
+  # auto-label-issues.yml creates the new-converter label if it does not exist,
+  # since GitHub drops form labels that do not exist yet.
   - type: input
     id: platform
     attributes:
