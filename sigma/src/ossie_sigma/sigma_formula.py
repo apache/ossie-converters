@@ -558,6 +558,12 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
         # The value is the same, but the text can differ: Sigma's Text() and the
         # engine's CAST may format numbers and dates differently.
         return exp.Cast(this=built[0], to=exp.DataType.build("VARCHAR"))
+    if name == "in" and len(args) >= 2:
+        # Only a list of non-null literals: a NULL candidate makes SQL IN return
+        # NULL on a miss where Sigma's In() returns False.
+        if not all(isinstance(a, Literal) for a in args[1:]):
+            raise _NotTranslatable("In() candidates must be literals")
+        return exp.In(this=built[0], expressions=built[1:])
     if name == "isnull" and len(args) == 1:
         return exp.Is(this=built[0], expression=exp.Null())
     if name == "isnotnull" and len(args) == 1:
@@ -721,6 +727,15 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         return f"-({inner})"
     if isinstance(node, exp.Not):
         return f"NOT ({_render_sql_node(node.this, dataset_alias)})"
+
+    if isinstance(node, exp.In):
+        candidates = node.expressions
+        if node.args.get("query") or node.args.get("unnest") or node.args.get("field") or not candidates:
+            raise _NotTranslatable("IN over a subquery has no Sigma equivalent")
+        if not all(isinstance(c, exp.Literal) for c in candidates):
+            raise _NotTranslatable("IN candidates other than non-null literals are not mapped")
+        rendered = [_render_sql_node(c, dataset_alias) for c in [node.this, *candidates]]
+        return f"In({', '.join(rendered)})"
 
     if isinstance(node, exp.Is):
         inner = _render_sql_node(node.this, dataset_alias)

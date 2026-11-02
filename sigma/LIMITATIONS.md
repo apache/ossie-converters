@@ -113,6 +113,12 @@ displayed text may not be: Sigma's `Text()` and a warehouse's `CAST` can format 
 and dates differently. A cast to a sized text type such as `CHAR(1)` is not mapped,
 because it truncates and `Text()` does not.
 
+`In(x, a, b)` translates to `x IN (a, b)` and back, only when every candidate is a
+non-null literal. With a `NULL` candidate, SQL `IN` returns `NULL` instead of `FALSE`
+on a miss, while Sigma's `In()` is documented as returning `True` or `False`; a column
+candidate can be `NULL` at run time, so column lists, `NULL` candidates and `IN`
+over a subquery are not mapped. `NOT IN` translates as `NOT (In(...))`.
+
 ## Untranslatable expressions are omitted on export, not approximated
 
 `formula` is required on every Sigma column and metric, and the data model API
