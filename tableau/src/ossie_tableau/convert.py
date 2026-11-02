@@ -23,6 +23,7 @@ import json
 import re
 import zipfile
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -357,12 +358,28 @@ class _Table:
 MAX_XML_BYTES = 256 * 1024 * 1024
 
 
+class _DtdError(Exception):
+    pass
+
+
+def _reject_dtd(*_args) -> None:
+    raise _DtdError
+
+
 def _parse_xml(data: bytes, name: str) -> ET.Element:
     if len(data) > MAX_XML_BYTES:
         raise ValueError(f"{name}: XML larger than {MAX_XML_BYTES} bytes")
-    head = data[:4096].lower()
-    if b"<!doctype" in head or b"<!entity" in data[:65536].lower():
-        raise ValueError(f"{name}: DOCTYPE/ENTITY declarations are not allowed")
+    # Reject any DTD wherever it appears (a byte-prefix check is bypassed by a long leading
+    # comment or PI). The expat pre-pass stops at the declaration, before entities expand.
+    pre = expat.ParserCreate()
+    pre.StartDoctypeDeclHandler = _reject_dtd
+    pre.EntityDeclHandler = _reject_dtd
+    try:
+        pre.Parse(data, True)
+    except _DtdError:
+        raise ValueError(f"{name}: DOCTYPE/ENTITY declarations are not allowed") from None
+    except expat.ExpatError as e:
+        raise ET.ParseError(f"{name}: {e}") from None
     return ET.fromstring(data)
 
 

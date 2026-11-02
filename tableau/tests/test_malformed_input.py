@@ -41,6 +41,42 @@ def test_doctype_rejected_in_archive(tmp_path):
         C._read_xml(p)
 
 
+_DTD = b'<!DOCTYPE d [<!ENTITY e "boom">]><datasource name="d">&e;</datasource>'
+
+
+@pytest.mark.parametrize("prefix", [
+    b"<!--" + b"x" * 70_000 + b"-->",
+    b"<?pad " + b"x" * 70_000 + b"?>",
+    b"\n" * 70_000,
+    b'<?xml version="1.0"?><!--a--><?pi?>',
+], ids=["comment", "pi", "whitespace", "mixed"])
+def test_padded_doctype_rejected(prefix):
+    with pytest.raises(ValueError, match="DOCTYPE"):
+        C._parse_xml(prefix + _DTD, "x.tds")
+
+
+def test_external_doctype_rejected():
+    with pytest.raises(ValueError, match="DOCTYPE"):
+        C._parse_xml(b'<!DOCTYPE d SYSTEM "file:///etc/passwd"><datasource name="d"/>', "x.tds")
+
+
+def test_doctype_text_in_comment_parses():
+    root = C._parse_xml(b'<!-- <!DOCTYPE d [<!ENTITY e "x">]> --><datasource name="d"/>', "x.tds")
+    assert root.get("name") == "d"
+
+
+def test_padded_doctype_property():
+    from hypothesis import given, settings, strategies as st
+
+    @settings(max_examples=25, deadline=None)
+    @given(st.integers(0, 1_000_000), st.sampled_from([b"<!--%s-->", b"<?p %s?>"]))
+    def check(n, wrap):
+        with pytest.raises(ValueError, match="DOCTYPE"):
+            C._parse_xml(wrap.replace(b"%s", b"x" * n) + _DTD, "x.tds")
+
+    check()
+
+
 def test_oversized_member_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(C, "MAX_XML_BYTES", 10)
     p = tmp_path / "x.twbx"
