@@ -15,6 +15,12 @@ Status: `direct` (same result in both engines), `approximated` (close, see note)
 | `MEDIAN` | 1 | `MEDIAN(__a0)` | direct | num |  |
 | `STDEV` | 1 | `STDDEV_SAMP(__a0)` | direct | num |  |
 | `VAR` | 1 | `VARIANCE(__a0)` | direct | num |  |
+| `STDEVP` | 1 | `STDDEV_POP(__a0)` | direct | num |  |
+| `VARP` | 1 | `VAR_POP(__a0)` | direct | num |  |
+| `PERCENTILE` | 2 | `PERCENTILE_CONT(__a1) WITHIN GROUP (ORDER BY __a0)` | direct | num | the percentile must be a numeric literal between 0 and 1 |
+| `CORR` | 2 | `CORR(__a0, __a1)` | direct | num |  |
+| `COVAR` | 2 | `COVAR_SAMP(__a0, __a1)` | direct | num |  |
+| `COVARP` | 2 | `COVAR_POP(__a0, __a1)` | direct | num |  |
 | `ATTR` | 1 | `MIN(__a0)` | approximated | any | Tableau returns * when the values differ; MIN returns the smallest value |
 | `ZN` | 1 | `COALESCE(__a0, 0)` | direct | num |  |
 | `IFNULL` | 2 | `COALESCE(__a0, __a1)` | direct | any |  |
@@ -83,6 +89,12 @@ BigQuery uses its own template where one is written; otherwise the Snowflake tem
 | `MEDIAN` | `` | unmappable | BigQuery has no exact MEDIAN aggregate (APPROX_QUANTILES is approximate) |
 | `STDEV` | `STDDEV(__a0)` | direct |  |
 | `VAR` | `VARIANCE(__a0)` | direct |  |
+| `STDEVP` | `STDDEV_POP(__a0)` | direct |  |
+| `VARP` | `VAR_POP(__a0)` | direct |  |
+| `PERCENTILE` | `` | unmappable | BigQuery PERCENTILE_CONT is an analytic function only; APPROX_QUANTILES is approximate |
+| `CORR` | `CORR(__a0, __a1)` | direct |  |
+| `COVAR` | `COVAR_SAMP(__a0, __a1)` | direct |  |
+| `COVARP` | `COVAR_POP(__a0, __a1)` | direct |  |
 | `ATTR` | `MIN(__a0)` | approximated | Tableau returns * when the values differ; MIN returns the smallest value |
 | `ZN` | `COALESCE(__a0, 0)` | direct |  |
 | `IFNULL` | `COALESCE(__a0, __a1)` | direct |  |

@@ -49,6 +49,7 @@ class Entry:
 
 _BQ = {
     "MEDIAN": Override("", note="BigQuery has no exact MEDIAN aggregate (APPROX_QUANTILES is approximate)"),
+    "PERCENTILE": Override("", note="BigQuery PERCENTILE_CONT is an analytic function only; APPROX_QUANTILES is approximate"),
     "DATETRUNC": Override("DATETIME_TRUNC(CAST(__a1 AS DATETIME), UNIT_)", "approximated",
                           note="a date input comes back as a DATETIME; week starts on Sunday, which matches Tableau's default start-of-week only"),
     "DATEPART": Override("EXTRACT(UNIT_ FROM CAST(__a1 AS DATETIME))", "approximated",
@@ -85,7 +86,7 @@ _BQ = {
 
 # Entries whose Snowflake template transpiles to BigQuery unchanged (checked by tests/test_calc_bigquery.py).
 PORTABLE: dict[str, frozenset[str]] = {"bigquery": frozenset((
-    "SUM AVG MIN MAX COUNT COUNTD STDEV VAR ATTR ZN IFNULL ISNULL TODAY LEFT RIGHT MID LEN UPPER LOWER TRIM REPLACE ROUND ABS "
+    "SUM AVG MIN MAX COUNT COUNTD STDEV STDEVP VAR VARP CORR COVAR COVARP ATTR ZN IFNULL ISNULL TODAY LEFT RIGHT MID LEN UPPER LOWER TRIM REPLACE ROUND ABS "
     "CEILING FLOOR POWER SQRT LN EXP SIGN INT FLOAT STR DATE IIF").split())}
 
 
@@ -105,6 +106,13 @@ CATALOG: list[Entry] = [
     _e("aggregate", "MEDIAN", 1, "MEDIAN(__a0)", result="num"),
     _e("aggregate", "STDEV", 1, "STDDEV_SAMP(__a0)", result="num"),
     _e("aggregate", "VAR", 1, "VARIANCE(__a0)", result="num"),
+    _e("aggregate", "STDEVP", 1, "STDDEV_POP(__a0)", result="num"),
+    _e("aggregate", "VARP", 1, "VAR_POP(__a0)", result="num"),
+    _e("aggregate", "PERCENTILE", 2, "PERCENTILE_CONT(__a1) WITHIN GROUP (ORDER BY __a0)", result="num",
+       note="the percentile must be a numeric literal between 0 and 1"),
+    _e("aggregate", "CORR", 2, "CORR(__a0, __a1)", result="num"),
+    _e("aggregate", "COVAR", 2, "COVAR_SAMP(__a0, __a1)", result="num"),
+    _e("aggregate", "COVARP", 2, "COVAR_POP(__a0, __a1)", result="num"),
     _e("aggregate", "ATTR", 1, "MIN(__a0)", "approximated", note="Tableau returns * when the values differ; MIN returns the smallest value"),
     _e("null", "ZN", 1, "COALESCE(__a0, 0)", result="num"),
     _e("null", "IFNULL", 2, "COALESCE(__a0, __a1)"),

@@ -693,6 +693,10 @@ class _P:
             args = [(exp.Literal.string(conv(lit.name)), "str"), args[1]]
         if entry.status == "unmappable" or not entry.sql:
             raise Untranslatable(f"{entry.name}: {entry.note}")
+        if entry.name == "PERCENTILE" and len(args) == 2:
+            q = args[1][0]
+            if not (isinstance(q, exp.Literal) and not q.is_string and 0 <= float(q.name) <= 1):
+                raise Untranslatable(f"PERCENTILE: {entry.note}")
         if entry.name in ("DATE", "DATETIME") and entry.sql_dialect == "bigquery" and len(args) == 1:
             lit = args[0][0]
             if isinstance(lit, exp.Literal) and lit.is_string:
@@ -931,17 +935,23 @@ def emit_tableau(tree: exp.Expression, ref: Callable[[exp.Column], str] | None =
             if isinstance(n.this, exp.Star):
                 return "COUNT(*)"
             return fn("COUNT", n.this)
+        if t is exp.WithinGroup and isinstance(n.this, exp.PercentileCont):
+            keys = n.expression.expressions if isinstance(n.expression, exp.Order) else []
+            if len(keys) != 1 or keys[0].args.get("desc"):
+                raise Untranslatable("PERCENTILE_CONT other than one ascending key")
+            return fn("PERCENTILE", keys[0].this, n.this.this)
         if t is exp.Quarter:
             return f"DATEPART('quarter', {e(_uncast(n.this))})"
         simple = {exp.Sum: "SUM", exp.Avg: "AVG", exp.Min: "MIN", exp.Max: "MAX", exp.Median: "MEDIAN", exp.Stddev: "STDEV",
-                  exp.StddevSamp: "STDEV", exp.Variance: "VAR", exp.Year: "YEAR", exp.Month: "MONTH", exp.Day: "DAY",
+                  exp.StddevSamp: "STDEV", exp.Variance: "VAR", exp.StddevPop: "STDEVP", exp.VariancePop: "VARP",
+                  exp.Year: "YEAR", exp.Month: "MONTH", exp.Day: "DAY",
                   exp.Length: "LEN", exp.Upper: "UPPER", exp.Lower: "LOWER", exp.Trim: "TRIM", exp.Abs: "ABS", exp.Ceil: "CEILING",
                   exp.Floor: "FLOOR", exp.Sqrt: "SQRT", exp.Ln: "LN", exp.Exp: "EXP", exp.Sign: "SIGN",
                   exp.DayOfWeekIso: "ISOWEEKDAY"}
         if t in simple:
             return fn(simple[t], n.this)
         two = {exp.Left: "LEFT", exp.Right: "RIGHT", exp.Contains: "CONTAINS", exp.StartsWith: "STARTSWITH", exp.EndsWith: "ENDSWITH",
-               exp.Pow: "POWER"}
+               exp.Pow: "POWER", exp.Corr: "CORR", exp.CovarSamp: "COVAR", exp.CovarPop: "COVARP"}
         if t in two:
             return fn(two[t], n.this, n.expression)
         if t is exp.Pi:

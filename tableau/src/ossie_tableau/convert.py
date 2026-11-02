@@ -30,6 +30,7 @@ from pathlib import Path
 import sqlglot
 
 from . import stash
+from .calc_catalog import CATALOG
 from .formula import masked, refs as formula_refs, sub_refs, tokenize
 from .losses import spec as loss_spec
 from .warehouse import DEFAULT, GENERIC, WAREHOUSES, Warehouse, by_tableau_class, needs_quote
@@ -50,10 +51,18 @@ from ossie.models import (
 )
 
 
-AGG_RE = re.compile(r"\b(SUM|AVG|MIN|MAX|COUNT|COUNTD|MEDIAN)\s*\(", re.I)
+# aggregate names come from the catalogue so detection and translation cannot drift apart
+_AGGS = sorted((e for e in CATALOG if e.group == "aggregate"), key=lambda e: -len(e.name))
+_alt = lambda names: "|".join(names)
+_AGG_ARG = r"\s*(?:\[[^\[\]]+\]|[-+]?\d+(?:\.\d+)?)\s*"
+_bare = lambda names: rf"\b({_alt(names)})\s*\(\s*\[[^\[\]]+\]\s*(?:,{_AGG_ARG})*\)"
+AGG_RE = re.compile(rf"\b({_alt(e.name for e in _AGGS)})\s*\(", re.I)
 REF_RE = re.compile(r"\[([^\[\]]+)\]")
-NUMERIC_AGG_RE = re.compile(r"\b(SUM|AVG|MIN|MAX|MEDIAN)\s*\(\s*\[[^\[\]]+\]\s*\)", re.I)
-BARE_AGG_RE = re.compile(r"\b(SUM|AVG|MIN|MAX|COUNT|COUNTD|MEDIAN)\s*\(\s*\[[^\[\]]+\]\s*\)", re.I)
+# aggregates whose every reference must be numeric (ATTR/COUNT/COUNTD take any type)
+NUMERIC_AGG_RE = re.compile(_bare(e.name for e in _AGGS if e.name not in ("ATTR", "COUNT", "COUNTD")), re.I)
+BARE_AGG_RE = re.compile(_bare(e.name for e in _AGGS), re.I)
+# single-argument aggregates that can wrap a helper field (ATTR keeps its own approximation note, so it stays out)
+_HELPER_AGG_RE = re.compile(rf"\s*({_alt(e.name for e in _AGGS if e.arity == (1,) and e.name != 'ATTR')})\s*\(", re.I)
 RLS_RE = re.compile(r"\b(ISMEMBEROF|USERNAME|FULLNAME|ISFULLNAME|ISUSERNAME|USERDOMAIN|ISCURRENTUSER)\s*\(", re.I)
 # applied to formula.masked(): strings/comments blanked and reference names flattened
 UNSUPPORTED = [
@@ -686,7 +695,7 @@ def _inside_aggregate(formula: str, ref: str) -> bool:
 
 def _helper_aggregate(out: str, tables: list):
     """Split `AGG(<row-level expression over one table>)` into (AGG, expression, table); None for any other shape."""
-    m = re.match(r"\s*(SUM|AVG|MIN|MAX|MEDIAN|COUNTD|COUNT)\s*\(", out, re.I)
+    m = _HELPER_AGG_RE.match(out)
     if not m:
         return None
     depth, close_at, end = 0, -1, -1
@@ -1570,16 +1579,16 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 if not reasons:
                     for mm in NUMERIC_AGG_RE.finditer(m):
                         refs_here = formula_refs(formula[mm.start():mm.end()])
-                        if not refs_here:
-                            continue
-                        ref = refs_here[0]
-                        hit = resolve.get(ref)
-                        if hit:
-                            typ = dict(hit[0].columns).get(hit[1], "string")
-                        else:
-                            typ = emitted[internal_of[ref]][2] if internal_of.get(ref) in emitted else None
-                        if typ is not None and typ not in ("integer", "real"):
-                            reasons.append("non_numeric_aggregate")
+                        for ref in refs_here:
+                            hit = resolve.get(ref)
+                            if hit:
+                                typ = dict(hit[0].columns).get(hit[1], "string")
+                            else:
+                                typ = emitted[internal_of[ref]][2] if internal_of.get(ref) in emitted else None
+                            if typ is not None and typ not in ("integer", "real"):
+                                reasons.append("non_numeric_aggregate")
+                                break
+                        if reasons:
                             break
             if reasons:
                 lose(iname, c, formula, reasons[0], row_cause(formula, m) if reasons[0] == "row_level_calc" else None)

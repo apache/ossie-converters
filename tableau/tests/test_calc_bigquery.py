@@ -26,7 +26,8 @@ pytestmark = pytest.mark.unit
 
 SAMPLES = {
     "SUM": "SUM([x])", "AVG": "AVG([x])", "MIN": "MIN([x])", "MAX": "MAX([x])", "COUNT": "COUNT([x])", "COUNTD": "COUNTD([x])",
-    "MEDIAN": "MEDIAN([x])", "STDEV": "STDEV([x])", "VAR": "VAR([x])", "ATTR": "ATTR([x])", "ZN": "ZN([x])", "IFNULL": "IFNULL([x], 1)",
+    "MEDIAN": "MEDIAN([x])", "STDEV": "STDEV([x])", "VAR": "VAR([x])", "ATTR": "ATTR([x])", "STDEVP": "STDEVP([x])", "VARP": "VARP([x])",
+    "PERCENTILE": "PERCENTILE([x], 0.5)", "CORR": "CORR([x], [y])", "COVAR": "COVAR([x], [y])", "COVARP": "COVARP([x], [y])", "ZN": "ZN([x])", "IFNULL": "IFNULL([x], 1)",
     "ISNULL": "ISNULL([x])", "DATETRUNC": "DATETRUNC('month', [d])", "DATEPART": "DATEPART('weekday', [d])",
     "DATEADD": "DATEADD('day', 3, [d])", "DATEDIFF": "DATEDIFF('day', [d], [e])", "YEAR": "YEAR([d])", "MONTH": "MONTH([d])",
     "DAY": "DAY([d])", "MAKEPOINT": "MAKEPOINT([a], [b])", "DATEPARSE": "DATEPARSE('yyyy-MM-dd', [s])", "DATENAME": "DATENAME('month', [d])",
@@ -38,7 +39,7 @@ SAMPLES = {
     "REGEXP_EXTRACT": "REGEXP_EXTRACT([s], '(a)')", "ISOWEEKDAY": "ISOWEEKDAY([d])", "INT": "INT([x])", "FLOAT": "FLOAT([x])", "STR": "STR([x])",
     "DATE": "DATE([s])", "DATETIME": "DATETIME([s])", "IIF": "IIF([x] > 1, 1, 2)",
 }
-UNMAPPABLE = {"MEDIAN"}
+UNMAPPABLE = {"MEDIAN", "PERCENTILE"}
 ROUND_TRIP = {"DATETRUNC", "DATEADD", "DATEDIFF", "MAKEPOINT", "DATEPARSE", "DATENAME", "NOW", "SPLIT", "PI", "FIND"}
 
 
