@@ -329,8 +329,9 @@ class OssieToSalesforceConverterTest {
     }
 
     @Test
-    void testFieldWithOnlyPortableSqlIsReportedAndOmitted() {
-        // An expression may carry only `sql`, with no `dialects` list to unwrap.
+    void testCalculatedFieldWithOnlyPortableSqlIsReportedAndOmitted() {
+        // An expression may carry only `sql`, with no `dialects` list to unwrap. Its `sql` is
+        // OSSIE_SQL_2026, and export only translates a calculation written in TABLEAU.
         Map<String, Object> ossieField = Map.of(
                 "name", "order_year",
                 "dimension", Map.of(),
@@ -1378,6 +1379,25 @@ class OssieToSalesforceConverterTest {
                         .filter(d -> "customer_id".equals(d.get("apiName")))
                         .count(),
                 "a primary key column already declared as a field should not be exported twice");
+    }
+
+    @Test
+    void testPrimaryKeyFieldWithOnlyPortableSqlKeepsTheRelationshipJoiningOnIt() throws Exception {
+        // A declared key field counts as covering the key, so no key field is added for it.
+        // Omitted for having no dialect entries, it would take the relationship with it.
+        String sqlOnlyKey = "  - name: customer_id\n"
+                + "    dimension: {}\n"
+                + "    expression:\n"
+                + "      sql: customer_id\n";
+        String ossieModel = ossieModelWithAPrimaryKey(true).replace(ossieDimension("customer_id"), sqlOnlyKey);
+        List<String> results = converter.convert(ossieModel);
+        Map<String, Object> sfModel = jsonMapper.readValue(results.get(0), new TypeReference<Map<String, Object>>() {});
+
+        assertTrue(dimensionsOf(sfModel, "Customers").stream()
+                        .anyMatch(d -> "customer_id".equals(d.get("apiName"))),
+                "a primary key field written only in sql should be exported as a dimension");
+        assertEquals(1, ((List<Map<String, Object>>) sfModel.get("semanticRelationships")).size(),
+                "the relationship joining on the primary key should survive export");
     }
 
     @Test

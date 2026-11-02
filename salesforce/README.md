@@ -275,7 +275,9 @@ and a measurement as `Number`.
 
 `datatype` does not determine whether an Ossie field is a dimension or a fact.
 For direct fields, the presence of the `dimension` object determines whether the
-field is exported to `semanticDimensions` or `semanticMeasurements`. A calculated
+field is exported to `semanticDimensions` or `semanticMeasurements`. A field reads
+its `TABLEAU` entry, then the top-level `sql` (portable `OSSIE_SQL_2026`), then its
+first dialect entry. A calculated
 Tableau expression follows the converter's existing calculated-dimension path.
 A calculation in any other dialect is not translated, so the field is omitted and
 a warning names the field, its dataset and the dialect it was written in.
