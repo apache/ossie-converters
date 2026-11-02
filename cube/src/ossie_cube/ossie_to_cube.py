@@ -70,6 +70,7 @@ from ._common import (
     DOTTED_REF_RE,
     lookup_map,
     match_keys,
+    measure_signature,
     normalize_identifier,
     resolve_identifier,
     quoted_runs,
@@ -1264,6 +1265,8 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
     # including COUNT(*) and other expressions with no field reference.
     refs = _MetricReferences({}, dialect, tables, lambda: None, model_name,
                              {}, set(cube_names.values()), issues)
+    restored_names = {c: {normalize_identifier(n) for n in p.names.values()}
+                      for c, p in plan.items()}
     for ds_name, metric, scope in _dataset_metrics(datasets):
         target = cube_names[ds_name]
         expr, used = pick_expression(metric.get("expression"), dialect)
@@ -1325,12 +1328,27 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
                     [f["name"] for f in datasets[ds_name].get("fields") or []],
                     scope, aliases)})
             restored_expression = {**restored_expression, "dialects": entries}
-        measure.setdefault("meta", {}).setdefault("ossie", {})["dataset_metric"] = (
-            escape_braces_for_cube({"name": metric["name"],
-                                    "expression": restored_expression}))
         for key, value in stash.items():
             if key not in _METRIC_STASH_CONSUMED:
                 measure[key] = value
+        local_name = metric["name"]
+        if normalize_identifier(local_name) in restored_names[target]:
+            local_name, suffix = mname, 2
+            while normalize_identifier(local_name) in restored_names[target]:
+                local_name, suffix = f"{mname}_{suffix}", suffix + 1
+            issues.add(
+                IssueType.APPROXIMATED, scope,
+                f"field-name sanitization would collide with this metric's name; "
+                f"the restored dataset metric is named '{local_name}'")
+        restored_names[target].add(normalize_identifier(local_name))
+        origin = {"name": local_name, "expression": restored_expression,
+                  "signature": measure_signature(measure)}
+        overrides = {k: stash[k] for k in ("sql", "type", "filters", "measure")
+                     if k in stash}
+        if overrides:
+            origin["overrides"] = overrides
+        measure.setdefault("meta", {}).setdefault("ossie", {})["dataset_metric"] = (
+            escape_braces_for_cube(origin))
         _place(measures_by_cube, target, measure, model_name)
 
 

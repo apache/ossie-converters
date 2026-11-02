@@ -57,6 +57,7 @@ from ._common import (
     is_simple_identifier,
     lookup_map,
     match_keys,
+    measure_signature,
     sanitize_name,
     uncollided_view_name,
     normalize_identifier,
@@ -1857,6 +1858,17 @@ def _field_owners_of(member_names):
     return owners
 
 
+def _dataset_metric_of(measure):
+    """Restore origins only while the native measure still matches its export."""
+    origin = parked_of(measure.get("meta")).get("dataset_metric")
+    if (isinstance(origin, dict) and isinstance(origin.get("name"), str)
+            and origin["name"] and isinstance(origin.get("expression"), dict)
+            and isinstance(origin.get("overrides", {}), dict)
+            and origin.get("signature") == measure_signature(measure)):
+        return origin
+    return None
+
+
 def _metric_names_of(resolver, decomposed, *, dataset_scoped=False):
     """{(cube, measure): the Ossie metric name it becomes}, for every measure that
     produces a metric at all.
@@ -1875,7 +1887,7 @@ def _metric_names_of(resolver, decomposed, *, dataset_scoped=False):
     converts = {key: resolver.inlined(*key) is not None
                 for key in resolver.measures()}
     scoped = {key for key, measure in resolver.measures().items()
-              if dataset_scoped and parked_of(measure.get("meta")).get("dataset_metric")}
+              if dataset_scoped and _dataset_metric_of(measure)}
 
     # Counted by *normalized* name: Ossie regular identifiers are case-insensitive, so
     # `revenue` on one cube and `Revenue` on another are one name in the model-level
@@ -1972,10 +1984,16 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                         f"identifiers are case-insensitive); rename the colliding "
                         f"measures in Cube")
                 seen.add(derived)
-            metric = _convert_measure(cname, mname, metric_name, measure, context)
+            local = _dataset_metric_of(measure) if restore_dataset_metrics else None
+            if (restore_dataset_metrics and local is None
+                    and "dataset_metric" in parked_of(measure.get("meta"))):
+                issues.add(
+                    IssueType.APPROXIMATED, f"{cname}.{mname}",
+                    "dataset-metric origin metadata no longer matches the native "
+                    "measure; imported the current definition as a model-level metric")
+            metric = _convert_measure(cname, mname, metric_name, measure, context,
+                                      dataset_metric=local)
             if metric is not None:
-                local = (parked_of(measure.get("meta")).get("dataset_metric")
-                         if restore_dataset_metrics else None)
                 if local:
                     metric["name"] = local["name"]
                     metric["expression"] = local["expression"]
@@ -1988,7 +2006,7 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
     return metrics, extra_measures, dataset_metrics
 
 
-def _convert_measure(cname, mname, metric_name, measure, context):
+def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_metric=None):
     resolver, issues = context.resolver, context.issues
     plain = context.plain(cname)
     scope = f"{cname}.{mname}"
@@ -2114,6 +2132,13 @@ def _convert_measure(cname, mname, metric_name, measure, context):
     leftover_meta = _meta_without_ai_context(measure.get("meta"))
     if leftover_meta:
         stash["meta"] = leftover_meta
+    if dataset_metric:
+        # The local field expression regenerates these native spellings. Keeping
+        # an import-generated SQL/type/filter override would freeze the operand
+        # and silently defeat later edits to that expression on the Ossie side.
+        for key in ("cube", "sql", "type", "filters", "name"):
+            stash.pop(key, None)
+        stash.update(dataset_metric.get("overrides", {}))
     write_stash(metric, stash)
     _restore_parked_extensions(metric, measure.get("meta"))
     return metric

@@ -25,7 +25,7 @@ from _cube_gate import (
     cube_gate,
     validator_gate,
 )
-from _util import by_name, parse_files
+from _util import by_name, parse_files, stash_of
 
 from ossie_cube import (
     ConversionError,
@@ -142,6 +142,101 @@ def test_local_metric_is_renamed_when_a_model_metric_already_uses_the_cube_membe
     assert back["metrics"][0]["name"] == "total_amount"
     assert back["datasets"][0]["metrics"][0]["name"] == "total_amount"
     assert parse_files(export(back)[0]) == parse_files(files)
+
+
+def test_editing_a_restored_local_expression_changes_the_native_operand():
+    files, _ = export(model(dataset(metrics=[metric()])))
+    returned, _ = convert_cube_to_ossie(files)
+    document = yaml.safe_load(returned)
+    local = document["datasets"][0]["metrics"][0]
+    assert "sql" not in stash_of(local)
+    local["expression"] = expression("MAX(id)")
+    files, _ = export(document)
+    measure = measures(files)["total_amount"]
+    assert measure["type"] == "max"
+    assert measure["sql"] == "{CUBE}.id"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"type": "avg"},
+        {"sql": "{CUBE}.id"},
+        {"filters": [{"sql": "{CUBE}.id > 0"}]},
+    ],
+)
+def test_native_edits_invalidate_the_original_local_expression(changes):
+    files, _ = export(model(dataset(metrics=[metric()])))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    native["cubes"][0]["measures"][0].update(changes)
+    files[path] = yaml.safe_dump(native)
+    returned, issues = convert_cube_to_ossie(files)
+    document = yaml.safe_load(returned)
+    assert not document["datasets"][0].get("metrics")
+    assert document["metrics"][0]["expression"] != expression("SUM(amount)")
+    assert any("origin metadata no longer matches" in issue.detail for issue in issues)
+    back, _ = export(document)
+    for key, value in changes.items():
+        assert measures(back)["total_amount"][key] == value
+
+
+def test_descriptive_native_edits_keep_local_scope():
+    files, _ = export(model(dataset(metrics=[metric()])))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    native["cubes"][0]["measures"][0]["description"] = "Updated description"
+    files[path] = yaml.safe_dump(native)
+    returned, _ = convert_cube_to_ossie(files)
+    restored = yaml.safe_load(returned)["datasets"][0]["metrics"][0]
+    assert restored["description"] == "Updated description"
+
+
+@pytest.mark.parametrize("bad_origin", [True, "local", {"name": "local"}])
+def test_malformed_origin_metadata_falls_back_to_native_import(bad_origin):
+    files, _ = export(model(dataset(metrics=[metric()])))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    native["cubes"][0]["measures"][0]["meta"]["ossie"]["dataset_metric"] = bad_origin
+    files[path] = yaml.safe_dump(native)
+    returned, _ = convert_cube_to_ossie(files)
+    assert yaml.safe_load(returned)["metrics"][0]["name"] == "total_amount"
+
+
+@validator_gate
+def test_field_sanitization_cannot_create_duplicate_local_metric_names():
+    ds = dataset(
+        metrics=[
+            metric("gross_amount", 'SUM("Gross Amount")'),
+            metric("orders__gross_amount", 'MAX("Gross Amount")'),
+        ]
+    )
+    ds["fields"][1]["name"] = "Gross Amount"
+    files, issues = export(model(ds))
+    assert any("sanitization would collide" in issue.detail for issue in issues)
+    returned, _ = convert_cube_to_ossie(files)
+    assert_ossie_is_valid(returned, "sanitized local namespace")
+    restored = yaml.safe_load(returned)["datasets"][0]
+    names = [m["name"] for m in restored["metrics"]]
+    assert len(set(names)) == 2
+    assert "gross_amount" not in names
+    assert parse_files(export(yaml.safe_load(returned))[0]) == parse_files(files)
+
+
+def test_explicit_native_overrides_survive_local_metric_import():
+    local = metric()
+    local["custom_extensions"] = [
+        {
+            "vendor_name": "CUBE",
+            "data": '{"_v": 1, "type": "number", "sql": "SUM({CUBE.amount})"}',
+        }
+    ]
+    files, _ = export(model(dataset(metrics=[local])))
+    returned, _ = convert_cube_to_ossie(files)
+    restored = yaml.safe_load(returned)["datasets"][0]["metrics"][0]
+    assert stash_of(restored)["type"] == "number"
+    assert stash_of(restored)["sql"] == "SUM({CUBE.amount})"
+    assert parse_files(export(yaml.safe_load(returned))[0]) == parse_files(files)
 
 
 @pytest.mark.parametrize(
