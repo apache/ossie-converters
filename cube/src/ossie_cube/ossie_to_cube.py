@@ -47,6 +47,7 @@ from ._common import (
     DIALECT_ANSI,
     DIALECT_OSSIE_SQL,
     OSSIE_VERSION,
+    SQL_DIALECT_READERS,
     ConversionError,
     classify_metric_expression,
     cube_file,
@@ -56,6 +57,7 @@ from ._common import (
     foreign_vendor_extensions,
     generated_view_cubes,
     instructions_of,
+    is_referenceable_name,
     is_simple_identifier,
     load_yaml,
     ReferenceTables,
@@ -1062,6 +1064,8 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             stashed_name = mstash["measure"].get("name")
             if stashed_name:
                 reserved.add(str(stashed_name).lower())
+    for _, metric, scope in _dataset_metrics(datasets):
+        reserved.add(sanitize_name(metric["name"], scope, set()).lower())
 
     # Which datasets declare each field name, for attributing an unqualified
     # column in a metric expression. Both spellings count -- the Ossie field name
@@ -1176,7 +1180,158 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             if key not in _METRIC_STASH_CONSUMED:
                 measure[key] = value
         _place(measures_by_cube, target, measure, name)
+    _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
+                            dialect, issues, name)
     return measures_by_cube
+
+
+def _dataset_metrics(datasets):
+    """Dataset metrics have a local namespace shared with the dataset's fields."""
+    for ds_name, ds in datasets.items():
+        metrics = ds.get("metrics", [])
+        if metrics is None:
+            metrics = []
+        if not isinstance(metrics, list):
+            raise ConversionError(f"Dataset '{ds_name}': 'metrics' must be a list")
+        taken = {normalize_identifier(f["name"]) for f in ds.get("fields") or []}
+        for metric in metrics:
+            scope = f"dataset '{ds_name}' metric"
+            if not isinstance(metric, dict):
+                raise ConversionError(f"{scope} must be a mapping")
+            raw = require_str(metric, "name", scope)
+            scope += f" '{raw}'"
+            key = normalize_identifier(raw)
+            if key in taken:
+                raise ConversionError(
+                    f"{scope}: fields and metrics share one dataset namespace; "
+                    f"name '{raw}' is declared more than once")
+            taken.add(key)
+            yield ds_name, metric, scope
+
+
+def _qualify_dataset_metric(expr, dialect, dataset, fields, scope, renamed_fields=None):
+    """Resolve local fields before entering the model-level measure pipeline.
+
+    Replace only column-node spans, preserving SQL spelling, comments and literals.
+    This also handles quoted field names and date-function units without guessing
+    from words in the SQL. Raw source columns and metric references are not legal
+    in the dataset-scoped namespace.
+    """
+    tree = parse_expression(expr, dialect)
+    if (tree is None or tree.find(sqlglot.exp.Query, sqlglot.exp.Command) is not None
+            or any(t.token_type is sqlglot.TokenType.SEMICOLON
+                   for t in native_tokens(expr, dialect))):
+        raise ConversionError(f"{scope}: expected a SQL expression over declared fields")
+    field_names = lookup_map(fields)
+    quote = "`" if dialect in BACKTICK_DIALECTS else '"'
+
+    def reference(name):
+        return (name if is_referenceable_name(name)
+                else quote + name.replace(quote, quote * 2) + quote)
+
+    replacements = {}
+    for column in tree.find_all(sqlglot.exp.Column):
+        ident = column.this
+        if column.table or not isinstance(ident, sqlglot.exp.Identifier):
+            raise ConversionError(
+                f"{scope}: dataset-scoped metrics require unqualified declared "
+                f"fields, got '{column.sql()}'")
+        # Ossie identifier matching distinguishes quoted mixed-case names.
+        written = ('"' + ident.name.replace('"', '""') + '"'
+                   if ident.args.get("quoted") else ident.name)
+        field = resolve_identifier(field_names, written)
+        if field is None:
+            raise ConversionError(
+                f"{scope}: '{written}' is not a declared field of this dataset")
+        start, end = ident.meta.get("start"), ident.meta.get("end")
+        if not isinstance(start, int) or not isinstance(end, int):
+            raise ConversionError(f"{scope}: cannot resolve field '{written}' in SQL")
+        # Qualify canonical names in the selected SQL grammar. Keep simple names
+        # bare so primary-key aggregate classification sees its canonical operand.
+        field = (renamed_fields or {}).get(field, field)
+        replacements[start, end + 1] = (
+            reference(dataset) + "." + reference(field) if dataset is not None
+            else reference(field))
+    for (start, end), replacement in sorted(replacements.items(), reverse=True):
+        expr = expr[:start] + replacement + expr[end:]
+    return expr
+
+
+def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
+                            dialect, issues, model_name):
+    # Local expressions contain no metric references, so model-level metric names
+    # must never shadow their fields. Ownership comes from the declaring dataset,
+    # including COUNT(*) and other expressions with no field reference.
+    refs = _MetricReferences({}, dialect, tables, lambda: None, model_name,
+                             {}, set(cube_names.values()), issues)
+    for ds_name, metric, scope in _dataset_metrics(datasets):
+        target = cube_names[ds_name]
+        expr, used = pick_expression(metric.get("expression"), dialect)
+        if expr is None:
+            issues.add(IssueType.NO_USABLE_DIALECT, scope,
+                       "no ANSI_SQL expression and no warehouse dialect Cube could "
+                       "pass through; metric dropped")
+            continue
+        _report_dialect_fallback(issues, scope, used, dialect)
+        qualified = _qualify_dataset_metric(
+            expr, used, ds_name, [f["name"] for f in datasets[ds_name].get("fields") or []],
+            scope)
+        missing = _references_a_dropped_field(qualified, tables, cube_names, plan, used)
+        if missing:
+            issues.add(IssueType.NO_USABLE_DIALECT, scope,
+                       f"references {', '.join(sorted(missing))}, which has no "
+                       "expression in a usable dialect; metric dropped")
+            continue
+        stash = read_stash(metric)
+        mname = stash.get("name") or sanitize_name(metric["name"], scope, set())
+        taken = {m["name"].lower() for m in measures_by_cube.get(target, [])}
+        taken.update(n.lower() for n in plan[target].members)
+        # Model and dataset metrics have separate Ossie namespaces but share a
+        # Cube member namespace. Preserve the local name in metadata when renamed.
+        if mname.lower() in taken:
+            base = f"{target}__{mname}"
+            mname, suffix = base, 2
+            while mname.lower() in taken:
+                mname, suffix = f"{base}_{suffix}", suffix + 1
+        if "measure" in stash:
+            measure = {**stash["measure"], "name": mname}
+        else:
+            measure = _measure_from_expression(
+                qualified, target, mname, stash, plan, refs, expression_dialect=used)
+        # Store the local expression with its scope, rather than handing the
+        # model-level importer an unqualified expression in the wrong namespace.
+        translated = {**metric, "expression": {"dialects": [
+            {"dialect": used, "expression": qualified}]}}
+        _apply_measure_metadata(translated, measure, stash, used)
+        restored_expression = metric["expression"]
+        aliases = {field: member for field, member in plan[target].names.items()
+                   if field != member}
+        if aliases:
+            # Fields re-import under their sanitized Cube identifiers. A local
+            # expression must name those fields too, rather than restore dangling
+            # references such as "Net Amount" when its field is now net_amount.
+            entries = []
+            for entry in restored_expression.get("dialects") or []:
+                if entry["dialect"] not in {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL}:
+                    issues.add(
+                        IssueType.APPROXIMATED, scope,
+                        f"field names were sanitized, but the opaque "
+                        f"{entry['dialect']} alternative cannot be rewritten; "
+                        "preserved unchanged for review")
+                    entries.append(entry)
+                    continue
+                entries.append({**entry, "expression": _qualify_dataset_metric(
+                    entry["expression"], entry["dialect"], None,
+                    [f["name"] for f in datasets[ds_name].get("fields") or []],
+                    scope, aliases)})
+            restored_expression = {**restored_expression, "dialects": entries}
+        measure.setdefault("meta", {}).setdefault("ossie", {})["dataset_metric"] = (
+            escape_braces_for_cube({"name": metric["name"],
+                                    "expression": restored_expression}))
+        for key, value in stash.items():
+            if key not in _METRIC_STASH_CONSUMED:
+                measure[key] = value
+        _place(measures_by_cube, target, measure, model_name)
 
 
 # Metric stash keys the exporter consumes itself rather than writing onto the

@@ -156,7 +156,7 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
 
 
 def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
-                 view, issues, source_dialect=None):
+                 view, issues, source_dialect=None, *, restore_dataset_metrics=True):
     """The Ossie model (a dict, without `version`) for the collected Cube model.
 
     Split from `convert_cube_to_ossie` so view projection can run the same import over
@@ -208,15 +208,18 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
     plain_by_cube = {cname: _plain_members(cube, cname)
                      for cname, cube in cubes.items()}
 
-    metrics, extra_measures = _convert_measures(
+    metrics, extra_measures, dataset_metrics = _convert_measures(
         cubes, pk_by_cube, plain_by_cube, fanned_out, relationships, issues,
-        source_dialect)
+        source_dialect, restore_dataset_metrics=restore_dataset_metrics)
 
     model["datasets"] = [
         _convert_cube(cname, cube, plain_by_cube[cname], extra_joins.get(cname),
                       extra_measures.get(cname), issues, source_dialect)
         for cname, cube in cubes.items()
     ]
+    for ds in model["datasets"]:
+        if dataset_metrics.get(ds["name"]):
+            ds["metrics"] = dataset_metrics[ds["name"]]
     if metrics:
         model["metrics"] = metrics
 
@@ -1854,7 +1857,7 @@ def _field_owners_of(member_names):
     return owners
 
 
-def _metric_names_of(resolver, decomposed):
+def _metric_names_of(resolver, decomposed, *, dataset_scoped=False):
     """{(cube, measure): the Ossie metric name it becomes}, for every measure that
     produces a metric at all.
 
@@ -1863,12 +1866,16 @@ def _metric_names_of(resolver, decomposed):
     measures that convert get one. The `inlined()` form is name-independent, which is
     what breaks the circularity (it also warms the cache the fan-out analysis reads).
 
+    With dataset restoration enabled, locally parked metrics are excluded from
+    this model-level namespace. References to those measures inline instead.
     A name is the measure's own when unique across the model, else
     `<cube>__<measure>`. View projection reads it too, to find the metric a published
     measure became.
     """
     converts = {key: resolver.inlined(*key) is not None
                 for key in resolver.measures()}
+    scoped = {key for key, measure in resolver.measures().items()
+              if dataset_scoped and parked_of(measure.get("meta")).get("dataset_metric")}
 
     # Counted by *normalized* name: Ossie regular identifiers are case-insensitive, so
     # `revenue` on one cube and `Revenue` on another are one name in the model-level
@@ -1877,12 +1884,13 @@ def _metric_names_of(resolver, decomposed):
     # spec's own validator misses, since its duplicate check compares exact strings.
     counts = {}
     for key, measure in resolver.measures().items():
-        if converts[key] and not _is_generated_part(measure, decomposed):
+        if (converts[key] and key not in scoped
+                and not _is_generated_part(measure, decomposed)):
             norm = normalize_identifier(key[1])
             counts[norm] = counts.get(norm, 0) + 1
     metric_names = {}
     for key, measure in resolver.measures().items():
-        if not converts[key] or _is_generated_part(measure, decomposed):
+        if not converts[key] or key in scoped or _is_generated_part(measure, decomposed):
             continue
         cname, mname = key
         # The emitted name keeps its original spelling; only the *comparison* is
@@ -1893,14 +1901,15 @@ def _metric_names_of(resolver, decomposed):
 
 
 def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationships,
-                      issues, source_dialect=None):
-    """Hoist every cube's measures into Ossie model-level metrics.
+                      issues, source_dialect=None, *, restore_dataset_metrics=True):
+    """Convert measures, restoring explicitly parked dataset-scoped metrics.
 
     A metric name is the measure name when globally unique, else
     `<cube>__<measure>`; the original name is stashed so export puts the measure
     back where it came from.
 
-    Returns (metrics, {cube: [{"index": i, "measure": ...}]}). The second value holds
+    Returns (model metrics, extra measures by cube, dataset metrics by cube).
+    Extra measures hold
     measures with no static Ossie expression -- a multi-stage measure renders as a
     window function over another grain -- which have no `metrics` entry and would
     otherwise vanish. They ride on the owning dataset's stash with their positions,
@@ -1910,7 +1919,8 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                                 source_dialect=source_dialect)
     member_names = _member_names_of(cubes)
     decomposed = _decomposed_measure_names(cubes)
-    metric_names = _metric_names_of(resolver, decomposed)
+    metric_names = _metric_names_of(
+        resolver, decomposed, dataset_scoped=restore_dataset_metrics)
     resolver.set_metric_names(metric_names)
 
     # What the stash decisions need to know about the metric namespace: which cube
@@ -1939,6 +1949,7 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
         issues=issues)
 
     metrics = []
+    dataset_metrics = {}
     extra_measures = {}
     seen = set()
     for cname, cube in cubes.items():
@@ -1963,11 +1974,18 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                 seen.add(derived)
             metric = _convert_measure(cname, mname, metric_name, measure, context)
             if metric is not None:
-                metrics.append(metric)
+                local = (parked_of(measure.get("meta")).get("dataset_metric")
+                         if restore_dataset_metrics else None)
+                if local:
+                    metric["name"] = local["name"]
+                    metric["expression"] = local["expression"]
+                    dataset_metrics.setdefault(cname, []).append(metric)
+                else:
+                    metrics.append(metric)
             else:
                 extra_measures.setdefault(cname, []).append(
                     {"index": index, "measure": measure})
-    return metrics, extra_measures
+    return metrics, extra_measures, dataset_metrics
 
 
 def _convert_measure(cname, mname, metric_name, measure, context):

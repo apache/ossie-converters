@@ -221,7 +221,7 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     # and checks each join alone rather than the whole tree.
     imported = IssueLog()
     model = _build_model(reduced, {}, {view: reduced_view}, {}, {}, None, view, imported,
-                         source_dialect)
+                         source_dialect, restore_dataset_metrics=False)
     _refuse_unjoined(view, model, imported)
     for issue in imported:
         if issue.issue_type is not IssueType.FANOUT_UNSAFE_METRIC:
