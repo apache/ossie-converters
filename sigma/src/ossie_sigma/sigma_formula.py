@@ -558,6 +558,11 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
         # The value is the same, but the text can differ: Sigma's Text() and the
         # engine's CAST may format numbers and dates differently.
         return exp.Cast(this=built[0], to=exp.DataType.build("VARCHAR"))
+    if name == "number" and len(args) == 1:
+        return exp.Cast(this=built[0], to=exp.DataType.build("DOUBLE"))
+    if name == "int" and len(args) == 1:
+        # Sigma's Int() rounds down (Int(-3.2) = -4), which is FLOOR, not CAST AS INT.
+        return exp.Floor(this=built[0])
     if name == "isnull" and len(args) == 1:
         return exp.Is(this=built[0], expression=exp.Null())
     if name == "isnotnull" and len(args) == 1:
@@ -758,6 +763,10 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         # target types fall through to the not-translatable error below.
         if node.to.is_type(*exp.DataType.TEXT_TYPES) and not node.to.expressions:
             return f"Text({_render_sql_node(node.this, dataset_alias)})"
+        # An unsized floating-point cast is Number(). Integer and DECIMAL/NUMBER casts
+        # round to a scale (DECIMAL and NUMBER default to scale 0), so they are not.
+        if node.to.is_type(*exp.DataType.FLOAT_TYPES) and not node.to.expressions:
+            return f"Number({_render_sql_node(node.this, dataset_alias)})"
 
     if isinstance(node, exp.CurrentDate):
         return "Today()"
