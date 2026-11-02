@@ -108,7 +108,7 @@ CATALOG: dict[str, LossSpec] = {
     "field_renamed": _s("approximated", "info", "Tableau names fields by physical column; the Ossie name survives as the caption."),
     "datasource_filter_restored": _s("approximated", "warning", "A stashed data-source filter was written back to the TDS; it changes query results exactly as it did in Tableau."),
     # --- Snowflake
-    "sql_unreconciled": _s("approximated", "warning", "Best-effort window SQL (table-wide OVER / PARTITION BY) is attached, but live Snowflake values did not match Tableau table-across addressing on SAMPLE_SUPERSTORE. The SQL is kept for downstream tools; do not treat it as proven equivalent."),
+    "sql_unreconciled": _s("approximated", "warning", "Best-effort window SQL (table-wide OVER / PARTITION BY) is attached, but live Snowflake values did not match Tableau table-across addressing on the live data. The SQL is kept for downstream tools; do not treat it as proven equivalent."),
     "expression_approximated": _s("approximated", "info", "A Tableau function with no exact SQL equivalent was translated to the closest form in the target warehouse's SQL; see docs/expression-mapping.md."),
     "parameter_inlined": _s("approximated", "warning", "A parameter reference was replaced by the parameter's current value (--inline-parameters); the calculation no longer follows parameter changes."),
     "rawsql_translated": _s("approximated", "warning", "The inner SQL of a RAWSQL_* call was used as the warehouse expression; it runs in the source database unchanged, so check it for dialect differences."),

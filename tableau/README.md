@@ -22,7 +22,7 @@ under the License.
 Two-way converter between Tableau classic data sources and [Apache Ossie](https://ossie.apache.org/).
 
 - **Tableau to Ossie:** `.tds`, `.twb`, `.tdsx` and `.twbx` files to Ossie YAML (`ossie-tableau convert`).
-- **Ossie to Tableau:** Ossie YAML to a logical-layer `.tds` (`ossie-tableau to-tds`; Snowflake and BigQuery are tested).
+- **Ossie to Tableau:** Ossie YAML to a logical-layer `.tds` (`ossie-tableau to-tds`; Snowflake and BigQuery are supported).
 
 Every element that cannot be represented is reported as a classified loss and never dropped silently (see [Known limitations and lossiness](#known-limitations-and-lossiness) and [LIMITATIONS.md](LIMITATIONS.md)).
 
@@ -86,18 +86,18 @@ Add `--strict` (exit 1 on any `error`-severity loss) or `--strict-kinds k1,k2` (
 
 ## Coverage matrix
 
-| Tableau construct                                | Result                                               | Loss kind                                                             |
-| ------------------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------- |
-| Tables, joins, unions, custom SQL, relationships | Ossie datasets and relationships                     | `source_qualified`, `no_tables`                                   |
+| Tableau construct                                | Result                                               | Loss kind                                                                             |
+| ------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Tables, joins, unions, custom SQL, relationships | Ossie datasets and relationships                     | `source_qualified`, `no_tables`                                                   |
 | Calculations, LOD, table calcs, RAWSQL           | Field/metric expressions (Snowflake, BigQuery, ANSI) | `unresolved_reference`, `sql_unreconciled`, `rawsql_translated` |
-| Parameters                                       | Kept or inlined (`--inline-parameters`)            | `parameters`                                                        |
-| Groups, sets, hierarchies, aliases               | Kept in the TABLEAU extension                        | `group`, `set`, `hierarchy`, `aliases`                        |
-| Extracts                                         | Live connection converted                            | `extract`                                                           |
-| Data blending across worksheets                  | Not modeled                                          | `blend`                                                             |
-| Repeated connection and tables                   | Each converted, cross-referenced                     | `duplicate_datasource`                                              |
-| Unregistered warehouse class                     | Generic ANSI SQL                                     | `unknown_warehouse`                                                 |
-| BigQuery wildcard tables, `@param` custom SQL  | Kept verbatim                                        | `wildcard_table`, `query_parameter`                               |
-| Files (Excel, CSV), published sources            | Skipped                                              | `file_source`, `published_datasource`                             |
+| Parameters                                       | Kept or inlined (`--inline-parameters`)            | `parameters`                                                                        |
+| Groups, sets, hierarchies, aliases               | Kept in the TABLEAU extension                        | `group`, `set`, `hierarchy`, `aliases`                                        |
+| Extracts                                         | Live connection converted                            | `extract`                                                                           |
+| Data blending across worksheets                  | Not modeled                                          | `blend`                                                                             |
+| Repeated connection and tables                   | Each converted, cross-referenced                     | `duplicate_datasource`                                                              |
+| Unregistered warehouse class                     | Generic ANSI SQL                                     | `unknown_warehouse`                                                                 |
+| BigQuery wildcard tables, `@param` custom SQL  | Kept verbatim                                        | `wildcard_table`, `query_parameter`                                               |
+| Files (Excel, CSV), published sources            | Skipped                                              | `file_source`, `published_datasource`                                             |
 
 Every loss has a stable `kind` (its issue code) and a `name` (the object it refers to). The full table with categories, severities and remedies is `docs/loss-catalog.md`.
 
