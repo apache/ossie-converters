@@ -74,6 +74,15 @@ The Spec side is the shared `ossie.models.OssieOntologyModel` from the
 it with its own `OssieOntologyModel.from_ossie_yaml(text)` and
 `document.to_ossie_yaml()` (or the `_json` variants).
 
+`ossie_ontology.spec`, which held the converter's own copy of these models, is
+deprecated. It still re-exports the shared models under their old names
+(`OssieSpec` is `OssieOntologyModel`, `ConceptComponent` is
+`OssieConceptComponent`, and so on), and each name raises a
+`DeprecationWarning` naming its `ossie.models` replacement. Only the names carry
+over: `load_yaml` / `dump_yaml` are now `from_ossie_yaml` / `to_ossie_yaml`, and
+the models follow `ossie.models` (frozen, absent lists are `None`). The module
+will be removed once nothing in progress imports it.
+
 `OssieParser` parses and validates `derived_by` and `requires` expressions into
 an AST by default. To keep formulas as raw text instead, pass the plain
 `FormulaFactory` and `MappingFormulaFactory` from `ossie_ontology.model`.
