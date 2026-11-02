@@ -95,7 +95,8 @@ class Manifest:
 # Format names describe exported artifacts, independently of the converter name.
 NATIVE_SHAPES = {
     **dict.fromkeys(
-        ("cube", "hex", "honeydew", "omni", "holistics", "thoughtspot"), "directory"
+        ("cube", "hex", "honeydew", "lightdash", "omni", "holistics", "thoughtspot"),
+        "directory",
     ),
     **dict.fromkeys(
         (

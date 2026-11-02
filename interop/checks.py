@@ -190,6 +190,17 @@ def _additional_members(data, native_format):
     if native_format == "hex":
         # Hex resource files wrap a model, dimension, measure or relation.
         return sum(len(data.get(key) or []) for key in ("dimensions", "measures"))
+    if native_format == "lightdash":
+        # A Lightdash model file declares `type: model`; `lightdash.config.yml`
+        # and dbt files in the same tree are not models.
+        if not str(data.get("type") or "").startswith("model"):
+            return 0
+        dimensions = data.get("dimensions") or []
+        return (
+            len(dimensions)
+            + sum(len(dimension.get("metrics") or {}) for dimension in dimensions)
+            + len(data.get("metrics") or {})
+        )
     if native_format == "honeydew":
         return len(data.get("attributes") or []) + int(
             data.get("type") in ("calculated_attribute", "metric")

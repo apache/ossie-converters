@@ -43,6 +43,7 @@ updates:
       - "/gooddata"
       - "/honeydew"
       - "/interop"
+      - "/lightdash"
       - "/microsoft"
       - "/nvidia"
       - "/omni"

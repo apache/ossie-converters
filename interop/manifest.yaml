@@ -97,6 +97,16 @@ converters:
     output: directory
     fixtures:
       orders: interop/fixtures/honeydew/orders
+  lightdash:
+    cwd: lightdash
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-lightdash, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-lightdash, export, -i, '{input}', -o, '{output}']
+    native_format: lightdash
+    output: directory
+    fixtures:
+      orders: interop/fixtures/lightdash/orders
   microsoft:
     cwd: microsoft
     toolchain: uv
