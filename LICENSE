@@ -199,3 +199,15 @@
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+--------------------------------------------------------------------------------
+
+This product includes the OBML JSON Schema from the OrionBelt Semantic Layer,
+as distributed under the Apache License 2.0 in its packages/osi-orionbelt
+package.
+
+* orionbelt/src/ossie_orionbelt/schemas/obml-schema.json
+
+Copyright: 2025-2026 RALFORION d.o.o.
+Home page: https://github.com/ralforion/orionbelt-semantic-layer
+License: https://www.apache.org/licenses/LICENSE-2.0
