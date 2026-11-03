@@ -36,6 +36,8 @@ import java.util.Map;
  */
 public class OssieModelParser {
 
+    private boolean sawAiContext;
+
     /**
      * Parse an Ossie YAML file from the given path.
      */
@@ -50,6 +52,7 @@ public class OssieModelParser {
      */
     @SuppressWarnings("unchecked")
     public OssieModel parse(InputStream is) {
+        sawAiContext = false;
         Yaml yaml = new Yaml();
         Object document = yaml.load(is);
         if (!(document instanceof Map)) {
@@ -71,8 +74,16 @@ public class OssieModelParser {
 
         OssieModel model = new OssieModel();
         model.setVersion((String) root.get("version"));
-        model.setSemanticModel(parseSemanticModel(root));
+        SemanticModel semanticModel = parseSemanticModel(root);
+        semanticModel.setHadAiContext(sawAiContext);
+        model.setSemanticModel(semanticModel);
         return model;
+    }
+
+    private void noteAiContext(Map<String, Object> map) {
+        if (map.containsKey("ai_context")) {
+            sawAiContext = true;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -80,6 +91,7 @@ public class OssieModelParser {
         SemanticModel sm = new SemanticModel();
         sm.setName((String) map.get("name"));
         sm.setDescription((String) map.get("description"));
+        noteAiContext(map);
 
         // Datasets
         List<Map<String, Object>> dsList = (List<Map<String, Object>>) map.get("datasets");
@@ -141,6 +153,7 @@ public class OssieModelParser {
         }
 
         ds.setCustomExtensions(parseCustomExtensions(map));
+        noteAiContext(map);
 
         return ds;
     }
@@ -162,6 +175,7 @@ public class OssieModelParser {
         // Expressions
         field.setExpressions(parseDialectExpressions(map));
         field.setCustomExtensions(parseCustomExtensions(map));
+        noteAiContext(map);
         return field;
     }
 
@@ -196,6 +210,7 @@ public class OssieModelParser {
         if (toCols != null) {
             rel.setToColumns(new ArrayList<>(toCols));
         }
+        noteAiContext(map);
         return rel;
     }
 
@@ -205,6 +220,7 @@ public class OssieModelParser {
         metric.setName((String) map.get("name"));
         metric.setDescription((String) map.get("description"));
         metric.setExpressions(parseDialectExpressions(map));
+        noteAiContext(map);
         return metric;
     }
 

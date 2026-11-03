@@ -1,0 +1,15 @@
+table Orders
+
+	measure 'Total IDs' = SUM(Orders[id])
+
+	column id
+		dataType: int64
+		sourceColumn: id
+
+	partition Orders = m
+		mode: import
+		source =
+				let
+				    Source = #table(type table [id = Int64.Type], {{1}, {2}})
+				in
+				    Source

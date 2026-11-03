@@ -17,9 +17,9 @@
 
 """OntologyReasoner, on its own.
 
-Nothing here needs the optional `relationalai` extra: the reasoner reads the
-Ossie model and answers questions about it. The converter-side consequences of
-those answers are asserted in tests/relationalai/test_converter.py.
+The reasoner reads the Ossie model and answers questions about it. The
+converter-side consequences of those answers are asserted in
+relationalai/tests/test_converter.py.
 """
 
 from __future__ import annotations

@@ -48,6 +48,10 @@ converter/honeydew:
   - changed-files:
       - any-glob-to-any-file: 'honeydew/**'
 
+converter/lightdash:
+  - changed-files:
+      - any-glob-to-any-file: 'lightdash/**'
+
 converter/microsoft:
   - changed-files:
       - any-glob-to-any-file: 'microsoft/**'
@@ -68,9 +72,17 @@ converter/orionbelt:
   - changed-files:
       - any-glob-to-any-file: 'orionbelt/**'
 
+converter/palantir:
+  - changed-files:
+      - any-glob-to-any-file: 'palantir/**'
+
 converter/polaris:
   - changed-files:
       - any-glob-to-any-file: 'polaris/**'
+
+converter/relationalai:
+  - changed-files:
+      - any-glob-to-any-file: 'relationalai/**'
 
 converter/salesforce:
   - changed-files:

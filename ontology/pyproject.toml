@@ -21,14 +21,14 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     "pytest-snapshot",
 ]
 
 [project]
 name = "apache-ossie-ontology"
 version = "0.1.0"
-description = "Ossie ontology converters — Palantir → Ossie, Ossie → Spec, Spec → Ossie"
+description = "Ossie ontology converters — Ossie → Spec, Spec → Ossie, Ossie → RelationalAI"
 authors = [{ name = "RelationalAI", email = "support@relational.ai" }]
 requires-python = ">=3.11"
 readme = "README.md"
@@ -42,20 +42,6 @@ dependencies = [
     "pydantic",
     "ply",
     "pyyaml",
-]
-
-# Opt-in extra: `pip install "apache-ossie-ontology[relationalai]"`.
-#
-# WARNING: `relationalai` is proprietary and declares no license, and running
-# what this converter emits needs a RelationalAI deployment in Snowflake. Read
-# README.md, "The `relationalai` extra", before installing it.
-#
-# It is an extra rather than a dependency because nothing reachable from
-# `ossie_ontology/__init__.py` imports it: everything but this one converter
-# works without the SDK.
-[project.optional-dependencies]
-relationalai = [
-    "relationalai==1.35.1",
 ]
 
 [project.urls]

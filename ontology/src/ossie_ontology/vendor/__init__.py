@@ -18,8 +18,10 @@
 """Vendor-side models: how each spoke format represents an ontology.
 
 Ossie is the hub — `ossie_ontology.model` and `ossie_ontology.spec`. Each
-subpackage here is one spoke's own representation, in whichever direction the
-converter runs: `palantir` is a format read from, `relationalai` one written to.
+subpackage here is one spoke's own representation. The Palantir model, which is
+read from, lives in its own package, `ossie_palantir`, under palantir/; the
+RelationalAI model, which is written to, in `ossie_relationalai`, under
+relationalai/.
 
 Converters under `ossie_ontology.converter` translate between a vendor model and
 the hub, and hold only that translation.
