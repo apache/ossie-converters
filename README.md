@@ -302,7 +302,7 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 | Composite primary keys | Ensure the vendor format supports composite keys; if not, flatten or document the limitation |
 | Cross-dataset metrics referencing multiple tables | Ensure all referenced datasets exist and relationships are defined; resolve qualified column names |
 | Custom extensions with unknown vendor | Ignore (do not discard) — preserve for round-tripping |
-| `ai_context` on a vendor that doesn't support it | Store in a `custom_extension` with `vendor_name: COMMON` to preserve for round-tripping |
+| `ai_context` on a vendor that doesn't support it | Store in a `custom_extension` under the converter's own vendor name (see [`extensions/vendors.md`](https://github.com/apache/ossie/blob/main/extensions/vendors.md)) to preserve for round-tripping; there is no shared cross-vendor token |
 
 ### Round-Trip Fidelity
 
