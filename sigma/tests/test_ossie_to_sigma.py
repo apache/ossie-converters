@@ -295,6 +295,60 @@ def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula(
     )
 
 
+@pytest.mark.parametrize(
+    ("sql", "expected_formula"),
+    [
+        (
+            "CASE WHEN SUM(orders.hours) > 0 THEN SUM(orders.amount) ELSE NULL END",
+            "If((Sum([hours]) > 0), Sum([amount]), Null())",
+        ),
+        (
+            "CASE WHEN SUM(orders.hours) > 0 THEN SUM(orders.amount) END",
+            "If((Sum([hours]) > 0), Sum([amount]))",
+        ),
+        (
+            "SUM(orders.amount) / NULLIF(SUM(orders.hours), 0)",
+            "(Sum([amount]) / NullIf(Sum([hours]), 0))",
+        ),
+    ],
+)
+def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
+    """A metric that returns NULL for some inputs (a gate or a guarded ratio) must
+    reach the Sigma spec instead of being omitted as not translatable."""
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="orders",
+                source="db.public.orders",
+                fields=[
+                    OssieField(
+                        name=column,
+                        expression=OssieExpression(
+                            dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=column)]
+                        ),
+                    )
+                    for column in ("amount", "hours")
+                ],
+            )
+        ],
+        metrics=[
+            OssieMetric(
+                name="gated",
+                expression=OssieExpression(
+                    dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=sql)]
+                ),
+            )
+        ],
+    )
+
+    result = OssieToSigmaConverter().convert(document)
+    element = result.output["pages"][0]["elements"][0]
+
+    assert [m["formula"] for m in element.get("metrics", [])] == [expected_formula]
+    assert not any(i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE for i in result.issues)
+
+
 def test_synthesized_spec_carries_a_schema_version():
     """`schemaVersion` is required by the create/update endpoints."""
     document = OssieDocument.model_validate(

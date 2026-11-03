@@ -58,6 +58,12 @@ VENDOR = "POWER_BI"
 DIALECT_DAX = "DAX"
 DIALECT_ANSI = "ANSI_SQL"
 DIALECT_OSSIE_SQL = "OSSIE_SQL_2026"
+# Key under which dialect_expressions() returns an expression's portable `sql` form; it
+# is read as OSSIE_SQL_2026 but kept apart so it can outrank the dialect entries. Any
+# non-empty string is a valid dialect name (even "sql"), so the key is the empty string,
+# which no dialect entry can use: the schema requires a non-empty dialect and
+# dialect_expressions() skips empty ones.
+PORTABLE_SQL = ""
 
 # Power BI relationship properties whose meaning is tied to a specific endpoint pair.
 # Both converter directions use this set to avoid replaying stale vendor metadata after
@@ -340,7 +346,11 @@ def foreign_vendor_extensions(obj):
 
 
 def dialect_expressions(expression):
-    """Return an Apache Ossie expression's {dialect: expression} mapping."""
+    """Return an Apache Ossie expression's {dialect: expression} mapping.
+
+    The portable ``sql`` form is returned under ``PORTABLE_SQL``, apart from the
+    ``dialects`` entries, so the caller can rank it as the primary form.
+    """
     result = {}
     for entry in (expression or {}).get("dialects") or []:
         if not isinstance(entry, dict):
@@ -351,6 +361,11 @@ def dialect_expressions(expression):
                 f"expression must be a string, got {type(expr).__name__}")
         if dialect and expr:
             result[dialect] = expr
+    sql = (expression or {}).get("sql")
+    if sql is not None and not isinstance(sql, str):
+        raise ConversionError(f"sql must be a string, got {type(sql).__name__}")
+    if sql:
+        result[PORTABLE_SQL] = sql
     return result
 
 

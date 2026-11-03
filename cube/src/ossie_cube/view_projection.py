@@ -58,7 +58,7 @@ from ._common import (
     write_stash,
 )
 from .converter_issues import IssueLog, IssueType
-from .cube_to_osi import (
+from .cube_to_ossie import (
     _CUBE_NATIVE_KEYS,
     _DIM_NATIVE_KEYS,
     _MEASURE_NATIVE_KEYS,
@@ -78,6 +78,7 @@ from .cube_to_osi import (
     _no_cubes_message,
     _primary_key_of,
     _report_fanout,
+    measure_dialect,
     parked_of,
 )
 from .expressions import (
@@ -86,6 +87,7 @@ from .expressions import (
     qualify_column_paths,
     unsafe_aggregate_heads,
 )
+from .import_dialect import validate_imported_expressions, validate_source_dialect
 
 _SELF_REFS = ("CUBE", "TABLE")
 
@@ -143,7 +145,8 @@ class _JoinTree:
     parent: dict
 
 
-def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True):
+def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
+                              *, source_dialect=None):
     """Convert one Cube view's public surface to Ossie YAML.
 
     `files` is a Cube model as {relative filename: YAML str}, the same input
@@ -158,6 +161,9 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True):
     Fan-out is strict by default: a published metric that can over-count is refused
     rather than emitted. Pass `strict_fanout=False` to convert it with a
     FANOUT_UNSAFE_METRIC issue instead.
+
+    `source_dialect` selects the warehouse SQL grammar and generated expression
+    labels, and validates emitted SQL; None retains the legacy ANSI_SQL behavior.
     """
     if not isinstance(files, dict) or not files:
         raise ConversionError("expected a non-empty mapping of {filename: YAML}")
@@ -165,6 +171,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True):
         raise ConversionError("view projection needs the name of the view to project")
     if source is not None and (not isinstance(source, str) or not source):
         raise ConversionError(f"view '{view}': source must be a dataset name")
+
+    validate_source_dialect(source_dialect)
 
     # The collection's own issues are about the lossless import -- a file preserved in
     # custom_extensions only -- which a projection does not do.
@@ -190,7 +198,7 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True):
 
     tree = _view_tree(view, view_def, cubes)
     members = _published_members(view, view_def, cubes)
-    inliner = _Inliner(cubes)
+    inliner = _Inliner(cubes, source_dialect)
 
     measures = _needed_measures(members, cubes, inliner)
     dimensions = {}
@@ -212,7 +220,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True):
     # own: it attributes a struct path (`orders.accounts.balance`) to its second part,
     # and checks each join alone rather than the whole tree.
     imported = IssueLog()
-    model = _build_model(reduced, {}, {view: reduced_view}, {}, {}, None, view, imported)
+    model = _build_model(reduced, {}, {view: reduced_view}, {}, {}, None, view, imported,
+                         source_dialect)
     _refuse_unjoined(view, model, imported)
     for issue in imported:
         if issue.issue_type is not IssueType.FANOUT_UNSAFE_METRIC:
@@ -220,9 +229,12 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True):
     # A second resolver over the same cubes, for the fully inlined forms: the import
     # emits a reference to a hidden measure by its metric name, and that metric is not
     # published.
-    resolver = _MeasureResolver(reduced, {}, IssueLog(), qualify=False)
+    resolver = _MeasureResolver(reduced, {}, IssueLog(), qualify=False,
+                                source_dialect=source_dialect)
     _report_fanout_of(resolver, tree, reduced, model, measures, issues)
     _publish_surface(model, resolver, reduced, cubes, members, issues)
+    if source_dialect is not None:
+        validate_imported_expressions(model)
     return dump_yaml({"version": OSSIE_VERSION, **model}), resolved_source, issues
 
 
@@ -458,7 +470,8 @@ class _Inliner:
     to an unknown cube or member is refused, as Cube would refuse to compile it.
     """
 
-    def __init__(self, cubes):
+    def __init__(self, cubes, source_dialect=None):
+        self._source_dialect = source_dialect
         self._cubes = cubes
         self._dimensions = {}
         self._measures = set()
@@ -470,6 +483,11 @@ class _Inliner:
                                           f"cube '{cname}' measures"):
                 self._measures.add((cname, measure.get("name")))
         self._cache = {}
+
+    @property
+    def source_dialect(self):
+        """The SQL dialect selected for this projection."""
+        return self._source_dialect
 
     def dimension(self, cname, dname, stack=()):
         """A dimension's SQL with every reference inlined, relative to its own cube."""
@@ -509,10 +527,12 @@ class _Inliner:
         a dimension reading a measure is Cube's correlated subquery.
         """
         try:
-            qualified = qualify_column_paths(sql, cname, self._cubes)
+            qualified = qualify_column_paths(
+                sql, cname, self._cubes, self._source_dialect)
         except UnattributableSQL as reason:
+            dialect = f" ({self._source_dialect})" if self._source_dialect else ""
             raise ConversionError(
-                f"{scope}: the source of every column in {str(sql).strip()!r} cannot "
+                f"{scope}{dialect}: the source of every column in {str(sql).strip()!r} cannot "
                 f"be proven statically: {reason}") from None
         protected = qualified.replace("\\{", "\x00lb\x00").replace("\\}", "\x00rb\x00")
 
@@ -601,7 +621,8 @@ def _reduced_measure(inliner, cubes, measure, cname, mname):
     out = _labels_of(measure)
     if snake(measure.get("type") or "") == "count" and measure.get("sql") is None:
         out["type"] = "count_distinct"
-        out["sql"] = _primary_key_sql(inliner, cubes, cname)
+        out["sql"] = _primary_key_sql(
+            inliner, cubes, cname, measure_dialect(measure, inliner.source_dialect))
     elif measure.get("sql") is not None:
         out["sql"] = inliner.rewrite(measure["sql"], cname, scope, measures=references)
     filters = [f for f in measure.get("filters") or []
@@ -635,15 +656,17 @@ def _refuse_windowing(measure, scope):
                 f"than the query's; an Ossie expression has no form for that")
 
 
-def _primary_key_sql(inliner, cubes, cname):
+def _primary_key_sql(inliner, cubes, cname, source_dialect=None):
     """Cube SQL for a cube's primary key: its columns, or its key dimensions' SQL."""
     cube = cubes[cname]
     keys = _primary_key_of(cube, cname)
     if "primary_key" in parked_of(cube.get("meta")):
         # Recorded by a previous export, and columns by construction.
-        return primary_key_operand(cname, keys, lambda key: "{CUBE}." + key)
+        return primary_key_operand(cname, keys, lambda key: "{CUBE}." + key,
+                                   source_dialect)
     return primary_key_operand(
-        cname, keys, lambda key: inliner.dimension(cname, key))
+        cname, keys, lambda key: inliner.dimension(cname, key),
+        source_dialect)
 
 
 def _published_dimension(inliner, cubes, member):
@@ -871,10 +894,11 @@ def _report_fanout_of(resolver, tree, reduced, model, measures, issues):
         expr = resolver.inlined(cname, mname)
         if expr is None:
             continue
-        read = unsafe_aggregate_heads(expr)
+        read = unsafe_aggregate_heads(expr, resolver.source_dialect)
         if read is None:
             # Unparseable, so every dataset it names is assumed read.
-            datasets = _fanout_unsafe_datasets(expr, cname, names)
+            datasets = _fanout_unsafe_datasets(
+                expr, cname, names, resolver.source_dialect)
         else:
             heads, unqualified = read
             datasets = {resolve_identifier(canonical, h) for h in heads} - {None}

@@ -37,6 +37,14 @@ Model store_sales {
     primary_key: true
   }
 
+  dimension ss_ticket_number {
+    label: 'Ss Ticket Number'
+    type: 'number'
+    description: 'Ticket number identifying the sales transaction'
+    definition: @sql {{ #SOURCE.ss_ticket_number }};;
+    primary_key: true
+  }
+
   dimension ss_customer_sk {
     label: 'Ss Customer Sk'
     type: 'number'

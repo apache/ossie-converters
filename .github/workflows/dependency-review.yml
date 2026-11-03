@@ -36,4 +36,14 @@ jobs:
           deny-licenses: GPL-1.0-only, GPL-1.0-or-later, GPL-2.0-only, GPL-2.0-or-later, GPL-3.0-only, GPL-3.0-or-later, LGPL-2.0-only, LGPL-2.0-or-later, LGPL-2.1-only, LGPL-2.1-or-later, LGPL-3.0-only, LGPL-3.0-or-later, AGPL-1.0-only, AGPL-1.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0, EUPL-1.1, EUPL-1.2
           # JSqlParser is dual-licensed (LGPL-2.1 OR Apache-2.0); we use it under Apache-2.0.
           allow-dependencies-licenses: pkg:maven/com.github.jsqlparser/jsqlparser
+          # filelock advisories fixed only in filelock 4.2.1. relationalai pulls in
+          # snowflake-snowpark-python, which requires snowflake-connector-python<5,
+          # and every 4.x connector requires filelock<4, so no fixed version can be
+          # installed yet. The connector only uses FileLock, not the affected
+          # ReadWriteLock or SoftFileLock. Remove once snowpark allows connector 5.
+          # pydantic-settings GHSA-4xgf-cpjx-pc3j is fixed in 2.14.2, but relationalai
+          # and confocal require pydantic-settings<2.14.0. Neither sets secrets_dir, so
+          # the affected NestedSecretsSettingsSource is never used. Remove once they
+          # allow pydantic-settings 2.14.2.
+          allow-ghsas: GHSA-v4x8-3wr5-3wq8, GHSA-567q-5qvw-pf92, GHSA-9vhv-jxww-xfm5, GHSA-4xgf-cpjx-pc3j
           comment-summary-in-pr: always

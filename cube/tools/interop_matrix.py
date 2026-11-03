@@ -65,14 +65,14 @@ from pathlib import Path
 # all and is driven through its Python API.
 SPOKES = [
     ("databricks", ["ossie-databricks", "export"], False),
-    ("dbt", ["ossie-dbt", "osi-to-msi"], False),
+    ("dbt", ["ossie-dbt", "ossie-to-msi"], False),
     ("gooddata", None, False),  # API-only; see _run_gooddata
-    ("honeydew", ["honeydew-osi", "osi-to-honeydew"], True),
+    ("honeydew", ["ossie-honeydew", "ossie-to-honeydew"], True),
     ("nvidia", ["ossie-nvidia-auto-ontology", "export"], False),
-    ("omni", ["osi-omni", "export"], True),
-    ("orionbelt", ["ossie-orionbelt", "osi-to-obml"], False),
+    ("omni", ["ossie-omni", "export"], True),
+    ("orionbelt", ["ossie-orionbelt", "ossie-to-obml"], False),
     ("snowflake", ["ossie-snowflake"], False),
-    ("wisdom", ["ossie-wisdom", "osi-to-wisdom"], False),
+    ("wisdom", ["ossie-wisdom", "ossie-to-wisdom"], False),
 ]
 
 # Converters written in Java: a different toolchain, not a missing dependency.
@@ -161,10 +161,10 @@ def _run_gooddata(root, ossie, dest):
     """gooddata ships no console script, so drive its API the way its README does."""
     script = (
         "import json, sys, yaml\n"
-        "from ossie_gooddata import osi_to_gooddata\n"
+        "from ossie_gooddata import ossie_to_gooddata\n"
         "from ossie_gooddata.models import gd_model_to_dict\n"
         "model = yaml.safe_load(open(sys.argv[1]).read())\n"
-        "out = gd_model_to_dict(osi_to_gooddata(model))\n"
+        "out = gd_model_to_dict(ossie_to_gooddata(model))\n"
         "open(sys.argv[2], 'w').write(json.dumps(out, indent=2, default=str))\n"
     )
     return run(root / "gooddata",

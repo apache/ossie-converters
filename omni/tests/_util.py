@@ -98,6 +98,8 @@ def strip_normalized(ossie):
         if not ai:
             model.pop("ai_context")
     for ds in model.get("datasets", []):
+        # Popped due to lack of per-dataset metric support. Todo tracked by #59.
+        ds.pop("metrics", None)
         ds.pop("custom_extensions", None)
         ds.pop("unique_keys", None)
         ai = ds.get("ai_context")
