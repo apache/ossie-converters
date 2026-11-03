@@ -24,7 +24,7 @@
 #     cast once, not `Seats(Seats(col))`.
 #   * `raw` declares no datatype, so nothing is checked against the wrapper;
 #     `id` and `cap` are `Integer`, the base type of both wrappers.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: ValueTypeWrapper
 ontology:
 - concept: StoreNr
@@ -68,7 +68,7 @@ ontology:
 ontology_mappings:
 - name: value_type_wrapper_mapping
   semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: Value type wrapper semantic model
     datasets:
     - name: T

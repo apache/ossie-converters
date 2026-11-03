@@ -156,7 +156,7 @@ ossieToSf.convert(Paths.get("input/model.yaml"), Paths.get("output/"));
 - **Schema-validated** - Input is validated against JSON Schema before processing
 - **Lossless conversion** - Unmapped properties are preserved in `custom_extensions`
 - **Bidirectional** - Supports both directions, with direction-specific limits documented below
-- **Supports Ossie Specification v0.2.0.dev0**
+- **Supports Ossie Specification v0.3.0.dev0**
 
 ## Mapping Reference
 

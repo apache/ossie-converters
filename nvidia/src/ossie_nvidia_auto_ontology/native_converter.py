@@ -35,7 +35,7 @@ import yaml
 from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError, TokenError
 
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 # Any release in this major.minor series is accepted on input. The spec is
 # still on a .dev line, so pinning the exact string would reject every real
 # model as soon as the patch or dev suffix moves.

@@ -17,7 +17,7 @@
 
 [project]
 name = "apache-ossie-gooddata"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "Bidirectional converter between GoodData LDM and Apache Ossie semantic model"
 authors = [{name = "GoodData Corporation", email = "support@gooddata.com"}]
 readme = "README.md"

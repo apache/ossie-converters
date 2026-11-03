@@ -38,7 +38,7 @@ import org.junit.jupiter.api.io.TempDir;
 public class OssieDatabricksConverterCliSuite {
 
   private static final String OSSIE_MODEL =
-      "version: \"0.2.0.dev0\"\n"
+      "version: \"0.3.0.dev0\"\n"
       + "name: sales\n"
       + "datasets:\n"
       + "  - name: orders\n"
@@ -92,7 +92,7 @@ public class OssieDatabricksConverterCliSuite {
   public void importConvertsAMetricViewToAnOssieModel() throws IOException {
     String out = stdout("import", write("view.yaml", METRIC_VIEW).toString());
     assertTrue(out.contains("datasets:"), "expected an Apache Ossie model, got:\n" + out);
-    assertTrue(out.contains("0.2.0.dev0"), "expected the Apache Ossie version, got:\n" + out);
+    assertTrue(out.contains("0.3.0.dev0"), "expected the Apache Ossie version, got:\n" + out);
   }
 
   @Test

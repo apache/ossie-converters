@@ -17,7 +17,7 @@
 # The Ossie form of tpcds_cube/, asserted as a whole-document snapshot.
 # Regenerate with: uv run ossie-cube import -i tests/fixtures/tpcds_cube
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: tpcds_retail_model
 description: TPC-DS retail semantic model for sales and customer analytics
 ai_context:

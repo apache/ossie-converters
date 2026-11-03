@@ -107,7 +107,7 @@ def test_ossie_goldens_match_schema():
     for name in ("cfo_cockpit.yaml", "cfo_cockpit.enriched.yaml"):
         document = load_ossie((FINANCE / "ossie" / name).read_text())
         validator.validate(document)
-        assert document["version"] == "0.2.0.dev0"
+        assert document["version"] == "0.3.0.dev0"
 
 
 def test_synonym_sets_stay_empty():

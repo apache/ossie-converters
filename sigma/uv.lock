@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "apache-ossie"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 source = { editable = "../ossie/python" }
 dependencies = [
     { name = "pydantic" },
@@ -31,7 +31,7 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "apache-ossie-sigma"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "apache-ossie" },

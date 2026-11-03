@@ -62,7 +62,7 @@ class TestOwnVendorTags:
 
     def test_ossie_to_obml_native_stash_uses_ossie_vendor(self) -> None:
         ossie = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "m",
             "datasets": [
                 {
@@ -83,7 +83,7 @@ class TestOwnVendorTags:
 class TestForeignVendorRoundtrip:
     def _ossie_with_foreign(self) -> dict[str, Any]:
         return {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "demo",
             "custom_extensions": [
                 {"vendor_name": "DBT", "data": json.dumps({"model": "mart_x"})}
@@ -140,7 +140,7 @@ class TestForeignVendorRoundtrip:
 
     def test_foreign_metric_roundtrip(self) -> None:
         ossie_in = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "demo",
             "datasets": [
                 {

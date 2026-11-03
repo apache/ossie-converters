@@ -23,7 +23,7 @@
 # BigQuery demo connection carries, so the generated AML compiles against a real
 # schema rather than an invented one.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 name: aql_translation
 description: Metrics that exercise each path through the SQL to AQL translation
 

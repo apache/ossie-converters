@@ -221,7 +221,7 @@ class MSIToOssieConverter:
 
         return ConverterResult(
             output=OssieDocument(
-                version="0.2.0.dev0",
+                version="0.3.0.dev0",
                 name=ossie_model_name,
                 datasets=datasets,
                 relationships=relationships if relationships else None,

@@ -378,7 +378,7 @@ class MetricExportIntegrationTest {
 
     private static String document(Map<String, Object> model) throws IOException {
         Map<String, Object> root = new LinkedHashMap<>();
-        root.put("version", "0.2.0.dev0");
+        root.put("version", "0.3.0.dev0");
         root.putAll(model);
         return YAML.writeValueAsString(root);
     }
