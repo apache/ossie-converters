@@ -140,7 +140,7 @@ submodule, and was run through the reference parser in [`../ontology`](../ontolo
 construct: the **concept-qualified nested referent** `BusinessPartner.nr`, which
 the spec's own `CustOrder.nr` example uses, is rejected because
 `lookup_concept_relationship` prefixes the container name onto an already
-qualified name. This converter keeps the spec form. With that one reference
+qualified name (#129). This converter keeps the spec form. With that one reference
 written bare, the parser resolves all 11 concepts, 10 relationships,
 `Customer.identify_by == ['BusinessPartner.nr']`, the `EXISTS` derivation, and
 both concept mappings.
