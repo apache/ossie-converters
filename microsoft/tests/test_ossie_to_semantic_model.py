@@ -775,6 +775,134 @@ def test_a_metric_with_an_untranslatable_expression_uses_blank_and_annotations()
     assert _annotation(measure, "OssieExpression") == "SUM(amount) / COUNT(*)"
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected_dialect"),
+    [
+        (make_expression("SUM(c * c)", "ANSI_SQL"), "ANSI_SQL"),
+        (make_expression("SUM(c * c)", "OSSIE_SQL_2026"), "OSSIE_SQL_2026"),
+        (
+            {
+                "sql": "SUM(c * c)",
+                "dialects": [{"dialect": "ANSI_SQL", "expression": "MIN(c)"}],
+            },
+            "OSSIE_SQL_2026",
+        ),
+    ],
+)
+def test_native_sql_measures_bypass_translation_and_preserve_metadata(
+    monkeypatch, expression, expected_dialect
+):
+    monkeypatch.setattr(
+        "ossie_microsoft.ossie_to_semantic_model._translate_metric_expression",
+        lambda *args: pytest.fail("native SQL must not invoke metric translation"),
+    )
+    metric = {"name": "M", "expression": expression, "description": "Row arithmetic"}
+    write_stash(
+        metric,
+        {
+            "table": "T",
+            "name": "Revenue",
+            "formatString": "0.00",
+            "annotations": [{"name": "keep", "value": "provenance"}],
+        },
+    )
+    semantic_model = _minimal(metrics=[metric])
+    write_stash(semantic_model, {"culture": "fr-FR"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        bim = convert_ossie_to_semantic_model(
+            semantic_model,
+            source={"workspaceId": "workspace", "itemId": "item"},
+            use_sql_measures=True,
+        )
+    measure = _table(bim, "T")["measures"][0]
+    assert measure["name"] == "Revenue"
+    assert measure["expression"] == "SUM(c * c)"
+    assert measure["dialect"] == "sql"
+    assert measure["description"] == "Row arithmetic"
+    assert measure["formatString"] == "0.00"
+    assert _annotation(measure, "keep") == "provenance"
+    assert _annotation(measure, "OssieExpressionDialect") == expected_dialect
+    assert _annotation(measure, "OssieExpression") == "SUM(c * c)"
+    assert bim["compatibilityLevel"] == 1000000
+    assert bim["model"]["culture"] == "fr-FR"
+    assert _column(_table(bim, "T"), "C")["sourceColumn"] == "c"
+
+
+def test_disabling_native_sql_measures_preserves_default_translation():
+    semantic_model = _minimal(metrics=[{"name": "M", "expression": {"sql": "SUM(c)"}}])
+    default = _convert(semantic_model)
+    disabled = convert_ossie_to_semantic_model(
+        {"version": OSSIE_VERSION, **semantic_model}, use_sql_measures=False
+    )
+    assert disabled == default
+    assert _table(default, "T")["measures"][0]["expression"] == "SUM('T'[C])"
+
+
+def test_native_sql_mode_preserves_preferred_dax_over_stale_sql_annotations():
+    metric = {
+        "name": "M",
+        "expression": {
+            "sql": "SUM(c)",
+            "dialects": [{"dialect": "DAX", "expression": "COUNTROWS(T)"}],
+        },
+    }
+    write_stash(
+        metric,
+        {
+            "annotations": [
+                {"name": "OssieExpressionDialect", "value": "ANSI_SQL"},
+                {"name": "OssieExpression", "value": "MIN(c)"},
+            ]
+        },
+    )
+    semantic_model = _minimal(metrics=[metric])
+    with pytest.warns(UserWarning, match="no home table recorded"):
+        bim = convert_ossie_to_semantic_model(semantic_model, use_sql_measures=True)
+    measure = _table(bim, "T")["measures"][0]
+    assert measure["expression"] == "COUNTROWS(T)"
+    assert "dialect" not in measure
+    assert bim["compatibilityLevel"] == 1702
+
+
+@pytest.mark.parametrize("dialect", ["BIGQUERY", "sql"])
+def test_native_sql_mode_rejects_other_selected_dialects_without_translation(monkeypatch, dialect):
+    monkeypatch.setattr(
+        "ossie_microsoft.ossie_to_semantic_model._translate_metric_expression",
+        lambda *args: pytest.fail("unsupported native dialect must not invoke metric translation"),
+    )
+    semantic_model = _minimal(
+        metrics=[{"name": "M", "expression": make_expression("SUM(c)", dialect)}]
+    )
+    with pytest.raises(ConversionError, match=f"metric 'M': source dialect '{dialect}'"):
+        convert_ossie_to_semantic_model(semantic_model, use_sql_measures=True)
+
+
+@pytest.mark.parametrize("level", [1500, 1000001, "1500", True])
+def test_native_sql_compatibility_without_generated_partitions(level):
+    semantic_model = _minimal(metrics=[{"name": "M", "expression": {"sql": "SUM(c)"}}])
+    write_stash(
+        semantic_model["datasets"][0],
+        {"partitions": [{"name": "T", "source": {"type": "calculated", "expression": "{1}"}}]},
+    )
+    write_stash(semantic_model, {"document": {"compatibilityLevel": level}})
+    if isinstance(level, (str, bool)):
+        with pytest.raises(ConversionError, match="'compatibilityLevel' must be an integer"):
+            convert_ossie_to_semantic_model(semantic_model, use_sql_measures=True)
+    else:
+        bim = convert_ossie_to_semantic_model(semantic_model, use_sql_measures=True)
+        assert bim["compatibilityLevel"] == max(level, 1000000)
+
+
+def test_native_sql_mode_still_warns_and_skips_missing_expressions():
+    with pytest.warns(UserWarning, match="metric has no expression; skipped"):
+        bim = convert_ossie_to_semantic_model(
+            _minimal(metrics=[{"name": "M"}]), use_sql_measures=True
+        )
+    assert not _table(bim, "T").get("measures")
+    assert bim["compatibilityLevel"] == 1702
+
+
 def _metric_dax(sql, dialect="ANSI_SQL"):
     """Convert a single-metric model and return the DAX the measure was given."""
     semantic_model = _minimal(
