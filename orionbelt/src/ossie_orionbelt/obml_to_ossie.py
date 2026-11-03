@@ -29,12 +29,12 @@ from functools import partial
 from typing import Any
 
 from ossie_orionbelt._common import (
-    _INTERNAL_VENDORS,
     _OSSIE_VENDOR_READ,
     _OSSIE_VERSION,
     _VENDOR_OBML,
     OBML_ABSTRACT_TO_OSSIE_DATATYPE,
     OBML_TO_OSSIE_TYPE,
+    _is_internal_vendor,
     obml_datatype_to_ossie,
 )
 from ossie_orionbelt._field_names import (
@@ -182,7 +182,7 @@ class OBMLtoOssie:
         """
         for ext in obml_exts or []:
             vendor = ext.get("vendor")
-            if vendor and vendor not in _INTERNAL_VENDORS:
+            if vendor and not _is_internal_vendor(vendor, ext.get("data")):
                 ossie_exts.append({"vendor_name": vendor, "data": ext.get("data", "")})
 
     def _convert_data_object(
