@@ -22,6 +22,7 @@ records. Pure offline transforms on dicts; the CLI reads and writes files.
 
     doc, issues = convert_registry_to_ossie(records)        # list of registry records -> Ossie dict
     definition = convert_ossie_to_registry(doc, "metric")   # one Ossie metric -> registry definition
+    records, issues = convert_ossie_to_records(doc)         # every Ossie metric -> registry records
     patch = write_back(doc, "metric", record)               # the registry patch an Ossie edit implies
 """
 
@@ -71,6 +72,33 @@ def convert_ossie_to_registry(doc: dict, metric: str) -> dict:
         raise ConversionError(str(e)) from None
 
 
+def convert_ossie_to_records(doc: dict) -> tuple[dict, IssueLog]:
+    """Every Ossie metric, model- or dataset-scoped -> registry records, as a registry export
+    `{"artifacts": [...]}`, plus the issues. A metric that came from the registry keeps its id and workspace; any
+    other is a new metric with no id, which `convert_registry_to_ossie` reads back as one.
+    A metric the registry cannot express is a METRIC_NOT_CONVERTIBLE issue and the rest
+    still convert."""
+    try:
+        work = load(doc)
+    except (LookupError, TypeError) as e:
+        raise ConversionError(str(e)) from None
+    workspace = _c._registry_of(work).get("workspace_id")
+    issues, out = IssueLog(), []
+    for name in _c.metric_names(work):
+        try:
+            rec = _c.to_registry(work, name)
+        except (NotConvertible, LookupError, TypeError) as e:
+            issues.add(IssueType.METRIC_NOT_CONVERTIBLE, name, str(e))
+            continue
+        reg = _c._registry_of(_c._metric(work, name))
+        # the parts of a split whole-query record share its id; each part alone is a new metric
+        out.append({**({"id": reg["id"]} if reg.get("id") and not reg.get("output_column") else {}),
+                    "kind": "metric", "name": rec["name"], "description": rec["description"],
+                    **({"workspace_id": workspace} if workspace else {}),
+                    "metadata": {"definition": rec["definition"]}})
+    return {"artifacts": out}, issues
+
+
 def write_back(doc: dict, metric: str, record: dict, registry_version: int | None = None) -> dict:
     """The registry patch an edited Ossie file implies for an existing record ({} if unchanged).
     `registry_version` is the registry's current definition version when known; a file built
@@ -90,6 +118,7 @@ __all__ = [
     "NotConvertible",
     "NotWritable",
     "agent_context",
+    "convert_ossie_to_records",
     "convert_ossie_to_registry",
     "convert_registry_to_ossie",
     "write_back",

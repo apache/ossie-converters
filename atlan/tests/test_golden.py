@@ -26,7 +26,8 @@ import pytest
 import yaml
 
 import _golden as golden
-from ossie_atlan import ConversionError, IssueType, cli, convert_ossie_to_registry, convert_registry_to_ossie, load
+from ossie_atlan import (ConversionError, IssueType, NotWritable, cli, convert_ossie_to_records, convert_ossie_to_registry,
+                         convert_registry_to_ossie, load, write_back)
 from ossie_atlan import converter as A
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -180,7 +181,7 @@ def test_cli_import_export_write_back(tmp_path, capsys):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps([{"name": "x"}]))
     assert cli.main(["import", "-i", str(bad)]) == 1
-    assert "METRIC_NOT_CONVERTIBLE] x: record has no name, id or metadata.definition" in capsys.readouterr().err
+    assert "METRIC_NOT_CONVERTIBLE] x: record has no name or metadata.definition" in capsys.readouterr().err
     bad.write_text("{\"foo\": 1}")
     assert cli.main(["export", "-i", str(bad), "--metric", "x"]) == 1
     assert "not an Ossie document" in capsys.readouterr().err
@@ -190,3 +191,88 @@ def test_cli_import_export_write_back(tmp_path, capsys):
     one.write_text(json.dumps(_input("count_filtered")))
     assert cli.main(["write-back", "-i", str(out), "--metric", "preferred_customer_count", "--record", str(one)]) == 0
     assert json.loads(capsys.readouterr().out) == {}
+
+
+@pytest.mark.parametrize("name", OK)
+def test_export_of_a_whole_file_imports_back_to_the_same_metrics(name):
+    """export with no --metric: every metric as a registry record, which import reads back to
+    the same metric expressions. A metric from the registry keeps its id and workspace; the
+    parts of a split query share one id, so each part goes out as a new metric."""
+    doc = _ossie_yaml(name)
+    recs, issues = convert_ossie_to_records(doc)
+    assert not issues
+    split = len(doc["metrics"]) > 1
+    for r in recs["artifacts"]:
+        assert r["kind"] == "metric" and r["workspace_id"] == _input(name)["workspace_id"]
+        assert r.get("id") == (None if split else _input(name)["id"])
+    back, issues = convert_registry_to_ossie(recs["artifacts"], name=doc["name"])
+    assert not issues
+    assert {m["name"]: A.expression_text(m) for m in load(back)["metrics"]} == \
+        {m["name"]: A.expression_text(m) for m in load(doc)["metrics"]}
+
+
+def test_record_without_an_id_imports_as_a_new_metric_and_cannot_write_back():
+    rec = {k: v for k, v in _input("count_filtered").items() if k != "id"}
+    doc, issues = convert_registry_to_ossie([rec])
+    assert not issues
+    m = load(doc)["metrics"][0]
+    assert "id" not in A._registry_of(m)
+    assert A.expression_text(m) == A.expression_text(load(_ossie_yaml("count_filtered"))["metrics"][0])
+    with pytest.raises(NotWritable, match="no registry id"):
+        write_back(doc, m["name"], _input("count_filtered"))
+
+
+def test_cli_export_of_a_whole_file(tmp_path, capsys):
+    doc = _ossie_yaml("count_filtered")
+    doc["metrics"].append({**doc["metrics"][0], "name": "broken",
+                           "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM("}]}})
+    src, out = tmp_path / "model.yaml", tmp_path / "records.json"
+    src.write_text(yaml.safe_dump(doc))
+    assert cli.main(["export", "-i", str(src), "-o", str(out)]) == 0
+    err = capsys.readouterr().err
+    assert "[METRIC_NOT_CONVERTIBLE] broken" in err and "1 registry records from 2 Ossie metrics" in err
+    assert [r["name"] for r in json.loads(out.read_text())["artifacts"]] == ["preferred_customer_count"]
+    doc["metrics"] = doc["metrics"][1:]
+    src.write_text(yaml.safe_dump(doc))
+    assert cli.main(["export", "-i", str(src)]) == 1
+    assert "nothing to write: no metric converted" in capsys.readouterr().err
+
+
+def _with_dataset_metric(expression, name="total_quantity"):
+    doc = _ossie_yaml("count_rows")
+    doc["datasets"][0]["fields"] = [{"name": "ss_quantity", "expression": {"dialects": [
+        {"dialect": "ANSI_SQL", "expression": "SS_QUANTITY"}]}}]
+    doc["datasets"][0]["metrics"] = [{"name": name, "description": "units sold", "expression": {
+        "dialects": [{"dialect": "ANSI_SQL", "expression": expression}]}}]
+    return doc
+
+
+def test_dataset_scoped_metric_exports_with_its_own_dataset():
+    """datasets[].metrics name their dataset's fields unqualified; export reads them as that
+    dataset's columns, so the metric is not dropped."""
+    recs, issues = convert_ossie_to_records(_with_dataset_metric("SUM(ss_quantity)"))
+    assert not issues
+    assert {r["name"]: r["metadata"]["definition"]["formula"] for r in recs["artifacts"]} == \
+        {"store_sales_count": "COUNT(m.*)", "total_quantity": "SUM(m.SS_QUANTITY)"}
+    assert convert_ossie_to_registry(_with_dataset_metric("SUM(ss_quantity)"), "total_quantity")[
+        "definition"]["formula"] == "SUM(m.SS_QUANTITY)"
+
+
+def test_dataset_scoped_metric_refusals():
+    _, issues = convert_ossie_to_records(_with_dataset_metric("SUM(ss_quantity)", name="store_sales_count"))
+    assert [(i.element_name, i.detail) for i in issues] == \
+        [("store_sales_count", "2 metrics are named 'store_sales_count'; a registry name is unique")]
+    _, issues = convert_ossie_to_records(_with_dataset_metric("store_sales_count / 2"))
+    assert [i.element_name for i in issues] == ["total_quantity"]
+    assert "built from other metrics" in issues.of_type(IssueType.METRIC_NOT_CONVERTIBLE)[0].detail
+
+
+def test_cli_export_of_a_file_with_no_metrics(tmp_path, capsys):
+    """Metrics are optional in Ossie; the registry holds only metrics, so the export is empty."""
+    doc = _ossie_yaml("count_rows")
+    del doc["metrics"]
+    src, out = tmp_path / "model.yaml", tmp_path / "records.json"
+    src.write_text(yaml.safe_dump(doc))
+    assert cli.main(["export", "-i", str(src), "-o", str(out)]) == 0
+    assert json.loads(out.read_text()) == {"artifacts": []}
+    assert "0 registry records from 0 Ossie metrics" in capsys.readouterr().err

@@ -626,8 +626,8 @@ def _parsing(dialect: str | None):
 def convert(art: dict) -> list[tuple[dict, list[dict], list[dict]]]:
     """Any registry metric -> list of (metric, datasets, relationships). Steps 0 to 6."""
     d = (art.get("metadata") or {}).get("definition") if isinstance(art, dict) else None
-    if not isinstance(d, dict) or not art.get("name") or not art.get("id"):
-        raise NotConvertible("record has no name, id or metadata.definition")
+    if not isinstance(d, dict) or not art.get("name"):
+        raise NotConvertible("record has no name or metadata.definition")
     if not isinstance(d.get("formula"), str) or not d["formula"].strip():
         raise NotConvertible("formula is empty")
     if not isinstance(d.get("source"), dict):
@@ -912,7 +912,8 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
     if prov.get("trust_score") is not None:
         ctx["trust"] = {"score": prov["trust_score"]}
     metric["custom_extensions"] = [{"vendor_name": "ATLAN", "data": {
-        "registry": {"id": art["id"], "definition_version": d.get("version"),
+        # a record with no id is a metric not yet in the registry (an export of a new one)
+        "registry": {**({"id": art["id"]} if art.get("id") else {}), "definition_version": d.get("version"),
                      **({"output_column": art["output_column"]} if art.get("output_column") else {})},
         "agent_context": ctx}}]
     datasets = []
@@ -1042,8 +1043,8 @@ def export(doc: dict) -> dict:
     """The strict Ossie 0.2.0.dev0 form: every ATLAN extension's data as a JSON string; private
     keys (`_merge_notes`) dropped."""
     out = json.loads(json.dumps({k: v for k, v in doc.items() if not k.startswith("_")}))
-    holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", [])] \
-        + out.get("relationships", []) + out["metrics"]
+    holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", []) + d.get("metrics", [])] \
+        + out.get("relationships", []) + out.get("metrics", [])
     for h in holders:
         for x in h.get("custom_extensions") or []:
             if not isinstance(x["data"], str):
@@ -1074,10 +1075,36 @@ def expression_text(holder: dict) -> str:
 
 
 def _metric(doc: dict, name: str) -> dict:
-    m = next((x for x in doc.get("metrics") or [] if x.get("name") == name), None)
-    if m is None:
+    """The Ossie metric of this name. A dataset-scoped metric (datasets[].metrics) comes back as
+    a model-scoped one: its expression names its own dataset's fields unqualified, so they are
+    qualified with that dataset. A name two metrics share has no single registry record."""
+    found = [(None, x) for x in doc.get("metrics") or [] if x.get("name") == name] + \
+        [(d, x) for d in doc.get("datasets") or [] for x in d.get("metrics") or [] if x.get("name") == name]
+    if not found:
         raise LookupError(f"no metric named {name!r} in the document")
-    return m
+    if len(found) > 1:
+        raise NotConvertible(f"{len(found)} metrics are named {name!r}; a registry name is unique")
+    ds, m = found[0]
+    if ds is None:
+        return m
+    text = expression_text(m)
+    try:
+        tree = sqlglot.parse_one(text)
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
+        raise NotConvertible(f"an expression in the Ossie file does not parse: {str(e).splitlines()[0][:80]}") from None
+    others = set(metric_names(doc))
+    for c in tree.find_all(exp.Column):
+        if not c.table and c.name not in others:    # a metric name stays bare: refused as one later
+            c.set("table", exp.to_identifier(ds["name"]))
+    dialect = next(x["dialect"] for x in m["expression"]["dialects"] if x["expression"] == text)
+    return {**m, "expression": {"dialects": [{"dialect": dialect, "expression": tree.sql()}]}}
+
+
+def metric_names(doc: dict) -> list[str]:
+    """Every metric name in the document, model-scoped first, each once."""
+    names = [x["name"] for x in doc.get("metrics") or []] + \
+        [x["name"] for d in doc.get("datasets") or [] for x in d.get("metrics") or []]
+    return list(dict.fromkeys(names))
 
 
 # ---------- Ossie -> Atlan
@@ -1115,11 +1142,11 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None,
     # names (revenue / order_count). A bare column that exists on exactly one dataset is read as
     # that dataset's; a metric name or an ambiguous column has no registry form.
     tree0 = sqlglot.parse_one(expr_text, read=DIALECT)
-    metric_names = {x["name"] for x in doc["metrics"]}
+    others = set(metric_names(doc))
     for c in list(tree0.find_all(exp.Column)):
         if c.table:
             continue
-        if c.name in metric_names:
+        if c.name in others:
             raise NotConvertible(f"metric is built from other metrics ({c.name}); the registry formula "
                                  "cannot reference another metric")
         homes = [n for n, d in ds.items() if any(f["name"] == c.name for f in d.get("fields", []))]
@@ -1218,6 +1245,8 @@ def write_back(doc: dict, metric_name: str, record: dict, registry_version: int 
     the registry's current definition version is not the one the Ossie file was built from."""
     m = _metric(doc, metric_name)
     reg = _registry_of(m)
+    if not reg.get("id"):
+        raise NotWritable(f"{metric_name!r} has no registry id, so it is not in the registry yet; export it instead")
     if reg.get("id") != record.get("id"):
         raise NotWritable(f"{metric_name!r} was made from registry metric {reg.get('id')!r}, not {record.get('id')!r}")
     current = registry_version if registry_version is not None else record["metadata"]["definition"]["version"]

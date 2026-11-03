@@ -34,8 +34,8 @@ class ConversionError(Exception):
 def load(doc: dict) -> dict:
     """Strict form -> working form: extension data from JSON strings back to objects."""
     out = json.loads(json.dumps(doc))
-    holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", [])] \
-        + out.get("relationships", []) + out["metrics"]
+    holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", []) + d.get("metrics", [])] \
+        + out.get("relationships", []) + out.get("metrics", [])
     for h in holders:
         for x in h.get("custom_extensions") or []:
             if isinstance(x["data"], str):

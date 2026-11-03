@@ -36,9 +36,10 @@ and none for filters, windows, parameters, additivity or units, so:
   output. Everything an agent needs that Ossie core cannot hold goes to
   `custom_extensions[ATLAN]` on the metric as `agent_context`, plus the registry id and
   definition version (`registry`), so another tool can map the metric back.
-- **Export** (`ossie-atlan export`): one Ossie metric -> a registry metric definition (the
-  new-metric case: the record has no registry id yet). Works on files other converters
-  wrote, when the metric's columns can be placed on one dataset.
+- **Export** (`ossie-atlan export`): Ossie metrics -> registry records (`{"artifacts": [...]}`),
+  or with `--metric` one registry definition. A metric that came from the registry keeps its
+  id; any other is a new metric with no id, which import reads back as one. Works on files
+  other converters wrote, when the metric's columns can be placed on one dataset.
 - **Write-back** (`ossie-atlan write-back`): an Ossie file that came from a registry record,
   edited, -> the registry patch it implies, versioned against the record it was made from.
   Edits to description, example questions and `agent_context` write back; structural edits
@@ -65,7 +66,7 @@ declared dialect). Python 3.11+.
 
 ```bash
 ossie-atlan import -i records.json [-o model.yaml] [--name my_model] [--workspace WS] [--metric NAME ...]
-ossie-atlan export -i model.yaml --metric NAME [-o definition.json]
+ossie-atlan export -i model.yaml [--metric NAME] [-o records.json]
 ossie-atlan write-back -i model.yaml --metric NAME --record record.json
 ```
 
@@ -77,9 +78,10 @@ per workspace.
 ### Python API
 
 ```python
-from ossie_atlan import convert_registry_to_ossie, convert_ossie_to_registry, write_back
+from ossie_atlan import convert_registry_to_ossie, convert_ossie_to_records, convert_ossie_to_registry, write_back
 
 doc, issues = convert_registry_to_ossie(records)           # list of dicts -> Ossie dict (strict form)
+records, issues = convert_ossie_to_records(doc)           # -> {"artifacts": [record, ...]}
 definition = convert_ossie_to_registry(doc, "metric_name") # -> registry definition dict
 patch = write_back(doc, "metric_name", record)             # -> {} when nothing changed
 for issue in issues:
@@ -158,7 +160,7 @@ consumer could run, so the record becomes an issue instead:
 | `PROSE_DIFFERENCE_KEPT_FIRST` | the same field with different prose; the first description is kept |
 
 `export` and `write-back` raise `NotConvertible`, `NotWritable` (an edit the registry cannot
-take) or `Conflict` (the registry record moved on since the file was made).
+take, or a metric with no registry id) or `Conflict` (the registry record moved on since the file was made).
 
 ## Tests
 

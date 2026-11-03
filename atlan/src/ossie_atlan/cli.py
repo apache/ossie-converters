@@ -18,14 +18,16 @@
 """Command-line interface for the Apache Ossie <-> Atlan metric registry converter.
 
     ossie-atlan import -i RECORDS.json [-o model.yaml] [--name MODEL] [--workspace WS] [--metric NAME ...]
-    ossie-atlan export -i model.yaml --metric NAME [-o definition.json]
+    ossie-atlan export -i model.yaml [--metric NAME] [-o OUT.json]
     ossie-atlan write-back -i model.yaml --metric NAME --record RECORD.json [--registry-version N]
 
 `import` converts registry metric records (one record, a list, or a registry export
 `{"artifacts": [...]}`) into one Ossie document; with no `-o` the YAML goes to stdout. Every
 metric Ossie cannot express is an issue on stderr, and the rest still convert. `export` does
-the reverse for one Ossie metric and prints a registry definition. `write-back` prints the
-registry patch an edited Ossie file implies for an existing record (`{}` when nothing changed).
+the reverse: with `--metric`, one registry definition; without it, every metric as registry
+records (`{"artifacts": [...]}`), with the ones the registry cannot express as issues on
+stderr. `write-back` prints the registry patch an edited Ossie file implies for an existing
+record (`{}` when nothing changed).
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from pathlib import Path
 
 import yaml
 
-from . import convert_ossie_to_registry, convert_registry_to_ossie, write_back
+from . import convert_ossie_to_records, convert_ossie_to_registry, convert_registry_to_ossie, write_back
 from ._common import ConversionError
 from .converter import Conflict, NotConvertible, NotWritable
 
@@ -60,9 +62,9 @@ def _build_parser():
     imp.add_argument("--name", default="atlan_registry", help="Ossie model name")
     imp.add_argument("--workspace", help="only records of this workspace_id (one Ossie file per workspace)")
     imp.add_argument("--metric", action="append", help="only these record names (repeatable)")
-    exp = sub.add_parser("export", help="one Apache Ossie metric -> registry metric definition JSON")
+    exp = sub.add_parser("export", help="Apache Ossie metrics -> registry records JSON (or one definition)")
     exp.add_argument("-i", "--input", required=True, help="Ossie YAML file")
-    exp.add_argument("--metric", required=True, help="Ossie metric name")
+    exp.add_argument("--metric", help="only this Ossie metric, as one registry definition")
     exp.add_argument("-o", "--output", help="output JSON file (default: stdout)")
     wb = sub.add_parser("write-back", help="the registry patch an edited Ossie file implies")
     wb.add_argument("-i", "--input", required=True, help="Ossie YAML file")
@@ -92,8 +94,22 @@ def main(argv=None) -> int:
                   f"{len(issues)} issues", file=sys.stderr)
             return 0
         doc = yaml.safe_load(Path(args.input).read_text())
-        if not isinstance(doc, dict) or "datasets" not in doc or "metrics" not in doc:
-            raise ConversionError(f"{args.input} is not an Ossie document (no datasets/metrics)")
+        if not isinstance(doc, dict) or "datasets" not in doc:
+            raise ConversionError(f"{args.input} is not an Ossie document (no datasets)")
+        if args.command == "export" and not args.metric:
+            recs, issues = convert_ossie_to_records(doc)
+            if issues:
+                print(f"{len(issues)} conversion issue(s):", file=sys.stderr)
+                for issue in issues:
+                    print(f"  {issue}", file=sys.stderr)
+            if not recs["artifacts"] and issues:
+                print("nothing to write: no metric converted", file=sys.stderr)
+                return 1
+            out = json.dumps(recs, indent=1, ensure_ascii=False)
+            Path(args.output).write_text(out + "\n") if args.output else print(out)
+            print(f"{len(recs['artifacts'])} registry records from {len(recs['artifacts']) + len(issues)} Ossie metrics; "
+                  f"{len(issues)} issues", file=sys.stderr)
+            return 0
         if args.command == "export":
             out = json.dumps(convert_ossie_to_registry(doc, args.metric), indent=1, ensure_ascii=False)
             Path(args.output).write_text(out + "\n") if args.output else print(out)

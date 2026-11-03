@@ -100,6 +100,7 @@ NATIVE_SHAPES = {
     ),
     **dict.fromkeys(
         (
+            "atlan",
             "dbt",
             "databricks",
             "gooddata",
