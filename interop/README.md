@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 22 converter projects**, with explicit capability skips.
+The registry includes **all 23 converter projects**, with explicit capability skips.
 Cube, Databricks, and dbt remain the targets of the focused semantic regressions.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 

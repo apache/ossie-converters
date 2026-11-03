@@ -296,7 +296,7 @@ class Runner:
         suffix = (
             ".json"
             if converter.native_format
-            in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+            in ("atlan", "dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
             else ".yaml"
         )
         dest = directory / (

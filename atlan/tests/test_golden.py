@@ -276,3 +276,15 @@ def test_cli_export_of_a_file_with_no_metrics(tmp_path, capsys):
     assert cli.main(["export", "-i", str(src), "-o", str(out)]) == 0
     assert json.loads(out.read_text()) == {"artifacts": []}
     assert "0 registry records from 0 Ossie metrics" in capsys.readouterr().err
+
+
+def test_dataset_scoped_metric_reads_its_own_field_over_a_metric_of_that_name():
+    """the spec: a dataset metric names its dataset's fields unqualified, so a field `amount`
+    is that field even when a model metric is also called `amount`"""
+    doc = _with_dataset_metric("SUM(ss_quantity)")
+    doc["metrics"].append({**doc["metrics"][0], "name": "ss_quantity",
+                           "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(store_sales.*)"}]}})
+    recs, issues = convert_ossie_to_records(doc)
+    assert not issues
+    assert {r["name"]: r["metadata"]["definition"]["formula"] for r in recs["artifacts"]}["total_quantity"] == \
+        "SUM(m.SS_QUANTITY)"

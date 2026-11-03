@@ -1092,9 +1092,11 @@ def _metric(doc: dict, name: str) -> dict:
         tree = sqlglot.parse_one(text)
     except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
         raise NotConvertible(f"an expression in the Ossie file does not parse: {str(e).splitlines()[0][:80]}") from None
+    own = {f["name"] for f in ds.get("fields") or []}
     others = set(metric_names(doc))
     for c in tree.find_all(exp.Column):
-        if not c.table and c.name not in others:    # a metric name stays bare: refused as one later
+        # the dataset's own field wins; another bare metric name stays bare and is refused later
+        if not c.table and (c.name in own or c.name not in others):
             c.set("table", exp.to_identifier(ds["name"]))
     dialect = next(x["dialect"] for x in m["expression"]["dialects"] if x["expression"] == text)
     return {**m, "expression": {"dialects": [{"dialect": dialect, "expression": tree.sql()}]}}
