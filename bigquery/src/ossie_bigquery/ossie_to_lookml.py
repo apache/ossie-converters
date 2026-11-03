@@ -50,6 +50,13 @@ SUPPORTED_VERSION = "0.2.0.dev0"
 # Dialects the converter can emit, in order of preference.
 _DIALECT_PREFERENCE = ("BIGQUERY", "ANSI_SQL", "OSSIE_SQL_2026")
 
+# How sqlglot reads each dialect. ANSI_SQL and OSSIE_SQL_2026 use sqlglot's
+# default (ANSI-style) dialect and are transpiled to BigQuery on output, since
+# the two disagree on quoting ("x" is an identifier in ANSI, a string literal
+# in BigQuery) and on argument order (DATE_TRUNC). Same mapping as
+# interop/contracts.py and the orionbelt converter.
+_SQLGLOT_DIALECTS = {"BIGQUERY": "bigquery", "ANSI_SQL": None, "OSSIE_SQL_2026": None}
+
 # A valid LookML object name (view, field, join); also a bare SQL identifier.
 _LOOKML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -161,13 +168,25 @@ def _convert_model(ossie):
             raise OssieConversionError(f"Duplicate dataset name '{plan.name}'")
         plans[plan.name] = plan
 
+    model_metrics = _require_list(ossie, "metrics", "Model")
     metric_names = set()
-    for index, metric in enumerate(_require_list(ossie, "metrics", "Model"), 1):
+    for index, metric in enumerate(model_metrics, 1):
         _require_mapping(metric, f"Metric #{index}")
-        metric_name = metric.get("name")
+        metric_name = _metric_name(metric)
         if metric_name in metric_names:
             raise OssieConversionError(f"Duplicate metric name '{metric_name}'")
         metric_names.add(metric_name)
+
+    # Every declared metric name is reserved before any measure is planned, so
+    # hidden helper measures never take a name a metric will need.
+    for plan in plans.values():
+        plan.reserved_names = plan.metric_names | metric_names
+
+    # Dataset-scoped metrics first, so they keep their own names in their view.
+    for plan in plans.values():
+        for metric in plan.raw_metrics:
+            _plan_metric(metric, plans, scope=plan)
+    for metric in model_metrics:
         _plan_metric(metric, plans)
 
     raw_relationships = _require_list(ossie, "relationships", "Model")
@@ -257,7 +276,7 @@ class _Dataset:
         self.name = dataset.get("name")
         if not self.name:
             raise OssieConversionError("Missing required 'name' field in dataset")
-        if not _LOOKML_NAME.match(self.name):
+        if not _is_lookml_name(self.name):
             raise OssieConversionError(
                 f"Dataset '{self.name}': name is not a valid LookML view name"
             )
@@ -270,6 +289,11 @@ class _Dataset:
         self.raw_fields = _require_list(dataset, "fields", context)
         for index, field in enumerate(self.raw_fields, 1):
             _require_mapping(field, f"{context}: field #{index}")
+        self.raw_metrics = _require_list(dataset, "metrics", context)
+        self.metric_names = set()      # names of its dataset-scoped metrics
+        self.reserved_names = set()    # every metric name a measure here may need
+        for index, metric in enumerate(self.raw_metrics, 1):
+            _require_mapping(metric, f"{context}: metric #{index}")
         self.description = _entity_description(dataset)
         self.fields = []
         self.pk_dimension = None
@@ -280,6 +304,12 @@ class _Dataset:
         self.used_names = set()
 
     def register(self, field):
+        clash = field.exposed_names() & self.used_names
+        if clash:
+            raise OssieConversionError(
+                f"Dataset '{self.name}': field '{field.name}' would emit LookML "
+                f"name(s) {', '.join(sorted(clash))} that the view already uses"
+            )
         self.fields.append(field)
         self.used_names.update(field.exposed_names())
         if field.column:
@@ -319,7 +349,7 @@ def _plan_dataset(dataset):
             raise OssieConversionError(
                 f"Dataset '{plan.name}': missing required 'name' in field"
             )
-        if not isinstance(name, str) or not _LOOKML_NAME.match(name):
+        if not _is_lookml_name(name):
             raise OssieConversionError(
                 f"Field '{plan.name}.{name}': name is not a valid LookML field name"
             )
@@ -328,34 +358,77 @@ def _plan_dataset(dataset):
                 f"Dataset '{plan.name}': duplicate field name '{name}'"
             )
         names.add(name)
+        datatype = field.get("datatype")
+        if datatype is not None and not isinstance(datatype, str):
+            raise OssieConversionError(
+                f"Field '{plan.name}.{name}': 'datatype' must be a string"
+            )
 
-    # A temporal field `created_at` becomes `dimension_group: created`, unless
+    # Fields and dataset-scoped metrics share one namespace (Ossie spec,
+    # Metric Scoping, rule 2).
+    for metric in plan.raw_metrics:
+        metric_name = _metric_name(metric, f"Dataset '{plan.name}': ")
+        if metric_name in names:
+            raise OssieConversionError(
+                f"Dataset '{plan.name}': '{metric_name}' is both a field and a metric"
+            )
+        if metric_name in plan.metric_names:
+            raise OssieConversionError(
+                f"Dataset '{plan.name}': duplicate metric name '{metric_name}'"
+            )
+        plan.metric_names.add(metric_name)
+
+    # Pick each field's expression first: a field with no usable dialect is
+    # skipped and must not reserve names in the view.
+    extracted = {}
+    for field in fields:
+        context = f"Field '{plan.name}.{field['name']}'"
+        _warn_ai_context(field, context, used=("synonyms", "instructions"))
+        extracted[field["name"]] = _extract_expression(field.get("expression"), context)
+    emitted = {name for name, (expr, _) in extracted.items() if expr is not None}
+
+    # A temporal field `created_time` becomes `dimension_group: created`, unless
     # the shorter name, or a timeframe it expands to (`created_date`), would
-    # collide with another field or another group.
+    # collide with another field, another group, or a dataset-scoped metric.
     group_names = Counter()
     for field in fields:
-        if _is_temporal(field):
+        if field["name"] in emitted and _is_temporal(field):
             group_names[_strip_time_suffix(field["name"])] += 1
 
     for field in fields:
         name = field["name"]
         context = f"Field '{plan.name}.{name}'"
-        _warn_ai_context(field, context, used=("synonyms", "instructions"))
-        expr = _extract_expression(field.get("expression"), context)
+        expr, dialect = extracted[name]
         if expr is None:
             continue
-        sql, column, _ = _qualify(expr, plan.name, {plan.name: plan}, context)
+        sql, column, _ = _qualify(expr, dialect, plan.name, {plan.name: plan}, context)
 
         if _is_temporal(field):
             datatype = field.get("datatype")
             lookml_datatype = _TEMPORAL_TYPES.get(datatype)
             timeframes = _DATE_TIMEFRAMES if lookml_datatype == "date" else _TIMESTAMP_TIMEFRAMES
+            # Names the group must not take: every other emitted field, what
+            # the groups and dimensions planned so far expose, and the
+            # dataset's declared metric names.
+            taken = (emitted - {name}) | plan.used_names | plan.metric_names
             short = _strip_time_suffix(name)
             expands_to = {short, *(f"{short}_{tf}" for tf in timeframes)}
-            if short != name and (
-                group_names[short] > 1 or (expands_to & (names - {name}))
-            ):
+            if short != name and (group_names[short] > 1 or (expands_to & taken)):
                 short = name
+            clashing = [tf for tf in timeframes if f"{short}_{tf}" in taken]
+            if "raw" in clashing:
+                raise OssieConversionError(
+                    f"{context}: dimension_group '{short}' needs '{short}_raw' (its "
+                    f"join and measure reference), which another field or metric "
+                    f"already uses"
+                )
+            if clashing:
+                warnings.warn(
+                    f"{context}: dropped "
+                    + ", ".join(f"timeframe '{tf}' ('{short}_{tf}' is already a field or metric)" for tf in clashing)
+                    + f" from dimension_group '{short}'"
+                )
+                timeframes = [tf for tf in timeframes if tf not in clashing]
             planned = _Field(name, short, "group", sql, column)
             planned.datatype = lookml_datatype
             # Ossie DateTime (BigQuery DATETIME) is civil time with no zone;
@@ -527,7 +600,9 @@ def _convert_source(source, dataset_name):
     without it Looker would use the view name as the table, so an empty
     source is an error rather than a warning.
     """
-    source_stripped = str(source).strip() if isinstance(source, str) else ""
+    if source is not None and not isinstance(source, str):
+        raise OssieConversionError(f"Dataset '{dataset_name}': 'source' must be a string")
+    source_stripped = (source or "").strip()
     if not source_stripped:
         raise OssieConversionError(
             f"Dataset '{dataset_name}': missing required 'source' (Looker would "
@@ -564,10 +639,10 @@ def _convert_source(source, dataset_name):
 def _extract_expression(expression, context):
     """Selects the best dialect expression for BigQuery/LookML.
 
-    Prefers BIGQUERY, then ANSI_SQL, then OSSIE_SQL_2026. Returns the
-    expression string, or None if only unsupported dialects are present (the
-    caller skips the entry). Raises OssieConversionError if the expression
-    block is missing entirely.
+    Prefers BIGQUERY, then ANSI_SQL, then OSSIE_SQL_2026. Returns
+    (expression, dialect), or (None, None) if only unsupported dialects are
+    present (the caller skips the entry). Raises OssieConversionError if the
+    expression block is missing or malformed.
     """
     if expression is None or not isinstance(expression, dict):
         raise OssieConversionError(f"Missing or malformed expression for {context}")
@@ -579,13 +654,22 @@ def _extract_expression(expression, context):
     available = {}
     for index, d in enumerate(dialects, 1):
         _require_mapping(d, f"{context}: dialect #{index}")
-        dialect_name = (d.get("dialect") or "").upper()
-        if d.get("expression") is not None:
-            available.setdefault(dialect_name, d["expression"])
+        dialect_name = d.get("dialect") or ""
+        if not isinstance(dialect_name, str):
+            raise OssieConversionError(f"{context}: dialect #{index}: 'dialect' must be a string")
+        value = d.get("expression")
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise OssieConversionError(
+                f"{context}: dialect #{index}: expression must be a string, "
+                f"got {type(value).__name__}"
+            )
+        available.setdefault(dialect_name.upper(), value)
 
     for dialect_name in _DIALECT_PREFERENCE:
         if dialect_name in available:
-            return available[dialect_name]
+            return available[dialect_name], dialect_name
 
     dialect_names = [str(d.get("dialect", "")) for d in dialects]
     warnings.warn(
@@ -593,16 +677,31 @@ def _extract_expression(expression, context):
         f"(has dialects: {', '.join(dialect_names)}; requires one of "
         f"{', '.join(_DIALECT_PREFERENCE)})"
     )
-    return None
+    return None, None
 
 
-def _parse(expr, context):
-    """Parses a BigQuery expression; returns None (with a warning) when sqlglot
-    cannot parse it, in which case the caller emits the text verbatim."""
+def _parse(expr, dialect, context):
+    """Parses an expression in its Ossie dialect; returns None (with a
+    warning) when sqlglot cannot read it, in which case the caller emits the
+    text verbatim. SqlglotError covers tokenizer errors (an unterminated
+    string) as well as parse errors."""
     try:
-        return sqlglot.parse_one(expr, dialect="bigquery")
-    except sqlglot.errors.ParseError as e:
+        return sqlglot.parse_one(expr, read=_SQLGLOT_DIALECTS[dialect])
+    except sqlglot.errors.SqlglotError as e:
         first_line = str(e).splitlines()[0]
+        if dialect != "BIGQUERY":
+            # BigQuery SQL is often tagged ANSI_SQL (backtick identifiers are
+            # the usual tell). Reading it as BigQuery only after the ANSI
+            # read failed cannot change the meaning of valid ANSI.
+            try:
+                tree = sqlglot.parse_one(expr, read="bigquery")
+            except sqlglot.errors.SqlglotError:
+                pass
+            else:
+                warnings.warn(
+                    f"{context}: not valid {dialect} ({first_line}); read as BIGQUERY"
+                )
+                return tree
         warnings.warn(
             f"{context}: could not parse expression ({first_line}); emitted "
             f"verbatim, verify column references in LookML"
@@ -610,13 +709,16 @@ def _parse(expr, context):
         return None
 
 
-def _qualify(expr, home, plans, context, tree=None):
+def _qualify(expr, dialect, home, plans, context, tree=None, metric=False):
     """Rewrites column references in `expr` to LookML substitutions.
 
-    Bare `col` becomes `${TABLE}.col` (a physical column of the home view).
-    `dataset.col` becomes `${dataset.<field>}`, resolved through the field
-    names the dataset's view exposes (so a time column joins on its `_raw`
-    timeframe).
+    In a field expression a bare `col` is a source column and becomes
+    `${TABLE}.col`. In a metric (`metric=True`) names refer to fields (Ossie
+    spec, Name Resolution), so a bare name of a computed field of the home view
+    becomes `${field}`; a field that just selects the column of the same name
+    stays `${TABLE}.col`. `dataset.col` becomes `${dataset.<field>}`, resolved
+    through the field names the dataset's view exposes (so a time column joins
+    on its `_raw` timeframe).
 
     Returns (sql, bare_column, tree): `bare_column` is set when the expression
     is a single bare identifier; `tree` is the rewritten sqlglot tree (None
@@ -624,7 +726,7 @@ def _qualify(expr, home, plans, context, tree=None):
     """
     expr = expr.strip()
     if tree is None:
-        tree = _parse(expr, context)
+        tree = _parse(expr, dialect, context)
     if tree is None:
         return expr, None, None
 
@@ -647,6 +749,9 @@ def _qualify(expr, home, plans, context, tree=None):
             )
             return exp.Var(this=node.sql(dialect="bigquery"))
         if not table:
+            field = plans[home].resolve(column) if metric else None
+            if field is not None and not _selects_column(field, column):
+                return exp.Var(this=f"${{{field.ref}}}")
             return exp.Var(this=f"${{TABLE}}.{ident}")
         plan = plans.get(table)
         if plan is None:
@@ -674,19 +779,33 @@ def _qualify(expr, home, plans, context, tree=None):
     return rewritten.sql(dialect="bigquery"), bare_column, rewritten
 
 
+def _selects_column(field, column):
+    """True when `field` is a plain pass-through of the source column `column`."""
+    return field.column is not None and field.column.upper() == str(column).upper()
+
+
 # ---------------------------------------------------------------------------
 # Metrics -> measures
 # ---------------------------------------------------------------------------
 
-def _plan_metric(metric, plans):
+def _metric_name(metric, prefix=""):
+    """The metric's name, checked to be a valid LookML name (YAML reads
+    `2024` as an int and `yes` / `on` as booleans)."""
     name = metric.get("name")
-    if not name:
-        raise OssieConversionError("Missing required 'name' in metric")
-    if not _LOOKML_NAME.match(name):
-        raise OssieConversionError(f"Metric '{name}': name is not a valid LookML name")
-    context = f"Metric '{name}'"
+    if name is None or name == "":
+        raise OssieConversionError(f"{prefix}Missing required 'name' in metric")
+    if not _is_lookml_name(name):
+        raise OssieConversionError(f"{prefix}Metric '{name}': name is not a valid LookML name")
+    return name
 
-    expr = _extract_expression(metric.get("expression"), context)
+
+def _plan_metric(metric, plans, scope=None):
+    """Plans a measure. `scope` is the dataset that declares a dataset-scoped
+    metric; its measure goes in that view and may reference only its fields."""
+    name = _metric_name(metric)
+    context = f"Metric '{scope.name}.{name}'" if scope else f"Metric '{name}'"
+
+    expr, dialect = _extract_expression(metric.get("expression"), context)
     if expr is None:
         return
     if not plans:
@@ -695,17 +814,47 @@ def _plan_metric(metric, plans):
 
     description = _entity_description(metric)
     _warn_ai_context(metric, context, used=("synonyms", "instructions"))
-    _warn_dropped_fields(metric, context)
+    _warn_dropped_fields(
+        metric, context, extra=["datatype"] if metric.get("datatype") else None,
+    )
 
-    tree = _parse(expr, context)
+    tree = _parse(expr, dialect, context)
     if tree is None:
-        home = next(iter(plans.values()))
+        home = scope or next(iter(plans.values()))
         home.add_measure(_Measure(_measure_name(home, name, context), "number", expr.strip(), description=description))
         return
 
-    home = _metric_home(tree, plans, context)
-    sql, _, rewritten = _qualify(expr, home.name, plans, context, tree=tree)
+    tree = _unwrap_filters(tree)
+    if scope is not None:
+        for column in tree.find_all(exp.Column):
+            if column.table and column.table != scope.name:
+                raise OssieConversionError(
+                    f"{context}: references dataset '{column.table}'; a dataset-scoped "
+                    f"metric reaches only its own dataset's fields (declare it in the "
+                    f"model-root metrics instead)"
+                )
+            if not column.table and scope.resolve(column.name) is None:
+                warnings.warn(
+                    f"{context}: '{column.name}' matches no field of dataset "
+                    f"'{scope.name}'; referencing the source column"
+                )
+        home = scope
+    else:
+        home = _metric_home(tree, plans, context)
+    sql, _, rewritten = _qualify(expr, dialect, home.name, plans, context, tree=tree, metric=True)
     measure_name = _measure_name(home, name, context)
+
+    if rewritten.find(exp.Filter) is not None:
+        # A FILTER that _unwrap_filters could not rewrite (e.g. over a
+        # multi-argument DISTINCT): hoisting the inner aggregate would drop
+        # the condition, so keep the whole expression inline.
+        warnings.warn(
+            f"{context}: contains an aggregate FILTER LookML cannot type natively; "
+            f"emitted as type: number with the aggregate inline (not protected "
+            f"by symmetric aggregates)"
+        )
+        home.add_measure(_Measure(measure_name, "number", sql, description=description))
+        return
 
     if rewritten.find(exp.Window) is not None:
         warnings.warn(
@@ -726,7 +875,7 @@ def _plan_metric(metric, plans):
     # express the metric as arithmetic over them, so Looker's symmetric
     # aggregates still protect the aggregates across joins.
     helpers = []
-    taken = set(home.used_names) | {measure_name}
+    taken = set(home.used_names) | home.reserved_names | {measure_name}
 
     def hoist(node):
         native = _native_measure(node)
@@ -769,6 +918,43 @@ def _measure_name(home, name, context):
         f"emitted as measure '{renamed}'"
     )
     return renamed
+
+
+def _unwrap_filters(tree):
+    """Rewrites `AGG(x) FILTER (WHERE c)` as `AGG(IF(c, x, NULL))`, the same
+    aggregate as a plain one Looker can type and hoist. `COUNT(*) FILTER
+    (WHERE c)` becomes `SUM(IF(c, 1, 0))`, a native sum that symmetric
+    aggregates keep correct across fanning joins (it is NULL rather than 0
+    over no rows at all)."""
+    def unwrap(node):
+        if not (
+            isinstance(node, exp.Filter)
+            and isinstance(node.this, exp.AggFunc)
+            and isinstance(node.expression, exp.Where)
+        ):
+            return node
+        agg = node.this.copy()
+        condition = node.expression.this
+
+        def guarded(value):
+            return exp.If(this=condition.copy(), true=value, false=exp.Null())
+
+        arg = agg.this
+        if isinstance(agg, exp.Count) and isinstance(arg, exp.Star):
+            return exp.Sum(this=exp.If(
+                this=condition.copy(), true=exp.Literal.number(1), false=exp.Literal.number(0),
+            ))
+        elif isinstance(arg, exp.Distinct):
+            if len(arg.expressions) != 1:
+                return node
+            arg.set("expressions", [guarded(arg.expressions[0])])
+        elif isinstance(arg, exp.Expression):
+            agg.set("this", guarded(arg))
+        else:
+            return node
+        return agg
+
+    return tree.transform(unwrap)
 
 
 def _native_measure(node):
@@ -854,8 +1040,10 @@ def _plan_relationships(relationships, plans):
     seen = set()
     for rel in relationships:
         rel_name = rel.get("name")
-        if not rel_name:
+        if rel_name is None or rel_name == "":
             raise OssieConversionError("Missing required 'name' field in relationship")
+        if not isinstance(rel_name, str):
+            raise OssieConversionError(f"Relationship '{rel_name}': name must be a string")
         if rel_name in seen:
             raise OssieConversionError(f"Duplicate relationship name '{rel_name}'")
         seen.add(rel_name)
@@ -865,6 +1053,8 @@ def _plan_relationships(relationships, plans):
         to_ds = rel.get("to")
         if not from_ds or not to_ds:
             raise OssieConversionError(f"{context}: both 'from' and 'to' are required")
+        if not isinstance(from_ds, str) or not isinstance(to_ds, str):
+            raise OssieConversionError(f"{context}: 'from' and 'to' must be dataset names")
 
         from_cols = _require_name_list(rel, "from_columns", context)
         to_cols = _require_name_list(rel, "to_columns", context)
@@ -953,7 +1143,7 @@ def _render_explore(base, out_edges, plans):
                 # paths (e.g. billing vs shipping address) stay distinct.
                 join_name, aliased = f"{current_alias}_{rel.to_ds}", True
             elif target_counts[rel.to_ds] > 1:
-                if not _LOOKML_NAME.match(rel.name):
+                if not _is_lookml_name(rel.name):
                     raise OssieConversionError(
                         f"{context}: '{rel.name}' is needed as a LookML join alias "
                         f"(dataset '{rel.to_ds}' is joined more than once from "
@@ -1049,6 +1239,10 @@ def _warn_ai_context(entity, context, used):
             f"{context}: dropped ai_context key(s) with no LookML counterpart: "
             + ", ".join(f"ai_context.{key}" for key in dropped)
         )
+
+
+def _is_lookml_name(value):
+    return isinstance(value, str) and bool(_LOOKML_NAME.match(value))
 
 
 def _require_mapping(value, context):

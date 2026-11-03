@@ -42,12 +42,12 @@ TPCDS = Path(__file__).resolve().parents[2] / "ossie" / "examples" / "tpcds_sema
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _ansi(expr):
-    return {"dialects": [{"dialect": "ANSI_SQL", "expression": expr}]}
+def _ansi(expr, dialect="ANSI_SQL"):
+    return {"dialects": [{"dialect": dialect, "expression": expr}]}
 
 
-def _field(name, expr=None, is_time=None, datatype=None, label=None, description=None):
-    field = {"name": name, "expression": _ansi(expr or name)}
+def _field(name, expr=None, is_time=None, datatype=None, label=None, description=None, dialect="ANSI_SQL"):
+    field = {"name": name, "expression": _ansi(expr or name, dialect)}
     if is_time is not None:
         field["dimension"] = {"is_time": is_time}
     if datatype is not None:
@@ -59,10 +59,12 @@ def _field(name, expr=None, is_time=None, datatype=None, label=None, description
     return field
 
 
-def _dataset(name, fields, source=None, primary_key=None):
+def _dataset(name, fields, source=None, primary_key=None, metrics=None):
     dataset = {"name": name, "source": source or f"proj.sch.{name}", "fields": fields}
     if primary_key is not None:
         dataset["primary_key"] = primary_key
+    if metrics is not None:
+        dataset["metrics"] = metrics
     return dataset
 
 
@@ -76,8 +78,8 @@ def _rel(name, from_ds, to_ds, from_cols, to_cols):
     }
 
 
-def _metric(name, expr, **extra):
-    return {"name": name, "expression": _ansi(expr), **extra}
+def _metric(name, expr, dialect="ANSI_SQL", **extra):
+    return {"name": name, "expression": _ansi(expr, dialect), **extra}
 
 
 def _model(datasets, relationships=None, metrics=None, **extra):
@@ -224,11 +226,11 @@ class TestExtractExpression:
                 {"dialect": "BIGQUERY", "expression": "SAFE_CAST(LOWER(email) AS STRING)"},
             ]
         }
-        assert _extract_expression(expression, "f") == "SAFE_CAST(LOWER(email) AS STRING)"
+        assert _extract_expression(expression, "f") == ("SAFE_CAST(LOWER(email) AS STRING)", "BIGQUERY")
 
     def test_falls_back_to_ansi(self):
         expression = {"dialects": [{"dialect": "ANSI_SQL", "expression": "x"}]}
-        assert _extract_expression(expression, "f") == "x"
+        assert _extract_expression(expression, "f") == ("x", "ANSI_SQL")
 
     def test_falls_back_to_ossie_sql_after_ansi(self):
         expression = {
@@ -237,12 +239,12 @@ class TestExtractExpression:
                 {"dialect": "SNOWFLAKE", "expression": "snow_expr"},
             ]
         }
-        assert _extract_expression(expression, "f") == "ossie_expr"
+        assert _extract_expression(expression, "f") == ("ossie_expr", "OSSIE_SQL_2026")
 
     def test_unsupported_only_warns_and_skips(self):
         expression = {"dialects": [{"dialect": "SNOWFLAKE", "expression": "x"}]}
         with pytest.warns(UserWarning, match="Skipping"):
-            assert _extract_expression(expression, "f") is None
+            assert _extract_expression(expression, "f") == (None, None)
 
     def test_missing_expression_raises(self):
         with pytest.raises(OssieConversionError, match="Missing or malformed"):
@@ -310,18 +312,18 @@ class TestFields:
 
     def test_bigquery_functions_survive_qualification(self):
         out = self._view(
-            _field("month", expr="DATE_TRUNC(order_date, MONTH)"),
-            _field("email", expr="SAFE_CAST(LOWER(email) AS STRING)"),
+            _field("month", expr="DATE_TRUNC(order_date, MONTH)", dialect="BIGQUERY"),
+            _field("email", expr="SAFE_CAST(LOWER(email) AS STRING)", dialect="BIGQUERY"),
         )
         assert "sql: DATE_TRUNC(${TABLE}.order_date, MONTH) ;;" in out
         assert "sql: SAFE_CAST(LOWER(${TABLE}.email) AS STRING) ;;" in out
 
     def test_quoted_column_keeps_its_quotes(self):
-        out = self._view(_field("oid", expr="`Order ID`"))
+        out = self._view(_field("oid", expr="`Order ID`", dialect="BIGQUERY"))
         assert "sql: ${TABLE}.`Order ID` ;;" in out
 
     def test_quoted_column_in_an_expression_keeps_its_quotes(self):
-        out = self._view(_field("oid", expr="CAST(`Order ID` AS STRING)"))
+        out = self._view(_field("oid", expr="CAST(`Order ID` AS STRING)", dialect="BIGQUERY"))
         assert "sql: CAST(${TABLE}.`Order ID` AS STRING) ;;" in out
 
     @pytest.mark.parametrize("literal", ["NULL", "TRUE", "CURRENT_DATE"])
@@ -698,7 +700,7 @@ class TestRelationships:
         assert "sql_on: ${orders.cust} = ${customers.id} ;;" in out
 
     def test_sql_on_resolves_a_quoted_column_to_its_field(self):
-        orders = _dataset("orders", [_field("id"), _field("cust", expr="`Customer ID`")], primary_key=["id"])
+        orders = _dataset("orders", [_field("id"), _field("cust", expr="`Customer ID`", dialect="BIGQUERY")], primary_key=["id"])
         model = _model([orders, CUSTOMERS], [_rel("o2c", "orders", "customers", ["Customer ID"], ["id"])])
         assert "sql_on: ${orders.cust} = ${customers.id} ;;" in _convert(model)
 
@@ -820,6 +822,18 @@ class TestInputValidation:
             ({"datasets": [_dataset("t", [])], "relationships": ["x"]}, "Relationship #1.*mapping"),
             ({"datasets": [_dataset("t", [{"name": "f", "expression": {"dialects": ["ANSI_SQL"]}}])]}, "Field 't.f'.*dialect #1.*mapping"),
             ({"datasets": [_dataset("t", [{"name": "f", "expression": {"dialects": "x"}}])]}, "Field 't.f'.*'dialects' must be a list"),
+            # YAML reads `2024` as an int and `yes` / `on` as booleans.
+            ({"datasets": [{"name": 2024, "source": "a.b.c"}]}, "Dataset '2024'.*not a valid LookML view name"),
+            ({"datasets": [_dataset("t", [])], "metrics": [{"name": True, "expression": _ansi("COUNT(*)")}]}, "Metric 'True'.*not a valid LookML name"),
+            ({"datasets": [_dataset("t", [], metrics=[{"name": 7, "expression": _ansi("COUNT(*)")}])]}, "Metric '7'.*not a valid LookML name"),
+            ({"datasets": [_dataset("a", [_field("id")]), _dataset("b", [_field("id")], primary_key=["id"])],
+              "relationships": [_rel(True, "a", "b", ["id"], ["id"])]}, "Relationship 'True'.*name must be a string"),
+            ({"datasets": [_dataset("a", [_field("id")]), _dataset("b", [_field("id")], primary_key=["id"])],
+              "relationships": [_rel("r", ["a"], "b", ["id"], ["id"])]}, "Relationship 'r'.*'from' and 'to' must be dataset names"),
+            ({"datasets": [_dataset("t", [{"name": "f", "expression": _ansi(1)}])]}, "Field 't.f'.*expression must be a string"),
+            ({"datasets": [_dataset("t", [{"name": "f", "expression": {"dialects": [{"dialect": 1, "expression": "x"}]}}])]}, "Field 't.f'.*'dialect' must be a string"),
+            ({"datasets": [_dataset("t", [_field("f", datatype=["Integer"])])]}, "Field 't.f'.*'datatype' must be a string"),
+            ({"datasets": [{"name": "t", "source": 42}]}, "Dataset 't'.*'source' must be a string"),
         ],
     )
     def test_wrongly_typed_containers_are_conversion_errors(self, model, message):
@@ -917,3 +931,246 @@ class TestTimezones:
     def test_instants_and_dates_keep_looker_defaults(self, datatype):
         view = _block(_convert(_model([_dataset("t", [_field("f", datatype=datatype)])])), "view: t")
         assert "convert_tz" not in _block(view, "dimension_group: f")
+
+
+class TestSourceDialects:
+    """ANSI_SQL and OSSIE_SQL_2026 are read as ANSI and transpiled to BigQuery,
+    since the two disagree on quoting and argument order."""
+
+    def _view(self, *fields):
+        return _block(_convert(_model([_dataset("t", list(fields))])), "view: t")
+
+    def test_ansi_double_quotes_are_an_identifier(self):
+        assert "sql: ${TABLE}.`Customer ID` ;;" in self._view(_field("cid", expr='"Customer ID"'))
+
+    def test_ansi_date_trunc_is_transpiled(self):
+        view = self._view(_field("m", expr="DATE_TRUNC('month', order_date)", dialect="OSSIE_SQL_2026"))
+        assert "sql: DATE_TRUNC(${TABLE}.order_date, MONTH) ;;" in view
+
+    def test_ansi_count_distinct_of_quoted_identifier(self):
+        ds = _dataset("t", [_field("id"), _field("cid", expr='"customer id"')], primary_key=["id"])
+        out = _convert(_model([ds], metrics=[_metric("n", 'COUNT(DISTINCT t.cid)')]))
+        measure = _block(out, "measure: n")
+        assert "type: count_distinct" in measure
+        assert "sql: ${t.cid} ;;" in measure
+
+    def test_bigquery_dialect_is_read_as_bigquery(self):
+        # In BigQuery a double-quoted token is a string literal.
+        assert "sql: 'x' ;;" in self._view(_field("lit", expr='"x"', dialect="BIGQUERY"))
+
+
+class TestFilterClause:
+    """`AGG(x) FILTER (WHERE c)` becomes `AGG(IF(c, x, NULL))`, so it is still
+    typed natively and stays under symmetric aggregates."""
+
+    DS = _dataset("t", [_field("id"), _field("amount"), _field("status"), _field("cid")], primary_key=["id"])
+
+    def _measure(self, expr, name="m"):
+        return _block(_convert(_model([self.DS], metrics=[_metric(name, expr)])), f"measure: {name}")
+
+    def test_filtered_sum_is_a_native_sum(self):
+        measure = self._measure("SUM(t.amount) FILTER (WHERE t.status = 'complete')")
+        assert "type: sum" in measure
+        assert "sql: IF(${t.status} = 'complete', ${t.amount}, NULL) ;;" in measure
+
+    def test_filtered_count_distinct_is_native(self):
+        measure = self._measure("COUNT(DISTINCT t.cid) FILTER (WHERE t.status = 'x')")
+        assert "type: count_distinct" in measure
+        assert "sql: IF(${t.status} = 'x', ${t.cid}, NULL) ;;" in measure
+
+    def test_filtered_count_star_is_a_native_sum_of_matches(self):
+        # A native measure keeps symmetric aggregates across fanning joins;
+        # an inline COUNT(IF(...)) would count fanned-out rows.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(_model([self.DS], metrics=[_metric("m", "COUNT(*) FILTER (WHERE t.status = 'x')")]))
+        measure = _block(out, "measure: m")
+        assert "type: sum" in measure
+        assert "sql: IF(${t.status} = 'x', 1, 0) ;;" in measure
+
+    def test_filtered_aggregate_inside_arithmetic_hoists_the_filter(self):
+        out = _convert(_model([self.DS], metrics=[_metric("r", "SUM(t.amount) FILTER (WHERE t.status = 'x') / SUM(t.amount)")]))
+        helper = _block(out, "measure: r_sum_1")
+        assert "sql: IF(${t.status} = 'x', ${t.amount}, NULL) ;;" in helper
+        assert "sql: ${r_sum_1} / ${r_sum_2} ;;" in _block(out, "measure: r")
+
+
+class TestUnparseable:
+    def test_tokenizer_error_is_verbatim_with_warning(self):
+        model = _model([_dataset("t", [_field("full", expr="CONCAT(first, ', last)")])])
+        with pytest.warns(UserWarning, match="Field 't.full'.*verbatim"):
+            out = convert_ossie_to_lookml(model)
+        assert "sql: CONCAT(first, ', last) ;;" in out
+
+    def test_tokenizer_error_in_a_metric_is_verbatim_with_warning(self):
+        model = _model([ORDERS], metrics=[_metric("m", "SUM(CONCAT(a, ')")])
+        with pytest.warns(UserWarning, match="Metric 'm'.*verbatim"):
+            convert_ossie_to_lookml(model)
+
+
+class TestMetricFieldReferences:
+    """Metric expressions refer to fields, never source columns (Ossie spec,
+    Name Resolution); field expressions refer to source columns."""
+
+    DS = _dataset(
+        "orders",
+        [_field("id"), _field("price"), _field("quantity"), _field("revenue", expr="price * quantity")],
+        primary_key=["id"],
+    )
+
+    def test_bare_name_of_a_computed_field_references_the_field(self):
+        out = _convert(_model([self.DS], metrics=[_metric("total_revenue", "SUM(revenue)")]))
+        measure = _block(out, "measure: total_revenue")
+        assert "type: sum" in measure
+        assert "sql: ${revenue} ;;" in measure
+
+    def test_bare_name_of_a_pass_through_field_stays_the_column(self):
+        out = _convert(_model([self.DS], metrics=[_metric("q", "SUM(quantity)")]))
+        assert "sql: ${TABLE}.quantity ;;" in _block(out, "measure: q")
+
+    def test_bare_name_of_a_computed_time_field_references_its_raw_timeframe(self):
+        ds = _dataset("e", [_field("id"), _field("seen", expr="TIMESTAMP_SECONDS(ts)", datatype="DateTimeTz")], primary_key=["id"])
+        out = _convert(_model([ds], metrics=[_metric("last_seen", "MAX(seen)")]))
+        assert "sql: ${seen_raw} ;;" in _block(out, "measure: last_seen")
+
+    def test_field_expressions_still_read_source_columns(self):
+        # `revenue` in a field expression is the source column, not the field.
+        ds = _dataset("o", [_field("revenue", expr="price * quantity"), _field("gross", expr="revenue * 1.2")])
+        out = _convert(_model([ds]))
+        assert "sql: ${TABLE}.revenue * 1.2 ;;" in _block(out, "dimension: gross")
+
+
+class TestDatasetMetrics:
+    """`datasets[].metrics` (dataset-scoped metrics) become measures in that
+    dataset's view, resolving single-part names against its fields."""
+
+    def test_dataset_metric_becomes_a_measure_in_its_view(self):
+        ds = _dataset("orders", [_field("id"), _field("amount")], primary_key=["id"], metrics=[_metric("total", "SUM(amount)")])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(_model([ds]))
+        measure = _block(_block(out, "view: orders"), "measure: total")
+        assert "type: sum" in measure
+        assert "sql: ${TABLE}.amount ;;" in measure
+
+    def test_dataset_metric_is_placed_in_its_dataset_even_when_another_exposes_the_field(self):
+        a = _dataset("a", [_field("id"), _field("amount")], primary_key=["id"])
+        b = _dataset("b", [_field("id"), _field("amount")], primary_key=["id"], metrics=[_metric("total", "SUM(amount)")])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(_model([a, b]))
+        assert "measure: total" in _block(out, "view: b")
+        assert "measure: total" not in _block(out, "view: a")
+
+    def test_dataset_metric_referencing_another_dataset_is_an_error(self):
+        a = _dataset("a", [_field("id")], primary_key=["id"])
+        b = _dataset("b", [_field("id")], primary_key=["id"], metrics=[_metric("n", "COUNT(DISTINCT a.id)")])
+        with pytest.raises(OssieConversionError, match="Metric 'b.n'.*references dataset 'a'"):
+            convert_ossie_to_lookml(_model([a, b]))
+
+    def test_dataset_metric_name_must_not_repeat_a_field_name(self):
+        ds = _dataset("t", [_field("id"), _field("total")], metrics=[_metric("total", "COUNT(*)")])
+        with pytest.raises(OssieConversionError, match="Dataset 't'.*'total'.*both a field and a metric"):
+            convert_ossie_to_lookml(_model([ds]))
+
+    def test_duplicate_dataset_metric_names_raise(self):
+        ds = _dataset("t", [_field("id")], metrics=[_metric("n", "COUNT(*)"), _metric("n", "COUNT(*)")])
+        with pytest.raises(OssieConversionError, match="Dataset 't'.*duplicate metric name 'n'"):
+            convert_ossie_to_lookml(_model([ds]))
+
+    def test_tpcds_dataset_metric_is_converted(self):
+        out = _convert(TPCDS.read_text())
+        measure = _block(_block(out, "view: store_sales"), "measure: total_quantity")
+        assert "type: sum" in measure
+
+
+class TestTimeframeCollisions:
+    def test_unshortened_group_drops_a_timeframe_a_field_already_uses(self):
+        ds = _dataset("t", [_field("created", datatype="DateTimeTz"), _field("created_year", datatype="Integer")])
+        with pytest.warns(UserWarning, match="Field 't.created'.*timeframe 'year'.*created_year"):
+            out = convert_ossie_to_lookml(_model([ds]))
+        group = _block(out, "dimension_group: created")
+        assert "timeframes: [raw, time, date, week, month, quarter]" in group
+        lkml.load(out)
+
+    def test_raw_timeframe_collision_is_an_error(self):
+        ds = _dataset("t", [_field("created", datatype="DateTimeTz"), _field("created_raw")])
+        with pytest.raises(OssieConversionError, match="Field 't.created'.*created_raw"):
+            convert_ossie_to_lookml(_model([ds]))
+
+    def test_groups_never_expose_the_same_name(self):
+        # `a` (Date) expands to a_date; `a_date_time` shortens to the group
+        # `a_date`, which is that same name.
+        ds = _dataset("t", [_field("a", datatype="Date"), _field("a_date_time", datatype="DateTimeTz")])
+        out = _convert(_model([ds]))
+        view = lkml.load(out)["views"][0]
+        exposed = [d["name"] for d in view.get("dimensions", [])]
+        for group in view.get("dimension_groups", []):
+            exposed += [group["name"], *(f"{group['name']}_{tf}" for tf in group["timeframes"])]
+        assert len(exposed) == len(set(exposed)), exposed
+
+
+class TestNotSilentlyDroppedSpecKeys:
+    def test_metric_datatype_is_reported(self):
+        model = _model([ORDERS], metrics=[_metric("n", "COUNT(*)", datatype="Integer")])
+        with pytest.warns(UserWarning, match="Dropped from Metric 'n'.*datatype"):
+            convert_ossie_to_lookml(model)
+
+
+class TestReviewFollowUps:
+    def test_ansi_expression_with_backticks_falls_back_to_bigquery_with_warning(self):
+        # Backticks are not ANSI; models in the wild still tag BigQuery SQL as ANSI_SQL.
+        model = _model([_dataset("t", [_field("oid", expr="`Order ID`")])])
+        with pytest.warns(UserWarning, match="Field 't.oid'.*not valid ANSI_SQL.*read as BIGQUERY"):
+            out = convert_ossie_to_lookml(model)
+        assert "sql: ${TABLE}.`Order ID` ;;" in out
+
+    def test_skipped_fields_do_not_reserve_names(self):
+        ds = _dataset("t", [
+            _field("created", datatype="DateTimeTz"),
+            {"name": "created_raw", "expression": _ansi("x", "SNOWFLAKE")},
+            {"name": "created_year", "expression": _ansi("x", "SNOWFLAKE")},
+        ])
+        out = _convert(_model([ds]))
+        assert "timeframes: [raw, time, date, week, month, quarter, year]" in _block(out, "dimension_group: created")
+
+    def test_dataset_metric_with_unknown_name_warns(self):
+        ds = _dataset("orders", [_field("id")], metrics=[_metric("m", "SUM(nonexistent)")])
+        with pytest.warns(UserWarning, match="Metric 'orders.m'.*'nonexistent' matches no field"):
+            convert_ossie_to_lookml(_model([ds]))
+
+    def test_helper_measures_do_not_take_a_declared_metric_name(self):
+        ds = _dataset("t", [_field("id"), _field("amount")], primary_key=["id"], metrics=[
+            _metric("a", "SUM(amount) / COUNT(DISTINCT id)"),
+            _metric("a_sum_1", "SUM(amount)"),
+        ])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(_model([ds]))
+        assert "type: sum" in _block(out, "measure: a_sum_1")
+        assert "hidden: yes" not in _block(out, "measure: a_sum_1")
+        assert "a_sum_1_measure" not in out
+
+    def test_helper_measures_do_not_take_a_model_metric_name(self):
+        out = _convert(_model([ORDERS], metrics=[
+            _metric("r", "SUM(orders.amount) / COUNT(DISTINCT orders.order_id)"),
+            _metric("r_sum_1", "SUM(orders.amount)"),
+        ]))
+        assert "hidden: yes" not in _block(out, "measure: r_sum_1")
+
+    def test_dataset_metric_keeps_its_name_over_a_generated_timeframe(self):
+        ds = _dataset("t", [_field("created_time", datatype="DateTimeTz"), _field("n")],
+                      metrics=[_metric("created_date", "COUNT(*)")])
+        out = _convert(_model([ds]))
+        assert "measure: created_date {" in out
+        assert "created_date_measure" not in out
+        # The group keeps its full name rather than expose `created_date`.
+        assert "dimension_group: created_time {" in out
+        lkml.load(out)
+
+    def test_dataset_metric_named_like_a_timeframe_of_an_unshortened_group_drops_it(self):
+        ds = _dataset("t", [_field("created", datatype="DateTimeTz")], metrics=[_metric("created_year", "COUNT(*)")])
+        with pytest.warns(UserWarning, match="dropped timeframe 'year'"):
+            out = convert_ossie_to_lookml(_model([ds]))
+        assert "measure: created_year {" in out
+        assert "created_year_measure" not in out
