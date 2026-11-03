@@ -120,6 +120,8 @@ The Ossie specification currently defines extensions for the following vendors:
 
 [`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped spoke. It reads one Snowflake semantic view, writes one Ossie document, writes a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. It does not call `snowflake` (Cortex Analyst export only) or `wisdom` (that spoke drops synonyms and field or metric `ai_context`).
 
+[`sap-csn-ontology`](sap-csn-ontology/README.md) targets the **ontology layer** rather than the core semantic-model schema: it reads a SAP CSN document and writes an Ossie ontology document (concepts, identity, relationships, derivations, verbalizations, and `ontology_mappings`). It is complementary to the core-layer SAP CSN converter and uses the same CSN input.
+
 Each vendor may define custom extensions (via the `custom_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification.
 
 ## Mapping Core Constructs

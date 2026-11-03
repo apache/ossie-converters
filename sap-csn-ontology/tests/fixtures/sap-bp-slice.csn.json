@@ -1,0 +1,130 @@
+{
+  "$comment": "SAP Business Partner slice — CSN source fixture. Pairs with sap-bp-slice.ossie.yaml (which validates against ontology/ontology.json). Together they form the fixture pair of the sap-csn-ontology converter; the same CSN is the input of the SAP Business Partner example in apache/ossie. CAP-style CSN, trimmed to the slice's scope.",
+  "csnInteropEffective": "1.0",
+  "definitions": {
+
+    "sap.slice.BusinessPartnerCategory": {
+      "kind": "type",
+      "type": "cds.String",
+      "length": 1,
+      "@EndUserText.label": "Business Partner Category",
+      "enum": {
+        "Person":       { "val": "1" },
+        "Organization": { "val": "2" },
+        "Group":        { "val": "3" }
+      }
+    },
+
+    "sap.slice.BusinessPartner": {
+      "kind": "entity",
+      "@EndUserText.label": "Business Partner",
+      "@ODM.entityName": "BusinessPartner",
+      "elements": {
+        "BusinessPartner": {
+          "key": true,
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "Business Partner Number",
+          "@Semantics.businessPartner.id": true
+        },
+        "BusinessPartnerCategory": {
+          "type": "sap.slice.BusinessPartnerCategory",
+          "@EndUserText.label": "Business Partner Category"
+        },
+        "BusinessPartnerFullName": {
+          "type": "cds.String",
+          "length": 81,
+          "@EndUserText.label": "Full Name"
+        },
+        "Country": {
+          "type": "cds.String",
+          "length": 3,
+          "@EndUserText.label": "Country Key",
+          "$comment": "Domain LAND1, check table T005 — value set maintained as data, not schema"
+        },
+        "_Customer": {
+          "type": "cds.Association",
+          "target": "sap.slice.Customer",
+          "cardinality": { "max": 1 },
+          "on": [ { "ref": ["_Customer", "BusinessPartner"] }, "=", { "ref": ["BusinessPartner"] } ],
+          "@EndUserText.label": "Customer role"
+        }
+      }
+    },
+
+    "sap.slice.Customer": {
+      "kind": "entity",
+      "@EndUserText.label": "Customer",
+      "@ODM.entityName": "Customer",
+      "$comment": "Role view (I_Customer / FLCU00-class): a business partner acting as customer",
+      "elements": {
+        "Customer": {
+          "key": true,
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "Customer Number",
+          "$comment": "Domain KUNNR (CHAR 10, ALPHA)"
+        },
+        "BusinessPartner": {
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "Business Partner Number"
+        },
+        "_SalesArea": {
+          "type": "cds.Association",
+          "target": "sap.slice.CustomerSalesArea",
+          "cardinality": { "max": "*" },
+          "on": [ { "ref": ["_SalesArea", "Customer"] }, "=", { "ref": ["Customer"] } ],
+          "@EndUserText.label": "Sales Areas"
+        }
+      }
+    },
+
+    "sap.slice.CustomerSalesArea": {
+      "kind": "entity",
+      "@EndUserText.label": "Customer Sales Area Data",
+      "$comment": "KNVV-class: customer master data per sales area; four-part compound key",
+      "elements": {
+        "Customer": {
+          "key": true,
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "Customer Number"
+        },
+        "SalesOrganization": {
+          "key": true,
+          "type": "cds.String",
+          "length": 4,
+          "@EndUserText.label": "Sales Organization",
+          "$comment": "Domain VKORG, check table TVKO"
+        },
+        "DistributionChannel": {
+          "key": true,
+          "type": "cds.String",
+          "length": 2,
+          "@EndUserText.label": "Distribution Channel",
+          "$comment": "Domain VTWEG, check table TVTW"
+        },
+        "Division": {
+          "key": true,
+          "type": "cds.String",
+          "length": 2,
+          "@EndUserText.label": "Division",
+          "$comment": "Domain SPART, check table TSPA"
+        },
+        "DeliveryIsBlocked": {
+          "type": "cds.Boolean",
+          "@EndUserText.label": "Delivery Block",
+          "$comment": "Reduced from LIFSD fixed-value domain to a flag for the slice; the release action is behavior, not structure"
+        },
+        "_Customer": {
+          "type": "cds.Association",
+          "target": "sap.slice.Customer",
+          "cardinality": { "max": 1 },
+          "on": [ { "ref": ["_Customer", "Customer"] }, "=", { "ref": ["Customer"] } ],
+          "@EndUserText.label": "Customer"
+        }
+      }
+    }
+  }
+}
