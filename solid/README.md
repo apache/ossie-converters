@@ -47,7 +47,7 @@ mapping for, such as one a later solid-server adds: it is carried unchanged and
 restored on export, with a warning, since an Apache Ossie consumer cannot see it. Where a stashed value stands in for an Apache Ossie field, export
 uses it only while that field still holds what import wrote there: **an edit made in
 Apache Ossie wins**, with a warning. Any input that breaks a
-[requirement](#requirements) **raises a `ConversionError`** — the converter never drops
+[requirement](#errors-and-warnings) **raises a `ConversionError`** — the converter never drops
 information silently or produces an invalid result. (A dataset's or relationship's
 `name` only identifies it within Apache Ossie; Solid has no slot for either, and import
 derives them again.)
@@ -400,37 +400,49 @@ relying on a warehouse default. The one
 type that does not survive is `Time` on Databricks, which has no time-of-day type: it is
 written as `STRING`. An unknown `datatype` name is ignored with a warning.
 
-## Requirements
+## Errors and warnings
 
-Conversion raises a `ConversionError` (rather than guessing or emitting something invalid)
-when an input breaks one of these:
+One rule decides between failing and carrying on, in both directions:
 
-- an Apache Ossie document has no `version` (export) — see
-  [Spec versions](#spec-versions);
-- the input YAML is malformed, or its root is not a mapping;
+- **A `ConversionError`** when the input is not a document the converter can read
+  as a whole — it is not well-formed for its format, its names are ambiguous, so any
+  reference could bind to the wrong object, or nothing convertible is left. Guessing
+  there would produce something wrong.
+- **A warning, dropping that one construct**, when a valid document has something
+  the other format cannot hold or a reference that leads nowhere. The rest of the
+  model still converts, and every such loss is named.
+
+It raises when:
+
+- the input YAML is malformed, or its root is not a mapping; the input file is not
+  UTF-8 (CLI); or the YAML is nested too deeply to read;
+- an Apache Ossie document has no `version` (export), or a `semantic_model` key that
+  is not a non-empty list of mappings — see [Spec versions](#spec-versions);
 - a value has the wrong YAML kind — a scalar where a list or mapping belongs, a list
   item that is itself a list or mapping, or a `custom_extensions` entry that is not a
   mapping with string `vendor_name` and `data`. A null is read as empty, since Solid
   writes an empty list as one;
-- the input file is not UTF-8 (CLI);
-- a Solid model has no `tables`, or an Apache Ossie model has no `datasets` — the spec
-  requires at least one dataset;
-- an Apache Ossie model declares two datasets with the same `name`, or names that differ
-  only in case, which relationships and metrics could then resolve to the wrong table
+- a required part is missing: a Solid model's `tables`, an Apache Ossie model's
+  `datasets`, a dataset's `source`, or a relationship's `from_columns`/`to_columns`;
+- names are ambiguous: two Apache Ossie datasets with the same `name`, or names that
+  differ only in case (export); a Solid table listed twice, ignoring case (import); a
+  field or metric expression listing the same dialect twice with different SQL
   (export);
-- a Solid model lists the same table twice, compared ignoring case, for the same reason
-  (import);
-- a field or metric expression lists the same dialect twice with different SQL (export);
-- a relationship's `from_columns`/`to_columns` differ in length, or name a dataset that
-  is not declared;
-- `--dialect` names a dialect outside `ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS`, `BIGQUERY`;
-- an Apache Ossie document has a `semantic_model` key that is not a non-empty list of
-  mappings (export);
-- a field or metric has neither the selected dialect nor `ANSI_SQL`/`OSSIE_SQL_2026`
-  (export);
-- every dataset's `source` is a SQL query, leaving Solid no table (export);
-- the recorded `custom_extensions[SOLID]` dialect is not one of the four above — which
-  only a hand-edited stash can produce (export).
+- nothing convertible is left: every dataset's `source` is a SQL query, or no field
+  has SQL Solid can run in the selected dialect (export);
+- `--dialect` names a dialect outside `ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS`,
+  `BIGQUERY`, or the recorded `custom_extensions[SOLID]` dialect is not one of them,
+  which only a hand-edited stash can produce (export).
+
+It warns and drops the one construct when:
+
+- a relationship names a dataset or table that is not declared, has join columns that
+  do not pair up, or joins on a column that is not a declared field (both
+  directions); a primary key names an undeclared field (export);
+- a field or metric has no expression in SQL Solid can run (`MDX`, `TABLEAU`,
+  `HOLISTICS_AQL`, …) — and so does a key or join that names such a field (export);
+- a dataset's `source` is a SQL query, with what reads it (export);
+- an Apache Ossie construct has no Solid slot — see the list at the top (export).
 
 ## Spec versions
 

@@ -54,7 +54,7 @@ from ossie_solid._common import (
     PORTABLE_DIALECTS,
     READABLE_OSSIE_VERSIONS,
     SUPPORTED_DIALECTS,
-    ConversionError,
+    split_source,
 )
 from ossie_solid.expressions import is_query
 
@@ -102,22 +102,31 @@ def _fixture_id(path):
     return f"{path.relative_to(CONVERTERS).parts[0]}/{path.name}"
 
 
-def _only_non_sql(path):
-    """True if some field or metric in the document is written only in an expression
-    language that is not SQL (HOLISTICS_AQL, THOUGHTSPOT, ...), which export rejects
-    by design rather than handing Solid a formula it cannot run."""
-    document = yaml.safe_load(path.read_text())
+def _is_non_sql(obj):
+    """True if a field or metric is written only in an expression language that is not
+    SQL (HOLISTICS_AQL, THOUGHTSPOT, ...), which export drops by design rather than
+    handing Solid a formula it cannot run."""
+    expression = obj.get("expression") or {}
+    if expression.get("sql"):
+        return False
     readable = set(SUPPORTED_DIALECTS) | set(PORTABLE_DIALECTS)
+    return not {e.get("dialect") for e in expression.get("dialects") or []} & readable
+
+
+def _only_non_sql(path):
+    """True if some field or metric in the document is written only in a non-SQL
+    expression language (see _is_non_sql)."""
+    document = yaml.safe_load(path.read_text())
     objects = [f for d in document["datasets"] for f in d.get("fields") or []]
     objects += document.get("metrics") or []
-    return any(
-        not {e.get("dialect") for e in o["expression"]["dialects"]} & readable
-        for o in objects
-    )
+    objects += [m for d in document["datasets"] for m in d.get("metrics") or []]
+    return any(_is_non_sql(o) for o in objects)
 
 
-CONVERTIBLE = [p for p in FOREIGN if not _only_non_sql(p)]
-NON_SQL = [p for p in FOREIGN if p not in CONVERTIBLE]
+# Every one converts: a field or metric only in a non-SQL language is dropped with a
+# warning, and the rest of the model still reaches Solid.
+CONVERTIBLE = FOREIGN
+NON_SQL = [p for p in FOREIGN if _only_non_sql(p)]
 
 
 @pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
@@ -153,10 +162,12 @@ def test_another_vendors_model_converts_to_a_well_formed_solid_model(path):
 
 @pytest.mark.skipif(not NON_SQL, reason="no other converter ships a non-SQL expression")
 @pytest.mark.parametrize("path", NON_SQL, ids=_fixture_id)
-def test_a_model_with_an_expression_only_in_a_non_sql_language_is_rejected(path):
-    """As documented: a formula Solid cannot run is not passed into a SQL field."""
-    with pytest.raises(ConversionError, match="has no .* expression"):
-        convert_quietly(convert_ossie_to_solid, path.read_text())
+def test_a_formula_only_in_a_non_sql_language_is_dropped_with_a_warning(path):
+    """As documented: a formula Solid cannot run is not passed into a SQL field. The
+    field or metric is dropped with a warning; the rest of the model converts."""
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, path.read_text())
+    assert any("which is SQL Solid can run, so it was dropped" in w for w in warnings_)
+    assert solid_model_of(solid)["tables"]
 
 
 @pytest.mark.skipif(not FOREIGN, reason="no other converters ship Ossie fixtures")
@@ -184,12 +195,20 @@ def _split_expectations(path):
     document = yaml.safe_load(path.read_text())
     solid, _ = convert_quietly(convert_ossie_to_solid, path.read_text())
     found = []
-    for dataset, table in zip(document["datasets"], solid_model_of(solid)["tables"]):
+    tables = {table["name"].lower(): table for table in solid_model_of(solid)["tables"]}
+    for dataset in document["datasets"]:
+        # By name, not position: a dataset Solid cannot hold is dropped, and two over
+        # one table are merged.
+        table = tables.get(".".join(split_source(dataset["source"])).lower())
+        if table is None:
+            continue
         # A field that is an alias for another column becomes that column, with the
         # field's name as a synonym.
         dimensions = {name for c in table.get("dimensions") or []
                       for name in [c["name"], *(c.get("synonyms") or [])]}
         for field in dataset.get("fields") or []:
+            if _is_non_sql(field):
+                continue  # dropped, with a warning, before any role applies
             if field.get("dimension") is not None:
                 expected = "dimensions"
             elif field.get("datatype") in NUMERIC_DATATYPES:

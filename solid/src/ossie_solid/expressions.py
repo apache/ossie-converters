@@ -555,8 +555,14 @@ def rename_fields(expression, dialect, renames, scope=None):
 def is_query(source, dialect):
     """True if a dataset `source` is a SQL query rather than a table name.
 
-    Apache Ossie lets `source` be either. Text sqlglot cannot parse (`c.s.select`) is
-    taken as a table name: only a query is known to have no Solid slot.
+    Apache Ossie lets `source` be either. The source is read in `dialect` first, then in
+    each other dialect, since another converter writes it in its own warehouse's SQL
+    (Holistics' `` select * from `ecommerce`.`users` `` does not parse as ANSI). A
+    table name never parses as a query; text no dialect can parse (`c.s.select`) is
+    taken as a table name, since only a query is known to have no Solid slot.
     """
-    return isinstance(_parse(source, dialect), (exp.Query, exp.Values))
+    return any(
+        isinstance(_parse(source, candidate), (exp.Query, exp.Values))
+        for candidate in dict.fromkeys((dialect, *SQLGLOT_DIALECTS))
+    )
 

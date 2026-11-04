@@ -416,11 +416,26 @@ def test_relationship_order_is_preserved(from_fixture):
     ]
 
 
-def test_a_relationship_naming_an_undeclared_dataset_is_rejected():
+def test_a_relationship_naming_an_undeclared_dataset_is_dropped_with_a_warning():
+    """One dangling relationship is one construct Solid cannot hold, so it is dropped,
+    like a join on an undeclared field, rather than failing the whole model."""
     ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    name = ossie["relationships"][0]["name"]
     ossie["relationships"][0]["to"] = "nope"
-    with pytest.raises(ConversionError, match="not declared in 'datasets'"):
-        convert_ossie_to_solid(yaml.safe_dump(ossie))
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert len(solid_model_of(solid)["relationships"]) == len(ossie["relationships"]) - 1
+    assert any(f"'{name}' joins nope, which is not declared in 'datasets', so it was "
+               f"dropped" in w for w in warnings_), warnings_
+
+
+def test_a_relationship_whose_columns_do_not_pair_up_is_dropped_with_a_warning():
+    ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    name = ossie["relationships"][0]["name"]
+    ossie["relationships"][0]["to_columns"] = ossie["relationships"][0]["to_columns"] * 2
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    assert len(solid_model_of(solid)["relationships"]) == len(ossie["relationships"]) - 1
+    assert any(f"'{name}' has 1 from_columns but 2 to_columns, which must correspond "
+               f"positionally, so it was dropped" in w for w in warnings_), warnings_
 
 
 # --- dialect selection ------------------------------------------------------------
@@ -442,7 +457,8 @@ def test_an_explicit_dialect_overrides_the_stash():
 def test_forcing_a_dialect_the_model_does_not_carry_is_an_error():
     # The TPC-DS fixture is SNOWFLAKE-only, with no ANSI_SQL fallback to read.
     with pytest.raises(
-        ConversionError, match="no DATABRICKS, ANSI_SQL or OSSIE_SQL_2026 expression"
+        ConversionError,
+        match="No field has a DATABRICKS, ANSI_SQL or OSSIE_SQL_2026 expression",
     ):
         convert_ossie_to_solid(fixture("tpcds_ossie.yaml"), dialect="DATABRICKS")
 
@@ -811,17 +827,40 @@ def test_a_non_sql_dialect_never_becomes_the_resolved_dialect():
     assert column["name"] == "amt"
 
 
-def test_a_non_sql_dialect_with_no_ansi_form_is_an_error():
-    """Better a clear failure than a Tableau formula in a SQL field."""
+def test_a_model_with_no_field_in_sql_is_an_error():
+    """Each field only in a non-SQL language is dropped; with every one gone, there is
+    nothing to convert, which is a clear failure rather than an empty Solid model."""
     ossie = _one_field_model([
         {"dialect": "MDX", "expression": "[Measures].[Amt]"},
     ])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ConversionError, match="no ANSI_SQL or OSSIE_SQL_2026 expression"
+            ConversionError, match="No field has a ANSI_SQL or OSSIE_SQL_2026 expression"
         ):
             convert_ossie_to_solid(yaml.safe_dump(ossie))
+
+
+def test_a_field_or_metric_only_in_a_non_sql_language_is_dropped_with_what_names_it():
+    """Better dropped with a warning than a Tableau formula in a SQL field. A key or
+    join naming a dropped field goes too: Solid would not have the column."""
+    ossie = _one_field_model([{"dialect": "ANSI_SQL", "expression": "amt"}],
+                             metric_dialects=[{"dialect": "MDX", "expression": "[M]"}])
+    ossie["datasets"][0]["fields"].append(
+        {"name": "region", "expression": {"dialects": [
+            {"dialect": "TABLEAU", "expression": "[Region]"}]}})
+    ossie["datasets"][0]["primary_key"] = ["region"]
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    model = solid_model_of(solid)
+    assert [c["name"] for c in model["tables"][0]["facts"]] == ["amt"]
+    assert "primary_key" not in model["tables"][0]
+    assert "metrics" not in model
+    for expected in (("'a.region' has no ANSI_SQL or OSSIE_SQL_2026 expression, which is "
+                     "SQL Solid can run, so it was dropped"),
+                     "'total' has no ANSI_SQL or OSSIE_SQL_2026 expression",
+                     ("primary_key names region, which was dropped as SQL Solid cannot "
+                     "run")):
+        assert any(expected in w for w in warnings_), (expected, warnings_)
 
 
 def test_a_hand_edited_stash_dialect_is_rejected():
@@ -1424,3 +1463,42 @@ def test_a_key_naming_an_alias_field_in_another_case_still_names_its_column():
     model = solid_model_of(solid)
     assert model["tables"][0]["primary_key"] == "customer_id"
     assert model["relationships"][0]["join_keys"]["left"] == ["customer_id"]
+
+
+def test_every_relationship_to_a_query_backed_dataset_is_dropped_not_just_the_first():
+    """The dropped datasets were once shadowed by a later local of the same name, so
+    only the first relationship checked against them."""
+    def field(name):
+        return {"name": name, "datatype": "Integer", "expression": _ansi(name)}
+
+    ossie = {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders", "fields": [field("id"), field("uid")]},
+            {"name": "items", "source": "db.s.items", "fields": [field("oid")]},
+            {"name": "users", "source": _QUERY, "fields": [field("id")]},
+        ],
+        "relationships": [
+            {"name": "first", "from": "items", "to": "orders", "from_columns": ["oid"],
+             "to_columns": ["id"],
+             "ai_context": {"instructions": "annotated, so the old local was non-empty"}},
+            {"name": "second", "from": "orders", "to": "users", "from_columns": ["uid"],
+             "to_columns": ["id"]},
+        ],
+    }
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    relationships = solid_model_of(solid)["relationships"]
+    assert [(r["left_table"], r["right_table"]) for r in relationships] == [
+        ("db.s.items", "db.s.orders")]
+    assert any("'second' joins users, whose source is a SQL query" in w
+               for w in warnings_), warnings_
+
+
+@pytest.mark.parametrize("source", [
+    "select * from `ecommerce`.`users`",          # Holistics: BigQuery quoting, lower case
+    "(SELECT id FROM db.s.users)",
+    "WITH u AS (SELECT 1) SELECT * FROM u",
+])
+def test_a_query_in_any_dialects_quoting_is_recognized(source):
+    from ossie_solid.expressions import is_query
+    assert is_query(source, "ANSI_SQL")

@@ -463,11 +463,11 @@ def _convert_relationships(relationships, by_source):
                  f"least one column on each side)")
             continue
         if len(left_columns) != len(right_columns):
-            raise ConversionError(
-                f"Relationship '{left['name']}' -> '{right['name']}' has "
-                f"{len(left_columns)} left join key(s) but {len(right_columns)} right; "
-                f"the columns must correspond positionally"
-            )
+            warn("relationship",
+                 f"'{left['name']}' -> '{right['name']}' has {len(left_columns)} left "
+                 f"join key(s) but {len(right_columns)} right, which must correspond "
+                 f"positionally; the relationship was dropped")
+            continue
 
         oriented = _orient(left, right, left_columns, right_columns, taken)
         if relationship_extra or join_keys_extra:

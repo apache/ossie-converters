@@ -256,14 +256,19 @@ def test_a_relationship_naming_an_unknown_table_is_dropped_with_a_warning():
     assert "relationships" not in model_of(ossie)
 
 
-def test_mismatched_join_key_counts_are_rejected():
+def test_mismatched_join_key_counts_drop_the_relationship_with_a_warning():
+    """One relationship whose keys cannot pair up is one construct dropped, not a
+    reason to fail the whole model (the README's error policy)."""
     solid = yaml.safe_load(fixture("databricks_solid.yaml"))
     solid["semantic_model"]["relationships"][0]["join_keys"]["right"] = [
         "customer_id",
         "region",
     ]
-    with pytest.raises(ConversionError, match="correspond positionally"):
-        convert_solid_to_ossie(yaml.safe_dump(solid))
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert len(model_of(ossie).get("relationships") or []) == len(
+        solid["semantic_model"]["relationships"]) - 1
+    assert any("which must correspond positionally; the relationship was dropped" in w
+               for w in warnings_), warnings_
 
 
 # --- metrics ----------------------------------------------------------------------
