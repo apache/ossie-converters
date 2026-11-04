@@ -91,6 +91,23 @@ ossie_yaml = convert_solid_to_ossie(solid_yaml_str)                      # or di
 solid_yaml = convert_ossie_to_solid(ossie_yaml_str, model_name="sales")
 ```
 
+What a conversion drops or changes is reported as a `ConversionWarning`, one per
+object, and an input it cannot convert raises a `ConversionError` (see
+[Errors and warnings](#errors-and-warnings)). To collect the report:
+
+```python
+import warnings
+from ossie_solid import ConversionWarning, convert_ossie_to_solid
+
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always", ConversionWarning)
+    solid_yaml = convert_ossie_to_solid(ossie_yaml_str)
+report = [str(w.message) for w in caught if issubclass(w.category, ConversionWarning)]
+```
+
+`simplefilter("always", …)` matters in a long-running process: under Python's default
+filter, a warning identical to one already shown is not shown again.
+
 ## Dialect resolution
 
 Apache Ossie requires a dialect on every expression. Since October 2026 Solid's export

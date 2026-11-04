@@ -128,9 +128,20 @@ class ConversionError(Exception):
     """Raised when an input cannot be converted."""
 
 
+class ConversionWarning(UserWarning):
+    """Something a conversion dropped, changed or could not carry, naming the object.
+
+    These are the converter's report of what was lost; the CLI prints them on stderr.
+    A caller of the Python API records them with `warnings.catch_warnings(record=True)`
+    and `warnings.simplefilter("always", ConversionWarning)`: under Python's default
+    filter, a message identical to one already shown in the process is not shown
+    again, so a long-running caller converting several models would miss repeats.
+    """
+
+
 def warn(scope, message):
-    """Emit a conversion warning. The CLI surfaces these on stderr."""
-    warnings.warn(f"[{scope}] {message}", stacklevel=2)
+    """Emit a ConversionWarning. The CLI surfaces these on stderr."""
+    warnings.warn(f"[{scope}] {message}", ConversionWarning, stacklevel=2)
 
 
 def warn_unknown_keys(obj, known, scope, label, format_name):

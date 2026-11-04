@@ -22,6 +22,7 @@ from ._common import (
     SUPPORTED_DIALECTS,
     VENDOR,
     ConversionError,
+    ConversionWarning,
 )
 from .ossie_to_solid import convert_ossie_to_solid
 from .solid_to_ossie import convert_solid_to_ossie
@@ -31,6 +32,7 @@ __all__ = [
     "SUPPORTED_DIALECTS",
     "VENDOR",
     "ConversionError",
+    "ConversionWarning",
     "convert_ossie_to_solid",
     "convert_solid_to_ossie",
 ]

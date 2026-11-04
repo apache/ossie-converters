@@ -47,7 +47,18 @@ def fixture(name):
 
 
 def example(name):
-    """Read a model from the repository's `examples/` directory."""
+    """Read this converter's copy of a model from the spec's `examples/` directory.
+
+    Tests pin exact warnings and names against it, so it is copied into the fixtures
+    rather than read from the `ossie` submodule: a submodule bump that edits the
+    example would otherwise fail this suite without the converter being wrong. The
+    live example is checked by live_example's caller, which pins nothing.
+    """
+    return (FIXTURES / f"spec_{name}").read_text()
+
+
+def live_example(name):
+    """Read a model from the pinned spec's own `examples/` directory."""
     return (EXAMPLES / name).read_text()
 
 
