@@ -28,7 +28,7 @@ import subprocess
 import sys
 
 import pytest
-from _util import REPO_ROOT, load_fixture_dir, parse
+from _util import FIXTURES, load_fixture_dir, parse
 
 from ossie_cube.cli import main
 
@@ -284,7 +284,7 @@ def test_view_and_name_flags_take_effect(tmp_path, capsys):
 def test_export_writes_the_model_directory(tmp_path, capsys):
     out = tmp_path / "out"
     assert main(["export", "-i",
-                 str(REPO_ROOT / "examples" / "tpcds_semantic_model.yaml"),
+                 str(FIXTURES / "tpcds_ossie.yaml"),
                  "-o", str(out)]) == 0
     assert (out / "model" / "cubes" / "store_sales.yml").is_file()
     assert (out / "model" / "views" / "tpcds_retail_model.yml").is_file()

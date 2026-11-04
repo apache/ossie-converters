@@ -580,7 +580,7 @@ def test_a_model_from_another_converter_is_stable_after_one_cycle():
     assert second == first
 
 
-_SHADOWED_KEY_COLUMN = (
+_COMPUTED_KEY_FIELD = (
     f"version: {OSSIE_VERSION}\n"
     "name: shop\n"
     "datasets:\n"
@@ -601,28 +601,18 @@ def _two_export_cycles(ossie):
 
 
 def test_two_export_cycles_produce_the_same_cube_model():
-    """`Ossie -> Cube -> Ossie -> Cube`, on the collision that made the first differ from
-    the second: a key column `id` alongside a computed field also named `id`.
-
-    Comparing only the Ossie ends cannot see this class. A record meant to be read one way
-    that the next export reads another leaves both Ossie documents identical while the Cube
-    model changes -- here the key moved off the column and onto `LOWER(email)`, so Cube
-    deduplicated on a different value and returned different counts.
-
-    Ungated: comparing two exports needs no Cube installation, and putting the whole test
-    behind the optional gate meant the regression it exists for went unchecked on every
-    machine without a built Cube checkout -- including CI.
-    """
-    first, second = _two_export_cycles(_SHADOWED_KEY_COLUMN)
+    """Repeated exports keep a declared computed field as the key, without
+    replacing it with a same-named source column on the second cycle."""
+    first, second = _two_export_cycles(_COMPUTED_KEY_FIELD)
     assert parse_files(second) == parse_files(first)
 
     keys = [d for d in parse_files(first)["model/cubes/orders.yml"]["cubes"][0][
         "dimensions"] if d.get("primary_key")]
-    assert [(d["name"], d["sql"]) for d in keys] == [("id_pk", "id")]
+    assert [(d["name"], d["sql"]) for d in keys] == [("id", "LOWER(email)")]
 
 
 @cube_gate
 def test_the_second_export_cycle_still_compiles():
     """The half of the above that genuinely needs Cube."""
-    _, second = _two_export_cycles(_SHADOWED_KEY_COLUMN)
+    _, second = _two_export_cycles(_COMPUTED_KEY_FIELD)
     assert_cube_compiles(second, "second export cycle")

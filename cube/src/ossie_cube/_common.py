@@ -367,6 +367,18 @@ def foreign_vendor_extensions(obj):
     ]
 
 
+def relationship_binding(relationship, datasets):
+    """The declared field expressions a saved native join SQL was imported against."""
+    binding = []
+    for side in ("from", "to"):
+        name = relationship[side]
+        fields = lookup_map({f["name"]: f for f in datasets[name].get("fields") or []})
+        for column in relationship[side + "_columns"]:
+            field = resolve_identifier(fields, column)
+            binding.append([name, field["name"], field["expression"]])
+    return binding
+
+
 # --- expressions ----------------------------------------------------------------
 
 def pick_expression(ossie_expression, preferred=None):

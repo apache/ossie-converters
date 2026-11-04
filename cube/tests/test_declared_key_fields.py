@@ -1,0 +1,507 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+"""Keys and relationships reference fields, including aliases and computed fields."""
+
+import json
+
+import pytest
+import yaml
+from _cube_gate import assert_cube_compiles, assert_ossie_is_valid, cube_gate
+from _util import by_name, expr_of, parse_files, stash_of
+
+from ossie_cube import (
+    ConversionError,
+    convert_cube_to_ossie,
+    convert_cube_view_to_ossie,
+    convert_ossie_to_cube,
+)
+
+
+from ossie_cube._common import OSSIE_VERSION
+
+
+def expression(sql):
+    return {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]}
+
+
+def field(name, sql):
+    return {"name": name, "expression": expression(sql), "datatype": "String"}
+
+
+def document():
+    return {
+        "version": OSSIE_VERSION,
+        "name": "shop",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "sales.public.orders",
+                "primary_key": ["Order Key"],
+                "fields": [
+                    field("Order Key", "LOWER(email)"),
+                    field("Customer Key", "COALESCE(customer_id, 0)"),
+                ],
+            },
+            {
+                "name": "customers",
+                "source": "sales.public.customers",
+                "primary_key": ["Customer ID"],
+                "fields": [field("Customer ID", "id")],
+            },
+        ],
+        "relationships": [
+            {
+                "name": "orders_to_customers",
+                "from": "orders",
+                "to": "customers",
+                "from_columns": ["Customer Key"],
+                "to_columns": ["Customer ID"],
+            }
+        ],
+    }
+
+
+def export(model):
+    return convert_ossie_to_cube(yaml.safe_dump(model))[0]
+
+
+def cubes(files):
+    return {
+        c["name"]: c
+        for content in parse_files(files).values()
+        for c in content.get("cubes", [])
+    }
+
+
+def assert_declared(model):
+    datasets = by_name(model["datasets"])
+    for ds in datasets.values():
+        names = {f["name"].casefold() for f in ds.get("fields", [])}
+        for key in [ds.get("primary_key", [])] + ds.get("unique_keys", []):
+            assert all(n.casefold() in names for n in key)
+    for rel in model.get("relationships", []):
+        for side in ("from", "to"):
+            names = {
+                f["name"].casefold() for f in datasets[rel[side]].get("fields", [])
+            }
+            assert all(n.casefold() in names for n in rel[side + "_columns"])
+
+
+def test_export_resolves_computed_and_renamed_fields_in_keys_and_joins():
+    files = export(document())
+    native = cubes(files)
+    dims = by_name(native["orders"]["dimensions"])
+    assert dims["order_key"]["primary_key"] is True
+    assert dims["order_key"]["sql"] == "LOWER(email)"
+    assert (
+        native["orders"]["joins"][0]["sql"]
+        == "{CUBE.customer_key} = {customers.customer_id}"
+    )
+    for _ in range(3):
+        returned, _ = convert_cube_to_ossie(files)
+        assert_ossie_is_valid(returned)
+        model = yaml.safe_load(returned)
+        assert_declared(model)
+        assert model["datasets"][0]["primary_key"] == ["order_key"]
+        assert model["relationships"][0]["from_columns"] == ["customer_key"]
+        next_files = export(model)
+        assert parse_files(next_files) == parse_files(files)
+        files = next_files
+
+
+@pytest.mark.parametrize("key", ["primary_key", "unique_keys"])
+def test_key_matching_is_case_insensitive_and_unique_keys_use_field_expressions(key):
+    model = document()
+    ds = model["datasets"][0]
+    ds.pop("primary_key")
+    ds[key] = ["ORDER KEY"] if key == "primary_key" else [["ORDER KEY"]]
+    files = export(model)
+    assert (
+        by_name(cubes(files)["orders"]["dimensions"])["order_key"]["primary_key"]
+        is True
+    )
+    returned, _ = convert_cube_to_ossie(files)
+    back = yaml.safe_load(returned)
+    assert_declared(back)
+    assert ("primary_key" in back["datasets"][0]) == (key == "primary_key")
+    assert parse_files(export(back)) == parse_files(files)
+
+
+@pytest.mark.parametrize(
+    "where", ["primary_key", "unique_keys", "from_columns", "to_columns"]
+)
+def test_missing_field_references_are_rejected_even_when_sql_is_stashed(where):
+    model = document()
+    if where in ("primary_key", "unique_keys"):
+        model["datasets"][0][where] = (
+            ["missing"] if where == "primary_key" else [["missing"]]
+        )
+    else:
+        rel = model["relationships"][0]
+        rel[where] = ["missing"]
+        rel["custom_extensions"] = [
+            {"vendor_name": "CUBE", "data": json.dumps({"_v": 1, "sql": "x = y"})}
+        ]
+    with pytest.raises(
+        ConversionError, match="(undeclared|declared field).*(missing|orders|customers)"
+    ):
+        export(model)
+
+
+@pytest.mark.parametrize("relationship", ["many_to_one", "one_to_many", "one_to_one"])
+@pytest.mark.parametrize("raw", [False, True])
+def test_native_joins_choose_declared_aliases_and_preserve_orientation(
+    relationship, raw
+):
+    own = "{CUBE}.customer_id" if raw else "{CUBE.customer_key}"
+    other = "{customers}.id" if raw else "{customers.customer_key}"
+    native = {
+        "cubes": [
+            {
+                "name": "orders",
+                "sql_table": "sales.public.orders",
+                "dimensions": [
+                    {
+                        "name": "order_key",
+                        "sql": "id",
+                        "type": "number",
+                        "primary_key": True,
+                    },
+                    {"name": "customer_key", "sql": "customer_id", "type": "number"},
+                ],
+                "joins": [
+                    {
+                        "name": "customers",
+                        "relationship": relationship,
+                        "sql": f"{own} = {other}",
+                    }
+                ],
+            },
+            {
+                "name": "customers",
+                "sql_table": "sales.public.customers",
+                "dimensions": [
+                    {
+                        "name": "customer_key",
+                        "sql": "id",
+                        "type": "number",
+                        "primary_key": True,
+                    }
+                ],
+            },
+        ]
+    }
+    if relationship == "one_to_many":
+        native["cubes"][0]["dimensions"][0].pop("primary_key")
+        native["cubes"][0]["dimensions"][1]["primary_key"] = True
+    files = {"model.yml": yaml.safe_dump(native)}
+    for _ in range(3):
+        returned, _ = convert_cube_to_ossie(files)
+        model = yaml.safe_load(returned)
+        assert_declared(model)
+        assert_ossie_is_valid(returned)
+        rel = model["relationships"][0]
+        assert rel["from_columns"] == rel["to_columns"] == ["customer_key"]
+        back = export(model)
+        assert parse_files(back) == parse_files(files)
+        files = back
+
+
+def test_raw_column_fields_avoid_computed_fields_and_metric_names():
+    native = {
+        "cubes": [
+            {
+                "name": "orders",
+                "sql_table": "sales.public.orders",
+                "dimensions": [
+                    {
+                        "name": "id",
+                        "sql": "LOWER(email)",
+                        "type": "string",
+                        "primary_key": True,
+                    }
+                ],
+                "measures": [{"name": "source__id", "type": "number", "sql": "1"}],
+                "joins": [
+                    {
+                        "name": "customers",
+                        "relationship": "many_to_one",
+                        "sql": "{CUBE}.id = {customers}.id",
+                    }
+                ],
+            },
+            {
+                "name": "customers",
+                "sql_table": "sales.public.customers",
+                "dimensions": [
+                    {"name": "id", "sql": "id", "type": "number", "primary_key": True}
+                ],
+            },
+        ]
+    }
+    files = {"model.yml": yaml.safe_dump(native)}
+    returned, _ = convert_cube_to_ossie(files)
+    model = yaml.safe_load(returned)
+    assert_declared(model)
+    ds = by_name(model["datasets"])["orders"]
+    assert ds["primary_key"] == ["id"]
+    assert model["relationships"][0]["from_columns"] == ["source__id_2"]
+    raw = by_name(ds["fields"])["source__id_2"]
+    assert expr_of(raw) == "id"
+    assert "datatype" not in raw
+    assert stash_of(raw)["raw_column"] is True
+    assert parse_files(export(model)) == parse_files(files)
+
+
+def test_geo_coordinate_keys_keep_the_coordinate_field_and_native_key_dimension():
+    model = document()
+    ds = model["datasets"][0]
+    ds["primary_key"] = ["lat"]
+    for name, part, sql in [
+        ("lat", "latitude", "latitude"),
+        ("lon", "longitude", "longitude"),
+    ]:
+        f = field(name, sql)
+        f["datatype"] = "Float"
+        f["custom_extensions"] = [
+            {
+                "vendor_name": "CUBE",
+                "data": json.dumps({"_v": 1, "geo": {"of": "location", "part": part}}),
+            }
+        ]
+        ds["fields"].append(f)
+    files = export(model)
+    for _ in range(3):
+        returned, _ = convert_cube_to_ossie(files)
+        back = yaml.safe_load(returned)
+        assert_declared(back)
+        assert back["datasets"][0]["primary_key"] == ["location_latitude"]
+        assert_ossie_is_valid(returned)
+        next_files = export(back)
+        assert parse_files(next_files) == parse_files(files)
+        files = next_files
+
+
+@cube_gate
+def test_field_key_and_join_mappings_compile_in_cube():
+    files = export(document())
+    assert_cube_compiles(files, "declared field keys and joins")
+    returned, _ = convert_cube_to_ossie(files)
+    assert_cube_compiles(
+        export(yaml.safe_load(returned)), "declared fields after import/export"
+    )
+
+
+def test_projection_keeps_published_key_aliases_and_declares_hidden_join_fields():
+    files = export(document())
+    files["model/views/shop.yml"] = yaml.safe_dump(
+        {
+            "views": [
+                {
+                    "name": "shop",
+                    "cubes": [
+                        {
+                            "join_path": "orders",
+                            "includes": [
+                                {"name": "order_key", "alias": "order_number"}
+                            ],
+                        },
+                        {
+                            "join_path": "orders.customers",
+                            "includes": [
+                                {"name": "customer_id", "alias": "customer_number"}
+                            ],
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+    returned, source, _ = convert_cube_view_to_ossie(files, "shop")
+    assert source == "orders"
+    model = yaml.safe_load(returned)
+    assert_declared(model)
+    assert_ossie_is_valid(returned)
+    ds = by_name(model["datasets"])
+    assert ds["orders"]["primary_key"] == ["order_number"]
+    assert ds["customers"]["primary_key"] == ["customer_number"]
+    rel = model["relationships"][0]
+    assert rel["from_columns"] == ["__orders_customer_key"]
+    assert rel["to_columns"] == ["customer_number"]
+    support = by_name(ds["orders"]["fields"])["__orders_customer_key"]
+    assert stash_of(support)["public"] is False
+    assert expr_of(support) == "COALESCE(customer_id, 0)"
+
+
+def test_composite_keys_and_relationships_keep_the_declared_field_order():
+    model = document()
+    for ds in model["datasets"]:
+        ds["fields"].append(field("Tenant Key", "tenant_id"))
+        ds["primary_key"].append("Tenant Key")
+    rel = model["relationships"][0]
+    rel["from_columns"].append("Tenant Key")
+    rel["to_columns"].append("Tenant Key")
+    files = export(model)
+    returned, _ = convert_cube_to_ossie(files)
+    back = yaml.safe_load(returned)
+    assert_declared(back)
+    assert_ossie_is_valid(returned)
+    assert back["relationships"][0]["from_columns"] == ["customer_key", "tenant_key"]
+    assert back["relationships"][0]["to_columns"] == ["customer_id", "tenant_key"]
+    assert back["datasets"][0]["primary_key"] == ["order_key", "tenant_key"]
+    assert parse_files(export(back)) == parse_files(files)
+
+
+def test_legacy_physical_key_metadata_is_migrated_to_a_declared_field():
+    native = {
+        "cubes": [
+            {
+                "name": "orders",
+                "sql_table": "sales.public.orders",
+                "meta": {"ossie": {"primary_key": ["id"]}},
+                "dimensions": [
+                    {"name": "id", "sql": "LOWER(email)", "type": "string"},
+                    {
+                        "name": "id_pk",
+                        "sql": "id",
+                        "type": "string",
+                        "primary_key": True,
+                        "public": False,
+                        "meta": {"ossie": {"synthetic_key": True}},
+                    },
+                ],
+                "measures": [{"name": "count", "type": "count"}],
+            }
+        ]
+    }
+    returned, _ = convert_cube_to_ossie({"model.yml": yaml.safe_dump(native)})
+    model = yaml.safe_load(returned)
+    assert_declared(model)
+    assert_ossie_is_valid(returned)
+    assert model["datasets"][0]["primary_key"] == ["id_pk"]
+    assert expr_of(model["metrics"][0]) == "COUNT(DISTINCT orders.id_pk)"
+    first = export(model)
+    second, _ = convert_cube_to_ossie(first)
+    assert parse_files(export(yaml.safe_load(second))) == parse_files(first)
+
+
+def test_editing_a_restored_relationship_uses_the_new_field_binding():
+    files = export(document())
+    returned, _ = convert_cube_to_ossie(files)
+    model = yaml.safe_load(returned)
+    model["relationships"][0]["from_columns"] = ["order_key"]
+    back = cubes(export(model))
+    assert (
+        back["orders"]["joins"][0]["sql"]
+        == "{CUBE.order_key} = {customers.customer_id}"
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"datatype": "Integer"},
+        {"description": "Customer account key"},
+        {"expression": expression("COALESCE(customer_id, 0)")},
+    ],
+)
+def test_edits_to_column_only_fields_are_carried_by_private_native_dimensions(changes):
+    native = {
+        "cubes": [
+            {
+                "name": "orders",
+                "sql_table": "sales.public.orders",
+                "dimensions": [
+                    {"name": "id", "sql": "id", "type": "number", "primary_key": True}
+                ],
+                "joins": [
+                    {
+                        "name": "customers",
+                        "relationship": "many_to_one",
+                        "sql": "{CUBE}.customer_id = {customers}.id",
+                    }
+                ],
+            },
+            {
+                "name": "customers",
+                "sql_table": "sales.public.customers",
+                "dimensions": [
+                    {"name": "id", "sql": "id", "type": "number", "primary_key": True}
+                ],
+            },
+        ]
+    }
+    returned, _ = convert_cube_to_ossie({"model.yml": yaml.safe_dump(native)})
+    model = yaml.safe_load(returned)
+    f = by_name(by_name(model["datasets"])["orders"]["fields"])["customer_id"]
+    f.update(changes)
+    files = export(model)
+    dim = by_name(cubes(files)["orders"]["dimensions"])["customer_id"]
+    assert dim["public"] is False
+    if "expression" in changes:
+        assert cubes(files)["orders"]["joins"][0]["sql"].startswith(
+            "{CUBE.customer_id}"
+        )
+    returned, _ = convert_cube_to_ossie(files)
+    restored = by_name(
+        by_name(yaml.safe_load(returned)["datasets"])["orders"]["fields"]
+    )["customer_id"]
+    for key, value in changes.items():
+        assert restored[key] == value
+
+
+def test_editing_a_scalar_join_field_expression_rebuilds_saved_raw_column_sql():
+    native = {
+        "cubes": [
+            {
+                "name": "orders",
+                "sql_table": "sales.public.orders",
+                "dimensions": [
+                    {
+                        "name": "key",
+                        "sql": "customer_id",
+                        "type": "number",
+                        "primary_key": True,
+                    }
+                ],
+                "joins": [
+                    {
+                        "name": "customers",
+                        "relationship": "many_to_one",
+                        "sql": "{CUBE}.customer_id = {customers}.id",
+                    }
+                ],
+            },
+            {
+                "name": "customers",
+                "sql_table": "sales.public.customers",
+                "dimensions": [
+                    {"name": "id", "sql": "id", "type": "number", "primary_key": True}
+                ],
+            },
+        ]
+    }
+    returned, _ = convert_cube_to_ossie({"model.yml": yaml.safe_dump(native)})
+    model = yaml.safe_load(returned)
+    by_name(model["datasets"][0]["fields"])["key"]["expression"] = expression(
+        "other_customer_id"
+    )
+    assert (
+        cubes(export(model))["orders"]["joins"][0]["sql"]
+        == "{CUBE.key} = {customers}.id"
+    )

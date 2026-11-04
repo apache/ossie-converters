@@ -36,6 +36,7 @@ import dataclasses
 import re
 
 from ._common import (
+    _CUBE_REF_RE,
     AGG_TO_OSSIE_FUNC,
     AGG_TO_RESULT_DATATYPE,
     CALCULATED_MEASURE_TYPES,
@@ -75,6 +76,7 @@ from ._common import (
     unescape_braces_from_cube,
     view_file,
     read_stash,
+    relationship_binding,
     write_stash,
 )
 from .converter_issues import IssueLog, IssueType
@@ -193,30 +195,47 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
     elif carried.get("ai_context"):
         model["ai_context"] = carried["ai_context"]
 
-    # Anything a cube's stash has to carry is worked out before the dataset is
-    # built: joins with no Ossie form, and measures with no static Ossie
-    # expression. Primary keys are read straight off the dimensions so this
-    # ordering does not depend on the datasets existing yet.
-    relationships, extra_joins = _convert_joins(cubes, sorted(extra_files), issues)
-    if relationships:
-        model["relationships"] = relationships
-    fanned_out = _fanned_out_datasets(relationships, extra_joins)
-    pk_by_cube = {cname: _primary_key_of(cube, cname)
-                  for cname, cube in cubes.items()}
     # Which members regenerate from a bare column name, worked out once per cube:
     # both the measure and the dimension stage need the same answer.
     plain_by_cube = {cname: _plain_members(cube, cname)
                      for cname, cube in cubes.items()}
 
+    datasets = {cname: _convert_cube(cname, cube, plain_by_cube[cname], issues, source_dialect)
+                for cname, cube in cubes.items()}
+    fields = {cname: _ImportedFields(ds, cubes, cname, source_dialect)
+              for cname, ds in datasets.items()}
+    pk_by_cube = {}
+    for cname, ds in datasets.items():
+        parked = parked_of(cubes[cname].get("meta"))
+        legacy = "primary_key" in parked and not parked.get("key_fields")
+        key = [fields[cname].column(n) if legacy else fields[cname].member(n)
+               for n in _primary_key_of(cubes[cname], cname)]
+        pk_by_cube[cname] = key
+        if ds.get("primary_key"):
+            ds["primary_key"] = key
+        if ds.get("unique_keys"):
+            ds["unique_keys"] = [
+                [fields[cname].key(n, legacy=not parked.get("key_fields")) for n in k]
+                for k in ds["unique_keys"]]
+
+    # Raw join columns may need additional declared fields. Build them before
+    # metrics so keys, joins and aggregate attribution share the same namespace.
+    relationships, extra_joins = _convert_joins(cubes, sorted(extra_files), issues, fields)
+    if relationships:
+        model["relationships"] = relationships
+    fanned_out = _fanned_out_datasets(relationships, extra_joins)
+
     metrics, extra_measures = _convert_measures(
         cubes, pk_by_cube, plain_by_cube, fanned_out, relationships, issues,
         source_dialect)
 
-    model["datasets"] = [
-        _convert_cube(cname, cube, plain_by_cube[cname], extra_joins.get(cname),
-                      extra_measures.get(cname), issues, source_dialect)
-        for cname, cube in cubes.items()
-    ]
+    for cname, ds in datasets.items():
+        stash = read_stash(ds)
+        for key, values in (("extra_joins", extra_joins), ("extra_measures", extra_measures)):
+            if values.get(cname):
+                stash[key] = values[cname]
+        write_stash(ds, stash)
+    model["datasets"] = list(datasets.values())
     if metrics:
         model["metrics"] = metrics
 
@@ -656,17 +675,11 @@ def _plain_members(cube, cname):
 
 
 def _primary_key_of(cube, cname):
-    """A cube's primary key, as the *columns* Ossie names it by.
+    """Native key dimension names, or the key list parked by a prior export.
 
-    Read off the cube rather than the built dataset, so the stages that need it -- the
-    dataset, measures, and the fan-out check -- all get the same answer without waiting
-    for each other.
-
-    A recorded column list wins over the dimension names. The two differ whenever the key
-    is not a same-named scalar dimension: a field `order_id` reading column `id` carries
-    the key, and export synthesizes `id_pk` when a computed field shadows the column. Using
-    the dimension name then put that name in the rebuilt `COUNT(DISTINCT ...)` too, so the
-    metric referenced a member that does not exist on the Ossie side.
+    New metadata names declared fields (`key_fields: true`). Older metadata
+    names physical source columns; the import's field registry migrates those
+    references before converting measures and relationships.
     """
     parked = parked_of(cube.get("meta"))
     if "primary_key" in parked:
@@ -693,7 +706,67 @@ def _yields_a_same_named_field(dim):
                 or dim.get("sub_query"))
 
 
-def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
+class _ImportedFields:
+    """Resolve native members and source columns to declared Ossie fields.
+
+    A raw join column need not be a Cube dimension. Such a column gets a field
+    without inventing a datatype or a native dimension on the return trip.
+    """
+
+    def __init__(self, dataset, cubes, cname, dialect=None):
+        self.dataset, self.cubes, self.cname = dataset, cubes, cname
+        self.dialect = dialect or DIALECT_ANSI
+
+    def member(self, name):
+        names = lookup_map(f["name"] for f in self.dataset.get("fields") or [])
+        found = resolve_identifier(names, name)
+        if found is None:
+            raise ConversionError(f"cube '{self.cname}': key/member '{name}' has no declared field")
+        native = next((d for d in _as_named_list(self.cubes[self.cname].get("dimensions"),
+                                                f"cube '{self.cname}' dimensions")
+                       if d.get("name") == found), None)
+        uses_members = native is not None and any(
+            body not in ("CUBE", "TABLE", self.cname)
+            for body in cube_reference_bodies(" ".join(_dimension_sql_strings(native))))
+        if uses_members and _field_member(self.cubes, self.cname, found):
+            expression = _local_dimension_expression(self.cubes, self.cname, found)
+            if expression is not None:
+                field = next(f for f in self.dataset["fields"] if f["name"] == found)
+                if not parked_of(native.get("meta")).get("expression"):
+                    field["expression"]["dialects"][0]["expression"] = expression
+        return found
+
+    def key(self, name, *, legacy=False):
+        if legacy:
+            return self.column(name)
+        return self.member(name)
+
+    def column(self, column):
+        fields = self.dataset.get("fields") or []
+        matches = [f["name"] for f in fields
+                   if _column_of(self.cubes, self.cname, f["name"]) == column
+                   or (read_stash(f).get("raw_column")
+                       and f["expression"]["dialects"][0]["expression"] == column)]
+        if matches:
+            chosen = column if column in matches else matches[0]
+            return self.member(chosen)
+        taken = {f["name"].lower() for f in fields}
+        taken.update(m["name"].lower() for m in _as_named_list(
+            self.cubes[self.cname].get("measures"), f"cube '{self.cname}' measures"))
+        base = sanitize_name(column, f"cube '{self.cname}': source column", set())
+        name, suffix = base, 2
+        if name.lower() in taken:
+            base = name = "source__" + base
+        while name.lower() in taken:
+            name, suffix = f"{base}_{suffix}", suffix + 1
+        field = {"name": name, "expression": {"dialects": [
+            {"dialect": self.dialect, "expression": column}]}}
+        write_stash(field, {"raw_column": True})
+        self.dataset.setdefault("fields", []).append(field)
+        return name
+
+
+def _convert_cube(cname, cube, plain, issues,
                   source_dialect=None):
     """Build one Ossie dataset from a Cube cube."""
     scope = f"cube '{cname}'"
@@ -768,33 +841,14 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
         ds["fields"] = fields
     if extra_dimensions:
         stash["extra_dimensions"] = extra_dimensions
+    key_dimensions = {parked_of(d.get("meta"))["key_field"]: d["name"]
+                      for d in _as_named_list(cube.get("dimensions"), f"{scope} dimensions")
+                      if parked_of(d.get("meta")).get("key_field")}
+    if key_dimensions:
+        stash["key_dimensions"] = key_dimensions
     primary_key = _primary_key_of(cube, cname)
     if primary_key and not parked.get("key_from_unique_keys"):
         ds["primary_key"] = primary_key
-        # Ossie's `primary_key` names columns, but a Cube key can be an expression
-        # (`CONCAT(tenant_id, id)`), and then the only name there is to write is the
-        # dimension's. Which of the two an entry is cannot be told from the Ossie
-        # document afterwards -- a hand-authored model may name a real column that a
-        # computed field happens to share a name with -- so it is recorded here rather
-        # than guessed on the way back.
-        #
-        # Not inferred when `meta.ossie.primary_key` supplied the key: those entries are
-        # Ossie *columns* by construction, and reading them as dimension names moved the
-        # key onto a computed dimension of the same name on the next cycle -- changing what
-        # Cube deduplicates on, and so the counts it returns.
-        if not parked.get("primary_key"):
-            computed = [n for n in primary_key if n not in plain]
-            if computed:
-                stash["computed_primary_key"] = computed
-    if extra_joins:
-        stash["extra_joins"] = extra_joins
-    if extra_measures:
-        # Measures with no static Ossie expression (multi-stage ones) ride here with
-        # their original positions, so export can put them back among the measures it
-        # rebuilds from metrics. Without this they would be lost outright: `measures`
-        # is a natively-mapped key, so `cube_extras` does not carry it.
-        stash["extra_measures"] = extra_measures
-
     extras = {snake(k): v for k, v in cube.items()
               if snake(k) not in _CUBE_NATIVE_KEYS}
     leftover_meta = _meta_without_ai_context(cube.get("meta"))
@@ -878,10 +932,12 @@ def _finish_dimension_field(cname, dname, dim, field, stash, issues):
     # A precise datatype parked by a previous export wins over the default the Cube
     # type maps to, since Cube itself cannot hold the distinction.
     parked = parked_of(dim.get("meta"))
+    if parked.get("key_field"):
+        return None  # The key's declared field is emitted by its own dimension/geo half.
     if parked.get("synthetic_key"):
-        # A dimension export added only to carry Cube's primary key; the Ossie model had
-        # no field for that column, so it gets none back.
-        return None
+        # Older exports synthesized a dimension for an undeclared key column.
+        # Keep its field now: Ossie keys must reference declared dataset fields.
+        stash["synthetic_key"] = True
     _restore_expression(field, parked)
     # A field that carried no datatype keeps carrying none: Ossie says not to infer a
     # scalar type from `is_time` alone, so emitting DateTime for a `type: time`
@@ -1077,7 +1133,7 @@ def _convert_geo_dimension(cname, dname, dim, issues, source_dialect=None):
 
 # --- joins ----------------------------------------------------------------------
 
-def _convert_joins(cubes, skipped_files, issues):
+def _convert_joins(cubes, skipped_files, issues, fields):
     """Turn every cube's `joins` into Ossie relationships.
 
     Ossie's `from` is always the many side. A `many_to_one` join declared on cube
@@ -1119,6 +1175,10 @@ def _convert_joins(cubes, skipped_files, issues):
                     {"index": index, "join": join})
                 continue
 
+            pairs = [(fields[cname].column(a) if a_raw else fields[cname].member(a),
+                      fields[target].column(b) if b_raw else fields[target].member(b))
+                     for (a, a_raw), (b, b_raw) in pairs]
+
             from_cube, to_cube = cname, target
             from_cols = [p[0] for p in pairs]
             to_cols = [p[1] for p in pairs]
@@ -1159,6 +1219,9 @@ def _convert_joins(cubes, skipped_files, issues):
 
             rel = {"name": name, "from": from_cube, "to": to_cube,
                    "from_columns": from_cols, "to_columns": to_cols}
+            if "sql" in stash:
+                stash["field_binding"] = relationship_binding(
+                    rel, {n: registry.dataset for n, registry in fields.items()})
             write_stash(rel, stash)
             # Foreign-vendor extensions a previous export parked on the declaring
             # cube, keyed by join target -- a Cube join entry has no `meta` of its own.
@@ -1171,7 +1234,7 @@ def _convert_joins(cubes, skipped_files, issues):
 
 
 def _decompose_join_sql(sql, own_cube, target, what, cubes, issues):
-    """Split a Cube join `sql` into (own_column, target_column) pairs.
+    """Split a Cube join into pairs of member or raw-column references.
 
     Only an AND-chain of equalities between one own-cube reference and one
     target-cube reference has an Ossie relationship form. Anything else -- a
@@ -1191,15 +1254,14 @@ def _decompose_join_sql(sql, own_cube, target, what, cubes, issues):
         if left is None or right is None:
             issues.add(IssueType.PARKED_IN_META, what,
                        f"join clause '{clause.strip()}' does not resolve to two "
-                       f"physical columns -- Ossie relationship columns are columns, so "
-                       f"a member reading an expression has none to name; preserved in "
+                       f"local fields or source columns; preserved in "
                        f"custom_extensions only")
             return None
-        (lcube, lcol), (rcube, rcol) = left, right
+        (lcube, lcol, lraw), (rcube, rcol, rraw) = left, right
         if lcube == own_cube and rcube == target:
-            pairs.append((lcol, rcol))
+            pairs.append(((lcol, lraw), (rcol, rraw)))
         elif lcube == target and rcube == own_cube:
-            pairs.append((rcol, lcol))
+            pairs.append(((rcol, rraw), (lcol, lraw)))
         else:
             issues.add(IssueType.PARKED_IN_META, what,
                        f"join clause '{clause.strip()}' references cubes other than "
@@ -1249,6 +1311,8 @@ def _column_of(cubes, cname, member, seen=()):
         sql = dim.get("sql")
         if sql is None:
             return member
+        if is_simple_identifier(str(sql).strip()):
+            return str(sql).strip()  # bare SQL is a source column, even if a member shadows it
         alias = _ALIAS_COLUMN_RE.match(str(sql).strip())
         if alias:
             # The explicit raw-column form (`{CUBE}.tenant_user_id`) names a column, full
@@ -1282,19 +1346,16 @@ def _is_member(cubes, cname, name):
 
 
 def _ref_target(side, own_cube, target, cubes):
-    """Resolve one side of a join equality to (cube_name, physical column), or None.
+    """Return (cube, name, is_raw_column) for one side of an equality.
 
-    Ossie's `from_columns`/`to_columns` name *columns*, so the two Cube reference forms
-    cannot be treated alike. `{CUBE}.user_id` is a raw column and passes straight
-    through; `{CUBE.user_key}` names a *member*, whose own sql is what Cube joins on --
-    so it has to be resolved to the column that member reads. A member that reads an
-    expression rather than a column has no Ossie column to name at all, and returning
-    None here parks the whole join instead of inventing one.
+    Member references name declared fields, including local computed fields.
+    Alias-dot references name source columns, which the field registry maps to
+    an existing scalar field or declares as a new column-only field.
     """
     text = str(side).strip()
     if is_simple_identifier(text):
         # Bare SQL, no reference: a column of the cube the join is declared on.
-        return (own_cube, text)
+        return (own_cube, text, True)
     m = _JOIN_SIDE_RE.match(text)
     if not m:
         return None
@@ -1307,28 +1368,91 @@ def _ref_target(side, own_cube, target, cubes):
         if rest or head not in aliases | {target}:
             return None
         cube = own_cube if head in aliases else target
-        return (cube, suffix)
+        return (cube, suffix, True)
 
     if rest:
         # `{X.member}` -- a member reference.
         cube = own_cube if head in aliases else head if head == target else None
         if cube is None:
             return None
-        column = _column_of(cubes, cube, rest)
-        return (cube, column) if column else None
+        return (cube, rest, False) if _field_member(cubes, cube, rest) else None
 
     # `{member}` -- an unqualified member of the declaring cube.
     if body in aliases:
         return None  # a bare alias with no column means nothing here
-    column = _column_of(cubes, own_cube, body)
-    return (own_cube, column) if column else None
+    return (own_cube, body, False) if _field_member(cubes, own_cube, body) else None
+
+
+def _dimension_sql_strings(dim):
+    def sql_strings(value):
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if k == "sql":
+                    yield str(v)
+                else:
+                    yield from sql_strings(v)
+        elif isinstance(value, list):
+            for item in value:
+                yield from sql_strings(item)
+    yield from sql_strings({"sql": dim.get("sql"), "case": dim.get("case")})
+
+
+def _field_member(cubes, cname, name, seen=()):
+    """A local, acyclic dimension expression can be a relationship field."""
+    key = (cname, name)
+    if key in seen:
+        return False
+    dim = next((d for d in _as_named_list(cubes[cname].get("dimensions"),
+                                         f"cube '{cname}' dimensions")
+                if d.get("name") == name), None)
+    if dim is None or not _yields_a_same_named_field(dim):
+        return False
+    for body in cube_reference_bodies(" ".join(_dimension_sql_strings(dim))):
+        head, dot, tail = body.partition(".")
+        if head in ("CUBE", "TABLE", cname):
+            if not dot:
+                continue  # own alias in a raw-column reference
+            member = tail
+        elif dot:
+            return False  # a field cannot read another dataset
+        else:
+            member = head
+        if not _field_member(cubes, cname, member, seen + (key,)):
+            return False
+    return True
+
+
+def _local_dimension_expression(cubes, cname, name):
+    """Inline a local member chain into source SQL for a declared key/join field."""
+    dim = next(d for d in _as_named_list(cubes[cname].get("dimensions"),
+                                        f"cube '{cname}' dimensions") if d.get("name") == name)
+    def replace(match):
+        body = match.group(1).strip()
+        head, dot, tail = body.partition(".")
+        if head in ("CUBE", "TABLE", cname) and not dot:
+            return match.group(0)  # alias before a raw source column
+        member = tail if dot else head
+        nested = _local_dimension_expression(cubes, cname, member)
+        if nested is None:
+            return member
+        return f"({nested})" if has_top_level_operator(nested) else nested
+    def expand(sql):
+        return _CUBE_REF_RE.sub(replace, str(sql))
+    if dim.get("case") is not None:
+        expanded = _case_expression(cname, name, dim["case"], expand, str)
+    elif dim.get("sql") is None:
+        return None
+    else:
+        expanded = expand(dim["sql"])
+    return cube_sql_to_ossie(expanded, cname)[0]
 
 
 def _rebuild_join_sql(target, pairs):
-    """The canonical form export emits, used to decide whether the original has to
-    be stashed. The own side is always `{CUBE}` so the join keeps working when the
-    cube is extended, and both sides use the alias-dot raw-column form because
-    Ossie's from_columns/to_columns name columns, not members."""
+    """Canonical SQL for same-named scalar fields; other spellings are saved.
+
+    Computed fields and aliases need their original member/column bindings kept.
+    The saved SQL is guarded against later edits to those declared fields.
+    """
     return " AND ".join(
         "{CUBE}." + own + " = {" + target + "}." + other
         for own, other in pairs

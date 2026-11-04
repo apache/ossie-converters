@@ -827,15 +827,15 @@ def test_native_unsplittable_foreign_aggregate_is_reported(dialect):
 @pytest.mark.parametrize("dialect", ["BIGQUERY", "DATABRICKS"])
 def test_native_quoted_reference_to_a_dropped_field_drops_the_metric(dialect):
     model = _cross_dataset_composite_count(dialect)
-    model["datasets"][1]["fields"][0]["expression"]["dialects"] = [
-        {"dialect": "DAX", "expression": "[id]"}
-    ]
+    # Keep key/join fields usable so this isolates metric dependency dropping.
+    model["datasets"][1]["fields"].append({"name": "legacy", "expression": {
+        "dialects": [{"dialect": "DAX", "expression": "[legacy]"}]}})
     model["metrics"][0]["expression"]["dialects"][0]["expression"] = (
-        "SUM(orders.`amount`) + SUM(users.`id`)"
+        "SUM(orders.`amount`) + SUM(users.`legacy`)"
     )
     files, issues = convert_ossie_to_cube(dump_yaml(model))
     assert all(not parse(y)["cubes"][0].get("measures") for p, y in files.items() if "/cubes/" in p)
-    assert any("users.id" in issue.detail and "dropped" in issue.detail for issue in issues)
+    assert any("users.legacy" in issue.detail and "dropped" in issue.detail for issue in issues)
 
 
 @cube_gate

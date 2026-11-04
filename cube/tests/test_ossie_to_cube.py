@@ -55,6 +55,12 @@ _ORDERS = (
     "        - dialect: ANSI_SQL\n"
     "          expression: id\n"
     "      datatype: Integer\n"
+    "    - name: user_id\n"
+    "      expression: {dialects: [{dialect: ANSI_SQL, expression: user_id}]}\n"
+    "      datatype: Integer\n"
+    "    - name: region\n"
+    "      expression: {dialects: [{dialect: ANSI_SQL, expression: region}]}\n"
+    "      datatype: String\n"
     "    - name: amount\n"
     "      expression:\n"
     "        dialects:\n"
@@ -231,7 +237,7 @@ def test_is_time_on_a_non_temporal_datatype_is_reported():
     assert "temporal role is not carried" in detail
 
 
-def test_primary_key_column_without_a_field_is_synthesized():
+def test_primary_key_without_a_declared_field_is_rejected():
     ds = (
         "  - name: orders\n"
         "    source: t\n"
@@ -245,14 +251,8 @@ def test_primary_key_column_without_a_field_is_synthesized():
         "          expression: amount\n"
         "      datatype: Decimal\n"
     )
-    files, issues = convert_ossie_to_cube(_ossie(ds))
-    dims = by_name(_cubes(files)["orders"]["dimensions"])
-    assert dims["ticket_no"] == {
-        "name": "ticket_no", "sql": "ticket_no", "type": "string",
-        "primary_key": True, "public": False,
-        "meta": {"ossie": {"synthetic_key": True}}}
-    # `type: string` is chosen by the converter, not carried by Ossie.
-    assert issues.of_type(IssueType.APPROXIMATED)
+    with pytest.raises(ConversionError, match="primary_key references undeclared field 'ticket_no'"):
+        convert_ossie_to_cube(_ossie(ds))
 
 
 def test_field_name_is_sanitized_and_collisions_are_rejected():
@@ -349,6 +349,9 @@ _TWO_DATASETS = _ORDERS + (
     "        - dialect: ANSI_SQL\n"
     "          expression: id\n"
     "      datatype: Integer\n"
+    "    - name: region\n"
+    "      expression: {dialects: [{dialect: ANSI_SQL, expression: region}]}\n"
+    "      datatype: String\n"
 )
 _REL = ("  relationships:\n"
         "  - name: orders_to_users\n"
@@ -1300,7 +1303,7 @@ def test_a_model_with_only_a_warehouse_dialect_still_converts():
     Cube compiles, so nothing downstream noticed either."""
     files, issues = convert_ossie_to_cube(_databricks_ossie())
     cube = _cubes(files)["orders"]
-    assert [d["name"] for d in cube["dimensions"]] == ["o_orderkey", "o_orderdate"]
+    assert [d["name"] for d in cube["dimensions"]] == ["o_custkey", "o_orderkey", "o_orderdate"]
     assert [m["name"] for m in cube["measures"]] == ["total_revenue", "order_count"]
     # Reported, because Cube will pass that SQL to whatever the data source is.
     assert any("first warehouse dialect on offer" in i.detail

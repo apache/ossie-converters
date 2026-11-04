@@ -632,8 +632,7 @@ def test_a_many_to_one_join_still_makes_its_target_fanned_out():
 
 
 def _parked_join_model(relationship="many_to_one", measure_on="customers"):
-    """Two cubes joined on a predicate that reads a *computed* member, so the join has
-    no Ossie relationship form and is parked in the stash instead."""
+    """A filtered join has no core relationship form and is parked whole."""
     measures = ("    measures:\n"
                 "      - name: total_ltv\n"
                 "        sql: \"{CUBE}.ltv\"\n"
@@ -644,7 +643,7 @@ def _parked_join_model(relationship="many_to_one", measure_on="customers"):
         "    sql_table: public.orders\n"
         "    joins:\n"
         "      - name: customers\n"
-        "        sql: \"{CUBE}.customer_key = {customers.full_key}\"\n"
+        "        sql: \"{CUBE}.customer_key = {customers.full_key} AND {CUBE}.active = 1\"\n"
         f"        relationship: {relationship}\n"
         "    dimensions:\n"
         "      - name: id\n"
@@ -840,9 +839,9 @@ def test_join_clause_reaching_an_unrelated_cube_is_preserved():
         "    sql_table: public.regions\n"
     ))
     ossie, back, issues = _roundtrip(files)
-    assert "relationships" not in model_of(ossie)
-    assert any("does not resolve to two physical columns" in i.detail
-               for i in issues)
+    model = model_of(ossie)
+    assert "relationships" not in model
+    assert issues.of_type(IssueType.PARKED_IN_META)
     assert parse_files(back) == parse_files(files)
 
 
@@ -1282,43 +1281,29 @@ def _dims(files):
     return parse(files["model/cubes/orders.yml"])["cubes"][0]["dimensions"]
 
 
-def test_a_computed_dimension_does_not_cover_a_primary_key():
-    """`primary_key: true` in Cube declares that dimension's own sql to be the key.
-    Marking a computed dimension would declare `LOWER(email)` as the key when Ossie
-    named the `id` column -- so a name match alone must not count as coverage."""
-    files, issues = convert_ossie_to_cube(
+def test_a_computed_field_can_be_the_declared_primary_key():
+    files, _ = convert_ossie_to_cube(
         _ossie_pk(["id"], ("id", "LOWER(email)", None)))
     dims = by_name(_dims(files))
-    assert "primary_key" not in dims["id"]
+    assert set(dims) == {"id"}
+    assert dims["id"]["primary_key"] is True
     assert dims["id"]["sql"] == "LOWER({CUBE}.email)"
-    # A private scalar dimension carries the key instead, under a free name.
-    assert dims["id_pk"] == {
-        "name": "id_pk", "sql": "id", "type": "string", "primary_key": True,
-        "public": False, "meta": {"ossie": {"synthetic_key": True}}}
-    assert issues.of_type(IssueType.APPROXIMATED)
 
 
-def test_a_merged_geo_dimension_does_not_cover_a_primary_key():
-    """A geo dimension has two sql expressions and no single one, so it cannot be
-    the key even though its name matches."""
-    files, _ = convert_ossie_to_cube(_ossie_pk(
-        ["location"],
-        ("location_latitude", "lat", "latitude"),
-        ("location_longitude", "lon", "longitude")))
-    dims = by_name(_dims(files))
-    assert dims["location"]["type"] == "geo"
-    assert "primary_key" not in dims["location"]
-    assert dims["location_pk"] == {
-        "name": "location_pk", "sql": "location", "type": "string",
-        "primary_key": True, "public": False,
-        "meta": {"ossie": {"synthetic_key": True}}}
+def test_a_geo_member_name_is_not_a_declared_coordinate_key():
+    """A key must name a declared coordinate field, not the merged Cube member."""
+    with pytest.raises(ConversionError, match="undeclared field 'location'"):
+        convert_ossie_to_cube(_ossie_pk(
+            ["location"],
+            ("location_latitude", "lat", "latitude"),
+            ("location_longitude", "lon", "longitude")))
 
 
-def test_a_scalar_dimension_backed_by_the_key_column_covers_it():
+def test_an_aliased_field_can_carry_the_key():
     """The legitimate case: a differently-named dimension whose sql *is* the key
     column. It stays the key, and nothing is synthesized alongside it."""
     files, issues = convert_ossie_to_cube(
-        _ossie_pk(["id"], ("order_id", "id", None)))
+        _ossie_pk(["order_id"], ("order_id", "id", None)))
     dims = _dims(files)
     assert len(dims) == 1
     assert dims[0]["name"] == "order_id"
@@ -1347,9 +1332,8 @@ def test_a_scalar_dimension_named_as_the_key_covers_it():
     assert parse_files(back) == parse_files(src)
 
 
-def test_a_synthesized_key_name_avoids_every_existing_member():
-    """Suffixing has to keep going while names are taken, and the result must still
-    be a single non-public scalar dimension."""
+def test_a_computed_key_does_not_overwrite_other_members():
+    """The computed key keeps its own member and leaves similarly named fields intact."""
     files, _ = convert_ossie_to_cube(_ossie_pk(
         ["id"],
         ("id", "LOWER(email)", None),
@@ -1357,10 +1341,8 @@ def test_a_synthesized_key_name_avoids_every_existing_member():
         ("id_pk_2", "TRIM(email)", None)))
     dims = by_name(_dims(files))
     keys = [n for n, d in dims.items() if d.get("primary_key")]
-    assert keys == ["id_pk_3"]
-    assert dims["id_pk_3"] == {
-        "name": "id_pk_3", "sql": "id", "type": "string", "primary_key": True,
-        "public": False, "meta": {"ossie": {"synthetic_key": True}}}
+    assert keys == ["id"]
+    assert "id_pk_3" not in dims
     # Nothing was overwritten.
     assert dims["id"]["sql"] == "LOWER({CUBE}.email)"
     assert dims["id_pk"]["sql"] == "UPPER({CUBE}.email)"
@@ -1994,10 +1976,9 @@ def test_a_computed_primary_key_stays_on_its_own_dimension():
     # The original spelling, exactly: qualification makes the regenerated form
     # match the `{CUBE}`-referenced sql the model was written with.
     assert dims[0]["sql"] == "CONCAT({CUBE}.tenant_id, {CUBE}.id)"
-    # Import records which entries are dimension names rather than columns, because
-    # the Ossie document alone cannot tell them apart afterwards.
-    assert stash_of(by_name(model_of(ossie)["datasets"])["orders"])[
-        "computed_primary_key"] == ["order_key"]
+    # Keys always name declared fields, including computed ones.
+    assert by_name(model_of(ossie)["datasets"])["orders"]["primary_key"] == ["order_key"]
+    assert "computed_primary_key" not in stash_of(model_of(ossie)["datasets"][0])
 
 
 # --- brace escaping -------------------------------------------------------------
@@ -2111,17 +2092,14 @@ def _join_model(join_sql):
 
 
 @pytest.mark.parametrize("join_sql,expected", [
-    # A raw column passes straight through.
-    ("{CUBE}.user_id = {users}.id", ["user_id"]),
-    # A *member* reference names a dimension, not a column -- so it resolves to the
-    # column that dimension reads. `user_key` reads `user_id`.
-    ("{CUBE.user_key} = {users.id}", ["user_id"]),
-    ("{user_key} = {users.id}", ["user_id"]),
+    # A raw column reuses the scalar field that reads it.
+    ("{CUBE}.user_id = {users}.id", ["user_key"]),
+    # A member reference names the corresponding declared field directly.
+    ("{CUBE.user_key} = {users.id}", ["user_key"]),
+    ("{user_key} = {users.id}", ["user_key"]),
 ])
-def test_a_join_member_resolves_to_the_column_it_reads(join_sql, expected):
-    """Ossie's from_columns/to_columns are physical columns. Emitting the *member* name
-    gave downstream converters a column that need not exist -- `user_key` is a dimension,
-    the column is `user_id`."""
+def test_a_join_column_or_member_resolves_to_a_declared_field(join_sql, expected):
+    """Both native spellings bind to a declared field whose expression reads the source."""
     ossie, back, _ = _roundtrip(_join_model(join_sql))
     rel = model_of(ossie)["relationships"][0]
     assert rel["from_columns"] == expected
@@ -2130,14 +2108,14 @@ def test_a_join_member_resolves_to_the_column_it_reads(join_sql, expected):
     assert parse_files(back) == parse_files(_join_model(join_sql))
 
 
-def test_a_join_on_a_computed_member_is_parked_whole():
-    """`tenant_user_id` is `CONCAT(...)`, so there is no column for Ossie to name. The
-    join has no Ossie form and is preserved rather than described wrongly."""
+def test_a_join_on_a_computed_member_names_its_declared_field():
+    """A computed join endpoint is represented by its declared field expression."""
     ossie, back, issues = _roundtrip(
         _join_model("{CUBE.tenant_user_id} = {users.id}"))
-    assert "relationships" not in model_of(ossie)
-    assert any("does not resolve to two physical columns" in i.detail
-               for i in issues)
+    model = model_of(ossie)
+    assert model["relationships"][0]["from_columns"] == ["tenant_user_id"]
+    fields = by_name(by_name(model["datasets"])["orders"]["fields"])
+    assert expr_of(fields["tenant_user_id"]) == "CONCAT(tenant, user_id)"
     assert parse_files(back) == parse_files(
         _join_model("{CUBE.tenant_user_id} = {users.id}"))
 
@@ -2431,10 +2409,10 @@ _CHAIN = (
 
 
 @pytest.mark.parametrize("mid_sql,expected", [
-    # The chain ends in a real column, so the relationship names that column.
-    ("user_id", ["user_id"]),
-    # It ends in an expression, so there is no column to name: the join is parked.
-    ("CONCAT({CUBE}.a, {CUBE}.b)", None),
+    # Scalar and computed member chains both have declared field forms.
+    ("user_id", ["user_key"]),
+    # The computed expression is inlined within the endpoint field.
+    ("CONCAT({CUBE}.a, {CUBE}.b)", ["user_key"]),
     # A cycle Cube would reject must not hang the walk either.
     ("{CUBE.user_key}", None),
 ])
@@ -2613,12 +2591,14 @@ def test_an_explicit_raw_column_wins_over_a_dimension_of_that_name():
     )
     raw = _files(m=model.replace("{KEY}", "{CUBE}.tenant_user_id"))
     ossie, back, _ = _roundtrip(raw)
-    assert model_of(ossie)["relationships"][0]["from_columns"] == ["tenant_user_id"]
+    assert model_of(ossie)["relationships"][0]["from_columns"] == ["user_key"]
+    assert expr_of(by_name(model_of(ossie)["datasets"][0]["fields"])["user_key"]) == "tenant_user_id"
     assert parse_files(back) == parse_files(raw)
-    # The member form still parks: that one really does read an expression.
+    # The member form keeps the computed expression instead of reading the raw column.
     member = _files(m=model.replace("{KEY}", "{CUBE.tenant_user_id}"))
     ossie2, _, _ = _roundtrip(member)
-    assert "relationships" not in model_of(ossie2)
+    assert model_of(ossie2)["relationships"][0]["from_columns"] == ["user_key"]
+    assert expr_of(by_name(model_of(ossie2)["datasets"][0]["fields"])["user_key"]) == "CONCAT(a, b)"
 
 
 # --- review round seven ----------------------------------------------------------
@@ -2668,7 +2648,7 @@ def _join_key_model(key, dims):
     # column" does not apply -- there is no column of that name.
     ("tier",
      "      - name: tier\n        type: string\n        case:\n          when:\n"
-     "            - sql: \"{CUBE}.x > 1\"\n              label: hi\n", None),
+     "            - sql: \"{CUBE}.x > 1\"\n              label: hi\n", ["tier"]),
     # A `switch` dimension enumerates values and reads nothing.
     ("tier",
      "      - name: tier\n        type: switch\n        values:\n          - a\n", None),
@@ -2679,11 +2659,10 @@ def _join_key_model(key, dims):
     # This cube's own alias is a genuine raw column and still resolves.
     ("k",
      "      - name: k\n        sql: \"{CUBE}.user_id\"\n        type: number\n",
-     ["user_id"]),
+     ["k"]),
 ])
-def test_only_this_cubes_own_columns_resolve_a_join_key(key, dims, expected):
-    """Ossie relationship columns are physical columns of the dataset. Anything that is
-    not one has to park the join rather than name a column that does not exist."""
+def test_only_local_expressible_fields_resolve_a_join_key(key, dims, expected):
+    """Local scalar and computed fields are legal; correlated and switch members are not."""
     files = _join_key_model(key, dims)
     ossie, back, _ = _roundtrip(files)
     rels = model_of(ossie).get("relationships")
