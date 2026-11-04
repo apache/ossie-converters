@@ -29,6 +29,7 @@ from functools import partial
 from typing import Any
 
 from ossie_orionbelt._common import (
+    _CONVERTER_STAMP,
     _OSSIE_VENDOR_READ,
     _OSSIE_VERSION,
     _VENDOR_OBML,
@@ -127,7 +128,7 @@ class OBMLtoOssie:
         roundtrip_data: dict[str, Any] = {
             "source_format": "OBML",
             "source_version": str(self.obml.get("version", "1.0")),
-            "converter": "ossie-orionbelt",
+            "converter": _CONVERTER_STAMP,
         }
         # Preserve model-level static filters for roundtrip
         obml_filters = self.obml.get("filters", [])

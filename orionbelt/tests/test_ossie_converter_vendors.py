@@ -279,6 +279,21 @@ class TestCommonIsNotOurs:
         assert obml.get("owner") == "data-team"
         assert all(e.get("vendor") != "COMMON" for e in obml.get("customExtensions", []))
 
+    def test_our_legacy_common_provenance_stamp_is_still_read(self) -> None:
+        # the model-level payload of a plain model has no obml_ key, only the stamp
+        # (tests/fixtures/obml_as_ossie.yaml carries it under COMMON)
+        stamp = {
+            "vendor_name": "COMMON",
+            "data": json.dumps(
+                {"source_format": "OBML", "source_version": "1.0", "converter": "ossie-orionbelt"}
+            ),
+        }
+        obml = conv.OssietoOBML(self._ossie([stamp], [])).convert()
+        assert all(e.get("vendor") != "COMMON" for e in obml.get("customExtensions", []))
+
+        ossie = conv.OBMLtoOssie(obml, "demo").convert()
+        assert [e["vendor_name"] for e in ossie["custom_extensions"]] == ["ORIONBELT"]
+
     def test_a_foreign_common_does_not_hide_our_payload(self) -> None:
         foreign = {"vendor_name": "COMMON", "data": json.dumps({"owner": "test_user"})}
         ours = {"vendor_name": "ORIONBELT", "data": json.dumps({"obml_owner": "data-team"})}

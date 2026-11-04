@@ -80,19 +80,24 @@ _OSSIE_VENDOR_READ = ("Ossie", "OBSL")
 _INTERNAL_VENDORS = frozenset({"ORIONBELT", "Ossie", "OBSL"})
 # The legacy tag we emitted before ORIONBELT. COMMON is no longer a registered
 # vendor name and other converters have written their own state under it, so a
-# COMMON extension is ours only when its payload carries our ``obml_`` keys;
-# any other COMMON extension is third-party and carried through verbatim.
+# COMMON extension is ours only when its payload is one we wrote: it carries
+# our ``obml_`` keys or our provenance stamp (the model-level payload of a plain
+# model has only ``source_format``, ``source_version`` and ``converter``); any
+# other COMMON extension is third-party and carried through verbatim.
 _VENDOR_LEGACY_OBML = "COMMON"
+_CONVERTER_STAMP = "ossie-orionbelt"
 
 
-def _has_obml_keys(data: object) -> bool:
+def _is_our_payload(data: object) -> bool:
     try:
         payload = json.loads(data) if isinstance(data, str) else data
     except (json.JSONDecodeError, TypeError):
         return False
-    return isinstance(payload, dict) and any(
-        isinstance(key, str) and key.startswith("obml_") for key in payload
-    )
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("converter") == _CONVERTER_STAMP:
+        return True
+    return any(isinstance(key, str) and key.startswith("obml_") for key in payload)
 
 
 def _is_obml_extension(ext: dict) -> bool:
@@ -100,14 +105,14 @@ def _is_obml_extension(ext: dict) -> bool:
     vendor = ext.get("vendor_name")
     if vendor == _VENDOR_OBML:
         return True
-    return vendor == _VENDOR_LEGACY_OBML and _has_obml_keys(ext.get("data"))
+    return vendor == _VENDOR_LEGACY_OBML and _is_our_payload(ext.get("data"))
 
 
 def _is_internal_vendor(vendor: object, data: object) -> bool:
     """True when an extension is handled by the converter, not carried through."""
     if vendor in _INTERNAL_VENDORS:
         return True
-    return vendor == _VENDOR_LEGACY_OBML and _has_obml_keys(data)
+    return vendor == _VENDOR_LEGACY_OBML and _is_our_payload(data)
 
 # ─── Type mapping ───────────────────────────────────────────────────────────
 

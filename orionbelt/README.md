@@ -159,8 +159,10 @@ Ossie `custom_extensions` carry vendor-tagged payloads. This converter:
   original vendor and data. Ossie has no separate dimension entity, so an OBML
   dimension's foreign extensions surface on its Ossie field.
 
-Legacy `COMMON` / `OBSL` tags from earlier converter versions are still accepted
-on read.
+Legacy tags from earlier converter versions are still accepted on read: `OBSL`,
+and `COMMON` when the payload is ours (`obml_` keys or the `ossie-orionbelt`
+provenance stamp). Any other `COMMON` extension is carried through verbatim, like
+a third-party vendor.
 
 ## Limitations / unsupported constructs
 
