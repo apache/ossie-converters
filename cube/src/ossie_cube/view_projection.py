@@ -670,8 +670,15 @@ def _primary_key_sql(inliner, cubes, cname, source_dialect=None):
         return primary_key_operand(cname, keys, lambda key: "{CUBE}." + key,
                                    source_dialect)
     return primary_key_operand(
-        cname, keys, lambda key: inliner.dimension(cname, key),
+        cname, keys, lambda key: inliner.dimension(cname, _native_key_dimension(cube, key)),
         source_dialect)
+
+
+def _native_key_dimension(cube, field):
+    """A recorded field key may be carried by a private scalar geo dimension."""
+    return next((d["name"] for d in _as_named_list(cube.get("dimensions"),
+                                                  f"cube '{cube['name']}' dimensions")
+                 if parked_of(d.get("meta")).get("key_field") == field), field)
 
 
 def _published_dimension(inliner, cubes, member):
@@ -832,6 +839,34 @@ def _reduced_cubes(tree, cubes, dimensions, measures, inliner, issues):
     """The cube set the import runs over: each tree cube's source and labels, the joins
     the tree uses (SQL inlined, so a key member reads its column), the published
     dimensions and the measures they need -- nothing else to convert."""
+    # Recorded keys must resolve during import, before the published surface is
+    # rebuilt. Include their fields even for a cube with no joins or dimensions
+    # published by the view.
+    for cname in tree.order:
+        cube = cubes[cname]
+        parked = parked_of(cube.get("meta"))
+        if not parked.get("key_fields"):
+            continue
+        keys = set(parked.get("primary_key") or [])
+        keys.update(n for k in parked.get("unique_keys") or [] for n in k)
+        for native in _as_named_list(cube.get("dimensions"), f"cube '{cname}' dimensions"):
+            dname = native["name"]
+            if snake(native.get("type") or "") == "geo":
+                if not any(f"{dname}_{part}" in keys for part in ("latitude", "longitude")):
+                    continue
+                dim = copy.deepcopy(native)
+                for part in ("latitude", "longitude"):
+                    if isinstance(dim.get(part), dict) and "sql" in dim[part]:
+                        dim[part]["sql"] = inliner.rewrite(
+                            dim[part]["sql"], cname, f"dimension '{cname}.{dname}'")
+            elif dname in keys:
+                dim = {**_labels_of(native), "sql": inliner.dimension(cname, dname)}
+                if native.get("primary_key"):
+                    dim["primary_key"] = True
+            else:
+                continue
+            dimensions.setdefault((cname, dname), dim)
+
     # Keep local member references in joins: Ossie can now name the corresponding
     # computed fields directly. Their SQL is still fully inlined within each field.
     join_sql = {}
@@ -974,6 +1009,10 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues):
         parked = parked_of(cube.get("meta"))
         keys = _primary_key_of(cube, cname)
         if not keys or parked.get("key_from_unique_keys"):
+            continue
+        if "primary_key" in parked and parked.get("key_fields"):
+            # The reduced import already restored these declared fields, including
+            # geo coordinates, whose names differ from native key dimensions.
             continue
         dialect = next((f["expression"]["dialects"][0]["dialect"]
                         for f in ds.get("fields") or []), None)

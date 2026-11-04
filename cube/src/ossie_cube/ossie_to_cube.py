@@ -143,7 +143,7 @@ def _convert_model(model, dialect, base_cube, issues):
                 continue
             expr, _ = pick_expression(field.get("expression"), dialect)
             described = set(field) - {"name", "expression", "custom_extensions"}
-            if (described or foreign_vendor_extensions(field)
+            if (described or set(stash) - {"raw_column"} or foreign_vendor_extensions(field)
                     or (expr is not None and not is_simple_identifier(expr))):
                 # A column-only field needs no native member until its author
                 # adds metadata or a calculation that needs a member to carry it.
@@ -323,11 +323,13 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
 
     parked = {}
     if ds.get("unique_keys"):
-        parked["unique_keys"] = [
-            [plan.restored_fields[resolve_identifier(lookup_map(list(plan.names)), n)] for n in k]
-            for k in ds["unique_keys"]]
-        if any(resolve_identifier(lookup_map(list(plan.names)), n) in plan.references
-               for k in ds["unique_keys"] for n in k):
+        parked["unique_keys"] = [[plan.restored_fields[n] for n in k]
+                                 for k in plan.unique_keys]
+        # Same-named source columns retain the legacy spelling. Aliases,
+        # calculations, geo halves and column-only fields need explicit field
+        # semantics so import cannot reinterpret a field name as a column.
+        if any(n in plan.references or n in plan.inline_sql
+               for key in plan.unique_keys for n in key):
             parked["key_fields"] = True
         issues.add(IssueType.PARKED_IN_META, scope,
                    "unique_keys have no Cube field; parked under meta.ossie")
@@ -489,6 +491,8 @@ class _CubePlan:
                 generated name has to avoid.
     `dropped`   fields with no expression in a usable dialect, which become no dimension.
     `primary_key` the dataset's declared key fields.
+    `unique_keys` every canonical unique-key entry, including secondary keys.
+    `key_fields`  all fields needed to preserve either kind of key.
     """
 
     cname: str
@@ -500,13 +504,22 @@ class _CubePlan:
     members: frozenset
     dropped: frozenset
     primary_key: tuple
+    unique_keys: tuple
+    key_fields: frozenset
     key_from_unique_keys: bool
 
     @classmethod
     def of(cls, ds, cname, dialect, scope):
         names, inline_sql = _resolve_dimension_names(ds, dialect, scope)
         stash = read_stash(ds)
-        key, from_unique = _primary_key_fields(ds)
+        key, unique_keys, from_unique = _primary_key_fields(ds)
+        key_fields = frozenset(key) | frozenset(n for k in unique_keys for n in k)
+        dropped = frozenset(_undialected_fields(ds, dialect))
+        for unique in unique_keys:
+            for field in unique:
+                if field in dropped:
+                    raise ConversionError(f"{scope}: unique_keys field '{field}' "
+                                          "has no usable expression")
         lookup = dict(names)
         lookup.update({dname: dname for dname in names.values()})
         return cls(
@@ -520,7 +533,7 @@ class _CubePlan:
             lookup=lookup,
             members=frozenset(
                 {names[f["name"]] for f in ds.get("fields") or []
-                 if not read_stash(f).get("raw_column") or f["name"] in key}
+                 if not read_stash(f).get("raw_column") or f["name"] in key_fields}
                 | {str(item["dimension"]["name"])
                    for item in (stash.get("extra_dimensions") or [])
                    if (item.get("dimension") or {}).get("name")}
@@ -528,14 +541,16 @@ class _CubePlan:
                    for item in (stash.get("extra_measures") or [])
                    if (item.get("measure") or {}).get("name")}
                 | _stashed_segment_names(stash)),
-            dropped=frozenset(_undialected_fields(ds, dialect)),
+            dropped=dropped,
             primary_key=key,
+            unique_keys=unique_keys,
+            key_fields=key_fields,
             key_from_unique_keys=from_unique,
         )
 
 
 def _primary_key_fields(ds):
-    """(canonical declared key fields, whether they came from `unique_keys`).
+    """(canonical primary key, unique keys, whether primary came from unique keys).
 
     Cube needs a primary key on any cube that declares a join, and several source
     formats have no primary-key concept at all -- a Databricks metric view does not --
@@ -560,14 +575,14 @@ def _primary_key_fields(ds):
     unique_keys = ds.get("unique_keys") if ds.get("unique_keys") is not None else []
     if not isinstance(unique_keys, list):
         raise ConversionError(f"Dataset '{ds['name']}': unique_keys must be a list of field lists")
-    unique = [checked(k, "unique_keys") for k in unique_keys]
+    unique = tuple(tuple(checked(k, "unique_keys")) for k in unique_keys)
     if declared:
-        return tuple(declared), False
+        return tuple(declared), unique, False
     for candidate in unique:
         columns = candidate
         if columns:
-            return tuple(columns), True
-    return (), False
+            return tuple(columns), unique, True
+    return (), unique, False
 
 
 def _reference_members(ds, dim_names, dialect):
@@ -760,7 +775,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
         stash = read_stash(field)
         dname = dim_names[fname]
         if stash.get("raw_column"):
-            if fname not in plan.primary_key:
+            if fname not in plan.key_fields:
                 continue
             stash = {k: v for k, v in stash.items() if k != "raw_column"}
             stash["public"] = False

@@ -505,3 +505,237 @@ def test_editing_a_scalar_join_field_expression_rebuilds_saved_raw_column_sql():
         cubes(export(model))["orders"]["joins"][0]["sql"]
         == "{CUBE.key} = {customers}.id"
     )
+
+
+@pytest.mark.parametrize("case", [False, True])
+def test_member_key_chains_preserve_escaped_literals(case):
+    key = {"name": "key", "type": "string", "primary_key": True}
+    if case:
+        key["case"] = {
+            "when": [{"sql": "{CUBE.middle} IS NOT NULL", "label": r"\{outer\}"}],
+            "else": {"label": {"sql": "{CUBE.middle}"}},
+        }
+    else:
+        key["sql"] = r"CONCAT({CUBE.middle}, '\{outer\}')"
+    native = {
+        "cubes": [
+            {
+                "name": "orders",
+                "sql_table": "sales.public.orders",
+                "dimensions": [
+                    {
+                        "name": "base",
+                        "type": "string",
+                        "sql": r"CONCAT(id, '\{inner\}')",
+                    },
+                    {"name": "middle", "type": "string", "sql": "{CUBE.base}"},
+                    key,
+                ],
+            }
+        ]
+    }
+    returned, _ = convert_cube_to_ossie({"model.yml": yaml.safe_dump(native)})
+    model = yaml.safe_load(returned)
+    sql = expr_of(by_name(model["datasets"][0]["fields"])["key"])
+    assert "{inner}" in sql and "{outer}" in sql
+    assert "CUBE" not in sql and "\\{" not in sql
+    for _ in range(2):
+        returned, _ = convert_cube_to_ossie(export(model))
+        model = yaml.safe_load(returned)
+        assert expr_of(by_name(model["datasets"][0]["fields"])["key"]) == sql
+
+
+@pytest.mark.parametrize(
+    "metadata", [{"format": "currency"}, {"meta": {"owner": "finance"}}]
+)
+def test_column_only_field_cube_metadata_edits_materialize(metadata):
+    model = document()
+    raw = {"name": "raw", "expression": expression("raw_id")}
+    raw["custom_extensions"] = [
+        {
+            "vendor_name": "CUBE",
+            "data": json.dumps({"_v": 1, "raw_column": True, **metadata}),
+        }
+    ]
+    model["datasets"][0]["fields"].append(raw)
+    files = export(model)
+    dim = by_name(cubes(files)["orders"]["dimensions"])["raw"]
+    assert dim["public"] is False
+    for key, value in metadata.items():
+        if isinstance(value, dict):
+            assert all(dim[key][k] == v for k, v in value.items())
+        else:
+            assert dim[key] == value
+    returned, _ = convert_cube_to_ossie(files)
+    restored = by_name(yaml.safe_load(returned)["datasets"][0]["fields"])["raw"]
+    for key, value in metadata.items():
+        assert stash_of(restored)[key] == value
+
+
+@pytest.mark.parametrize("primary", [True, False])
+def test_secondary_unique_key_requires_a_usable_expression(primary):
+    model = document()
+    ds = model["datasets"][0]
+    if not primary:
+        ds.pop("primary_key")
+    ds["unique_keys"] = [["Order Key"], ["Customer Key"]]
+    ds["fields"][1]["expression"] = {
+        "dialects": [{"dialect": "DAX", "expression": "[Customer Key]"}]
+    }
+    with pytest.raises(
+        ConversionError, match="orders.*unique_keys.*Customer Key.*usable expression"
+    ):
+        export(model)
+
+
+@pytest.mark.parametrize("raw_name", ["source__id", "RAW ID"])
+def test_secondary_unique_key_preserves_column_only_field_binding(raw_name):
+    model = document()
+    ds = model["datasets"][0]
+    raw = {
+        "name": raw_name,
+        "expression": expression("id"),
+        "custom_extensions": [
+            {"vendor_name": "CUBE", "data": json.dumps({"_v": 1, "raw_column": True})}
+        ],
+    }
+    ds["fields"].append(raw)
+    ds["unique_keys"] = [["Order Key"], [raw_name]]
+    files = export(model)
+    native = cubes(files)["orders"]
+    assert native["meta"]["ossie"]["key_fields"] is True
+    name = native["meta"]["ossie"]["unique_keys"][1][0]
+    assert by_name(native["dimensions"])[name]["public"] is False
+    for _ in range(3):
+        returned, _ = convert_cube_to_ossie(files)
+        back = yaml.safe_load(returned)
+        ds = back["datasets"][0]
+        assert_declared(back)
+        assert expr_of(by_name(ds["fields"])[ds["unique_keys"][1][0]]) == "id"
+        next_files = export(back)
+        assert parse_files(next_files) == parse_files(files)
+        files = next_files
+
+
+def projected_count_files(model, joined=False):
+    if not joined:
+        model.pop("relationships", None)
+        model["datasets"] = model["datasets"][:1]
+    files = export(model)
+    native_cubes = cubes(files)
+    native = native_cubes["orders"]
+    native["measures"] = [{"name": "count", "type": "count"}]
+    published = [{"join_path": "orders", "includes": ["count"]}]
+    if joined:
+        published.append({"join_path": "orders.customers", "includes": ["customer_id"]})
+    # Use only the cube, without the automatically generated view/model carrier.
+    return {
+        "model.yml": yaml.safe_dump(
+            {
+                "cubes": list(native_cubes.values()),
+                "views": [{"name": "published", "cubes": published}],
+            }
+        )
+    }
+
+
+@pytest.mark.parametrize("promoted", [False, True])
+@pytest.mark.parametrize("joined", [False, True])
+def test_projection_preserves_hidden_recorded_unique_key_dependencies(promoted, joined):
+    model = document()
+    ds = model["datasets"][0]
+    if promoted:
+        ds.pop("primary_key")
+    ds["unique_keys"] = [["Order Key"], ["Customer Key"]]
+    files = projected_count_files(model, joined)
+    returned, _, _ = convert_cube_view_to_ossie(files, "published")
+    back = yaml.safe_load(returned)
+    assert_declared(back)
+    assert_ossie_is_valid(returned)
+    ds = by_name(back["datasets"])["orders"]
+    assert [
+        [expr_of(by_name(ds["fields"])[n]) for n in k] for k in ds["unique_keys"]
+    ] == [["LOWER(email)"], ["COALESCE(customer_id, 0)"]]
+    assert all(stash_of(f)["public"] is False for f in ds["fields"])
+    assert ("primary_key" in ds) != promoted
+    export(back)
+
+
+@pytest.mark.parametrize("part", ["latitude", "longitude"])
+def test_projection_resolves_recorded_geo_coordinate_keys(part):
+    model = document()
+    ds = model["datasets"][0]
+    ds["primary_key"] = ["lat" if part == "latitude" else "lon"]
+    for name, coordinate in [("lat", "latitude"), ("lon", "longitude")]:
+        f = field(name, coordinate)
+        f["datatype"] = "Float"
+        f["custom_extensions"] = [
+            {
+                "vendor_name": "CUBE",
+                "data": json.dumps(
+                    {"_v": 1, "geo": {"of": "location", "part": coordinate}}
+                ),
+            }
+        ]
+        ds["fields"].append(f)
+    files = projected_count_files(model)
+    returned, _, _ = convert_cube_view_to_ossie(files, "published")
+    back = yaml.safe_load(returned)
+    assert_declared(back)
+    assert_ossie_is_valid(returned)
+    ds = back["datasets"][0]
+    assert expr_of(by_name(ds["fields"])[ds["primary_key"][0]]) == part
+    assert expr_of(back["metrics"][0]) == f"COUNT(DISTINCT orders.{part})"
+    # Supporting coordinates are scalar fields in the projected model, so the
+    # result can be exported without requiring the unpublished other geo half.
+    export(back)
+
+
+@cube_gate
+def test_review_key_dependencies_compile_in_native_cube():
+    model = document()
+    ds = model["datasets"][0]
+    ds["fields"].append(
+        {
+            "name": "source__id",
+            "expression": expression("id"),
+            "custom_extensions": [
+                {
+                    "vendor_name": "CUBE",
+                    "data": json.dumps({"_v": 1, "raw_column": True}),
+                }
+            ],
+        }
+    )
+    ds["unique_keys"] = [["Order Key"], ["source__id"]]
+    assert_cube_compiles(export(model), "private secondary unique key")
+    returned, _, _ = convert_cube_view_to_ossie(
+        projected_count_files(model, True), "published"
+    )
+    assert_cube_compiles(
+        export(yaml.safe_load(returned)), "projected unique-key dependencies"
+    )
+
+    ds["primary_key"] = ["lat"]
+    for name, part in [("lat", "latitude"), ("lon", "longitude")]:
+        ds["fields"].append(
+            {
+                "name": name,
+                "datatype": "Float",
+                "expression": expression(part),
+                "custom_extensions": [
+                    {
+                        "vendor_name": "CUBE",
+                        "data": json.dumps(
+                            {"_v": 1, "geo": {"of": "location", "part": part}}
+                        ),
+                    }
+                ],
+            }
+        )
+    returned, _, _ = convert_cube_view_to_ossie(
+        projected_count_files(model), "published"
+    )
+    assert_cube_compiles(
+        export(yaml.safe_load(returned)), "projected geo-coordinate key"
+    )

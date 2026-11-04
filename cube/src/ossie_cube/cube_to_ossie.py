@@ -1422,7 +1422,7 @@ def _field_member(cubes, cname, name, seen=()):
     return True
 
 
-def _local_dimension_expression(cubes, cname, name):
+def _local_dimension_expression(cubes, cname, name, *, _nested=False):
     """Inline a local member chain into source SQL for a declared key/join field."""
     dim = next(d for d in _as_named_list(cubes[cname].get("dimensions"),
                                         f"cube '{cname}' dimensions") if d.get("name") == name)
@@ -1432,18 +1432,24 @@ def _local_dimension_expression(cubes, cname, name):
         if head in ("CUBE", "TABLE", cname) and not dot:
             return match.group(0)  # alias before a raw source column
         member = tail if dot else head
-        nested = _local_dimension_expression(cubes, cname, member)
+        nested = _local_dimension_expression(cubes, cname, member, _nested=True)
         if nested is None:
             return member
         return f"({nested})" if has_top_level_operator(nested) else nested
     def expand(sql):
-        return _CUBE_REF_RE.sub(replace, str(sql))
+        protected = str(sql).replace("\\{", "\x00lb\x00").replace("\\}", "\x00rb\x00")
+        return _CUBE_REF_RE.sub(replace, protected)
     if dim.get("case") is not None:
-        expanded = _case_expression(cname, name, dim["case"], expand, str)
+        expanded = _case_expression(cname, name, dim["case"], expand,
+                                    lambda s: s.replace("\\{", "\x00lb\x00")
+                                               .replace("\\}", "\x00rb\x00"))
     elif dim.get("sql") is None:
         return None
     else:
         expanded = expand(dim["sql"])
+    if _nested:
+        return expanded
+    expanded = expanded.replace("\x00lb\x00", "\\{").replace("\x00rb\x00", "\\}")
     return cube_sql_to_ossie(expanded, cname)[0]
 
 
