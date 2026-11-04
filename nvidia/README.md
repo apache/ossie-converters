@@ -19,11 +19,19 @@
 
 # Apache Ossie ↔ NVIDIA Auto Ontology Converter
 
-Converts between Apache Ossie YAML and NVIDIA Auto Ontology (formerly GSF)
-model documents. Runs offline: no Auto Ontology instance, database or network
-needed.
+Converts between [Apache Ossie](https://github.com/apache/ossie/blob/main/core-spec/spec.md)
+semantic models and [NVIDIA Auto Ontology](https://github.com/NVIDIA/auto-ontology)
+(formerly GSF) model documents. Runs offline: no Auto Ontology instance,
+database or network needed. Auto Ontology itself uses this converter for its
+Ossie import and export, and an Auto Ontology → Ossie → Auto Ontology round
+trip keeps its IDs, SQL and native metadata.
+
+Ossie documents hold one model at the root; legacy `semantic_model` wrappers
+are rejected.
 
 ## Setup
+
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
@@ -46,10 +54,12 @@ uv run ossie-nvidia-auto-ontology import -i model.auto_ontology.yaml -o model.ya
 - `--embedded-ontology-output` writes the ontology with the mapping embedded,
   for tools that don't read mapping documents yet.
 - Without `-o`, output goes to stdout.
+- Invalid input exits non-zero with the error on stderr.
 
 The same conversions are available from Python as
 `convert_ossie_to_auto_ontology`, `convert_auto_ontology_to_ossie` and
-`convert_auto_ontology_to_ossie_ontology`.
+`convert_auto_ontology_to_ossie_ontology`; they raise
+`AutoOntologyConversionError` on invalid input.
 
 ## Mapping
 
@@ -57,20 +67,26 @@ The same conversions are available from Python as
 |---|---|
 | Dataset | Term representing one catalog table |
 | Field backed by one column | Term column attribute |
+| Field `datatype` | Physical type of that column |
 | Computed field | SQL attribute |
 | Metric | Custom analysis |
 | Relationship | Joins and foreign keys |
 
 ## Loading into Auto Ontology
 
+Auto Ontology imports either this converter's output or the Ossie model
+itself. Use **Settings → Import / Export**, or the API with an
+[API token](https://github.com/NVIDIA/auto-ontology/blob/main/docs/authentication.md#api-tokens)
+from an admin account:
+
 ```bash
-curl --fail-with-body -X POST \
-  'http://127.0.0.1:3001/api/model/import?replace=true&embed=true' \
-  -H 'Content-Type: application/x-yaml' \
-  --data-binary @model.auto_ontology.yaml
+curl --fail-with-body -X POST "$AUTO_ONTOLOGY_URL/api/model/import" \
+  -H "x-api-key: $AUTO_ONTOLOGY_API_TOKEN" \
+  -F file=@model.auto_ontology.yaml
 ```
 
-The instance needs a connection configured for every database in the document.
+The instance needs a connection for every database in the document.
+`POST /api/model/export` with `{"format": "ossie"}` exports the model as Ossie.
 
 ## Limitations
 
@@ -80,7 +96,8 @@ The instance needs a connection configured for every database in the document.
 - `ai_context`, dimensions, synonyms and custom extensions have no
   Auto Ontology equivalent and are dropped on export.
 - Import embeds the full native document in an `NVIDIA_AUTO_ONTOLOGY`
-  extension so a round trip keeps its IDs, which makes the Ossie file large.
+  extension to keep the round trip intact, so Ossie files from large catalogs
+  are large.
 
 ## Tests
 
