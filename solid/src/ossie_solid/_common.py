@@ -147,6 +147,29 @@ def warn_unknown_keys(obj, known, scope, label, format_name):
                     f"reads it, so {'it was' if len(extra) == 1 else 'they were'} dropped")
 
 
+def carry_unknown_keys(obj, known, scope, label, format_name):
+    """The keys of `obj` outside `known`, for import to carry in the stash.
+
+    Solid's export gains keys over time (four in October 2026 alone). Dropping one the
+    converter does not know would break the round trip until it is updated, so each is
+    carried unchanged and restored on export. It is still reported, since an Apache
+    Ossie consumer cannot see it. A key that is not a string has no JSON spelling and
+    is dropped, as warn_unknown_keys reports.
+    """
+    carried = {k: v for k, v in obj.items() if k not in known and isinstance(k, str)}
+    warn_unknown_keys({k: v for k, v in obj.items() if not isinstance(k, str)},
+                      known, scope, label, format_name)
+    if carried:
+        names = ", ".join(f"'{key}'" for key in carried)
+        one = len(carried) == 1
+        warn(scope, f"{label}: {names} {'is' if one else 'are'} not part of {format_name} "
+                    f"as this converter maps it; {'it was' if one else 'they were'} "
+                    f"carried unchanged in custom_extensions[SOLID], so a round trip "
+                    f"keeps {'it' if one else 'them'}, but an Apache Ossie consumer does "
+                    f"not see {'it' if one else 'them'}")
+    return carried
+
+
 def require(obj, key, what):
     """Return `obj[key]`, or raise a clean ConversionError if it is missing/empty.
 
