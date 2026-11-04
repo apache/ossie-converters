@@ -204,3 +204,103 @@ class TestUnsupportedDimensions:
         with pytest.warns(UserWarning, match="could not be parsed"):
             fields = _fields("dimension: x { sql: ${TABLE}.a + ;; }")
         assert fields == {}
+
+
+class TestDimensionGroups:
+    def test_time_group_is_one_field(self):
+        fields = _fields(
+            "dimension_group: created { type: time timeframes: [raw, date, month] "
+            "sql: ${TABLE}.created_at ;; }"
+        )
+        assert fields["created_at"] == {
+            "name": "created_at",
+            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "created_at"}]},
+            "datatype": "DateTimeTz",
+        }
+
+    @pytest.mark.parametrize("lookml, ossie", [
+        ("date", "Date"),
+        ("datetime", "DateTime"),
+        ("timestamp", "DateTimeTz"),
+    ])
+    def test_datatype(self, lookml, ossie):
+        fields = _fields(f"dimension_group: created {{ type: time datatype: {lookml} "
+                         "sql: ${TABLE}.created ;; }")
+        assert fields["created"]["datatype"] == ossie  # column `created`
+
+    @pytest.mark.parametrize("lookml_datatype", ["epoch", "yyyymmdd"])
+    def test_numeric_datatype_is_skipped(self, lookml_datatype):
+        with pytest.warns(UserWarning, match=f"datatype '{lookml_datatype}' stores a number"):
+            fields = _fields(f"dimension_group: created {{ type: time "
+                             f"datatype: {lookml_datatype} sql: ${{TABLE}}.c ;; }}")
+        assert fields == {}
+
+    def test_duration_is_skipped(self):
+        with pytest.warns(UserWarning, match="dimension_group 'orders.open'.*type 'duration'"):
+            fields = _fields(
+                "dimension_group: open { type: duration intervals: [day] "
+                "sql_start: ${TABLE}.opened ;; sql_end: ${TABLE}.closed ;; }"
+            )
+        assert fields == {}
+
+    def test_label_and_description(self):
+        fields = _fields('dimension_group: created { type: time label: "Created" '
+                         'description: "When placed" sql: ${TABLE}.c ;; }')
+        assert fields["c"]["label"] == "Created"
+        assert fields["c"]["description"] == "When placed"
+
+    def test_computed_sql_is_named_raw(self):
+        fields = _fields("dimension_group: created { type: time sql: TIMESTAMP(${TABLE}.d) ;; }")
+        assert _sql(fields["created_raw"]) == "TIMESTAMP(d)"
+
+    def test_taken_column_name_is_named_raw(self):
+        fields = _fields(
+            "dimension: created_at { sql: CAST(${TABLE}.created_at AS STRING) ;; }"
+            "dimension_group: created { type: time sql: ${TABLE}.created_at ;; }"
+        )
+        assert set(fields) == {"created_at", "created_raw"}
+
+    def test_two_groups_on_one_column(self):
+        fields = _fields(
+            "dimension_group: created { type: time sql: ${TABLE}.created_at ;; }"
+            "dimension_group: placed { type: time sql: ${TABLE}.created_at ;; }"
+        )
+        assert set(fields) == {"created_at", "placed_raw"}
+
+    def test_quoted_column_is_named_raw(self):
+        fields = _fields("dimension_group: created { type: time sql: ${TABLE}.`created at` ;; }")
+        assert set(fields) == {"created_raw"}
+
+    def test_date_time_dimension(self):
+        fields = _fields("dimension: shipped { type: date_time sql: ${TABLE}.shipped ;; }")
+        assert fields["shipped"]["datatype"] == "DateTimeTz"
+
+    def test_date_dimension_is_skipped(self):
+        with pytest.warns(UserWarning, match="type 'date' truncates a timestamp"):
+            fields = _fields("dimension: shipped { type: date sql: ${TABLE}.shipped ;; }")
+        assert fields == {}
+
+
+class TestTimeframeReferences:
+    def test_raw_timeframe_is_inlined(self):
+        fields = _fields(
+            "dimension_group: created { type: time sql: ${TABLE}.created_at ;; }"
+            "dimension: is_recent { type: yesno sql: ${created_raw} > '2026-01-01' ;; }"
+        )
+        assert _sql(fields["is_recent"]) == "created_at > '2026-01-01'"
+
+    def test_other_timeframe_is_skipped(self):
+        with pytest.warns(UserWarning, match="'month' timeframe of dimension_group 'created'"):
+            fields = _fields(
+                "dimension_group: created { type: time sql: ${TABLE}.created_at ;; }"
+                "dimension: m { sql: ${created_month} ;; }"
+            )
+        assert "m" not in fields
+
+    def test_longest_group_name_wins(self):
+        fields = _fields(
+            "dimension_group: created { type: time sql: ${TABLE}.a ;; }"
+            "dimension_group: created_at { type: time sql: ${TABLE}.b ;; }"
+            "dimension: x { sql: ${created_at_raw} ;; }"
+        )
+        assert _sql(fields["x"]) == "b"

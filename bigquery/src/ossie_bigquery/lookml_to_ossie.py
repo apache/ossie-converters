@@ -29,6 +29,10 @@ Mapping summary:
                              `${other_dimension}` is replaced by that
                              dimension's SQL, since Ossie field expressions
                              reference columns, not other fields
+    LookML dimension_group-> one temporal Ossie field holding the raw value.
+                             Ossie has no time grain, so the timeframes
+                             (date, week, month, ...) are not carried over.
+                             See _group_field_name for how the field is named
 
 Expressions are tagged with the BIGQUERY dialect, as written in LookML.
 """
@@ -59,7 +63,21 @@ _DATATYPES = {
 # LookML types whose `sql` is a plain value Ossie can hold. Other types
 # (tier, location, distance, duration, bin, ...) compute their value from
 # `sql` or have none, so they are skipped.
-_VALUE_TYPES = set(_DATATYPES) | {"number"}
+_VALUE_TYPES = set(_DATATYPES) | {"number", "date_time"}
+
+# Dimension `type: date_time` -> Ossie `datatype`. Looker reads a timestamp
+# and only converts its display timezone, so the value is the same instant.
+# `type: date` is not here: Looker converts the timestamp's timezone and then
+# truncates it to a date, which the raw SQL does not do.
+_DATE_TYPES = {"date_time": "DateTimeTz"}
+
+# dimension_group `datatype` -> Ossie `datatype`. Looker's default is
+# timestamp. epoch and yyyymmdd store a number, not a temporal value.
+_GROUP_DATATYPES = {
+    "date": "Date",
+    "datetime": "DateTime",
+    "timestamp": "DateTimeTz",
+}
 
 # A LookML substitution: ${TABLE}, ${field}, ${view.field}, ${field._sql}.
 _SUBSTITUTION = re.compile(r"\$\{([^}]*)\}")
@@ -144,15 +162,22 @@ def _convert_view(view):
     dataset = {"name": name, "source": source}
 
     dimensions = {d["name"]: d for d in view.get("dimensions", [])}
+    groups = {g["name"]: g for g in view.get("dimension_groups", [])}
     fields = []
     primary_key = []
     for dim_name, dim in dimensions.items():
-        field = _convert_dimension(name, dim, dimensions)
+        field = _convert_dimension(name, dim, dimensions, groups)
         if field is None:
             continue
         fields.append(field)
         if dim.get("primary_key") == "yes":
             primary_key.append(dim_name)
+    taken = set(dimensions)
+    for group in groups.values():
+        field = _convert_dimension_group(name, group, dimensions, groups, taken)
+        if field is not None:
+            fields.append(field)
+            taken.add(field["name"])
 
     if primary_key:
         dataset["primary_key"] = primary_key
@@ -187,18 +212,67 @@ def _convert_source(view):
 # Dimensions
 # ---------------------------------------------------------------------------
 
-def _convert_dimension(view_name, dim, dimensions):
+def _convert_dimension(view_name, dim, dimensions, groups):
     """Converts one LookML dimension to an Ossie field, or None (with a
     warning) if it has no Ossie form."""
     name = dim["name"]
     scope = f"dimension '{view_name}.{name}'"
     lookml_type = dim.get("type", "string")  # Looker's default
+    if lookml_type == "date":
+        _warn(scope, "type 'date' truncates a timestamp to a date in the query "
+              "timezone, which has no Ossie form; skipping")
+        return None
     if lookml_type not in _VALUE_TYPES:
         _warn(scope, f"type '{lookml_type}' has no Ossie form; skipping")
         return None
+    datatype = _DATATYPES.get(lookml_type) or _DATE_TYPES.get(lookml_type)
+    return _build_field(view_name, dim, name, datatype, scope, dimensions, groups)
 
+
+def _convert_dimension_group(view_name, group, dimensions, groups, taken):
+    """Converts one LookML dimension_group to a single temporal Ossie field,
+    or None (with a warning) if it has no Ossie form."""
+    name = group["name"]
+    scope = f"dimension_group '{view_name}.{name}'"
+    if group.get("type", "time") != "time":
+        _warn(scope, f"type '{group['type']}' has no Ossie form; skipping")
+        return None
+    lookml_datatype = group.get("datatype", "timestamp")  # Looker's default
+    datatype = _GROUP_DATATYPES.get(lookml_datatype)
+    if datatype is None:
+        _warn(scope, f"datatype '{lookml_datatype}' stores a number, not a "
+              "temporal value; skipping")
+        return None
+    field = _build_field(view_name, group, None, datatype, scope, dimensions, groups)
+    if field is not None:
+        field["name"] = _group_field_name(group["name"], field, taken)
+    return field
+
+
+def _group_field_name(group_name, field, taken):
+    """Names the Ossie field for a dimension_group.
+
+    The group name itself (`created`) would read as a different thing than a
+    timestamp, so the field takes the name of the column the group reads
+    (`created_at`) when its SQL is a plain column. This also round-trips with
+    ossie_to_lookml, which turns field `order_date` into group `order` over
+    `${TABLE}.order_date`.
+
+    Otherwise (computed SQL, or a column name another field already uses) it
+    falls back to `<group>_raw`, Looker's own name for the group's raw value.
+    Open for review: other naming schemes are easy to swap in here.
+    """
+    sql = field["expression"]["dialects"][0]["expression"]
+    if _is_identifier(sql) and not sql.startswith("`") and sql not in taken:
+        return sql
+    return f"{group_name}_raw"
+
+
+def _build_field(view_name, entry, name, datatype, scope, dimensions, groups):
+    """Builds an Ossie field from a dimension or dimension_group, resolving
+    its SQL. Returns None (with a warning) if the SQL has no Ossie form."""
     try:
-        sql = _resolve_sql(view_name, name, dimensions, ())
+        sql = _resolve_sql(view_name, entry, dimensions, groups, ())
     except _Unsupported as e:
         _warn(scope, f"{e}; skipping")
         return None
@@ -212,29 +286,28 @@ def _convert_dimension(view_name, dim, dimensions):
         "name": name,
         "expression": {"dialects": [{"dialect": DIALECT, "expression": sql}]},
     }
-    if lookml_type in _DATATYPES:
-        field["datatype"] = _DATATYPES[lookml_type]
+    if datatype is not None:
+        field["datatype"] = datatype
     for key in ("label", "description"):
-        if key in dim:
-            field[key] = dim[key]
+        if key in entry:
+            field[key] = entry[key]
     return field
 
 
-def _resolve_sql(view_name, name, dimensions, path):
-    """Returns the SQL of dimension `name` with every LookML substitution
-    replaced, so it reads as a plain expression over the view's columns.
+def _resolve_sql(view_name, entry, dimensions, groups, path):
+    """Returns the SQL of a dimension or dimension_group with every LookML
+    substitution replaced, so it reads as a plain expression over the view's
+    columns.
 
-    `path` is the chain of dimensions being resolved, to catch cycles.
+    `path` is the chain of names being resolved, to catch cycles.
     Raises _Unsupported for references Ossie cannot express.
     """
+    name = entry["name"]
     if name in path:
         raise _Unsupported(f"circular reference {' -> '.join(path + (name,))}")
-    dim = dimensions.get(name)
-    if dim is None:
-        raise _Unsupported(f"references '${{{name}}}', which is not a dimension of this view")
 
     # A dimension without `sql` reads the column of the same name.
-    sql = dim.get("sql", f"${{TABLE}}.{name}").strip()
+    sql = entry.get("sql", f"${{TABLE}}.{name}").strip()
     if "{%" in sql or "{{" in sql:
         raise _Unsupported("Liquid templating has no Ossie form")
 
@@ -248,7 +321,8 @@ def _resolve_sql(view_name, name, dimensions, path):
         if len(parts) != 1:
             raise _Unsupported(f"'${{{ref}}}' references another view or a "
                                f"field property")
-        inner = _resolve_sql(view_name, parts[0], dimensions, path + (name,))
+        target = _lookup(parts[0], dimensions, groups)
+        inner = _resolve_sql(view_name, target, dimensions, groups, path + (name,))
         # Parenthesize so the inlined SQL keeps its precedence.
         return inner if _is_identifier(inner) else f"({inner})"
 
@@ -259,6 +333,29 @@ def _resolve_sql(view_name, name, dimensions, path):
     if "${TABLE}" in sql:
         raise _Unsupported("'${TABLE}' is used without a column")
     return sql
+
+
+def _lookup(ref, dimensions, groups):
+    """Returns the dimension, or the dimension_group, that `${ref}` reads.
+
+    A group is referenced by timeframe (`${created_date}`). Only `_raw` is the
+    group's own value; the others truncate or extract it, which an Ossie
+    field expression cannot reference without restating Looker's timezone
+    handling.
+    """
+    if ref in dimensions:
+        return dimensions[ref]
+    # Longest group name first, so `created_at_raw` prefers group `created_at`.
+    for group in sorted(groups, key=len, reverse=True):
+        if ref.startswith(f"{group}_"):
+            timeframe = ref[len(group) + 1:]
+            if timeframe == "raw":
+                return groups[group]
+            raise _Unsupported(
+                f"references '${{{ref}}}', the '{timeframe}' timeframe of "
+                f"dimension_group '{group}'; only '{group}_raw' has an Ossie form"
+            )
+    raise _Unsupported(f"references '${{{ref}}}', which is not a dimension of this view")
 
 
 def _is_identifier(sql):
