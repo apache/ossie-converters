@@ -132,6 +132,7 @@ NATIVE_SHAPES = {
             "orionbelt",
             "sigma",
             "snowflake",
+            "solid",
             "wisdom",
             "semantic-view",
             "salesforce",
