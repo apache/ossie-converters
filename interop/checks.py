@@ -249,6 +249,14 @@ def _additional_members(data, native_format):
             for page in data.get("pages") or []
             for element in page.get("elements") or []
         )
+    if native_format == "solid":
+        # A Solid export holds one model under `semantic_model`: table columns are its
+        # dimensions and facts, and metrics are one model-level list.
+        model = data.get("semantic_model") or {}
+        return sum(
+            len(table.get("dimensions") or []) + len(table.get("facts") or [])
+            for table in model.get("tables") or []
+        ) + len(model.get("metrics") or [])
     if native_format == "snowflake":
         return sum(
             sum(
