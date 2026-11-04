@@ -42,8 +42,9 @@ datatype does not imply, metric `datatype` and `ai_context.instructions`, relati
 `ai_context`, foreign-vendor `custom_extensions`, model-level `ai_context.synonyms`,
 `ai_context.examples` below the model level, and any key outside the spec — are
 **dropped with a warning**. On **import** (Solid → Apache Ossie), Solid-only features are
-instead **preserved** in `custom_extensions[SOLID]`, and a key Solid's export does not
-write is reported. Where a stashed value stands in for an Apache Ossie field, export
+instead **preserved** in `custom_extensions[SOLID]`. So is a key this converter has no
+mapping for, such as one a later solid-server adds: it is carried unchanged and
+restored on export, with a warning, since an Apache Ossie consumer cannot see it. Where a stashed value stands in for an Apache Ossie field, export
 uses it only while that field still holds what import wrote there: **an edit made in
 Apache Ossie wins**, with a warning. Any input that breaks a
 [requirement](#requirements) **raises a `ConversionError`** — the converter never drops

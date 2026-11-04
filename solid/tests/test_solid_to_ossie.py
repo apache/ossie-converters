@@ -453,14 +453,29 @@ def test_a_reserved_column_or_dataset_name_is_quoted_in_every_dialect(
     assert warnings_ == []
 
 
-def test_keys_solids_export_does_not_write_are_dropped_with_a_warning():
+def test_keys_this_converter_does_not_map_survive_the_round_trip_with_a_warning():
+    """Solid's export gains keys over time; a key the converter does not know is
+    carried in the stash at every level and restored, so the round trip does not
+    break until the converter catches up. It is reported, as Apache Ossie consumers
+    do not see it."""
     solid = yaml.safe_load(fixture("databricks_solid.yaml"))
-    solid["semantic_model"]["owner"] = "data team"
-    solid["semantic_model"]["tables"][0]["dimensions"][0]["pii"] = True
-    _, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
-    assert any("semantic_model: 'owner' is not part of a Solid semantic model" in w
-               for w in warnings_)
+    solid["exported_by"] = "solid-server"
+    model = solid["semantic_model"]
+    model["owner"] = "data team"
+    model["business_context"]["audience"] = "finance"
+    model["tables"][0]["certified"] = True
+    model["tables"][0]["dimensions"][0]["pii"] = {"level": 2, "tags": ["id"]}
+    model["metrics"][0]["unit"] = "orders"
+    model["relationships"][0]["cardinality"] = "many_to_one"
+    model["relationships"][0]["join_keys"]["operator"] = "="
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert any("semantic_model: 'owner' is not part of a Solid semantic model as this "
+               "converter maps it; it was carried unchanged" in w for w in warnings_)
     assert any("column 'orders.order_id': 'pii' is not part of" in w for w in warnings_)
+
+    back, export_warnings = convert_quietly(convert_ossie_to_solid, ossie)
+    assert normalized_yaml(back) == normalized_yaml(yaml.safe_dump(solid))
+    assert not [w for w in export_warnings if "owner" in w or "pii" in w]
 
 
 def test_structured_custom_instructions_render_into_the_model_instructions():

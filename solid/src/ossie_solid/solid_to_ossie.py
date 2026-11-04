@@ -34,18 +34,19 @@ from ._common import (
     as_list,
     as_mapping,
     build_ai_context,
+    carry_unknown_keys,
     clean_text,
     dataset_name_for,
     dump_yaml,
     has_asset_links,
     instruction_entries,
     load_yaml,
+    read_stash,
     render_custom_instructions,
     require_str,
     string_list,
     unique_name,
     warn,
-    warn_unknown_keys,
     write_stash,
 )
 
@@ -116,14 +117,15 @@ def convert_solid_to_ossie(solid_yaml_str, dialect=None, model_name=None):
                               "'semantic_model' key")
     if not isinstance(solid, dict):
         raise ConversionError("'semantic_model' must be a mapping")
-    warn_unknown_keys(document, {"semantic_model"}, "model", "the document", _SOLID)
+    document_extra = carry_unknown_keys(
+        document, {"semantic_model"}, "model", "the document", _SOLID)
 
-    model = _convert_model(solid, dialect, model_name)
+    model = _convert_model(solid, dialect, model_name, document_extra)
     return dump_yaml({"version": OSSIE_VERSION, **model})
 
 
-def _convert_model(solid, explicit_dialect, model_name):
-    warn_unknown_keys(solid, _MODEL_KEYS, "model", "semantic_model", _SOLID)
+def _convert_model(solid, explicit_dialect, model_name, document_extra):
+    model_extra = carry_unknown_keys(solid, _MODEL_KEYS, "model", "semantic_model", _SOLID)
     tables = as_list(solid.get("tables"), "semantic_model: 'tables'")
     if not tables:
         # Apache Ossie requires at least one dataset (schema: datasets.minItems = 1).
@@ -166,7 +168,7 @@ def _convert_model(solid, explicit_dialect, model_name):
 
     business = as_mapping(
         solid.get("business_context"), "semantic_model: 'business_context'")
-    warn_unknown_keys(
+    business_extra = carry_unknown_keys(
         business, _BUSINESS_CONTEXT_KEYS, "model", "business_context", _SOLID)
     llm_description = clean_text(
         solid.get("model_llm_description"), "semantic_model: 'model_llm_description'")
@@ -217,6 +219,10 @@ def _convert_model(solid, explicit_dialect, model_name):
         # `version_number` starts at 0, which is a value, not an absence.
         if value or (key == "version_number" and value is not None):
             stash[key] = value
+    for key, extra in (("extra", model_extra), ("business_context_extra", business_extra),
+                       ("document_extra", document_extra)):
+        if extra:
+            stash[key] = extra
     write_stash(model, stash)
     return model
 
@@ -278,7 +284,8 @@ def _convert_table(table, dialect, taken_names):
         raise ConversionError("Each entry of 'tables' must be a mapping")
     source = require_str(table, "name", "table")
     name = dataset_name_for(source, taken_names)
-    warn_unknown_keys(table, _TABLE_KEYS, "dataset", f"table '{source}'", _SOLID)
+    table_extra = carry_unknown_keys(
+        table, _TABLE_KEYS, "dataset", f"table '{source}'", _SOLID)
 
     dataset = {"name": name, "source": source}
 
@@ -318,6 +325,8 @@ def _convert_table(table, dialect, taken_names):
     indexes = string_list(table.get("indexes"), f"table '{source}': 'indexes'")
     if indexes:
         stash["indexes"] = indexes
+    if table_extra:
+        stash["extra"] = table_extra
     write_stash(dataset, stash)
     return dataset
 
@@ -343,7 +352,7 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
         raise ConversionError(
             f"Dataset '{dataset_name}': each column entry must be a mapping")
     raw_name = require_str(column, "name", f"column in '{dataset_name}'")
-    warn_unknown_keys(
+    column_extra = carry_unknown_keys(
         column, _COLUMN_KEYS, "field", f"column '{dataset_name}.{raw_name}'", _SOLID)
     name = unique_name(raw_name, taken)
     if name != raw_name:
@@ -416,6 +425,8 @@ def _convert_column(column, dialect, dataset_name, taken, is_dimension):
                             f"column '{dataset_name}.{raw_name}': 'sample_values'")
     if sample_values:
         stash["sample_values"] = sample_values
+    if column_extra:
+        stash["extra"] = column_extra
     write_stash(field, stash)
     return field
 
@@ -427,8 +438,9 @@ def _convert_relationships(relationships, by_source):
             raise ConversionError("Each entry of 'relationships' must be a mapping")
         left_source = require_str(relationship, "left_table", "relationship")
         right_source = require_str(relationship, "right_table", "relationship")
-        warn_unknown_keys(relationship, _RELATIONSHIP_KEYS, "relationship",
-                          f"relationship '{left_source}' -> '{right_source}'", _SOLID)
+        relationship_extra = carry_unknown_keys(
+            relationship, _RELATIONSHIP_KEYS, "relationship",
+            f"relationship '{left_source}' -> '{right_source}'", _SOLID)
         left = by_source.get(left_source.lower())
         right = by_source.get(right_source.lower())
         if left is None or right is None:
@@ -440,8 +452,8 @@ def _convert_relationships(relationships, by_source):
 
         what = f"relationship '{left_source}' -> '{right_source}'"
         join_keys = as_mapping(relationship.get("join_keys"), f"{what}: 'join_keys'")
-        warn_unknown_keys(join_keys, {"left", "right"}, "relationship",
-                          f"{what} join_keys", _SOLID)
+        join_keys_extra = carry_unknown_keys(
+            join_keys, {"left", "right"}, "relationship", f"{what} join_keys", _SOLID)
         left_columns = string_list(join_keys.get("left"), f"{what}: 'join_keys.left'")
         right_columns = string_list(join_keys.get("right"), f"{what}: 'join_keys.right'")
         if not left_columns or not right_columns:
@@ -457,7 +469,13 @@ def _convert_relationships(relationships, by_source):
                 f"the columns must correspond positionally"
             )
 
-        converted.append(_orient(left, right, left_columns, right_columns, taken))
+        oriented = _orient(left, right, left_columns, right_columns, taken)
+        if relationship_extra or join_keys_extra:
+            stash = read_stash(oriented)
+            stash.update({k: v for k, v in (("extra", relationship_extra),
+                                            ("join_keys_extra", join_keys_extra)) if v})
+            write_stash(oriented, stash)
+        converted.append(oriented)
     return converted
 
 
@@ -531,7 +549,8 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
         if not isinstance(metric, dict):
             raise ConversionError("Each entry of 'metrics' must be a mapping")
         raw_name = require_str(metric, "name", "metric")
-        warn_unknown_keys(metric, _METRIC_KEYS, "metric", f"metric '{raw_name}'", _SOLID)
+        metric_extra = carry_unknown_keys(
+            metric, _METRIC_KEYS, "metric", f"metric '{raw_name}'", _SOLID)
         name = unique_name(raw_name, taken)
         if name != raw_name:
             warn("metric", f"'{raw_name}' is declared more than once; the duplicate "
@@ -577,6 +596,8 @@ def _convert_metrics(metrics, by_source, datasets, dialect):
                 or referenced_datasets(
                     expression, dialect, dataset_names, fields) != expected):
             stash["tables"] = tables
+        if metric_extra:
+            stash["extra"] = metric_extra
         write_stash(converted_metric, stash)
         converted.append(converted_metric)
     return converted

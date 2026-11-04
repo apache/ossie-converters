@@ -129,8 +129,10 @@ def convert_ossie_to_solid(ossie_yaml_str, dialect=None, model_name=None):
                       f"v{OSSIE_VERSION}"
                       + (f"; {note}" if note else ""))
 
-    return dump_yaml({"semantic_model": _convert_model(
-        _document_model(document), dialect, model_name)})
+    model = _document_model(document)
+    solid = {"semantic_model": _convert_model(model, dialect, model_name)}
+    _restore_extra(solid, read_stash(model, "model"), "document_extra", "model")
+    return dump_yaml(solid)
 
 
 def _document_model(document):
@@ -285,7 +287,17 @@ def _convert_model(ossie, explicit_dialect, model_name):
     for key in ("example_queries", "benchmark_questions"):
         if stash.get(key):
             solid[key] = stash[key]
+    _restore_extra(business_context, stash, "business_context_extra", "model")
+    _restore_extra(solid, stash, "extra", "model")
     return solid
+
+
+def _restore_extra(target, stash, key, label):
+    """Put back the keys of a Solid object that import carried in its stash because the
+    converter has no mapping for them (see _common.carry_unknown_keys). Nothing in
+    Apache Ossie stands in for them, so they are restored as they were."""
+    for name, value in as_mapping(stash.get(key), f"{label}: stashed {key}").items():
+        target.setdefault(name, value)
 
 
 # The stash records what import wrote so an export can restore what Apache Ossie cannot
@@ -545,6 +557,7 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
         table["dimensions"] = dimensions
     # Unlike `dimensions`, Solid always emits `facts` -- as `[]` when a table has none.
     table["facts"] = facts
+    _restore_extra(table, stash, "extra", f"dataset '{name}'")
     return table, aliases
 
 
@@ -685,6 +698,7 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
                             f"field '{dataset_name}.{name}': stashed sample_values")
     if sample_values:
         column["sample_values"] = list(sample_values)
+    _restore_extra(column, stash, "extra", f"field '{dataset_name}.{name}'")
     return column, is_dimension, alias
 
 
@@ -899,14 +913,18 @@ def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=
             left, right = source, target
             left_columns, right_columns = source_columns, target_columns
 
-        converted.append({
+        solid_relationship = {
             "left_table": by_name[left]["source"],
             "right_table": by_name[right]["source"],
             "join_keys": {
                 "left": _column_names(left_columns, aliases.get(left, {})),
                 "right": _column_names(right_columns, aliases.get(right, {})),
             },
-        })
+        }
+        label = f"relationship '{name}'"
+        _restore_extra(solid_relationship["join_keys"], stash, "join_keys_extra", label)
+        _restore_extra(solid_relationship, stash, "extra", label)
+        converted.append(solid_relationship)
     return converted
 
 
@@ -1053,6 +1071,7 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
             warn("metric", f"'{label}': ai_context.examples has no Solid equivalent and "
                            f"was dropped")
         solid_metric["tables"] = list(tables)
+        _restore_extra(solid_metric, stash, "extra", f"metric '{label}'")
         converted.append(solid_metric)
     return converted
 
