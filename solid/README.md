@@ -44,13 +44,39 @@ datatype does not imply, metric `datatype` and `ai_context.instructions`, relati
 **dropped with a warning**. On **import** (Solid → Apache Ossie), Solid-only features are
 instead **preserved** in `custom_extensions[SOLID]`. So is a key this converter has no
 mapping for, such as one a later solid-server adds: it is carried unchanged and
-restored on export, with a warning, since an Apache Ossie consumer cannot see it. Where a stashed value stands in for an Apache Ossie field, export
-uses it only while that field still holds what import wrote there: **an edit made in
-Apache Ossie wins**, with a warning. Any input that breaks a
-[requirement](#errors-and-warnings) **raises a `ConversionError`** — the converter never drops
-information silently or produces an invalid result. (A dataset's or relationship's
-`name` only identifies it within Apache Ossie; Solid has no slot for either, and import
+restored on export, with a warning, since an Apache Ossie consumer cannot see it. Where
+a stashed value stands in for an Apache Ossie field, export uses it only while that
+field still holds what import wrote there: **an edit made in Apache Ossie wins**, with a
+warning. An input the converter cannot read as a whole **raises a `ConversionError`**;
+see [Errors and warnings](#errors-and-warnings). (A dataset's or relationship's `name`
+only identifies it within Apache Ossie; Solid has no slot for either, and import
 derives them again.)
+
+## Guarantees
+
+Each of these is checked by the test suite.
+
+1. **Solid → Apache Ossie → Solid gives back the model Solid exported**, as data:
+   every table, column, key, relationship, metric and model-level field, including keys
+   this converter does not map. The only differences are the ones listed under
+   [Known differences](#known-differences): surrounding whitespace, empty descriptions,
+   and two spellings Solid's export never writes. Checked against every Solid fixture,
+   and against 300 generated models shaped like solid-server's export template,
+   across every warehouse's type vocabulary (`test_generated_roundtrip.py`).
+2. **Every Apache Ossie document import writes is valid**: it passes the spec's JSON
+   Schema, and every primary key and join column names a declared field of its dataset,
+   which the spec's validator checks (apache/ossie#649).
+3. **A metric is never rewritten into something with a different meaning.** Where
+   adding or removing a dataset qualifier could rebind a name — a subquery, a lambda, a
+   table alias, a column two of the metric's tables share, a name none of them has — the
+   expression is left as written, in the warehouse dialect, with a warning.
+4. **Nothing is lost silently from Apache Ossie → Solid.** That direction cannot be
+   lossless: Solid's format has no slot for unique keys, labels, query-backed datasets
+   and more. Every construct dropped for that reason produces a `ConversionWarning`
+   naming it; the only exceptions are the ones that carry no information, listed under
+   [Known differences](#known-differences).
+5. **An edit made in Apache Ossie wins over the stash**, with a warning: a stashed value
+   stands in for a field only while that field still holds what import wrote.
 
 ## Installation
 
@@ -518,13 +544,21 @@ JSON, at any depth under their test directories — asserting that each converts
 well-formed Solid model that re-imports schema-valid, and that every field whose
 `dimension` block or `datatype` settles its role lands in `dimensions` or `facts`
 accordingly. A document with an expression written only in a language that is not SQL
-(Holistics AQL, ThoughtSpot formulas) is checked to raise, as documented.
+(Holistics AQL, ThoughtSpot formulas) is checked to drop just those fields and metrics,
+with a warning, and convert the rest, as documented.
 That sweep deliberately pins **no** warning counts, because those fixtures belong to other
 converters and each converter's CI is path-filtered to its own directory — a pin here would
 break on a main-branch push from a PR that never ran this suite. The exact interop gaps are
 pinned instead against
 [`tests/fixtures/foreign_ossie.yaml`](tests/fixtures/foreign_ossie.yaml), a fixture this
 converter owns that reproduces the same constructs.
+
+`tests/test_generated_roundtrip.py` checks the [guarantees](#guarantees) on 300 seeded,
+generated Solid exports rather than hand-written ones: each must round-trip unchanged,
+and its Apache Ossie form must be schema-valid with every key and join column a
+declared field. Tests that pin exact warnings or names read
+`tests/fixtures/spec_tpcds_semantic_model.yaml`, a copy of the spec's example, so a
+bump of the `ossie` submodule cannot fail them; the live example is checked loosely.
 
 To regenerate the expected-output fixture after an intentional change:
 
