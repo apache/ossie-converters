@@ -164,3 +164,21 @@ def test_the_name_flag_renames_the_model(tmp_path):
 def test_a_missing_subcommand_is_rejected():
     with pytest.raises(SystemExit):
         main([])
+
+
+def test_every_warning_is_a_conversion_warning_a_caller_can_collect_each_time():
+    """The Python API's report of what was lost: one category, so a caller can collect
+    it apart from other warnings, and every time, not only the first in a process."""
+    import warnings
+
+    from ossie_solid import ConversionWarning, convert_ossie_to_solid
+
+    def collect():
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConversionWarning)
+            convert_ossie_to_solid(fixture("foreign_ossie.yaml"))
+        return [w for w in caught if issubclass(w.category, ConversionWarning)]
+
+    first, second = collect(), collect()
+    assert first and len(first) == len(second)
+    assert all(w.category is ConversionWarning for w in first)

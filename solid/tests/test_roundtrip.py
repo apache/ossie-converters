@@ -33,6 +33,7 @@ from conftest import (
     convert_quietly,
     example,
     fixture,
+    live_example,
     model_of,
     normalized_yaml,
     solid_model_of,
@@ -318,3 +319,14 @@ def test_a_struct_path_is_qualified_at_its_head_and_comes_back_bare():
     assert restored["mobile_revenue"]["expression"] == (
         "SUM(CASE WHEN device.category = 'mobile' THEN amount END)")
     assert warnings_ == []
+
+
+def test_the_spec_s_current_example_converts_and_reimports_valid(assert_valid_ossie):
+    """The live example in the pinned spec, not this suite's copy: a spec bump that
+    changes it must still convert both ways, but pins nothing that a benign edit to it
+    could move."""
+    solid, _ = convert_quietly(
+        convert_ossie_to_solid, live_example("tpcds_semantic_model.yaml"))
+    ossie, _ = convert_quietly(convert_solid_to_ossie, solid, dialect="ANSI_SQL")
+    assert_valid_ossie(ossie)
+    assert model_of(ossie)["datasets"]
