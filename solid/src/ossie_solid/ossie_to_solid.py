@@ -558,8 +558,11 @@ def _undeclared(names, fields):
 
 def _column_names(fields, aliases):
     """The Solid column names of `fields`, a list of field names: a field that is an
-    alias for another column (see _convert_field) names that column."""
-    return [aliases[f][0] if f in aliases else f for f in fields]
+    alias for another column (see _convert_field) names that column. Names match
+    ignoring case, as keys and join columns are checked (see _undeclared)."""
+    by_folded = {name.casefold(): alias for name, alias in aliases.items()}
+    return [by_folded[f.casefold()][0] if f.casefold() in by_folded else f
+            for f in fields]
 
 
 def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensions,
@@ -569,8 +572,14 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     stash = read_stash(field, f"field '{dataset_name}.{name}'")
     if stash.get("undeclared") is True:
         # A key or join column the Solid table did not list, declared on import only so
-        # the Apache Ossie model resolves (see solid_to_ossie._declare_key_columns).
-        return None, False, None
+        # the Apache Ossie model resolves (see solid_to_ossie._declare_key_columns). It
+        # is left out again only while it is still what import wrote: once it is edited
+        # in Apache Ossie, it is a column someone described, and is exported as one.
+        if _is_unedited_key_column(field, name, dialect):
+            return None, False, None
+        warn("field", f"'{dataset_name}.{name}' was declared at import only because a "
+                      f"key or join names it, but it was edited in Apache Ossie, so it "
+                      f"is exported as a column")
     _warn_foreign_extensions(field, "field", f"{dataset_name}.{name}")
     solid_name = _solid_name(name, stash, "field", f"{dataset_name}.{name}")
 
@@ -677,6 +686,18 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     if sample_values:
         column["sample_values"] = list(sample_values)
     return column, is_dimension, alias
+
+
+def _is_unedited_key_column(field, name, dialect):
+    """True while a field import declared for a key or join column (see
+    solid_to_ossie._declare_key_columns) is still exactly what import wrote: a name,
+    an expression reading its own column, and the SOLID stash, nothing more."""
+    if set(field) - {"name", "expression", "custom_extensions"}:
+        return False
+    if foreign_vendor_extensions(field, f"field '{name}'"):
+        return False
+    expression, _ = pick_expression(field.get("expression"), dialect, f"Field '{name}'")
+    return expression is not None and is_column_reference(expression, name, dialect)
 
 
 # Solid's roles for a column: a dimension, a fact that is a catalog column, or a fact

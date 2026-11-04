@@ -630,3 +630,24 @@ def test_a_declared_key_column_is_left_out_again_on_export():
     assert shape(model) == shape(original)
     assert model["relationships"] == original["relationships"]
     assert not [w for w in warnings_ if "order_uuid" in w or "cust_fk" in w]
+
+
+@pytest.mark.parametrize("edit", [
+    lambda field: field.update(description="The order's unique id."),
+    lambda field: field.update(datatype="String"),
+    lambda field: field.update(ai_context={"synonyms": ["order key"]}),
+])
+def test_a_declared_key_column_edited_in_ossie_is_exported_as_a_column(edit):
+    """Leaving it out again is right only while it is what import wrote: an edit means
+    someone described a real column, and dropping it would lose the edit silently."""
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(_UNLISTED_KEYS),
+                               dialect="SNOWFLAKE")
+    model = yaml.safe_load(ossie)
+    orders = next(d for d in model["datasets"] if d["name"] == "orders")
+    edit(next(f for f in orders["fields"] if f["name"] == "order_uuid"))
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
+    table = solid_model_of(solid)["tables"][0]
+    columns = [c["name"] for c in (table.get("dimensions") or []) + table["facts"]]
+    assert "order_uuid" in columns
+    assert any("'orders.order_uuid' was declared at import only because a key or join "
+               "names it, but it was edited in Apache Ossie" in w for w in warnings_)

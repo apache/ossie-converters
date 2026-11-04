@@ -1412,3 +1412,15 @@ def test_two_datasets_over_one_table_become_one_solid_table():
         ["order_date_id"], ["ship_date_id"]]
     assert any("'ship_date' reads the same table as 'order_date', DB.S.DATE_DIM; Solid "
                "lists a table once" in w for w in warnings_), warnings_
+
+
+def test_a_key_naming_an_alias_field_in_another_case_still_names_its_column():
+    """Keys and join columns match fields ignoring case, as the spec's validator does,
+    so `CUST` is the field `cust`, and so the column it reads."""
+    ossie = _alias_model()
+    ossie["datasets"][0]["primary_key"] = ["CUST"]
+    ossie["relationships"][0]["from_columns"] = ["Cust"]
+    solid, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    model = solid_model_of(solid)
+    assert model["tables"][0]["primary_key"] == "customer_id"
+    assert model["relationships"][0]["join_keys"]["left"] == ["customer_id"]
