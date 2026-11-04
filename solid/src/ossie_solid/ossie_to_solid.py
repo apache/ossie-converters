@@ -29,6 +29,8 @@ Usage (CLI):
     ossie-solid export -i model.yaml [-o solid_model.yaml] [--dialect SNOWFLAKE]
 """
 
+import warnings
+
 from . import datatypes
 from ._common import (
     DIALECT_ANSI,
@@ -248,14 +250,15 @@ def _convert_model(ossie, explicit_dialect, model_name):
     # Per dataset, the fields that are aliases for another column, as {field: (the
     # column's name, its SQL text)}: keys, joins and metrics name the field, Solid the
     # column.
-    aliases = {}
+    _require_some_sql(datasets, dropped, resolved_dialect)
+    aliases, unreadable = {}, {}
     solid["tables"], by_table = [], {}
     for dataset in datasets:
         if dataset["name"] in dropped:
             continue
         # Relationships and metrics name a dataset's table by this too, through by_name.
         dataset["source"] = _solid_table_name(dataset)
-        table, aliases[dataset["name"]] = _convert_dataset(
+        table, aliases[dataset["name"]], unreadable[dataset["name"]] = _convert_dataset(
             dataset, resolved_dialect, recorded_dialect, marks_dimensions)
         first = by_table.get(table["name"].lower())
         if first is None:
@@ -281,7 +284,7 @@ def _convert_model(ossie, explicit_dialect, model_name):
         solid["metrics"] = metrics
     relationships = _convert_relationships(
         as_list(ossie.get("relationships"), "model: relationships"), by_name, dropped,
-        aliases)
+        aliases, unreadable)
     if relationships:
         solid["relationships"] = relationships
     for key in ("example_queries", "benchmark_questions"):
@@ -432,6 +435,28 @@ def _warn_foreign_extensions(obj, scope, name):
                     f"equivalent and were dropped")
 
 
+def _require_some_sql(datasets, dropped, dialect):
+    """Raise when no field of the datasets Solid keeps has SQL Solid can run.
+
+    A field in a language Solid cannot run is dropped with a warning, one construct at
+    a time; with every field gone there is nothing to convert. That is an explicit
+    --dialect naming one the model does not carry, or a model in no SQL at all, and a
+    warning for each field would only bury the reason.
+    """
+    fields = [f for d in datasets if d["name"] not in dropped
+              for f in as_list(d.get("fields"), f"dataset '{d['name']}': fields")
+              if isinstance(f, dict)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        readable = any(
+            pick_expression(f.get("expression"), dialect, f"Field '{f.get('name')}'")[0]
+            is not None for f in fields)
+    if fields and not readable:
+        raise ConversionError(
+            f"No field has a {readable_dialects(dialect)} expression, which is SQL Solid "
+            f"can run, so there is nothing to convert")
+
+
 def _solid_table_name(dataset):
     """The Solid name of a dataset's table: its `source` as an unquoted
     `catalog.schema.table`, which is how Solid names a table in its catalog. A source
@@ -523,22 +548,28 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     taken = {f["name"].lower(): f["name"] for f in fields
              if isinstance(f, dict) and isinstance(f.get("name"), str)}
     dimensions, facts, aliases = [], [], {}
+    unreadable = set()
     for field in fields:
         if not isinstance(field, dict):
             raise ConversionError(f"Dataset '{name}': each field must be a mapping")
-        column, is_dimension, alias = _convert_field(
-            field, dialect, recorded_dialect, name, marks_dimensions, taken)
+        try:
+            column, is_dimension, alias = _convert_field(
+                field, dialect, recorded_dialect, name, marks_dimensions, taken)
+        except _Unreadable as e:
+            warn("field", str(e))
+            unreadable.add(field["name"])
+            continue
         if alias:
             aliases[field["name"]] = alias
         if column is not None:
             (dimensions if is_dimension else facts).append(column)
 
     primary_key = string_list(dataset.get("primary_key"), f"dataset '{name}': primary_key")
-    undeclared = _undeclared(primary_key, fields)
-    if undeclared:
-        warn("dataset", f"'{name}': primary_key names {', '.join(undeclared)}, which "
-                        f"{'is not a declared field' if len(undeclared) == 1 else 'are not declared fields'}"
-                        f" of the dataset, so the key was dropped")
+    undeclared, dropped_fields = _unresolved(primary_key, fields, unreadable)
+    if undeclared or dropped_fields:
+        warn("dataset", f"'{name}': primary_key names "
+                        f"{_why_unresolved(undeclared, dropped_fields)}, so the key was "
+                        f"dropped")
     elif primary_key:
         # Solid stores a composite key as one comma-joined scalar.
         table["primary_key"] = PK_SEPARATOR.join(
@@ -558,15 +589,38 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     # Unlike `dimensions`, Solid always emits `facts` -- as `[]` when a table has none.
     table["facts"] = facts
     _restore_extra(table, stash, "extra", f"dataset '{name}'")
-    return table, aliases
+    return table, aliases, unreadable
 
 
-def _undeclared(names, fields):
-    """The names in `names` that are not one of `fields`, a dataset's field mappings.
-    Keys and join columns name fields; like the spec's validator, ignoring case."""
+class _Unreadable(Exception):
+    """A field whose every expression is in a language Solid cannot run: one construct
+    Solid cannot hold, dropped with a warning like any other (see _convert_dataset)."""
+
+
+def _unresolved(names, fields, unreadable=()):
+    """Split the names in `names` that do not resolve to a column Solid gets into
+    (undeclared, dropped): not one of `fields`, a dataset's field mappings, or a field
+    dropped as unreadable. Keys and join columns name fields; like the spec's
+    validator, ignoring case."""
     declared = {f["name"].casefold() for f in fields
                 if isinstance(f, dict) and isinstance(f.get("name"), str)}
-    return [n for n in dict.fromkeys(names) if n.casefold() not in declared]
+    gone = {n.casefold() for n in unreadable}
+    names = list(dict.fromkeys(names))
+    return ([n for n in names if n.casefold() not in declared],
+            [n for n in names if n.casefold() in gone])
+
+
+def _why_unresolved(undeclared, dropped):
+    """Name the unresolved key or join columns, saying why each one is."""
+    parts = []
+    if undeclared:
+        parts.append(f"{', '.join(undeclared)}, which "
+                     f"{'is not a declared field' if len(undeclared) == 1 else 'are not declared fields'}")
+    if dropped:
+        parts.append(f"{', '.join(dropped)}, which "
+                     f"{'was' if len(dropped) == 1 else 'were'} dropped as SQL Solid "
+                     f"cannot run")
+    return "; and ".join(parts)
 
 
 def _column_names(fields, aliases):
@@ -599,9 +653,8 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     expression, fallback = pick_expression(
         field.get("expression"), dialect, f"Field '{dataset_name}.{name}'")
     if expression is None:
-        raise ConversionError(
-            f"Field '{dataset_name}.{name}' has no "
-            f"{readable_dialects(dialect)} expression")
+        raise _Unreadable(f"'{dataset_name}.{name}' has no {readable_dialects(dialect)} "
+                          f"expression, which is SQL Solid can run, so it was dropped")
     if fallback and dialect != DIALECT_ANSI:
         warn("field", f"'{dataset_name}.{name}' has no {dialect} expression; the "
                       f"{fallback} one was used")
@@ -838,8 +891,10 @@ def _solid_name(name, stash, scope, label):
     return name
 
 
-def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=None):
+def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=None,
+                           unreadable=None):
     aliases = aliases or {}
+    unreadable = unreadable or {}
     converted = []
     for relationship in relationships:
         if not isinstance(relationship, dict):
@@ -849,11 +904,6 @@ def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=
             relationship, _RELATIONSHIP_KEYS, "relationship", f"'{name}'", _OSSIE)
         source = require_str(relationship, "from", f"relationship '{name}'")
         target = require_str(relationship, "to", f"relationship '{name}'")
-        for end in (source, target):
-            if end not in by_name:
-                raise ConversionError(
-                    f"Relationship '{name}' references dataset '{end}', which is not "
-                    f"declared in 'datasets'")
         source_columns = string_list(
             relationship.get("from_columns"), f"relationship '{name}': from_columns")
         target_columns = string_list(
@@ -861,24 +911,32 @@ def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=
         if not source_columns or not target_columns:
             raise ConversionError(
                 f"Relationship '{name}' is missing from_columns/to_columns")
+        missing = [end for end in dict.fromkeys((source, target)) if end not in by_name]
+        if missing:
+            warn("relationship", f"'{name}' joins {' and '.join(missing)}, which "
+                                 f"{'is' if len(missing) == 1 else 'are'} not declared "
+                                 f"in 'datasets', so it was dropped")
+            continue
         if len(source_columns) != len(target_columns):
-            raise ConversionError(
-                f"Relationship '{name}' has {len(source_columns)} from_columns but "
-                f"{len(target_columns)} to_columns; they must correspond positionally")
+            warn("relationship", f"'{name}' has {len(source_columns)} from_columns but "
+                                 f"{len(target_columns)} to_columns, which must "
+                                 f"correspond positionally, so it was dropped")
+            continue
         gone = [end for end in dict.fromkeys((source, target)) if end in dropped]
         if gone:
             warn("relationship", f"'{name}' joins {' and '.join(gone)}, whose source is "
                                  f"a SQL query Solid cannot hold, so it was dropped")
             continue
-        undeclared = [
-            f"{end}.{column}"
-            for end, columns in ((source, source_columns), (target, target_columns))
-            for column in _undeclared(columns, by_name[end].get("fields") or [])
-        ]
-        if undeclared:
-            warn("relationship", f"'{name}' joins on {', '.join(undeclared)}, which "
-                                 f"{'is not a declared field' if len(undeclared) == 1 else 'are not declared fields'}"
-                                 f", so it was dropped")
+        undeclared, unreadable_columns = [], []
+        for end, columns in ((source, source_columns), (target, target_columns)):
+            missing_fields, dropped_fields = _unresolved(
+                columns, by_name[end].get("fields") or [], unreadable.get(end, ()))
+            undeclared += [f"{end}.{column}" for column in missing_fields]
+            unreadable_columns += [f"{end}.{column}" for column in dropped_fields]
+        if undeclared or unreadable_columns:
+            warn("relationship", f"'{name}' joins on "
+                                 f"{_why_unresolved(undeclared, unreadable_columns)}, so "
+                                 f"it was dropped")
             continue
 
         stash = read_stash(relationship, f"relationship '{name}'")
@@ -891,19 +949,19 @@ def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=
             relationship.get("ai_context"), f"relationship '{name}'")
         if instructions == ONE_TO_ONE_NOTE:
             instructions = None
-        dropped = [
+        lost = [
             label
             for label, value in (("instructions", instructions),
                                  ("synonyms", synonyms),
                                  ("examples", examples))
             if value
         ]
-        if dropped:
+        if lost:
             warn("relationship",
-                 f"'{name}': ai_context.{', ai_context.'.join(dropped)} "
-                 f"{'have' if len(dropped) > 1 else 'has'} no Solid equivalent -- a "
+                 f"'{name}': ai_context.{', ai_context.'.join(lost)} "
+                 f"{'have' if len(lost) > 1 else 'has'} no Solid equivalent -- a "
                  f"Solid relationship carries only its tables and join keys -- and "
-                 f"{'were' if len(dropped) > 1 else 'was'} dropped")
+                 f"{'were' if len(lost) > 1 else 'was'} dropped")
         if stash.get("flipped") is True:
             # Import flipped this pair to put the many side on `from`; restore the
             # left/right order Solid wrote.
@@ -986,8 +1044,10 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
         expression, fallback = pick_expression(
             metric.get("expression"), dialect, f"Metric '{label}'")
         if expression is None:
-            raise ConversionError(
-                f"Metric '{label}' has no {readable_dialects(dialect)} expression")
+            warn("metric", f"'{label}' has no {readable_dialects(dialect)} expression, "
+                           f"which is SQL Solid can run, so it was dropped")
+            taken.discard(solid_name.lower())
+            continue
         if fallback and dialect != DIALECT_ANSI:
             warn("metric", f"'{label}' has no {dialect} expression; the {fallback} "
                            f"one was used")
