@@ -25,7 +25,6 @@ from _cube_gate import assert_cube_compiles, assert_ossie_is_valid, cube_gate
 from _util import by_name, expr_of, parse_files, stash_of
 
 from ossie_cube import (
-    ConversionError,
     convert_cube_to_ossie,
     convert_cube_view_to_ossie,
     convert_ossie_to_cube,
@@ -145,7 +144,7 @@ def test_key_matching_is_case_insensitive_and_unique_keys_use_field_expressions(
 @pytest.mark.parametrize(
     "where", ["primary_key", "unique_keys", "from_columns", "to_columns"]
 )
-def test_missing_field_references_are_rejected_even_when_sql_is_stashed(where):
+def test_undeclared_legacy_columns_are_accepted_and_reported(where):
     model = document()
     if where in ("primary_key", "unique_keys"):
         model["datasets"][0][where] = (
@@ -157,10 +156,10 @@ def test_missing_field_references_are_rejected_even_when_sql_is_stashed(where):
         rel["custom_extensions"] = [
             {"vendor_name": "CUBE", "data": json.dumps({"_v": 1, "sql": "x = y"})}
         ]
-    with pytest.raises(
-        ConversionError, match="(undeclared|declared field).*(missing|orders|customers)"
-    ):
-        export(model)
+    files, issues = convert_ossie_to_cube(yaml.safe_dump(model))
+    assert any("missing" in i.detail and "legacy source column" in i.detail for i in issues)
+    returned, _ = convert_cube_to_ossie(files)
+    assert_declared(yaml.safe_load(returned))
 
 
 @pytest.mark.parametrize("relationship", ["many_to_one", "one_to_many", "one_to_one"])
@@ -573,7 +572,7 @@ def test_column_only_field_cube_metadata_edits_materialize(metadata):
 
 
 @pytest.mark.parametrize("primary", [True, False])
-def test_secondary_unique_key_requires_a_usable_expression(primary):
+def test_secondary_unique_key_with_no_usable_expression_is_dropped_and_reported(primary):
     model = document()
     ds = model["datasets"][0]
     if not primary:
@@ -582,10 +581,10 @@ def test_secondary_unique_key_requires_a_usable_expression(primary):
     ds["fields"][1]["expression"] = {
         "dialects": [{"dialect": "DAX", "expression": "[Customer Key]"}]
     }
-    with pytest.raises(
-        ConversionError, match="orders.*unique_keys.*Customer Key.*usable expression"
-    ):
-        export(model)
+    files, issues = convert_ossie_to_cube(yaml.safe_dump(model))
+    assert cubes(files)["orders"]["meta"]["ossie"]["unique_keys"] == [["order_key"]]
+    assert any("unique_keys" in i.element_name and "Customer Key" in i.detail for i in issues)
+    assert not cubes(files)["orders"].get("joins")
 
 
 @pytest.mark.parametrize("raw_name", ["source__id", "RAW ID"])
@@ -685,7 +684,7 @@ def test_projection_resolves_recorded_geo_coordinate_keys(part):
     assert_ossie_is_valid(returned)
     ds = back["datasets"][0]
     assert expr_of(by_name(ds["fields"])[ds["primary_key"][0]]) == part
-    assert expr_of(back["metrics"][0]) == f"COUNT(DISTINCT orders.{part})"
+    assert expr_of(back["metrics"][0]) == f"COUNT(DISTINCT orders.{ds['primary_key'][0]})"
     # Supporting coordinates are scalar fields in the projected model, so the
     # result can be exported without requiring the unpublished other geo half.
     export(back)

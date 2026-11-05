@@ -208,15 +208,26 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
     for cname, ds in datasets.items():
         parked = parked_of(cubes[cname].get("meta"))
         legacy = "primary_key" in parked and not parked.get("key_fields")
-        key = [fields[cname].column(n) if legacy else fields[cname].member(n)
-               for n in _primary_key_of(cubes[cname], cname)]
+        key = fields[cname].constraint(_primary_key_of(cubes[cname], cname),
+                                      "primary_key", issues, legacy=legacy)
         pk_by_cube[cname] = key
+        if not key and parked.get("primary_key"):
+            # Stale parked constraints do not change the key Cube actually uses
+            # for row counts. Keep that native binding for measures while dropping
+            # the stale Ossie constraint itself.
+            pk_by_cube[cname] = fields[cname].constraint(
+                _primary_key_of(cubes[cname], cname, native=True), "native primary_key", issues)
         if ds.get("primary_key"):
-            ds["primary_key"] = key
+            ds.pop("primary_key")
+            if key:
+                ds["primary_key"] = key
         if ds.get("unique_keys"):
-            ds["unique_keys"] = [
-                [fields[cname].key(n, legacy=not parked.get("key_fields")) for n in k]
-                for k in ds["unique_keys"]]
+            unique_keys = [resolved for index, k in enumerate(ds.pop("unique_keys"))
+                           if (resolved := fields[cname].constraint(
+                               k, f"unique_keys[{index}]", issues,
+                               legacy=not parked.get("key_fields")))]
+            if unique_keys:
+                ds["unique_keys"] = unique_keys
 
     # Raw join columns may need additional declared fields. Build them before
     # metrics so keys, joins and aggregate attribution share the same namespace.
@@ -674,20 +685,21 @@ def _plain_members(cube, cname):
     return plain
 
 
-def _primary_key_of(cube, cname):
-    """Native key dimension names, or the key list parked by a prior export.
+def _primary_key_of(cube, cname, *, native=False):
+    """Key fields from native dimension flags, or the list parked by a prior export.
 
     New metadata names declared fields (`key_fields: true`). Older metadata
     names physical source columns; the import's field registry migrates those
     references before converting measures and relationships.
     """
     parked = parked_of(cube.get("meta"))
-    if "primary_key" in parked:
+    if not native and "primary_key" in parked:
         # Presence, not truthiness: a recorded `[]` is an export saying the Ossie
         # model declared no key, and reading it as "absent" reinstated one from the
         # dimension flags -- reintroducing a key the model had deliberately dropped.
         return [str(column) for column in parked["primary_key"] or []]
-    return [require_str(dim, "name", f"cube '{cname}': dimension")
+    return [parked_of(dim.get("meta")).get("key_field")
+            or require_str(dim, "name", f"cube '{cname}': dimension")
             for dim in _as_named_list(cube.get("dimensions"),
                                       f"cube '{cname}' dimensions")
             if dim.get("primary_key") and _yields_a_same_named_field(dim)]
@@ -740,6 +752,19 @@ class _ImportedFields:
         if legacy:
             return self.column(name)
         return self.member(name)
+
+    def constraint(self, names, label, issues, *, legacy=False):
+        """Resolve a whole key, dropping stale field metadata without guessing SQL."""
+        if not legacy:
+            fields = lookup_map(f["name"] for f in self.dataset.get("fields") or [])
+            missing = [str(n) for n in names if resolve_identifier(fields, str(n)) is None]
+            if missing:
+                issues.add(IssueType.DROPPED_INVALID_REFERENCE,
+                           f"cube '{self.cname}': {label}",
+                           f"stale key dropped: no declared field for {', '.join(missing)}; "
+                           "the entire constraint is dropped")
+                return []
+        return [self.key(n, legacy=legacy) for n in names]
 
     def column(self, column):
         fields = self.dataset.get("fields") or []

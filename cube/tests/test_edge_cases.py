@@ -1290,13 +1290,17 @@ def test_a_computed_field_can_be_the_declared_primary_key():
     assert dims["id"]["sql"] == "LOWER({CUBE}.email)"
 
 
-def test_a_geo_member_name_is_not_a_declared_coordinate_key():
-    """A key must name a declared coordinate field, not the merged Cube member."""
-    with pytest.raises(ConversionError, match="undeclared field 'location'"):
-        convert_ossie_to_cube(_ossie_pk(
-            ["location"],
-            ("location_latitude", "lat", "latitude"),
-            ("location_longitude", "lon", "longitude")))
+def test_a_legacy_column_key_does_not_overwrite_a_merged_geo_member():
+    files, issues = convert_ossie_to_cube(_ossie_pk(
+        ["location"],
+        ("location_latitude", "lat", "latitude"),
+        ("location_longitude", "lon", "longitude")))
+    dims = by_name(_dims(files))
+    assert dims["location"]["type"] == "geo"
+    assert dims["location_pk"]["sql"] == "location"
+    assert dims["location_pk"]["primary_key"] is True
+    assert dims["location_pk"]["public"] is False
+    assert any("legacy source column" in i.detail for i in issues)
 
 
 def test_an_aliased_field_can_carry_the_key():

@@ -237,7 +237,7 @@ def test_is_time_on_a_non_temporal_datatype_is_reported():
     assert "temporal role is not carried" in detail
 
 
-def test_primary_key_without_a_declared_field_is_rejected():
+def test_legacy_primary_key_without_a_declared_field_is_private_and_reported():
     ds = (
         "  - name: orders\n"
         "    source: t\n"
@@ -251,8 +251,11 @@ def test_primary_key_without_a_declared_field_is_rejected():
         "          expression: amount\n"
         "      datatype: Decimal\n"
     )
-    with pytest.raises(ConversionError, match="primary_key references undeclared field 'ticket_no'"):
-        convert_ossie_to_cube(_ossie(ds))
+    files, issues = convert_ossie_to_cube(_ossie(ds))
+    dim = by_name(_cubes(files)["orders"]["dimensions"])["ticket_no"]
+    assert dim["primary_key"] is True and dim["public"] is False
+    assert any("ticket_no" in i.detail and "legacy source column" in i.detail
+               for i in issues.of_type(IssueType.APPROXIMATED))
 
 
 def test_field_name_is_sanitized_and_collisions_are_rejected():

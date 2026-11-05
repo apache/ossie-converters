@@ -202,7 +202,7 @@ def test_member_alias_prefix_and_metadata_override_are_effective():
 def test_hidden_calculated_measure_dependencies_are_inlined():
     out, _, _ = _project()
     assert _metric(out, "average_value") == (
-        "SUM(orders.gross - orders.discount) / COUNT(DISTINCT orders.id)")
+        "SUM(orders.gross - orders.discount) / COUNT(DISTINCT orders.__orders_id)")
 
 
 def test_hidden_computed_dimensions_are_inlined_in_fields_and_metrics():
@@ -221,7 +221,7 @@ def test_an_inlined_dimension_keeps_its_precedence():
     assert _metric(out, "doubled") == "SUM((orders.gross - orders.discount) * 2)"
 
 
-def test_bare_count_uses_primary_key_physical_sql():
+def test_bare_count_uses_the_declared_key_and_exports_as_a_native_row_count():
     text = """
 cubes:
   - name: orders
@@ -236,12 +236,15 @@ views:
       - {join_path: orders, includes: [count]}
 """
     out, _, _ = _project(text)
-    assert _metric(out, "count") == "COUNT(DISTINCT orders.o_orderkey)"
+    assert _metric(out, "count") == "COUNT(DISTINCT orders.__orders_id)"
     # A hidden key needs a declared supporting field rather than a bare source column.
     ds = by_name(model_of(out)["datasets"])["orders"]
     assert ds["primary_key"] == ["__orders_id"]
     assert expr_of(by_name(ds["fields"])[ds["primary_key"][0]]) == "o_orderkey"
     assert by_name(model_of(out)["metrics"])["count"]["datatype"] == "Integer"
+    files, _ = convert_ossie_to_cube(out)
+    measure = load_yaml(files["model/cubes/orders.yml"])["cubes"][0]["measures"][0]
+    assert measure["type"] == "count" and "sql" not in measure
 
 
 def test_bare_count_over_a_composite_key_concatenates_it_portably():
@@ -265,10 +268,13 @@ views:
       - {join_path: lines, includes: [count, active_count]}
 """
     out, _, _ = _project(text)
-    key = "CONCAT(CAST(lines.l_orderkey AS VARCHAR), CAST(lines.l_linenumber AS VARCHAR))"
+    key = "CONCAT(CAST(lines.__lines_order_id AS VARCHAR), CAST(lines.__lines_line_id AS VARCHAR))"
     assert _metric(out, "count") == f"COUNT(DISTINCT {key})"
     assert _metric(out, "active_count") == (
         f"COUNT(DISTINCT CASE WHEN (lines.is_active = true) THEN {key} END)")
+    files, _ = convert_ossie_to_cube(out)
+    measures = load_yaml(files["model/cubes/lines.yml"])["cubes"][0]["measures"]
+    assert all(m["type"] == "count" and "sql" not in m for m in measures)
 
 
 @pytest.mark.parametrize("hidden_dependency", [False, True])
@@ -359,7 +365,7 @@ views:
       - {join_path: orders, includes: [count]}
 """
     out, _, _ = _project(text)
-    assert _metric(out, "count") == "COUNT(DISTINCT orders.id)"
+    assert _metric(out, "count") == "COUNT(DISTINCT orders.__orders_id)"
     assert by_name(model_of(out)["datasets"])["orders"]["primary_key"] == ["__orders_id"]
 
 
