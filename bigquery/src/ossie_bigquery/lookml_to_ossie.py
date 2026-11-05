@@ -39,6 +39,13 @@ Mapping summary:
                              the measures they reference, since Ossie metrics
                              cannot reference metrics. `filters:` become
                              `FILTER (WHERE ...)`
+    LookML explore        -> Ossie model: the base view and every joined view
+                             become datasets (named by their alias)
+    LookML join           -> Ossie relationship from the many side to the one
+                             side, keyed by the sql_on or foreign_key columns
+
+One Ossie model per explore: with several explores, pick one. Without any,
+every view becomes a dataset and the model has no relationships.
 
 Expressions are tagged BIGQUERY, as written in LookML, except metrics with a
 `FILTER (WHERE ...)` clause: that is Ossie's expression language, not
@@ -124,13 +131,16 @@ def _warn(scope, msg):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def convert_lookml_to_ossie(files, model_name=DEFAULT_MODEL_NAME):
+def convert_lookml_to_ossie(files, explore=None, model_name=None):
     """Top-level entry point. Parses LookML files, converts them, returns an
     Ossie document as a YAML string.
 
     Args:
         files: {relative filename: LookML string}.
-        model_name: Name of the Ossie semantic model.
+        explore: Name of the explore to convert. Optional when the files
+            define at most one explore.
+        model_name: Name of the Ossie semantic model. Defaults to the
+            explore's name.
 
     Returns:
         Ossie YAML string.
@@ -141,14 +151,36 @@ def convert_lookml_to_ossie(files, model_name=DEFAULT_MODEL_NAME):
     if not isinstance(files, dict) or not files:
         raise OssieConversionError("Expected a non-empty mapping of {filename: LookML}")
 
-    views = _load_views(files)
-    datasets = [ds for ds in (_convert_view(v) for v in views) if ds is not None]
+    views, explores = _load(files)
+    if explore is None and len(explores) > 1:
+        raise OssieConversionError(
+            f"Found {len(explores)} explores; choose one to convert: "
+            + ", ".join(sorted(explores))
+        )
+    if explore is None and explores:
+        explore = next(iter(explores))
+    if explore is not None and explore not in explores:
+        raise OssieConversionError(
+            f"Explore '{explore}' not found. Explores: "
+            + (", ".join(sorted(explores)) or "none")
+        )
 
     model = {
         "version": SUPPORTED_VERSION,
-        "name": model_name,
-        "datasets": datasets,
+        "name": model_name or explore or DEFAULT_MODEL_NAME,
     }
+    if explore is None:
+        converted = {name: _convert_view(view) for name, view in views.items()}
+        model["datasets"] = [ds for ds, _ in converted.values() if ds is not None]
+        return yaml.safe_dump(model, sort_keys=False)
+
+    spec = explores[explore]
+    if "description" in spec:
+        model["description"] = spec["description"]
+    datasets, relationships = _convert_explore(spec, views)
+    model["datasets"] = datasets
+    if relationships:
+        model["relationships"] = relationships
     return yaml.safe_dump(model, sort_keys=False)
 
 
@@ -156,9 +188,11 @@ def convert_lookml_to_ossie(files, model_name=DEFAULT_MODEL_NAME):
 # Parsing
 # ---------------------------------------------------------------------------
 
-def _load_views(files):
-    """Parses every file and returns its views, rejecting duplicate names."""
+def _load(files):
+    """Parses every file and returns its views and explores by name,
+    rejecting duplicate names."""
     views = {}
+    explores = {}
     for fname, text in files.items():
         try:
             parsed = lkml.load(text)
@@ -174,21 +208,39 @@ def _load_views(files):
                     f"View '{name}' is defined in both '{views[name][0]}' and '{fname}'"
                 )
             views[name] = (fname, view)
-    return [view for _, view in views.values()]
+        for explore in parsed.get("explores", []):
+            name = explore["name"]
+            if name.startswith("+"):
+                _warn(f"explore '{name}'", "refinements are not supported yet; skipping")
+                continue
+            if name in explores:
+                raise OssieConversionError(
+                    f"Explore '{name}' is defined in both '{explores[name][0]}' and '{fname}'"
+                )
+            explores[name] = (fname, explore)
+    return (
+        {name: view for name, (_, view) in views.items()},
+        {name: explore for name, (_, explore) in explores.items()},
+    )
 
 
 # ---------------------------------------------------------------------------
 # Views
 # ---------------------------------------------------------------------------
 
-def _convert_view(view):
-    """Converts one LookML view to an Ossie dataset, or None if it has no
-    SQL source Ossie can express."""
+def _convert_view(view, alias=None):
+    """Converts one LookML view to an Ossie dataset named `alias` (default:
+    the view's name).
+
+    Returns (dataset, ref_names): `ref_names` maps each LookML field name the
+    view exposes (`created_raw` for a group) to its Ossie field name. The
+    dataset is None if the view has no SQL source Ossie can express.
+    """
     name = view["name"]
     source = _convert_source(view)
     if source is None:
-        return None
-    dataset = {"name": name, "source": source}
+        return None, {}
+    dataset = {"name": alias or name, "source": source}
 
     dimensions = {d["name"]: d for d in view.get("dimensions", [])}
     groups = {g["name"]: g for g in view.get("dimension_groups", [])}
@@ -221,7 +273,7 @@ def _convert_view(view):
         dataset["fields"] = fields
     if metrics:
         dataset["metrics"] = metrics
-    return dataset
+    return dataset, ref_names
 
 
 def _convert_source(view):
@@ -629,3 +681,155 @@ def _is_atom(sql):
     except sqlglot.errors.ParseError:
         return False
     return isinstance(tree, (exp.Column, exp.Func)) and not isinstance(tree, exp.Filter)
+
+
+# ---------------------------------------------------------------------------
+# Explores and joins
+# ---------------------------------------------------------------------------
+
+# Explore parameters that change query results but have no Ossie form.
+_EXPLORE_FILTERS = (
+    "sql_always_where", "sql_always_having", "always_filter",
+    "conditionally_filter", "access_filter",
+)
+
+
+def _convert_explore(explore, views):
+    """Returns (datasets, relationships) for an explore: one dataset per view
+    alias in it (base view first), and one relationship per join."""
+    name = explore["name"]
+    scope = f"explore '{name}'"
+    for param in _EXPLORE_FILTERS:
+        if param in explore:
+            _warn(scope, f"{param} has no Ossie form; the model does not apply it")
+
+    # The base view: `from:` reads another view under the explore's name;
+    # `view_name:` makes another view the base under its own name.
+    if "from" in explore:
+        aliases = {name: explore["from"]}
+    else:
+        base = explore.get("view_name", name)
+        aliases = {base: base}
+    base_alias = next(iter(aliases))
+    for join in explore.get("joins", []):
+        aliases[join["name"]] = join.get("from", join["name"])
+
+    datasets = []
+    ref_names = {}  # alias -> {LookML field name: Ossie field name}
+    primary_keys = {}  # alias -> LookML primary key dimension name
+    for alias, view_name in aliases.items():
+        view = views.get(view_name)
+        if view is None:
+            raise OssieConversionError(f"Explore '{name}': view '{view_name}' is not defined")
+        dataset, refs = _convert_view(view, alias)
+        if dataset is None:
+            continue
+        datasets.append(dataset)
+        ref_names[alias] = refs
+        primary_keys[alias] = next(
+            (d["name"] for d in view.get("dimensions", []) if d.get("primary_key") == "yes"),
+            None,
+        )
+
+    relationships = []
+    used = set()
+    for join in explore.get("joins", []):
+        try:
+            relationship = _convert_join(join, base_alias, ref_names, primary_keys)
+        except _Unsupported as e:
+            _warn(f"join '{name}.{join['name']}'", f"{e}; skipping the relationship")
+            continue
+        join_type = join.get("type", "left_outer")
+        if join_type != "left_outer":
+            _warn(f"join '{name}.{join['name']}'", f"type '{join_type}' has no "
+                  "Ossie form; the relationship keeps only the keys")
+        relationship["name"] = _unique(f"{relationship['from']}_to_{relationship['to']}", used)
+        relationships.append(relationship)
+    return datasets, relationships
+
+
+def _convert_join(join, base_alias, ref_names, primary_keys):
+    """Converts one join to an Ossie relationship (without its name)."""
+    alias = join["name"]
+    if alias not in ref_names:
+        raise _Unsupported(f"view '{join.get('from', alias)}' has no Ossie dataset")
+    kind = join.get("relationship", "many_to_one")  # Looker's default
+    if kind not in ("many_to_one", "one_to_one", "one_to_many"):
+        raise _Unsupported(f"relationship '{kind}' has no Ossie form")
+    if "sql_on" in join:
+        other, pairs = _parse_sql_on(join["sql_on"], alias)
+    elif "foreign_key" in join:
+        # foreign_key names a dimension of the base view (or view.dimension)
+        # that matches the joined view's primary key.
+        other, _, key = join["foreign_key"].rpartition(".")
+        other = other or base_alias
+        if primary_keys.get(alias) is None:
+            raise _Unsupported("foreign_key needs a primary key on the joined view")
+        pairs = [(key, primary_keys[alias])]
+    else:
+        raise _Unsupported("no sql_on or foreign_key")
+    if other not in ref_names:
+        raise _Unsupported(f"joins to '{other}', which is not in the explore")
+
+    other_columns, join_columns = [], []
+    for other_field, join_field in pairs:
+        other_columns.append(_join_field(other, other_field, ref_names))
+        join_columns.append(_join_field(alias, join_field, ref_names))
+
+    # Ossie relationships point from the many side to the one side.
+    if kind == "one_to_many":
+        return {"from": alias, "to": other,
+                "from_columns": join_columns, "to_columns": other_columns}
+    return {"from": other, "to": alias,
+            "from_columns": other_columns, "to_columns": join_columns}
+
+
+def _parse_sql_on(sql_on, alias):
+    """Parses `${a.x} = ${b.y} AND ...` into the other view's alias and the
+    (other field, joined field) pairs. Raises _Unsupported for anything that
+    is not a conjunction of equalities between the joined view and one
+    other view."""
+    unsupported = _Unsupported(f"sql_on '{sql_on.strip()}' is not equalities "
+                               "between two views")
+    # ${view.field} is LookML templating; as view.field it parses as a column.
+    sql = _SUBSTITUTION.sub(lambda m: m.group(1).strip(), sql_on)
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.ParseError:
+        raise unsupported
+    conditions = list(tree.flatten()) if isinstance(tree, exp.And) else [tree]
+
+    other, pairs = None, []
+    for condition in conditions:
+        if not (isinstance(condition, exp.EQ)
+                and isinstance(condition.left, exp.Column)
+                and isinstance(condition.right, exp.Column)):
+            raise unsupported
+        sides = {condition.left.table: condition.left.name,
+                 condition.right.table: condition.right.name}
+        if alias not in sides or len(sides) != 2:
+            raise unsupported
+        [this_other] = set(sides) - {alias}
+        if other not in (None, this_other):
+            raise unsupported
+        other = this_other
+        pairs.append((sides[other], sides[alias]))
+    return other, pairs
+
+
+def _join_field(alias, lookml_name, ref_names):
+    """Returns the Ossie field a join key names, or raises _Unsupported."""
+    field = ref_names[alias].get(lookml_name)
+    if field is None:
+        raise _Unsupported(f"key '{alias}.{lookml_name}' is not a converted "
+                           "dimension (only a group's _raw timeframe can be a key)")
+    return field
+
+
+def _unique(name, used):
+    candidate, n = name, 2
+    while candidate in used:
+        candidate = f"{name}_{n}"
+        n += 1
+    used.add(candidate)
+    return candidate

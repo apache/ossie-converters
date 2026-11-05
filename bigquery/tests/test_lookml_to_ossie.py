@@ -559,3 +559,163 @@ class TestFilters:
             metrics = _metrics('dimension: status {} measure: count { type: count }'
                                'measure: m { type: number sql: ${count} ;; filters: [status: "a"] }')
         assert "m" not in metrics
+
+
+_VIEWS = {
+    "orders.view.lkml": """
+        view: orders {
+          sql_table_name: shop.orders ;;
+          dimension: id { primary_key: yes type: number }
+          dimension: user_id { type: number }
+          dimension: product_id { type: number }
+          dimension: seller_id { type: number }
+          dimension_group: created { type: time sql: ${TABLE}.created_at ;; }
+        }""",
+    "users.view.lkml": """
+        view: users {
+          sql_table_name: shop.users ;;
+          dimension: id { primary_key: yes type: number }
+          dimension: country {}
+        }""",
+    "products.view.lkml": """
+        view: products {
+          sql_table_name: shop.products ;;
+          dimension: id { primary_key: yes type: number }
+        }""",
+    "events.view.lkml": """
+        view: events {
+          sql_table_name: shop.events ;;
+          dimension: order_id { type: number }
+          dimension_group: at { type: time sql: ${TABLE}.event_at ;; }
+        }""",
+}
+
+
+def _explore(explore_lookml, **kwargs):
+    files = dict(_VIEWS, **{"shop.model.lkml": explore_lookml})
+    return yaml.safe_load(convert_lookml_to_ossie(files, **kwargs))
+
+
+def _rels(model):
+    return {r["name"]: {k: v for k, v in r.items() if k != "name"}
+            for r in model.get("relationships", [])}
+
+
+class TestExplores:
+    def test_explore_is_the_model(self):
+        model = _explore("""explore: orders {
+            description: "Orders with buyers"
+            join: users { sql_on: ${orders.user_id} = ${users.id} ;; relationship: many_to_one }
+        }""")
+        assert model["name"] == "orders"
+        assert model["description"] == "Orders with buyers"
+        assert [d["name"] for d in model["datasets"]] == ["orders", "users"]
+
+    def test_model_name_override(self):
+        assert _explore("explore: orders {}", model_name="shop")["name"] == "shop"
+
+    def test_several_explores_need_a_choice(self):
+        with pytest.raises(OssieConversionError, match="choose one to convert: orders, users"):
+            _explore("explore: orders {} explore: users {}")
+
+    def test_chosen_explore(self):
+        model = _explore("explore: orders {} explore: users {}", explore="users")
+        assert [d["name"] for d in model["datasets"]] == ["users"]
+
+    def test_unknown_explore(self):
+        with pytest.raises(OssieConversionError, match="Explore 'nope' not found"):
+            _explore("explore: orders {}", explore="nope")
+
+    def test_missing_view(self):
+        with pytest.raises(OssieConversionError, match="view 'ghosts' is not defined"):
+            _explore("explore: orders { join: ghosts { sql_on: ${orders.id} = ${ghosts.id} ;; } }")
+
+    def test_explore_from(self):
+        model = _explore("explore: buyers { from: users }")
+        assert model["datasets"][0]["name"] == "buyers"
+        assert model["datasets"][0]["source"] == "shop.users"
+
+    def test_explore_view_name(self):
+        model = _explore("explore: sales { view_name: orders }")
+        assert model["name"] == "sales"
+        assert [d["name"] for d in model["datasets"]] == ["orders"]
+
+    def test_explore_filter_warns(self):
+        with pytest.warns(UserWarning, match="sql_always_where has no Ossie form"):
+            _explore("explore: orders { sql_always_where: ${orders.id} > 0 ;; }")
+
+
+class TestJoins:
+    def test_many_to_one(self):
+        model = _explore("explore: orders { join: users { "
+                         "sql_on: ${orders.user_id} = ${users.id} ;; relationship: many_to_one } }")
+        assert _rels(model) == {"orders_to_users": {
+            "from": "orders", "to": "users", "from_columns": ["user_id"], "to_columns": ["id"],
+        }}
+
+    def test_default_relationship_is_many_to_one(self):
+        model = _explore("explore: orders { join: users { sql_on: ${users.id} = ${orders.user_id} ;; } }")
+        assert _rels(model)["orders_to_users"]["from"] == "orders"
+
+    def test_one_to_many_points_from_the_joined_view(self):
+        model = _explore("explore: orders { join: events { "
+                         "sql_on: ${orders.id} = ${events.order_id} ;; relationship: one_to_many } }")
+        assert _rels(model) == {"events_to_orders": {
+            "from": "events", "to": "orders", "from_columns": ["order_id"], "to_columns": ["id"],
+        }}
+
+    def test_one_to_one(self):
+        model = _explore("explore: orders { join: users { "
+                         "sql_on: ${orders.user_id} = ${users.id} ;; relationship: one_to_one } }")
+        assert _rels(model)["orders_to_users"]["from"] == "orders"
+
+    def test_composite_key(self):
+        model = _explore("explore: orders { join: users { sql_on: "
+                         "${orders.user_id} = ${users.id} AND ${orders.seller_id} = ${users.id} ;; } }")
+        assert _rels(model)["orders_to_users"]["from_columns"] == ["user_id", "seller_id"]
+
+    def test_alias(self):
+        model = _explore("explore: orders {"
+                         " join: buyer { from: users sql_on: ${orders.user_id} = ${buyer.id} ;; }"
+                         " join: seller { from: users sql_on: ${orders.seller_id} = ${seller.id} ;; } }")
+        assert [d["name"] for d in model["datasets"]] == ["orders", "buyer", "seller"]
+        assert set(_rels(model)) == {"orders_to_buyer", "orders_to_seller"}
+
+    def test_foreign_key(self):
+        model = _explore("explore: orders { join: products { foreign_key: product_id } }")
+        assert _rels(model) == {"orders_to_products": {
+            "from": "orders", "to": "products", "from_columns": ["product_id"], "to_columns": ["id"],
+        }}
+
+    def test_chained_join(self):
+        model = _explore("explore: events {"
+                         " join: orders { sql_on: ${events.order_id} = ${orders.id} ;; }"
+                         " join: users { sql_on: ${orders.user_id} = ${users.id} ;; } }")
+        assert set(_rels(model)) == {"events_to_orders", "orders_to_users"}
+
+    def test_time_group_key_uses_its_field(self):
+        model = _explore("explore: orders { join: events { relationship: one_to_many "
+                         "sql_on: ${orders.created_raw} = ${events.at_raw} ;; } }")
+        rel = _rels(model)["events_to_orders"]
+        assert rel["from_columns"] == ["event_at"] and rel["to_columns"] == ["created_at"]
+
+    def test_inner_join_warns_and_keeps_keys(self):
+        with pytest.warns(UserWarning, match="join 'orders.users'.*type 'inner' has no Ossie form"):
+            model = _explore("explore: orders { join: users { type: inner "
+                             "sql_on: ${orders.user_id} = ${users.id} ;; } }")
+        assert "orders_to_users" in _rels(model)
+
+    @pytest.mark.parametrize("join, reason", [
+        ("relationship: many_to_many sql_on: ${orders.user_id} = ${users.id} ;;",
+         "many_to_many"),
+        ("sql_on: ${orders.user_id} > ${users.id} ;;", "not equalities"),
+        ("sql_on: ${orders.user_id} = ${users.id} AND ${users.country} = 'NL' ;;",
+         "not equalities"),
+        ("sql_on: ${orders.created_date} = ${users.id} ;;", "not a converted dimension"),
+        ("type: cross", "no sql_on or foreign_key"),
+    ])
+    def test_unsupported_join_keeps_the_dataset(self, join, reason):
+        with pytest.warns(UserWarning, match=f"join 'orders.users'.*{reason}"):
+            model = _explore(f"explore: orders {{ join: users {{ {join} }} }}")
+        assert [d["name"] for d in model["datasets"]] == ["orders", "users"]
+        assert _rels(model) == {}
