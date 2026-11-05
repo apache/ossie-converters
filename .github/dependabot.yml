@@ -39,6 +39,7 @@ updates:
   - package-ecosystem: "uv"
     directories:
       - "/atlan"
+      - "/bigquery"
       - "/cube"
       - "/dbt"
       - "/gooddata"

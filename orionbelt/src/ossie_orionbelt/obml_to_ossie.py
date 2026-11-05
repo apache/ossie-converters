@@ -29,12 +29,13 @@ from functools import partial
 from typing import Any
 
 from ossie_orionbelt._common import (
-    _INTERNAL_VENDORS,
+    _CONVERTER_STAMP,
     _OSSIE_VENDOR_READ,
     _OSSIE_VERSION,
     _VENDOR_OBML,
     OBML_ABSTRACT_TO_OSSIE_DATATYPE,
     OBML_TO_OSSIE_TYPE,
+    _is_internal_vendor,
     obml_datatype_to_ossie,
 )
 from ossie_orionbelt._field_names import (
@@ -127,7 +128,7 @@ class OBMLtoOssie:
         roundtrip_data: dict[str, Any] = {
             "source_format": "OBML",
             "source_version": str(self.obml.get("version", "1.0")),
-            "converter": "ossie-orionbelt",
+            "converter": _CONVERTER_STAMP,
         }
         # Preserve model-level static filters for roundtrip
         obml_filters = self.obml.get("filters", [])
@@ -182,7 +183,7 @@ class OBMLtoOssie:
         """
         for ext in obml_exts or []:
             vendor = ext.get("vendor")
-            if vendor and vendor not in _INTERNAL_VENDORS:
+            if vendor and not _is_internal_vendor(vendor, ext.get("data")):
                 ossie_exts.append({"vendor_name": vendor, "data": ext.get("data", "")})
 
     def _convert_data_object(

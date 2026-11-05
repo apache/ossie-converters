@@ -30,6 +30,16 @@ converters:
     output: file
     fixtures:
       tpcds: interop/fixtures/atlan/records.json
+  bigquery:
+    cwd: bigquery
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: null
+    export: [uv, run, --no-sync, ossie-bigquery, -i, '{input}', -o, '{output}']
+    native_format: lookml
+    output: file
+    fixtures: {}
+    import_skip: No native-to-Ossie importer is implemented in this converter.
   cube:
     cwd: cube
     toolchain: uv

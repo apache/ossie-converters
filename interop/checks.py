@@ -127,6 +127,19 @@ def native_content(path, native_format, output_shape):
                     model_files.append(str(item))
                     members += count
                 continue
+            if native_format == "lookml":
+                # Source-content check only; LookML validation needs Looker.
+                text = item.read_text(encoding="utf-8")
+                count = len(
+                    re.findall(
+                        r"(?m)^\s*(?:dimension|dimension_group|measure):\s*\w+\s*\{",
+                        text,
+                    )
+                )
+                if count:
+                    model_files.append(str(item))
+                    members += count
+                continue
             data = (
                 json.loads(item.read_text(encoding="utf-8"))
                 if native_format

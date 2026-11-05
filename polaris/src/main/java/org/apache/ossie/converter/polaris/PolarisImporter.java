@@ -129,10 +129,12 @@ public class PolarisImporter {
                 }
             }
 
-            // Store Polaris-specific table properties as custom extension
+            // Store Polaris-specific table properties as a custom extension under the
+            // Polaris vendor name, like the field-level extensions.
             JsonNode properties = metadata.get("properties");
             if (properties != null && properties.isObject() && properties.size() > 0) {
-                CustomExtension ext = new CustomExtension("COMMON", properties.toString());
+                CustomExtension ext = new CustomExtension(
+                        IcebergTypeMapper.POLARIS_VENDOR, properties.toString());
                 dataset.setCustomExtensions(Collections.singletonList(ext));
             }
         }

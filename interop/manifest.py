@@ -104,6 +104,7 @@ NATIVE_SHAPES = {
             "dbt",
             "databricks",
             "gooddata",
+            "lookml",
             "microsoft",
             "nvidia",
             "orionbelt",
