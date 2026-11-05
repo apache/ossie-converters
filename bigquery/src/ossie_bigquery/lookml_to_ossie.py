@@ -49,7 +49,10 @@ every view becomes a dataset and the model has no relationships.
 
 Refinements (`view: +orders`, `explore: +orders`) are merged into what they
 refine, in include order, as Looker does: they add fields and joins, and
-their parameters override the original's.
+their parameters override the original's. Then `extends:` is resolved: a view
+or explore starts as a copy of those it extends, in order, and its own
+definition merges on top. `extension: required` marks a view or explore that
+exists only to be extended, so it gets no dataset or model of its own.
 
 Only the views a Looker model can see are converted: the files its
 `include:` statements reach, transitively. Two files may define the same view
@@ -165,6 +168,9 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None):
         raise OssieConversionError("Expected a non-empty mapping of {filename: LookML}")
 
     views, explores = _Project(files).scope(model, explore)
+    if explore is None:
+        # Explores that exist only to be extended are not choices.
+        explores = {n: e for n, e in explores.items() if e.get("extension") != "required"}
     if explore is None and len(explores) > 1:
         raise OssieConversionError(
             f"Found {len(explores)} explores; choose one to convert: "
@@ -183,7 +189,8 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None):
         "name": model_name or explore or DEFAULT_MODEL_NAME,
     }
     if explore is None:
-        converted = {name: _convert_view(view) for name, view in views.items()}
+        converted = {name: _convert_view(view) for name, view in views.items()
+                     if view.get("extension") != "required"}
         model["datasets"] = [ds for ds, _ in converted.values() if ds is not None]
         return yaml.safe_dump(model, sort_keys=False)
 
@@ -319,6 +326,14 @@ class _Project:
                 continue
             base_file, base = found[name]
             found[name] = (base_file, _merge(base, refinement))
+
+        # extends is resolved after refinements, so a refinement can add one.
+        for kind, found in (("view", views), ("explore", explores)):
+            resolved = {}
+            for name in found:
+                _resolve_extends(kind, name, found, resolved, ())
+            for name, entry in resolved.items():
+                found[name] = (found[name][0], entry)
         return (
             {name: view for name, (_, view) in views.items()},
             {name: explore for name, (_, explore) in explores.items()},
@@ -349,6 +364,34 @@ def _merge(base, refinement):
         else:
             merged[key] = value
     return merged
+
+
+def _resolve_extends(kind, name, found, resolved, path):
+    """Returns the view or explore `name` with what it extends merged in,
+    memoized in `resolved`. A missing or circular parent is skipped with a
+    warning, so the entry keeps only its own definition from it."""
+    if name in resolved:
+        return resolved[name]
+    entry = found[name][1]
+    parents = [p for group in entry.get("extends__all", []) for p in group]
+    result = {}
+    for parent in parents:
+        scope = f"{kind} '{name}'"
+        if parent in path + (name,):
+            _warn(scope, f"extends '{parent}' in a cycle; ignoring that extends")
+            continue
+        if parent not in found:
+            _warn(scope, f"extends '{parent}', which the model does not define or "
+                  f"include; its fields are missing")
+            continue
+        inherited = dict(_resolve_extends(kind, parent, found, resolved, path + (name,)))
+        # Being abstract is not inherited.
+        inherited.pop("extension", None)
+        result = _merge(result, inherited)
+    own = {k: v for k, v in entry.items() if k != "extends__all"}
+    resolved[name] = _merge(result, own) if result else own
+    resolved[name]["name"] = name
+    return resolved[name]
 
 
 def _normalize_path(path):

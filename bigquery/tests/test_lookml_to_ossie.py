@@ -975,3 +975,83 @@ class TestRefinements:
 
 def _fields_of(model):
     return {f["name"]: f for f in model["datasets"][0].get("fields", [])}
+
+
+class TestExtends:
+    def test_inherits_fields_and_table(self):
+        model = _convert(
+            "view: base { extension: required sql_table_name: s.orders ;; dimension: id {} }",
+            "view: orders { extends: [base] dimension: status {} }",
+        )
+        [dataset] = model["datasets"]
+        assert dataset["name"] == "orders"
+        assert dataset["source"] == "s.orders"
+        assert {f["name"] for f in dataset["fields"]} == {"id", "status"}
+
+    def test_own_definition_overrides(self):
+        fields = _fields_of(_convert(
+            "view: base { extension: required "
+            "dimension: total { type: number sql: ${TABLE}.a ;; } }",
+            'view: orders { extends: [base] dimension: total { sql: ${TABLE}.b ;; } }',
+        ))
+        assert _sql(fields["total"]) == "b"
+        assert "datatype" not in fields["total"]  # type: number inherited
+
+    def test_later_parent_wins(self):
+        model = _convert(
+            "view: a { extension: required sql_table_name: s.a ;; }",
+            "view: b { extension: required sql_table_name: s.b ;; }",
+            "view: c { extends: [a, b] }",
+        )
+        assert model["datasets"][0]["source"] == "s.b"
+
+    def test_chain(self):
+        model = _convert(
+            "view: a { extension: required dimension: x {} }",
+            "view: b { extends: [a] extension: required dimension: y {} }",
+            "view: c { extends: [b] dimension: z {} }",
+        )
+        assert set(_fields_of(model)) == {"x", "y", "z"}
+
+    def test_parent_used_directly_is_a_dataset_too(self):
+        model = _convert("view: users { sql_table_name: s.users ;; }",
+                         "view: buyers { extends: [users] }")
+        assert {d["name"]: d["source"] for d in model["datasets"]} == {
+            "users": "s.users", "buyers": "s.users",
+        }
+
+    def test_refinement_can_add_extends(self):
+        model = _convert(
+            "view: base { extension: required dimension: x {} }",
+            "view: orders { dimension: y {} }",
+            "view: +orders { extends: [base] }",
+        )
+        assert set(_fields_of(model)) == {"x", "y"}
+
+    def test_refinement_of_parent_is_inherited(self):
+        model = _convert(
+            "view: base { extension: required }",
+            "view: +base { dimension: x {} }",
+            "view: orders { extends: [base] }",
+        )
+        assert set(_fields_of(model)) == {"x"}
+
+    def test_explore_extends(self):
+        model = _project({
+            "shop.model.lkml": 'include: "*.view" '
+                               "explore: base { extension: required "
+                               "join: users { foreign_key: user_id } } "
+                               "explore: orders { extends: [base] }",
+            "orders.view.lkml": "view: orders { dimension: user_id {} }",
+            "users.view.lkml": "view: users { dimension: id { primary_key: yes } }",
+        })
+        assert model["name"] == "orders"
+        assert [r["to"] for r in model["relationships"]] == ["users"]
+
+    def test_missing_parent_warns(self):
+        with pytest.warns(UserWarning, match="view 'orders'.*extends 'ghost'.*fields are missing"):
+            _convert("view: orders { extends: [ghost] }")
+
+    def test_cycle_warns(self):
+        with pytest.warns(UserWarning, match="in a cycle"):
+            _convert("view: a { extends: [b] }", "view: b { extends: [a] }")

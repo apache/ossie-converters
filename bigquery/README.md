@@ -161,7 +161,7 @@ Anything without an exact Ossie form is skipped with a warning naming it, rather
 - `many_to_many` joins and `sql_on` that is not equalities between two views. Join types other than `left_outer`, and explore filters (`sql_always_where`, `access_filter`, ...), warn because Ossie relationships carry only keys;
 - native derived tables (`explore_source`).
 
-Refinements (`view: +orders`, `explore: +orders`) are merged into what they refine, in include order: they add fields and joins, and override parameters.
+Refinements (`view: +orders`, `explore: +orders`) are merged into what they refine, in include order: they add fields and joins, and override parameters. `extends:` is resolved after refinements, as in Looker: a view or explore starts as a copy of those it extends and its own definition merges on top. `extension: required` views and explores get no dataset or model of their own.
 
 ## Roadmap
 
