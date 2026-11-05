@@ -84,8 +84,16 @@ def read_stash(obj: dict) -> dict[str, Any]:
     """Return this object's parsed THOUGHTSPOT payload, or {} if it has none.
 
     `data` is accepted in both shapes: the JSON string the spec defines today,
-    and the object apache/ossie#522 proposes. Only the shape differs -- the
-    payload inside, `_v` included, is read identically either way.
+    and the object apache/ossie#522 proposes.
+
+    The two are NOT equivalent, and saying so was wrong in an earlier revision
+    of this docstring. A JSON string is parsed by a JSON parser, so every
+    scalar in it is typed by what was written. An object has already been
+    through a YAML loader, which types unquoted scalars by guessing: `2024` is
+    an int, `12:30` is 750, `2024-01-01` is a date. This function normalises
+    the object form to JSON types and refuses what JSON cannot hold, which
+    closes the gap for value KINDS but not for a string that was written
+    unquoted and came back a number. A reader that needs a string checks.
     """
     extensions = obj.get("custom_extensions") or []
     if not isinstance(extensions, list):
@@ -125,7 +133,34 @@ def read_stash(obj: dict) -> dict[str, Any]:
             # unreadable until we shipped a release of our own. `write_stash`
             # deliberately still emits the string form, which is what the spec
             # says today -- a test pins that, and it is not an oversight.
-            parsed = raw
+            #
+            # Round-tripped through JSON rather than taken as-is, for two
+            # reasons that are easy to miss:
+            #
+            # 1. In the object form the payload has been through a YAML
+            #    loader, so it carries YAML types. `_yaml.Yaml12Loader`
+            #    narrows only the bool resolver; the rest is SafeLoader's
+            #    YAML 1.1 set, under which an unquoted `2024-01-01` is a
+            #    `datetime.date`, `12:30` is 750 and `0755` is 493. A date,
+            #    set or binary value has no JSON form at all and would
+            #    otherwise reach `write_stash`'s `json.dumps` and fail there
+            #    with a bare TypeError, which `_write_stash_safely` does not
+            #    catch -- a traceback in front of a user.
+            # 2. Taking `raw` as-is returns a live reference INTO the caller's
+            #    document, and what this returns is put straight into TML
+            #    bodies by `_shared_body` and `build_model`. The round trip
+            #    is also the copy.
+            #
+            # It does not turn an unquoted `2024` into `"2024"`; nothing here
+            # can know which keys were meant as strings. The three readers
+            # that require one check for themselves and say so.
+            try:
+                parsed = json.loads(json.dumps(raw))
+            except (TypeError, ValueError) as exc:
+                raise ConversionError(
+                    f"THOUGHTSPOT custom_extensions payload on "
+                    f"{_object_label(obj)!r} is not JSON-representable: {exc}"
+                ) from exc
         else:
             raise ConversionError(
                 f"custom_extensions data for {_object_label(obj)!r} is "
