@@ -49,7 +49,7 @@ uv run pytest
 | `dataset` | `view` with `sql_table_name` (3-part sources are backtick-quoted as `` `project.dataset.table` ``, sources that already carry backticks are emitted as-is; subquery sources become a `derived_table`). The dataset `description` (plus `ai_context` synonyms) has no view-level parameter in LookML, so it is kept as a comment in the view and emitted as the explore `description` |
 | `dataset.primary_key` | `primary_key: yes` on the key dimension; composite keys (and keys over a `dimension_group`) become a hidden `primary_key` dimension that `CONCAT`s each key field's expression as `CAST(... AS STRING)`, the pattern Looker documents for composite keys |
 | `field` | `dimension` typed from `datatype` (see below), with `label` and `description` |
-| `field` with a temporal `datatype`, or `is_time: true` and no `datatype` | `dimension_group` with `type: time`, `datatype: date \| datetime \| timestamp`, and standard timeframes. A trailing `_date` / `_time` / `_datetime` / `_timestamp` is dropped from the group name (so `created_time` becomes `dimension_group: created`, exposing `created_date`, `created_month`, …; `created_at` keeps its name) unless that would collide with another field or a dataset-scoped metric |
+| `field` with a temporal `datatype` (unless it sets `is_time: false`) | `dimension_group` with `type: time`, `datatype: date \| datetime \| timestamp`, and standard timeframes. A trailing `_date` / `_time` / `_datetime` / `_timestamp` is dropped from the group name (so `created_time` becomes `dimension_group: created`, exposing `created_date`, `created_month`, …; `created_at` keeps its name) unless that would collide with another field or a dataset-scoped metric |
 | `metric` (model root) | `measure` in the view of the dataset it aggregates (see below) |
 | `dataset.metrics` (dataset-scoped) | `measure` in that dataset's view, its single-part names resolved against the dataset's fields (a name that matches none is warned about). Referencing another dataset is an error, as is a metric named like a field of the same dataset (the two share one namespace) |
 | `relationship` | `explore` on the many-side (`from`) dataset with `join`s (`relationship: many_to_one`, `type: left_outer`); `sql_on` joins `${view.field}` references, composite keys are `AND`-ed |
@@ -59,6 +59,7 @@ uv run pytest
 | Ossie `datatype` | LookML |
 |------------------|--------|
 | `String`, `Time`, omitted | `dimension` `type: string` (LookML has no time-of-day type) |
+| `Date`, `DateTime`, `DateTimeTz` with `is_time: false` | `dimension` `type: string` (kept off the time axis, without Looker's date casts or timezone conversion) |
 | `Integer`, `Decimal`, `Float` | `dimension` `type: number` |
 | `Boolean` | `dimension` `type: yesno` |
 | `Date` | `dimension_group` `datatype: date`, timeframes `[raw, date, week, month, quarter, year]` |
@@ -66,7 +67,7 @@ uv run pytest
 | `DateTimeTz` | `dimension_group` `datatype: timestamp`, same timeframes |
 | `Opaque`, unrecognized | `type: string` with a warning |
 
-`is_time` is a role marker in Ossie, so an `is_time` field with a scalar `datatype` (TPC-DS marks the integer `d_year` this way) stays a plain dimension; only a temporal `datatype`, or `is_time` with no `datatype` at all, produces a `dimension_group`. The latter is reported per field, because Looker will assume a `TIMESTAMP` column.
+`is_time` is a role marker in Ossie, not a type, so only a temporal `datatype` produces a `dimension_group`. An `is_time` field with a scalar `datatype` (TPC-DS marks the integer `d_year` this way) stays a plain dimension. So does `is_time: true` with no `datatype` (TPC-DS marks the integer `d_moy` and the string `d_quarter_name` this way): the spec says not to infer a type from it, and a `dimension_group` would make Looker treat the column as a `TIMESTAMP`. That case is emitted as `type: string` and reported per field. An explicit `is_time: false` always wins, so a temporal field that sets it (an audit `created_at`) is a plain dimension too.
 
 ### Names
 
@@ -88,12 +89,12 @@ Expressions sqlglot cannot read, including tokenizer errors such as an untermina
 
 ### Measures
 
-A metric is placed in the view of the first dataset it qualifies a column with (`SUM(store_sales.ss_ext_sales_price)` lands in `store_sales`); a metric that only uses bare columns is placed in the one dataset that exposes them all. Anything else falls back to the first view with a warning that names the metric.
+A metric is placed in the view of the first dataset it qualifies a column with (`SUM(store_sales.ss_ext_sales_price)` lands in `store_sales`); a metric that only uses bare columns is placed in the dataset that exposes them all (the first such dataset, with a warning, when several do). A metric whose bare columns no dataset exposes falls back to the first view with a warning that names the metric.
 
-- A single `SUM` / `AVG` / `MIN` / `MAX` over a row-level expression becomes a native `type: sum` / `average` / `min` / `max` measure; `COUNT(DISTINCT x)` becomes `count_distinct`; `COUNT(*)` becomes `type: count`.
+- A single `SUM` / `AVG` / `MIN` / `MAX` over a row-level expression becomes a native `type: sum` / `average` / `min` / `max` measure; `COUNT(DISTINCT x)` becomes `count_distinct`; `COUNT(*)` and `COUNT(1)` become `type: count`; `COUNT(x)` becomes a native `type: sum` over `IF(x IS NOT NULL, 1, 0)`, so it is not inflated by fanning joins (it is NULL rather than 0 when there are no rows at all).
 - An aggregate `FILTER (WHERE c)` is rewritten to the equivalent `IF`, so `SUM(amount) FILTER (WHERE status = 'complete')` stays a native `type: sum` over `IF(status = 'complete', amount, NULL)`. `COUNT(*) FILTER (WHERE c)` becomes a native `type: sum` over `IF(c, 1, 0)`, which stays correct across fanning joins (it is NULL rather than 0 when there are no rows at all).
-- Arithmetic over several aggregates (`SUM(a) / NULLIF(COUNT(DISTINCT b), 0)`) hoists each aggregate into a hidden native measure (`<metric>_sum_1`, `<metric>_count_distinct_2`, …) and emits the metric as `type: number` arithmetic over them, which keeps Looker's symmetric aggregates in play across joins.
-- Aggregates Looker cannot type natively (`COUNT(column)`, nested aggregates) and window functions are emitted as `type: number` with the qualified expression inline, with a warning; window functions will not run as a measure and need to be rewritten by hand.
+- Arithmetic over several aggregates (`SUM(a) / NULLIF(COUNT(DISTINCT b), 0)`) hoists each aggregate into a hidden native measure (`<metric>_sum_1`, `<metric>_count_distinct_2`, …) and emits the metric as `type: number` arithmetic over them, which keeps Looker's symmetric aggregates in play across joins. Looker counts each row of a measure's own view once, so a helper over another dataset's field goes in that dataset's view: in TPC-DS `store_productivity`, `SUM(store.s_number_employees)` becomes a hidden measure of `store` (each store counted once, not once per sales row), referenced as `${store.store_productivity_sum_2}`. A helper over fields of several datasets stays in the metric's view.
+- Aggregates Looker cannot type natively (`STDDEV`, nested aggregates) and window functions are emitted as `type: number` with the qualified expression inline, with a warning; window functions will not run as a measure and need to be rewritten by hand.
 - A metric that references several datasets is emitted in the first one and warned about: it is only valid in explores that join the others.
 
 ### Explores
