@@ -114,10 +114,6 @@ class TestViewSource:
             model = _convert(lookml)
         assert model["datasets"] == []
 
-    def test_refinement_is_skipped(self):
-        with pytest.warns(UserWarning, match="view '\\+orders'.*refinements"):
-            model = _convert("view: orders {}", "view: +orders {}")
-        assert [d["name"] for d in model["datasets"]] == ["orders"]
 
 
 def _fields(dimensions, view="orders"):
@@ -911,3 +907,71 @@ class TestIncludes:
             "broken.view.lkml": "view: broken {",
         })
         assert set(_sources(model)) == {"a"}
+
+
+class TestRefinements:
+    def test_adds_a_field(self):
+        fields = _fields_of(_convert(
+            "view: orders { dimension: id {} }",
+            "view: +orders { dimension: status {} }",
+        ))
+        assert set(fields) == {"id", "status"}
+
+    def test_overrides_field_parameters_and_keeps_the_rest(self):
+        fields = _fields_of(_convert(
+            'view: orders { dimension: total { type: number sql: ${TABLE}.amount ;; } }',
+            'view: +orders { dimension: total { label: "Total" } }',
+        ))
+        assert _sql(fields["total"]) == "amount"
+        assert fields["total"]["label"] == "Total"
+
+    def test_overrides_view_parameters(self):
+        model = _convert("view: orders { sql_table_name: old.orders ;; }",
+                         "view: +orders { sql_table_name: new.orders ;; }")
+        assert model["datasets"][0]["source"] == "new.orders"
+
+    def test_later_refinement_wins(self):
+        model = _convert("view: orders {}",
+                         "view: +orders { sql_table_name: a.orders ;; }",
+                         "view: +orders { sql_table_name: b.orders ;; }")
+        assert model["datasets"][0]["source"] == "b.orders"
+
+    def test_refinement_before_its_view(self):
+        model = _convert("view: +orders { sql_table_name: new.orders ;; }",
+                         "view: orders { sql_table_name: old.orders ;; }")
+        assert model["datasets"][0]["source"] == "new.orders"
+
+    def test_explore_refinement_adds_a_join(self):
+        model = _project({
+            "shop.model.lkml": 'include: "*.view" explore: orders {}',
+            "orders.view.lkml": "view: orders { dimension: user_id {} }",
+            "users.view.lkml": "view: users { dimension: id { primary_key: yes } }",
+            "more.view.lkml": "explore: +orders { join: users { foreign_key: user_id } }",
+        })
+        assert [r["to"] for r in model["relationships"]] == ["users"]
+
+    def test_refined_field_can_be_a_join_key(self):
+        model = _project({
+            "shop.model.lkml": 'include: "*.view" '
+                               'explore: orders { join: users { sql_on: ${orders.user_id} = ${users.id} ;; } }',
+            "orders.view.lkml": "view: orders {}",
+            "orders_rfn.view.lkml": "view: +orders { dimension: user_id {} }",
+            "users.view.lkml": "view: users { dimension: id {} }",
+        })
+        assert model["relationships"][0]["from_columns"] == ["user_id"]
+
+    def test_refinement_of_unknown_view_warns(self):
+        with pytest.warns(UserWarning, match="view '\\+ghosts'.*does not define or include"):
+            _convert("view: orders {}", "view: +ghosts {}")
+
+    def test_refinement_outside_the_model_is_not_applied(self):
+        model = _project({
+            "shop.model.lkml": 'include: "orders.view" explore: orders {}',
+            "orders.view.lkml": "view: orders { sql_table_name: s.orders ;; }",
+            "other.view.lkml": "view: +orders { sql_table_name: x.orders ;; }",
+        })
+        assert _sources(model) == {"orders": "s.orders"}
+
+
+def _fields_of(model):
+    return {f["name"]: f for f in model["datasets"][0].get("fields", [])}

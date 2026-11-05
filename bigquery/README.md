@@ -159,13 +159,15 @@ Anything without an exact Ossie form is skipped with a warning naming it, rather
 - measure types other than `count`, `sum`, `average`, `min`, `max`, `count_distinct` and `number` (`percent_of_total`, `running_total`, `median`, `sum_distinct`, ...);
 - filters other than exact values, lists, numeric comparisons, `%` / `_` wildcards, yes/no and `NULL`. Negation (`-cancelled`) is skipped because Looker does not document whether it matches NULL;
 - `many_to_many` joins and `sql_on` that is not equalities between two views. Join types other than `left_outer`, and explore filters (`sql_always_where`, `access_filter`, ...), warn because Ossie relationships carry only keys;
-- refinements (`+view`) and native derived tables (`explore_source`).
+- native derived tables (`explore_source`).
+
+Refinements (`view: +orders`, `explore: +orders`) are merged into what they refine, in include order: they add fields and joins, and override parameters.
 
 ## Roadmap
 
 Things this converter does not do yet, in rough order of value:
 
-- **LookML import follow-ups**: measures that reference other views as model-scoped metrics; `percent_of_total` and `running_total` in `custom_extensions`; refinements.
+- **LookML import follow-ups**: measures that reference other views as model-scoped metrics; `percent_of_total` and `running_total` in `custom_extensions`.
 - **`OSSIE_SQL_2026` as the primary source**: once the Ossie expression language settles, translating its portable functions (`DATE_TRUNC('month', d)` → `DATE_TRUNC(d, MONTH)`, `DATEADD` → `DATE_ADD`, …) to BigQuery with sqlglot would let models written only in the Ossie dialect convert without a hand-written `BIGQUERY` expression; sqlglot already does most of that transpilation.
 - **Explore-level descriptions and `ai_context`**: relationship and model `ai_context` could feed Looker's explore `description` or `sql_always_where`-style hints once Looker exposes a stable place for agent context.
 - **Vendor extension passthrough**: a `LOOKER` (or `BIGQUERY`) `custom_extensions` vendor could carry LookML-only settings such as `value_format`, `drill_fields`, `group_label` and `view_label` on round trips.

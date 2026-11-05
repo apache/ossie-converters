@@ -47,6 +47,10 @@ Mapping summary:
 One Ossie model per explore: with several explores, pick one. Without any,
 every view becomes a dataset and the model has no relationships.
 
+Refinements (`view: +orders`, `explore: +orders`) are merged into what they
+refine, in include order, as Looker does: they add fields and joins, and
+their parameters override the original's.
+
 Only the views a Looker model can see are converted: the files its
 `include:` statements reach, transitively. Two files may define the same view
 as long as no model includes both, as in Looker. Without a .model.lkml file,
@@ -284,17 +288,19 @@ class _Project:
         return matches
 
     def _collect(self, paths):
-        """Returns the views and explores defined in `paths`, rejecting a
-        name defined twice (Looker rejects it too)."""
+        """Returns the views and explores defined in `paths`, with their
+        refinements merged in, rejecting a name defined twice (Looker
+        rejects it too)."""
         views = {}
         explores = {}
+        refinements = []
         for fname in paths:
             parsed = self.parsed(fname)
             for kind, found in (("view", views), ("explore", explores)):
                 for entry in parsed.get(f"{kind}s", []):
                     name = entry["name"]
                     if name.startswith("+"):
-                        _warn(f"{kind} '{name}'", "refinements are not supported yet; skipping")
+                        refinements.append((kind, found, fname, entry))
                         continue
                     if name in found:
                         raise OssieConversionError(
@@ -302,10 +308,47 @@ class _Project:
                             f"'{found[name][0]}' and '{fname}'"
                         )
                     found[name] = (fname, entry)
+
+        # Refinements apply after every definition is known, in the order
+        # their files are included, so a later one wins.
+        for kind, found, fname, refinement in refinements:
+            name = refinement["name"][1:]
+            if name not in found:
+                _warn(f"{kind} '+{name}'", f"refines a {kind} the model does not "
+                      f"define or include; skipping")
+                continue
+            base_file, base = found[name]
+            found[name] = (base_file, _merge(base, refinement))
         return (
             {name: view for name, (_, view) in views.items()},
             {name: explore for name, (_, explore) in explores.items()},
         )
+
+
+# LookML parameters that hold named entries, which a refinement merges by
+# name instead of replacing.
+_NAMED_LISTS = (
+    "dimensions", "dimension_groups", "measures", "filters", "parameters",
+    "sets", "joins",
+)
+
+
+def _merge(base, refinement):
+    """Merges a refinement into a view or explore, as Looker does: a named
+    entry (field, join) is merged parameter by parameter, so the refinement
+    can add or override parameters; any other parameter is replaced."""
+    merged = dict(base)
+    for key, value in refinement.items():
+        if key == "name":
+            continue
+        if key in _NAMED_LISTS:
+            entries = {entry["name"]: entry for entry in merged.get(key, [])}
+            for entry in value:
+                entries[entry["name"]] = {**entries.get(entry["name"], {}), **entry}
+            merged[key] = list(entries.values())
+        else:
+            merged[key] = value
+    return merged
 
 
 def _normalize_path(path):
