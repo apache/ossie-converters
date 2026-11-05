@@ -242,3 +242,61 @@ class TestLegacyBackCompat:
         assert ds.get("unique_keys") == [["Order ID"]]
         order_id = next(f for f in ds["fields"] if f["name"] == "Order ID")
         assert order_id.get("label") == "filter"
+
+
+class TestCommonIsNotOurs:
+    """COMMON is no longer a vendor name; only our own legacy payloads under it are ours."""
+
+    @staticmethod
+    def _ossie(model_exts: list[dict], dataset_exts: list[dict]) -> dict[str, Any]:
+        return {
+            "version": "0.2.0.dev0",
+            "name": "demo",
+            "custom_extensions": model_exts,
+            "datasets": [
+                {
+                    "name": "Orders",
+                    "source": "WH.PUB.orders",
+                    "custom_extensions": dataset_exts,
+                    "fields": [_ossie_field("order_id")],
+                }
+            ],
+        }
+
+    def test_another_vendors_common_state_is_carried_through(self) -> None:
+        # e.g. table properties an older Polaris import wrote under COMMON
+        foreign = {"vendor_name": "COMMON", "data": json.dumps({"owner": "test_user"})}
+        obml = conv.OssietoOBML(self._ossie([], [foreign])).convert()
+        do = obml["dataObjects"]["Orders"]
+        assert {"vendor": "COMMON", "data": foreign["data"]} in do["customExtensions"]
+
+        ossie = conv.OBMLtoOssie(obml, "demo").convert()
+        assert foreign in ossie["datasets"][0]["custom_extensions"]
+
+    def test_our_legacy_common_payload_is_still_read(self) -> None:
+        legacy = {"vendor_name": "COMMON", "data": json.dumps({"obml_owner": "data-team"})}
+        obml = conv.OssietoOBML(self._ossie([legacy], [])).convert()
+        assert obml.get("owner") == "data-team"
+        assert all(e.get("vendor") != "COMMON" for e in obml.get("customExtensions", []))
+
+    def test_our_legacy_common_provenance_stamp_is_still_read(self) -> None:
+        # the model-level payload of a plain model has no obml_ key, only the stamp
+        # (tests/fixtures/obml_as_ossie.yaml carries it under COMMON)
+        stamp = {
+            "vendor_name": "COMMON",
+            "data": json.dumps(
+                {"source_format": "OBML", "source_version": "1.0", "converter": "ossie-orionbelt"}
+            ),
+        }
+        obml = conv.OssietoOBML(self._ossie([stamp], [])).convert()
+        assert all(e.get("vendor") != "COMMON" for e in obml.get("customExtensions", []))
+
+        ossie = conv.OBMLtoOssie(obml, "demo").convert()
+        assert [e["vendor_name"] for e in ossie["custom_extensions"]] == ["ORIONBELT"]
+
+    def test_a_foreign_common_does_not_hide_our_payload(self) -> None:
+        foreign = {"vendor_name": "COMMON", "data": json.dumps({"owner": "test_user"})}
+        ours = {"vendor_name": "ORIONBELT", "data": json.dumps({"obml_owner": "data-team"})}
+        obml = conv.OssietoOBML(self._ossie([foreign, ours], [])).convert()
+        assert obml.get("owner") == "data-team"
+        assert {"vendor": "COMMON", "data": foreign["data"]} in obml["customExtensions"]
