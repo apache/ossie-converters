@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 21 converter projects**, with explicit capability skips.
+The registry includes **all 23 converter projects**, with explicit capability skips.
 Cube, Databricks, and dbt remain the targets of the focused semantic regressions.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
@@ -79,7 +79,7 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |
-| Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
+| BigQuery, Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
 | Holistics | Compiled dataset JSON import and AML source export; re-import of generated AML requires a Holistics compiler |
 | Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
 | Ontology, Palantir, RelationalAI | Explicit skip: uses the ontology domain/schema, requiring a separate matrix |
@@ -89,6 +89,8 @@ inspectors count format-specific model members; these checks do not imply vendor
 compilation or platform acceptance. Holistics checks AML member declarations only.
 Its selected import/export dialect is BIGQUERY and exports use the placeholder
 connection `interop_warehouse`; no live connection is created.
+BigQuery (LookML export only) checks `dimension`, `dimension_group` and `measure`
+declarations in the single exported file; LookML validation needs a Looker instance.
 Existing vendor fixtures are reused, plus a small independently authored Honeydew
 workspace. OrionBelt installs its locked `obml-validation` extra so its native
 semantic validation is available during export checks. Missing directions never
