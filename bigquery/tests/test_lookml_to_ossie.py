@@ -304,3 +304,258 @@ class TestTimeframeReferences:
             "dimension: x { sql: ${created_at_raw} ;; }"
         )
         assert _sql(fields["x"]) == "b"
+
+
+def _dataset(body, view="orders"):
+    model = _convert(f"view: {view} {{ sql_table_name: analytics.{view} ;; {body} }}")
+    return model["datasets"][0]
+
+
+def _metrics(body):
+    return {m["name"]: m for m in _dataset(body).get("metrics", [])}
+
+
+def _metric_sql(metric, dialect="BIGQUERY"):
+    [d] = metric["expression"]["dialects"]
+    assert d["dialect"] == dialect
+    return d["expression"]
+
+
+class TestMeasures:
+    def test_count(self):
+        metrics = _metrics("measure: count { type: count }")
+        assert metrics["count"] == {
+            "name": "count",
+            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "COUNT(*)"}]},
+            "datatype": "Integer",
+        }
+
+    @pytest.mark.parametrize("lookml_type, sql", [
+        ("sum", "SUM(amount)"),
+        ("average", "AVG(amount)"),
+        ("min", "MIN(amount)"),
+        ("max", "MAX(amount)"),
+        ("count_distinct", "COUNT(DISTINCT amount)"),
+    ])
+    def test_aggregates(self, lookml_type, sql):
+        metrics = _metrics(f"dimension: amount {{ type: number }} "
+                           f"measure: m {{ type: {lookml_type} sql: ${{TABLE}}.amount ;; }}")
+        assert _metric_sql(metrics["m"]) == sql
+
+    def test_count_distinct_is_integer(self):
+        metrics = _metrics("dimension: user_id {} "
+                           "measure: users { type: count_distinct sql: ${user_id} ;; }")
+        assert metrics["users"]["datatype"] == "Integer"
+
+    def test_sum_has_no_datatype(self):
+        metrics = _metrics("dimension: amount { type: number } "
+                           "measure: total { type: sum sql: ${amount} ;; }")
+        assert "datatype" not in metrics["total"]
+
+    def test_dimension_reference_is_the_field_name(self):
+        metrics = _metrics(
+            "dimension: line_total { type: number sql: ${TABLE}.price * ${TABLE}.qty ;; }"
+            "measure: revenue { type: sum sql: ${line_total} ;; }"
+        )
+        assert _metric_sql(metrics["revenue"]) == "SUM(line_total)"
+
+    def test_expression_over_fields(self):
+        metrics = _metrics(
+            "dimension: price { type: number } dimension: qty { type: number }"
+            "measure: revenue { type: sum sql: ${price} * ${qty} ;; }"
+        )
+        assert _metric_sql(metrics["revenue"]) == "SUM(price * qty)"
+
+    def test_time_group_raw_reference(self):
+        metrics = _metrics(
+            "dimension_group: created { type: time sql: ${TABLE}.created_at ;; }"
+            "measure: first_order { type: min sql: ${created_raw} ;; }"
+        )
+        assert _metric_sql(metrics["first_order"]) == "MIN(created_at)"
+
+    def test_description(self):
+        metrics = _metrics('measure: count { type: count description: "All orders" }')
+        assert metrics["count"]["description"] == "All orders"
+
+
+class TestMeasureColumns:
+    def test_column_without_dimension_gets_a_field(self):
+        dataset = _dataset("measure: total { type: sum sql: ${TABLE}.amount ;; }")
+        assert _metric_sql(dataset["metrics"][0]) == "SUM(amount)"
+        assert dataset["fields"] == [{
+            "name": "amount",
+            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "amount"}]},
+        }]
+
+    def test_field_named_after_measure_gets_suffix(self):
+        dataset = _dataset("measure: revenue { type: sum sql: ${TABLE}.revenue ;; }")
+        assert _metric_sql(dataset["metrics"][0]) == "SUM(revenue_value)"
+        assert [f["name"] for f in dataset["fields"]] == ["revenue_value"]
+
+    def test_existing_dimension_is_reused(self):
+        dataset = _dataset("dimension: amount { type: number sql: ${TABLE}.amount ;; }"
+                           "measure: total { type: sum sql: ${TABLE}.amount ;; }")
+        assert [f["name"] for f in dataset["fields"]] == ["amount"]
+
+    def test_column_is_added_once(self):
+        dataset = _dataset("measure: total { type: sum sql: ${TABLE}.amount ;; }"
+                           "measure: biggest { type: max sql: ${TABLE}.amount ;; }")
+        assert [f["name"] for f in dataset["fields"]] == ["amount"]
+
+    def test_skipped_measure_adds_no_field(self):
+        with pytest.warns(UserWarning, match="measure 'orders.share'"):
+            dataset = _dataset("measure: share { type: percent_of_total sql: ${TABLE}.amount ;; }")
+        assert "fields" not in dataset
+
+
+class TestNumberMeasures:
+    def test_measures_are_inlined(self):
+        metrics = _metrics(
+            "dimension: amount { type: number }"
+            "measure: total { type: sum sql: ${amount} ;; }"
+            "measure: count { type: count }"
+            "measure: avg_order { type: number sql: ${total} / NULLIF(${count}, 0) ;; }"
+        )
+        assert _metric_sql(metrics["avg_order"]) == "SUM(amount) / NULLIF(COUNT(*), 0)"
+
+    def test_nested_number_measure_is_parenthesized(self):
+        metrics = _metrics(
+            "measure: count { type: count }"
+            "measure: doubled { type: number sql: ${count} + ${count} ;; }"
+            "measure: tripled { type: number sql: ${doubled} * 3 ;; }"
+        )
+        assert _metric_sql(metrics["tripled"]) == "(COUNT(*) + COUNT(*)) * 3"
+
+    def test_cycle_is_skipped(self):
+        with pytest.warns(UserWarning, match="circular reference"):
+            metrics = _metrics("measure: a { type: number sql: ${b} ;; }"
+                               "measure: b { type: number sql: ${a} ;; }")
+        assert metrics == {}
+
+    def test_measure_inside_aggregate_is_skipped(self):
+        with pytest.warns(UserWarning, match="measure inside an aggregate"):
+            metrics = _metrics("measure: count { type: count }"
+                               "measure: bad { type: sum sql: ${count} ;; }")
+        assert set(metrics) == {"count"}
+
+
+class TestUnsupportedMeasures:
+    @pytest.mark.parametrize("lookml_type", [
+        "percent_of_total", "running_total", "median", "sum_distinct", "list", "string",
+    ])
+    def test_type_is_skipped(self, lookml_type):
+        with pytest.warns(UserWarning, match=f"type '{lookml_type}' has no Ossie form"):
+            metrics = _metrics(f"measure: m {{ type: {lookml_type} sql: ${{TABLE}}.x ;; }}")
+        assert metrics == {}
+
+    def test_other_view_is_skipped(self):
+        with pytest.warns(UserWarning, match="another view"):
+            metrics = _metrics("measure: m { type: sum sql: ${users.age} ;; }")
+        assert metrics == {}
+
+    def test_skipped_dimension_reference(self):
+        with pytest.warns(UserWarning) as record:
+            metrics = _metrics("dimension: t { type: tier sql: ${TABLE}.x ;; }"
+                               "measure: m { type: sum sql: ${t} ;; }")
+        assert any("'${t}', which was skipped" in str(w.message) for w in record)
+        assert metrics == {}
+
+
+def _filtered(filters, dims="dimension: status {} dimension: total { type: number } "
+                            "dimension: is_big { type: yesno sql: ${total} > 100 ;; }"):
+    metrics = _metrics(f"{dims} measure: m {{ type: count filters: [{filters}] }}")
+    return _metric_sql(metrics["m"], "OSSIE_SQL_2026")
+
+
+class TestFilters:
+    def test_string_value(self):
+        assert _filtered('status: "complete"') == "COUNT(*) FILTER(WHERE status = 'complete')"
+
+    def test_string_list(self):
+        assert _filtered('status: "complete,shipped"') == (
+            "COUNT(*) FILTER(WHERE status IN ('complete', 'shipped'))"
+        )
+
+    def test_wildcard_is_like(self):
+        assert _filtered('status: "in_%"') == "COUNT(*) FILTER(WHERE status LIKE 'in_%')"
+
+    def test_quote_is_escaped(self):
+        assert _filtered('status: "it\'s"') == "COUNT(*) FILTER(WHERE status = 'it''s')"
+
+    @pytest.mark.parametrize("value, condition", [
+        ("100", "total = 100"),
+        (">100", "total > 100"),
+        (">=1.5", "total >= 1.5"),
+        ("<0", "total < 0"),
+        ("1,2,3", "total IN (1, 2, 3)"),
+    ])
+    def test_number(self, value, condition):
+        assert _filtered(f'total: "{value}"') == f"COUNT(*) FILTER(WHERE {condition})"
+
+    def test_yes(self):
+        assert _filtered('is_big: "Yes"') == "COUNT(*) FILTER(WHERE is_big)"
+
+    def test_no_includes_null(self):
+        assert _filtered('is_big: "No"') == (
+            "COUNT(*) FILTER(WHERE NOT COALESCE(is_big, FALSE))"
+        )
+
+    def test_null(self):
+        assert _filtered('status: "NULL"') == "COUNT(*) FILTER(WHERE status IS NULL)"
+        assert _filtered('status: "-NULL"') == "COUNT(*) FILTER(WHERE NOT status IS NULL)"
+
+    def test_several_filters_are_anded(self):
+        assert _filtered('status: "complete", total: ">100"') == (
+            "COUNT(*) FILTER(WHERE status = 'complete' AND total > 100)"
+        )
+
+    def test_aggregate_over_field(self):
+        metrics = _metrics("dimension: status {} dimension: amount { type: number }"
+                           'measure: m { type: sum sql: ${amount} ;; filters: [status: "complete"] }')
+        assert _metric_sql(metrics["m"], "OSSIE_SQL_2026") == (
+            "SUM(amount) FILTER(WHERE status = 'complete')"
+        )
+
+    def test_old_filter_syntax(self):
+        metrics = _metrics('dimension: status {} '
+                           'measure: m { type: count filters: { field: status value: "complete" } }')
+        assert _metric_sql(metrics["m"], "OSSIE_SQL_2026") == (
+            "COUNT(*) FILTER(WHERE status = 'complete')"
+        )
+
+    def test_number_measure_over_filtered_measure(self):
+        metrics = _metrics(
+            'dimension: status {} measure: done { type: count filters: [status: "complete"] }'
+            "measure: count { type: count }"
+            "measure: done_share { type: number sql: ${done} / ${count} ;; }"
+        )
+        assert _metric_sql(metrics["done_share"], "OSSIE_SQL_2026") == (
+            "(COUNT(*) FILTER(WHERE status = 'complete')) / COUNT(*)"
+        )
+
+    @pytest.mark.parametrize("filters", [
+        'status: "-cancelled"',       # negation: NULL handling undocumented
+        'status: "EMPTY"',
+        'status: "a^_b"',             # escape
+        'status: "a%,b"',             # wildcard in a list
+        'total: "[1, 10]"',           # range
+        'total: "NOT 5"',
+        'is_big: "maybe"',
+        'created_date: "7 days"',     # date filter
+        'missing: "x"',
+    ])
+    def test_untranslatable_filter_skips_the_measure(self, filters):
+        with pytest.warns(UserWarning, match="measure 'orders.m'"):
+            metrics = _metrics(
+                "dimension: status {} dimension: total { type: number } "
+                "dimension: is_big { type: yesno sql: ${total} > 100 ;; } "
+                "dimension_group: created { type: time sql: ${TABLE}.created_at ;; } "
+                f"measure: m {{ type: count filters: [{filters}] }}"
+            )
+        assert "m" not in metrics
+
+    def test_filters_on_number_measure_are_skipped(self):
+        with pytest.warns(UserWarning, match="filters on a type 'number' measure"):
+            metrics = _metrics('dimension: status {} measure: count { type: count }'
+                               'measure: m { type: number sql: ${count} ;; filters: [status: "a"] }')
+        assert "m" not in metrics

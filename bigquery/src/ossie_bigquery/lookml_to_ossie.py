@@ -33,8 +33,16 @@ Mapping summary:
                              Ossie has no time grain, so the timeframes
                              (date, week, month, ...) are not carried over.
                              See _group_field_name for how the field is named
+    LookML measure        -> Ossie dataset-scoped metric. Metrics reference
+                             fields, so a column no dimension exposes gets a
+                             field of its own. `type: number` measures inline
+                             the measures they reference, since Ossie metrics
+                             cannot reference metrics. `filters:` become
+                             `FILTER (WHERE ...)`
 
-Expressions are tagged with the BIGQUERY dialect, as written in LookML.
+Expressions are tagged BIGQUERY, as written in LookML, except metrics with a
+`FILTER (WHERE ...)` clause: that is Ossie's expression language, not
+BigQuery's, so those are transpiled with sqlglot and tagged OSSIE_SQL_2026.
 """
 
 import re
@@ -43,6 +51,7 @@ import warnings
 import lkml
 import sqlglot
 import yaml
+from sqlglot import exp
 
 from .ossie_to_lookml import SUPPORTED_VERSION, OssieConversionError
 
@@ -50,6 +59,7 @@ from .ossie_to_lookml import SUPPORTED_VERSION, OssieConversionError
 DEFAULT_MODEL_NAME = "lookml_model"
 
 DIALECT = "BIGQUERY"
+OSSIE_DIALECT = "OSSIE_SQL_2026"
 
 # LookML dimension `type` -> Ossie `datatype`. `number` is absent on purpose:
 # LookML does not say whether it is an integer or a decimal, and the Ossie
@@ -81,6 +91,25 @@ _GROUP_DATATYPES = {
 
 # A LookML substitution: ${TABLE}, ${field}, ${view.field}, ${field._sql}.
 _SUBSTITUTION = re.compile(r"\$\{([^}]*)\}")
+
+
+# LookML measure `type` -> SQL aggregate over the measure's `sql`.
+_AGGREGATES = {
+    "sum": "SUM({})",
+    "average": "AVG({})",
+    "min": "MIN({})",
+    "max": "MAX({})",
+    "count_distinct": "COUNT(DISTINCT {})",
+}
+
+# Measure types that always return a whole number.
+_INTEGER_MEASURES = {"count", "count_distinct"}
+
+# A plain number in a Looker filter, with an optional comparison.
+_NUMBER_FILTER = re.compile(r"(>=|<=|>|<)?\s*(-?\d+(?:\.\d+)?)")
+
+# ${TABLE}.col, with the column bare or backtick-quoted.
+_TABLE_COLUMN = re.compile(r"\$\{\s*TABLE\s*\}\.(`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)")
 
 
 class _Unsupported(Exception):
@@ -172,17 +201,26 @@ def _convert_view(view):
         fields.append(field)
         if dim.get("primary_key") == "yes":
             primary_key.append(dim_name)
+    # How a measure's `${ref}` reads each converted dimension: its field name.
+    ref_names = {f["name"]: f["name"] for f in fields}
     taken = set(dimensions)
     for group in groups.values():
         field = _convert_dimension_group(name, group, dimensions, groups, taken)
         if field is not None:
             fields.append(field)
             taken.add(field["name"])
+            ref_names[f"{group['name']}_raw"] = field["name"]
+
+    measures = {m["name"]: m for m in view.get("measures", [])}
+    builder = _MetricBuilder(name, measures, dimensions, groups, fields, ref_names)
+    metrics = [m for m in (builder.convert(m) for m in measures.values()) if m]
 
     if primary_key:
         dataset["primary_key"] = primary_key
     if fields:
         dataset["fields"] = fields
+    if metrics:
+        dataset["metrics"] = metrics
     return dataset
 
 
@@ -360,3 +398,234 @@ def _lookup(ref, dimensions, groups):
 
 def _is_identifier(sql):
     return re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*|`[^`]+`", sql) is not None
+
+
+# ---------------------------------------------------------------------------
+# Measures
+# ---------------------------------------------------------------------------
+
+class _MetricBuilder:
+    """Converts the measures of one view to dataset-scoped Ossie metrics.
+
+    Ossie metric expressions reference the dataset's fields, never its source
+    columns. A measure over `${TABLE}.col` uses the field that reads `col`;
+    if there is none, a field for `col` is added to the dataset (only once the
+    measure converts, so a skipped measure leaves no stray field).
+    """
+
+    def __init__(self, view_name, measures, dimensions, groups, fields, ref_names):
+        self.view_name = view_name
+        self.measures = measures
+        self.dimensions = dimensions
+        self.groups = groups
+        self.fields = fields          # the dataset's fields; added to in place
+        self.ref_names = ref_names    # LookML reference -> Ossie field name
+        self.by_column = {}           # column SQL -> name of the field reading it
+        for field in fields:
+            sql = field["expression"]["dialects"][0]["expression"]
+            if _is_identifier(sql):
+                self.by_column.setdefault(sql, field["name"])
+        self.taken = {f["name"] for f in fields} | set(measures) | set(dimensions) | set(groups)
+
+    def convert(self, measure):
+        """Returns the Ossie metric for `measure`, or None with a warning."""
+        name = measure["name"]
+        scope = f"measure '{self.view_name}.{name}'"
+        new_fields = {}  # column SQL -> field name, added if the measure converts
+        try:
+            sql = self._expression(measure, (), new_fields)
+        except _Unsupported as e:
+            _warn(scope, f"{e}; skipping")
+            return None
+        try:
+            tree = sqlglot.parse_one(sql, read="bigquery")
+        except sqlglot.errors.ParseError:
+            _warn(scope, f"SQL '{sql}' could not be parsed; skipping")
+            return None
+
+        for column, field_name in new_fields.items():
+            self.fields.append({
+                "name": field_name,
+                "expression": {"dialects": [{"dialect": DIALECT, "expression": column}]},
+            })
+            self.by_column[column] = field_name
+            self.taken.add(field_name)
+
+        if tree.find(exp.Filter) is not None:
+            # BigQuery has no FILTER clause; Ossie's expression language does.
+            dialect, sql = OSSIE_DIALECT, tree.sql()
+        else:
+            dialect = DIALECT
+        metric = {
+            "name": name,
+            "expression": {"dialects": [{"dialect": dialect, "expression": sql}]},
+        }
+        if measure.get("type") in _INTEGER_MEASURES:
+            metric["datatype"] = "Integer"
+        if "description" in measure:
+            metric["description"] = measure["description"]
+        return metric
+
+    def _expression(self, measure, path, new_fields):
+        """Returns the SQL for a measure, over field names."""
+        name = measure["name"]
+        if name in path:
+            raise _Unsupported(f"circular reference {' -> '.join(path + (name,))}")
+        path = path + (name,)
+        lookml_type = measure.get("type")
+        sql = measure.get("sql", "").strip()
+
+        if lookml_type == "count":
+            body = "COUNT(*)"
+        elif lookml_type in _AGGREGATES:
+            if not sql:
+                raise _Unsupported(f"type '{lookml_type}' without sql")
+            body = _AGGREGATES[lookml_type].format(self._substitute(sql, path, new_fields))
+        elif lookml_type == "number":
+            if not sql:
+                raise _Unsupported("type 'number' without sql")
+            if _filter_entries(measure):
+                raise _Unsupported("filters on a type 'number' measure")
+            return self._substitute(sql, path, new_fields, measures=True)
+        else:
+            raise _Unsupported(f"type '{lookml_type}' has no Ossie form")
+
+        conditions = [self._filter(field, value) for field, value in _filter_entries(measure)]
+        if conditions:
+            body = f"{body} FILTER (WHERE {' AND '.join(conditions)})"
+        return body
+
+    def _substitute(self, sql, path, new_fields, measures=False):
+        """Replaces LookML substitutions in a measure's SQL with field names,
+        and, when `measures` is set (type: number), `${measure}` with that
+        measure's SQL."""
+        if "{%" in sql or "{{" in sql:
+            raise _Unsupported("Liquid templating has no Ossie form")
+        sql = _TABLE_COLUMN.sub(lambda m: self._column_field(m.group(1), new_fields), sql)
+
+        def substitute(match):
+            ref = match.group(1).strip()
+            parts = ref.split(".")
+            if len(parts) == 2 and parts[0] == self.view_name:
+                parts = parts[1:]
+            if ref == "TABLE":
+                raise _Unsupported("'${TABLE}' is used without a column")
+            if len(parts) != 1:
+                raise _Unsupported(f"'${{{ref}}}' references another view or a "
+                                   f"field property")
+            target = parts[0]
+            if measures and target in self.measures:
+                inner = self._expression(self.measures[target], path, new_fields)
+                return inner if _is_atom(inner) else f"({inner})"
+            if target in self.ref_names:
+                return self.ref_names[target]
+            if target in self.measures:
+                raise _Unsupported(f"'${{{target}}}' is a measure inside an aggregate")
+            _lookup(target, self.dimensions, self.groups)  # raises the reason
+            raise _Unsupported(f"references '${{{target}}}', which was skipped")
+
+        return _SUBSTITUTION.sub(substitute, sql)
+
+    def _column_field(self, column, new_fields):
+        """Returns the name of the field that reads `column`, planning a new
+        one if no field does."""
+        if column in self.by_column:
+            return self.by_column[column]
+        if column in new_fields:
+            return new_fields[column]
+        base = column.strip("`")
+        if not _is_identifier(base):
+            raise _Unsupported(f"column {column} is not a valid field name")
+        taken = self.taken | set(new_fields.values())
+        name, n = base, 1
+        while name in taken:
+            name = f"{base}_value" if n == 1 else f"{base}_value_{n}"
+            n += 1
+        new_fields[column] = name
+        return name
+
+    def _filter(self, field, value):
+        """Translates one `field: "value"` filter to a SQL condition."""
+        ref = field.split(".")
+        if len(ref) == 2 and ref[0] == self.view_name:
+            ref = ref[1:]
+        if len(ref) != 1 or ref[0] not in self.dimensions or ref[0] not in self.ref_names:
+            raise _Unsupported(f"filter on '{field}', which is not a converted "
+                               f"dimension of this view")
+        dim = self.dimensions[ref[0]]
+        return _filter_condition(self.ref_names[ref[0]], dim.get("type", "string"), value)
+
+
+def _filter_entries(measure):
+    """Returns a measure's filters as (field, value) pairs. lkml reads both
+    `filters: [field: "value"]` and the older `filters: { field: value: }`."""
+    entries = []
+    for entry in measure.get("filters__all", []):
+        for item in entry if isinstance(entry, list) else [entry]:
+            if "field" in item and "value" in item:
+                entries.append((item["field"], item["value"]))
+            else:
+                entries.extend(item.items())
+    return entries
+
+
+def _filter_condition(field, lookml_type, value):
+    """Translates a Looker filter expression to SQL over `field`.
+
+    Only the forms whose meaning is certain are translated: exact values,
+    lists, numeric comparisons, wildcards, yes/no and NULL. Anything else
+    (negation, whose NULL handling Looker does not document; ranges; dates;
+    escapes) raises _Unsupported, since a wrong filter is a wrong number.
+    """
+    column = exp.column(field)
+    text = value.strip()
+    unsupported = _Unsupported(f"filter '{field}: \"{value}\"' has no exact Ossie form")
+
+    if text.upper() == "NULL":
+        return column.is_(exp.Null()).sql("bigquery")
+    if text.upper() in ("-NULL", "NOT NULL"):
+        return exp.not_(column.is_(exp.Null())).sql("bigquery")
+
+    if lookml_type == "yesno":
+        if text.lower() == "yes":
+            return column.sql("bigquery")
+        if text.lower() == "no":
+            # Looker's "No" is anything not true, NULL included.
+            return f"NOT COALESCE({column.sql('bigquery')}, FALSE)"
+        raise unsupported
+
+    terms = [t.strip() for t in text.split(",")]
+    if lookml_type == "number":
+        matches = [_NUMBER_FILTER.fullmatch(t) for t in terms]
+        if not all(matches):
+            raise unsupported
+        if len(terms) > 1:
+            if any(m.group(1) for m in matches):
+                raise unsupported
+            return column.isin(*(exp.Literal.number(m.group(2)) for m in matches)).sql("bigquery")
+        op, number = matches[0].group(1) or "=", exp.Literal.number(matches[0].group(2))
+        return f"{column.sql('bigquery')} {op} {number.sql('bigquery')}"
+
+    if lookml_type not in ("string", "zipcode"):
+        raise unsupported
+    if any(t.startswith("-") or t.upper() in ("EMPTY", "NULL") or "^" in t or '"' in t
+           or not t for t in terms):
+        raise unsupported
+    wildcard = any("%" in t or "_" in t for t in terms)
+    if len(terms) > 1:
+        if wildcard:
+            raise unsupported
+        return column.isin(*(exp.Literal.string(t) for t in terms)).sql("bigquery")
+    literal = exp.Literal.string(terms[0])
+    condition = column.like(literal) if wildcard else column.eq(literal)
+    return condition.sql("bigquery")
+
+
+def _is_atom(sql):
+    """True when `sql` needs no parentheses to keep its precedence when
+    inlined: a column or a single function call, such as an aggregate."""
+    try:
+        tree = sqlglot.parse_one(sql, read="bigquery")
+    except sqlglot.errors.ParseError:
+        return False
+    return isinstance(tree, (exp.Column, exp.Func)) and not isinstance(tree, exp.Filter)
