@@ -625,7 +625,7 @@ _VIEWS = {
 
 
 def _explore(explore_lookml, **kwargs):
-    files = dict(_VIEWS, **{"shop.model.lkml": explore_lookml})
+    files = dict(_VIEWS, **{"shop.model.lkml": 'include: "*.view"\n' + explore_lookml})
     return yaml.safe_load(convert_lookml_to_ossie(files, **kwargs))
 
 
@@ -657,7 +657,7 @@ class TestExplores:
             _explore("explore: orders {}", explore="nope")
 
     def test_missing_view(self):
-        with pytest.raises(OssieConversionError, match="view 'ghosts' is not defined"):
+        with pytest.raises(OssieConversionError, match="view 'ghosts' is not defined in or included by"):
             _explore("explore: orders { join: ghosts { sql_on: ${orders.id} = ${ghosts.id} ;; } }")
 
     def test_explore_from(self):
@@ -814,3 +814,100 @@ class TestProject:
             # The exporter adds a hidden `primary_key` dimension for
             # composite keys, which comes back as a field.
             assert after[0][name][0] - {"primary_key"} == fields
+
+
+def _project(files, **kwargs):
+    return yaml.safe_load(convert_lookml_to_ossie(files, **kwargs))
+
+
+def _sources(model):
+    return {d["name"]: d["source"] for d in model["datasets"]}
+
+
+class TestIncludes:
+    def test_same_view_in_two_files_is_fine_when_one_is_included(self):
+        model = _project({
+            "shop.model.lkml": 'include: "/views/*.view.lkml" explore: customers {}',
+            "views/customers.view.lkml": "view: customers { sql_table_name: shop.customers ;; }",
+            "legacy/customers.view.lkml": "view: customers { sql_table_name: old.customers ;; }",
+        })
+        assert _sources(model) == {"customers": "shop.customers"}
+
+    def test_both_included_is_an_error(self):
+        with pytest.raises(OssieConversionError, match="View 'customers' is defined in both"):
+            _project({
+                "shop.model.lkml": 'include: "/**/*.view" explore: customers {}',
+                "views/customers.view.lkml": "view: customers {}",
+                "legacy/customers.view.lkml": "view: customers {}",
+            })
+
+    def test_relative_include_starts_at_the_including_file(self):
+        model = _project({
+            "models/shop.model.lkml": 'include: "../views/a.view" explore: a {}',
+            "views/a.view.lkml": "view: a { sql_table_name: s.a ;; }",
+        })
+        assert _sources(model) == {"a": "s.a"}
+
+    def test_double_star_crosses_folders(self):
+        model = _project({
+            "shop.model.lkml": 'include: "/views/**/*.view" explore: a { join: b { foreign_key: id } }',
+            "views/a.view.lkml": "view: a { dimension: id { primary_key: yes } }",
+            "views/deep/er/b.view.lkml": "view: b { dimension: id { primary_key: yes } }",
+        })
+        assert set(_sources(model)) == {"a", "b"}
+
+    def test_explore_file_and_nested_includes(self):
+        model = _project({
+            "shop.model.lkml": 'include: "/explores/*.explore.lkml"',
+            "explores/orders.explore.lkml": 'include: "/views/orders.view" explore: orders {}',
+            "views/orders.view.lkml": "view: orders { sql_table_name: s.orders ;; }",
+        })
+        assert model["name"] == "orders"
+        assert _sources(model) == {"orders": "s.orders"}
+
+    def test_views_outside_the_model_are_not_converted(self):
+        model = _project({
+            "shop.model.lkml": 'include: "a.view" explore: a {}',
+            "a.view.lkml": "view: a {}",
+            "unused.view.lkml": "view: unused {}",
+        })
+        assert set(_sources(model)) == {"a"}
+
+    def test_explore_in_two_models_needs_a_model(self):
+        files = {
+            "one.model.lkml": 'include: "/views/*.view" include: "orders.explore.lkml"',
+            "two.model.lkml": 'include: "/views/*.view" include: "orders.explore.lkml"',
+            "orders.explore.lkml": "explore: orders {}",
+            "views/orders.view.lkml": "view: orders {}",
+        }
+        with pytest.raises(OssieConversionError, match="in models one, two; choose one with model="):
+            _project(files, explore="orders")
+        assert _project(files, explore="orders", model="two")["name"] == "orders"
+
+    def test_unknown_model(self):
+        with pytest.raises(OssieConversionError, match="Model 'nope' not found. Models: shop"):
+            _project({"shop.model.lkml": "explore: a {}"}, model="nope")
+
+    def test_include_matching_nothing_warns(self):
+        with pytest.warns(UserWarning, match="include '/missing/\\*.view' matches no files"):
+            _project({"shop.model.lkml": 'include: "/missing/*.view" include: "a.view" explore: a {}',
+                      "a.view.lkml": "view: a {}"})
+
+    def test_dashboard_include_is_ignored(self, recwarn):
+        _project({"shop.model.lkml": 'include: "/dashboards/*.dashboard.lookml" '
+                                     'include: "a.view" explore: a {}',
+                  "a.view.lkml": "view: a {}"})
+        assert [str(w.message) for w in recwarn] == []
+
+    def test_other_project_include_warns(self):
+        with pytest.warns(UserWarning, match="another project"):
+            _project({"shop.model.lkml": 'include: "//lib/x.view" include: "a.view" explore: a {}',
+                      "a.view.lkml": "view: a {}"})
+
+    def test_unincluded_file_is_not_parsed(self):
+        model = _project({
+            "shop.model.lkml": 'include: "a.view" explore: a {}',
+            "a.view.lkml": "view: a {}",
+            "broken.view.lkml": "view: broken {",
+        })
+        assert set(_sources(model)) == {"a"}

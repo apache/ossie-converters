@@ -19,7 +19,8 @@
 
 Usage:
     ossie-bigquery export -i model.yaml -o output.lkml
-    ossie-bigquery import -i lookml_project/ [-o model.yaml] [--explore NAME] [--name NAME]
+    ossie-bigquery import -i lookml_project/ [-o model.yaml] [--explore NAME]
+                         [--model NAME] [--name NAME]
 
 `export` converts an Ossie model to LookML; `import` converts a LookML
 project (a directory of .lkml files, or one file) to an Ossie model, written
@@ -56,6 +57,8 @@ def _build_parser():
                      help="LookML project directory, or a single .lkml file")
     imp.add_argument("-o", "--output", help="Path to write the Ossie YAML (default: stdout)")
     imp.add_argument("--explore", help="Explore to convert (needed when there are several)")
+    imp.add_argument("--model", help="Looker model whose includes to follow "
+                                     "(needed when the explore is in several)")
     imp.add_argument("--name", help="Ossie model name (default: the explore's name)")
     return parser
 
@@ -92,7 +95,8 @@ def _export(args):
 
 def _import(args):
     ossie_yaml_str = convert_lookml_to_ossie(
-        _read_lookml(args.input), explore=args.explore, model_name=args.name
+        _read_lookml(args.input), explore=args.explore, model_name=args.name,
+        model=args.model,
     )
     if args.output:
         with open(args.output, "w") as f:

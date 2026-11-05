@@ -131,6 +131,8 @@ Malformed input is reported as an `OssieConversionError` naming the entity (`Rel
 
 `import` turns one explore into one Ossie model (`--explore` picks it when the project has several; without any explores, every view becomes a dataset and there are no relationships).
 
+Views are read the way the Looker model sees them: the files its `include:` statements reach, transitively (`/` starts at the project root, other paths at the including file, `**` crosses folders, `.lkml` may be left off). Two files may define the same view as long as no model includes both. When an explore is in several models, `--model` picks one. Dashboard includes and includes from other projects (`//`) are not read.
+
 | LookML | Ossie |
 |--------|-------|
 | `view` | `dataset`; `sql_table_name` (backticks removed) or `derived_table.sql` is the `source`, and a view with neither uses its own name, as Looker does |

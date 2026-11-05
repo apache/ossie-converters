@@ -162,3 +162,13 @@ class TestCommands:
         with pytest.raises(SystemExit):
             cli.main(["import", "-i", str(tmp_path)])
         assert "no .lkml files" in capsys.readouterr().err
+
+    def test_import_model_flag(self, tmp_path, capsys):
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "one.model.lkml").write_text('include: "*.view" include: "o.explore.lkml"')
+        (project / "two.model.lkml").write_text('include: "*.view" include: "o.explore.lkml"')
+        (project / "o.explore.lkml").write_text("explore: orders {}")
+        (project / "orders.view.lkml").write_text("view: orders {}")
+        cli.main(["import", "-i", str(project), "--explore", "orders", "--model", "one"])
+        assert yaml.safe_load(capsys.readouterr().out)["name"] == "orders"

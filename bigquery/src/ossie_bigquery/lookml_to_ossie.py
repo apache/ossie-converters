@@ -47,11 +47,17 @@ Mapping summary:
 One Ossie model per explore: with several explores, pick one. Without any,
 every view becomes a dataset and the model has no relationships.
 
+Only the views a Looker model can see are converted: the files its
+`include:` statements reach, transitively. Two files may define the same view
+as long as no model includes both, as in Looker. Without a .model.lkml file,
+every file is read.
+
 Expressions are tagged BIGQUERY, as written in LookML, except metrics with a
 `FILTER (WHERE ...)` clause: that is Ossie's expression language, not
 BigQuery's, so those are transpiled with sqlglot and tagged OSSIE_SQL_2026.
 """
 
+import posixpath
 import re
 import warnings
 
@@ -131,7 +137,7 @@ def _warn(scope, msg):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def convert_lookml_to_ossie(files, explore=None, model_name=None):
+def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None):
     """Top-level entry point. Parses LookML files, converts them, returns an
     Ossie document as a YAML string.
 
@@ -141,6 +147,9 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None):
             define at most one explore.
         model_name: Name of the Ossie semantic model. Defaults to the
             explore's name.
+        model: Name of the Looker model (`<model>.model.lkml`) whose
+            includes define the views. Optional unless the explore is in
+            several models.
 
     Returns:
         Ossie YAML string.
@@ -151,7 +160,7 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None):
     if not isinstance(files, dict) or not files:
         raise OssieConversionError("Expected a non-empty mapping of {filename: LookML}")
 
-    views, explores = _load(files)
+    views, explores = _Project(files).scope(model, explore)
     if explore is None and len(explores) > 1:
         raise OssieConversionError(
             f"Found {len(explores)} explores; choose one to convert: "
@@ -188,40 +197,140 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None):
 # Parsing
 # ---------------------------------------------------------------------------
 
-def _load(files):
-    """Parses every file and returns its views and explores by name,
-    rejecting duplicate names."""
-    views = {}
-    explores = {}
-    for fname, text in files.items():
-        try:
-            parsed = lkml.load(text)
-        except SyntaxError as e:
-            raise OssieConversionError(f"File '{fname}': invalid LookML: {e}")
-        for view in parsed.get("views", []):
-            name = view["name"]
-            if name.startswith("+"):
-                _warn(f"view '{name}'", "refinements are not supported yet; skipping")
-                continue
-            if name in views:
+class _Project:
+    """A LookML project as {path: text}, parsed on demand, with Looker's
+    include resolution."""
+
+    def __init__(self, files):
+        self.files = {_normalize_path(path): text for path, text in files.items()}
+        self._parsed = {}
+
+    def parsed(self, path):
+        if path not in self._parsed:
+            try:
+                self._parsed[path] = lkml.load(self.files[path])
+            except SyntaxError as e:
+                raise OssieConversionError(f"File '{path}': invalid LookML: {e}")
+        return self._parsed[path]
+
+    def scope(self, model, explore):
+        """Returns (views, explores) by name, as the chosen Looker model
+        sees them. Without model files, every file is in scope."""
+        models = {
+            posixpath.basename(path)[: -len(".model.lkml")]: path
+            for path in sorted(self.files) if path.endswith(".model.lkml")
+        }
+        if model is not None:
+            if model not in models:
                 raise OssieConversionError(
-                    f"View '{name}' is defined in both '{views[name][0]}' and '{fname}'"
+                    f"Model '{model}' not found. Models: {', '.join(models) or 'none'}"
                 )
-            views[name] = (fname, view)
-        for explore in parsed.get("explores", []):
-            name = explore["name"]
-            if name.startswith("+"):
-                _warn(f"explore '{name}'", "refinements are not supported yet; skipping")
-                continue
-            if name in explores:
-                raise OssieConversionError(
-                    f"Explore '{name}' is defined in both '{explores[name][0]}' and '{fname}'"
-                )
-            explores[name] = (fname, explore)
-    return (
-        {name: view for name, (_, view) in views.items()},
-        {name: explore for name, (_, explore) in explores.items()},
-    )
+            return self._collect(self._closure(models[model]))
+        if not models:
+            return self._collect(sorted(self.files))
+
+        # Pick the model whose includes define the explore (or any explore).
+        found = {}
+        for name, path in models.items():
+            for p in self._closure(path):
+                for e in self.parsed(p).get("explores", []):
+                    if explore in (None, e["name"]):
+                        found.setdefault(name, e["name"])
+        if not found:
+            if explore is None:
+                return self._collect(sorted(self.files))
+            raise OssieConversionError(
+                f"Explore '{explore}' not found in any model. Models: {', '.join(models)}"
+            )
+        if len(found) > 1 and explore is not None:
+            raise OssieConversionError(
+                f"Explore '{explore}' is in models {', '.join(found)}; choose one "
+                f"with model="
+            )
+        return self._collect(self._closure(models[next(iter(found))]))
+
+    def _closure(self, path):
+        """The files `path` includes, transitively, starting with itself."""
+        seen = [path]
+        for current in seen:
+            for pattern in self.parsed(current).get("includes", []):
+                for match in self._resolve(pattern, current):
+                    if match not in seen:
+                        seen.append(match)
+        return seen
+
+    def _resolve(self, pattern, from_path):
+        """The project files an `include:` pattern matches, in path order.
+
+        A leading `/` starts at the project root, anything else at the
+        including file's folder. `*` stays within a folder, `**` crosses
+        folders, and a pattern may leave off `.lkml` (`*.view`).
+        """
+        scope = f"file '{from_path}'"
+        if pattern.endswith((".lookml", ".dashboard")):
+            return []  # dashboards are not part of the semantic model
+        if pattern.startswith("//"):
+            _warn(scope, f"include '{pattern}' is in another project; skipping")
+            return []
+        if pattern.startswith("/"):
+            full = pattern.lstrip("/")
+        else:
+            full = posixpath.normpath(posixpath.join(posixpath.dirname(from_path), pattern))
+        regex = _include_regex(full)
+        matches = [p for p in sorted(self.files)
+                   if regex.fullmatch(p) or regex.fullmatch(p.removesuffix(".lkml"))]
+        if not matches:
+            _warn(scope, f"include '{pattern}' matches no files")
+        return matches
+
+    def _collect(self, paths):
+        """Returns the views and explores defined in `paths`, rejecting a
+        name defined twice (Looker rejects it too)."""
+        views = {}
+        explores = {}
+        for fname in paths:
+            parsed = self.parsed(fname)
+            for kind, found in (("view", views), ("explore", explores)):
+                for entry in parsed.get(f"{kind}s", []):
+                    name = entry["name"]
+                    if name.startswith("+"):
+                        _warn(f"{kind} '{name}'", "refinements are not supported yet; skipping")
+                        continue
+                    if name in found:
+                        raise OssieConversionError(
+                            f"{kind.capitalize()} '{name}' is defined in both "
+                            f"'{found[name][0]}' and '{fname}'"
+                        )
+                    found[name] = (fname, entry)
+        return (
+            {name: view for name, (_, view) in views.items()},
+            {name: explore for name, (_, explore) in explores.items()},
+        )
+
+
+def _normalize_path(path):
+    path = path.replace("\\", "/")
+    return posixpath.normpath(path).lstrip("/")
+
+
+def _include_regex(pattern):
+    """Translates an include glob to a regex over project paths."""
+    out = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out))
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +829,10 @@ def _convert_explore(explore, views):
     for alias, view_name in aliases.items():
         view = views.get(view_name)
         if view is None:
-            raise OssieConversionError(f"Explore '{name}': view '{view_name}' is not defined")
+            raise OssieConversionError(
+                f"Explore '{name}': view '{view_name}' is not defined in or "
+                f"included by its model"
+            )
         dataset, refs = _convert_view(view, alias)
         if dataset is None:
             continue
