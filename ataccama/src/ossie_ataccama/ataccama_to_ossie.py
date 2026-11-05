@@ -48,12 +48,10 @@ from ossie import (
     OssieExpression,
     OssieField,
     OssieRelationship,
+    OssieVendor,
 )
 
 from ossie_ataccama.models import CatalogAttribute, CatalogItem, CatalogItemBundle, Term
-
-# todo: Until apache/ossie#629 adds OssieVendor.ATACCAMA and the ossie submodule is bumped past it.
-ATACCAMA_VENDOR_NAME = "ATACCAMA"
 
 # Ataccama semantic data types that represent points in time.
 TIME_DATA_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIME"}
@@ -214,7 +212,7 @@ def _terms_ai_context(term_urns: list[str], terms: dict[str, Term]) -> OssieAICo
 
 def _ataccama_extension(data: dict[str, Any]) -> OssieCustomExtension:
     """Wrap Ataccama-specific metadata as an Ossie custom_extension entry."""
-    return OssieCustomExtension(vendor_name=ATACCAMA_VENDOR_NAME, data=json.dumps(data, sort_keys=True))
+    return OssieCustomExtension(vendor_name=OssieVendor.ATACCAMA.value, data=json.dumps(data, sort_keys=True))
 
 
 # --- data quality ---
