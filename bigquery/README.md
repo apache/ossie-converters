@@ -17,9 +17,9 @@
   under the License.
 -->
 
-# Ossie to LookML (BigQuery) Converter
+# Ossie <> LookML (BigQuery) Converter
 
-Converts Apache Ossie YAML semantic models to [LookML](https://cloud.google.com/looker/docs/what-is-lookml), the semantic modeling language for Looker — Google Cloud's semantic layer over BigQuery. Pure offline conversion — no BigQuery or Looker connection required.
+Converts Apache Ossie YAML semantic models to [LookML](https://cloud.google.com/looker/docs/what-is-lookml), the semantic modeling language for Looker — Google Cloud's semantic layer over BigQuery, and LookML projects back to Ossie. Pure offline conversion — no BigQuery or Looker connection required.
 
 > **Note:** This converter is under active development. It handles common cases but has not been thoroughly tested against all edge cases — use with caution in production.
 
@@ -32,8 +32,14 @@ uv sync
 ## Usage
 
 ```bash
-uv run ossie-bigquery -i input.yaml -o output.lkml
+# Ossie -> LookML
+uv run ossie-bigquery export -i input.yaml -o output.lkml
+
+# LookML -> Ossie (a project directory or one .lkml file; stdout without -o)
+uv run ossie-bigquery import -i lookml_project/ -o model.yaml --explore orders
 ```
+
+`ossie-bigquery -i input.yaml -o output.lkml`, without a command, still exports.
 
 ## Tests
 
@@ -121,11 +127,43 @@ Malformed input is reported as an `OssieConversionError` naming the entity (`Rel
 - **Window functions** in metrics cannot be LookML measures (see above).
 - **Dropped constructs**: `custom_extensions`, `unique_keys`, metric `datatype` (a LookML measure's type comes from its aggregate), relationship-level `ai_context`, and `ai_context` keys other than `synonyms` and `instructions` (such as `examples`) have no LookML counterpart and are dropped with a warning naming the entity. Field `label` is emitted; `description` plus `ai_context.instructions` and synonyms form the LookML description; dataset descriptions are kept as a comment and on the explore.
 
+## LookML to Ossie
+
+`import` turns one explore into one Ossie model (`--explore` picks it when the project has several; without any explores, every view becomes a dataset and there are no relationships).
+
+| LookML | Ossie |
+|--------|-------|
+| `view` | `dataset`; `sql_table_name` (backticks removed) or `derived_table.sql` is the `source`, and a view with neither uses its own name, as Looker does |
+| `dimension` | `field`. `${TABLE}.col` becomes `col`; a reference to another dimension of the view is replaced by that dimension's SQL, since field expressions reference columns. `primary_key: yes` sets the dataset's `primary_key` |
+| `dimension_group` (`type: time`) | One field holding the raw value. Ossie has no time grain, so timeframes are not carried over. The field is named after the column it reads (`created_at`, not `created`), which also round-trips with `export`; computed SQL or a taken name falls back to `<group>_raw` |
+| `measure` | Dataset-scoped `metric` over field names. A column no dimension exposes gets a field of its own. `type: number` measures inline the measures they reference, since metrics cannot reference metrics. `filters:` become `FILTER (WHERE ...)` |
+| `explore` / `join` | The model, and one `relationship` per join from the many side to the one side, keyed by `sql_on` equalities or `foreign_key`; `from:` aliases become datasets of their own |
+
+| LookML type | Ossie `datatype` |
+|-------------|------------------|
+| `string`, `zipcode`, no type | `String` |
+| `yesno` | `Boolean` |
+| `number` | none (LookML does not say integer or decimal) |
+| `date_time`; group `datatype: timestamp` (default) | `DateTimeTz` |
+| group `datatype: date` / `datetime` | `Date` / `DateTime` |
+| `count`, `count_distinct` measures | `Integer` |
+
+Expressions are tagged `BIGQUERY`, except metrics with `FILTER (WHERE ...)`: BigQuery has no `FILTER` clause, so those are transpiled with sqlglot and tagged `OSSIE_SQL_2026`.
+
+Anything without an exact Ossie form is skipped with a warning naming it, rather than translated approximately:
+
+- references to other views, Liquid, `${field._sql}`, timeframes other than `_raw`, and dimension `type: date` (Looker converts the timezone before truncating);
+- dimension types that compute their value (`tier`, `duration`, `location`, ...), `epoch` / `yyyymmdd` groups;
+- measure types other than `count`, `sum`, `average`, `min`, `max`, `count_distinct` and `number` (`percent_of_total`, `running_total`, `median`, `sum_distinct`, ...);
+- filters other than exact values, lists, numeric comparisons, `%` / `_` wildcards, yes/no and `NULL`. Negation (`-cancelled`) is skipped because Looker does not document whether it matches NULL;
+- `many_to_many` joins and `sql_on` that is not equalities between two views. Join types other than `left_outer`, and explore filters (`sql_always_where`, `access_filter`, ...), warn because Ossie relationships carry only keys;
+- refinements (`+view`) and native derived tables (`explore_source`).
+
 ## Roadmap
 
 Things this converter does not do yet, in rough order of value:
 
-- **LookML to Ossie import**, so a Looker project can be exchanged like the Snowflake and dbt models can. The module is named `ossie_to_lookml.py` and the CLI split out into `cli.py` for that reason; an importer would live beside it as `lookml_to_ossie.py` and reuse `lkml` for parsing.
+- **LookML import follow-ups**: measures that reference other views as model-scoped metrics; `percent_of_total` and `running_total` in `custom_extensions`; refinements.
 - **`OSSIE_SQL_2026` as the primary source**: once the Ossie expression language settles, translating its portable functions (`DATE_TRUNC('month', d)` → `DATE_TRUNC(d, MONTH)`, `DATEADD` → `DATE_ADD`, …) to BigQuery with sqlglot would let models written only in the Ossie dialect convert without a hand-written `BIGQUERY` expression; sqlglot already does most of that transpilation.
 - **Explore-level descriptions and `ai_context`**: relationship and model `ai_context` could feed Looker's explore `description` or `sql_always_where`-style hints once Looker exposes a stable place for agent context.
 - **Vendor extension passthrough**: a `LOOKER` (or `BIGQUERY`) `custom_extensions` vendor could carry LookML-only settings such as `value_format`, `drill_fields`, `group_label` and `view_label` on round trips.

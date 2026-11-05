@@ -18,38 +18,113 @@
 """Command line entry point for the BigQuery / LookML converter.
 
 Usage:
-    ossie-bigquery -i input.yaml -o output.lkml
+    ossie-bigquery export -i model.yaml -o output.lkml
+    ossie-bigquery import -i lookml_project/ [-o model.yaml] [--explore NAME] [--name NAME]
+
+`export` converts an Ossie model to LookML; `import` converts a LookML
+project (a directory of .lkml files, or one file) to an Ossie model, written
+to stdout when no `-o` is given. `ossie-bigquery -i ... -o ...` without a
+command still means `export`. Conversions that drop information warn on stderr.
 """
 
 import argparse
+import os
 import sys
 
+from .lookml_to_ossie import convert_lookml_to_ossie
 from .ossie_to_lookml import OssieConversionError, convert_ossie_to_lookml
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Convert Ossie YAML semantic model to LookML (Looker / BigQuery)"
-    )
+def _export_arguments(parser):
     parser.add_argument(
         "-i", "--input", required=True, help="Path to the Ossie YAML input file"
     )
     parser.add_argument(
         "-o", "--output", required=True, help="Path to write the LookML output"
     )
-    args = parser.parse_args(argv)
+
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="ossie-bigquery",
+        description="Convert between Ossie YAML semantic models and LookML (Looker / BigQuery)",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    _export_arguments(sub.add_parser("export", help="Ossie YAML -> LookML"))
+    imp = sub.add_parser("import", help="LookML project -> Ossie YAML")
+    imp.add_argument("-i", "--input", required=True,
+                     help="LookML project directory, or a single .lkml file")
+    imp.add_argument("-o", "--output", help="Path to write the Ossie YAML (default: stdout)")
+    imp.add_argument("--explore", help="Explore to convert (needed when there are several)")
+    imp.add_argument("--name", help="Ossie model name (default: the explore's name)")
+    return parser
+
+
+def _read_lookml(path):
+    """Returns {relative path: text} for a .lkml file, or every .lkml file
+    under a directory (hidden directories skipped)."""
+    if os.path.isfile(path):
+        with open(path) as f:
+            return {os.path.basename(path): f.read()}
+    if not os.path.isdir(path):
+        raise OSError(f"'{path}' is not a file or directory")
+    files = {}
+    for dirpath, dirnames, filenames in os.walk(path):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for fname in sorted(filenames):
+            if fname.endswith(".lkml"):
+                full = os.path.join(dirpath, fname)
+                with open(full) as f:
+                    files[os.path.relpath(full, path)] = f.read()
+    if not files:
+        raise OSError(f"no .lkml files under '{path}'")
+    return files
+
+
+def _export(args):
+    with open(args.input, "r") as f:
+        ossie_yaml_str = f.read()
+    lookml_str = convert_ossie_to_lookml(ossie_yaml_str)
+    with open(args.output, "w") as f:
+        f.write(lookml_str)
+    print(f"Converted {args.input} -> {args.output}")
+
+
+def _import(args):
+    ossie_yaml_str = convert_lookml_to_ossie(
+        _read_lookml(args.input), explore=args.explore, model_name=args.name
+    )
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(ossie_yaml_str)
+        print(f"Converted {args.input} -> {args.output}", file=sys.stderr)
+    else:
+        sys.stdout.write(ossie_yaml_str)
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] in ("export", "import"):
+        args = _build_parser().parse_args(argv)
+    else:
+        # The original form, `ossie-bigquery -i model.yaml -o out.lkml`.
+        legacy = argparse.ArgumentParser(
+            prog="ossie-bigquery",
+            description="Convert Ossie YAML semantic model to LookML (Looker / BigQuery). "
+                        "Use `ossie-bigquery import -h` for LookML to Ossie.",
+        )
+        _export_arguments(legacy)
+        args = legacy.parse_args(argv)
+        args.command = "export"
 
     try:
-        with open(args.input, "r") as f:
-            ossie_yaml_str = f.read()
-        lookml_str = convert_ossie_to_lookml(ossie_yaml_str)
-        with open(args.output, "w") as f:
-            f.write(lookml_str)
+        if args.command == "export":
+            _export(args)
+        else:
+            _import(args)
     except (OssieConversionError, OSError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    print(f"Converted {args.input} -> {args.output}")
 
 
 if __name__ == "__main__":
