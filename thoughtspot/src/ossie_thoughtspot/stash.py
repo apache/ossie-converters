@@ -81,7 +81,12 @@ def find_forbidden_key(value: Any, forbidden: frozenset[str] | None = None) -> s
 
 
 def read_stash(obj: dict) -> dict[str, Any]:
-    """Return this object's parsed THOUGHTSPOT payload, or {} if it has none."""
+    """Return this object's parsed THOUGHTSPOT payload, or {} if it has none.
+
+    `data` is accepted in both shapes: the JSON string the spec defines today,
+    and the object apache/ossie#522 proposes. Only the shape differs -- the
+    payload inside, `_v` included, is read identically either way.
+    """
     extensions = obj.get("custom_extensions") or []
     if not isinstance(extensions, list):
         raise ConversionError(
@@ -103,20 +108,29 @@ def read_stash(obj: dict) -> dict[str, Any]:
         raw = entry.get("data")
         if raw is None:
             return {}
-        if not isinstance(raw, str):
-            # `data` is typed as a string; a nested object is a spec violation.
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                # Name the object; never surface a bare json traceback.
+                raise ConversionError(
+                    f"malformed THOUGHTSPOT custom_extensions payload on "
+                    f"{_object_label(obj)!r}: {exc}"
+                ) from exc
+        elif isinstance(raw, dict):
+            # The object form apache/ossie#522 proposes. The reader accepts it
+            # before any writer emits it: a document written under the new shape
+            # is then readable here whenever that lands, and whichever way the
+            # vote goes, where the reverse order would leave every such document
+            # unreadable until we shipped a release of our own. `write_stash`
+            # deliberately still emits the string form, which is what the spec
+            # says today -- a test pins that, and it is not an oversight.
+            parsed = raw
+        else:
             raise ConversionError(
                 f"custom_extensions data for {_object_label(obj)!r} is "
-                f"{type(raw).__name__}, expected a JSON string"
+                f"{type(raw).__name__}, expected a JSON string or a mapping"
             )
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            # Name the object; never surface a bare json traceback.
-            raise ConversionError(
-                f"malformed THOUGHTSPOT custom_extensions payload on "
-                f"{_object_label(obj)!r}: {exc}"
-            ) from exc
         version = parsed.get("_v") if isinstance(parsed, dict) else None
         if version != STASH_VERSION:
             # An unrecognised shape version is a hard failure, not a
