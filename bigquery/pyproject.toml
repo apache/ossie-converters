@@ -22,6 +22,8 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    # Test-only: validates converted documents with ossie/validation/validate.py.
+    "jsonschema>=4.26.0",
 ]
 
 [project]

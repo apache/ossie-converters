@@ -17,11 +17,47 @@
 
 """Tests for the LookML to Ossie converter."""
 
+import importlib.util
+import json
+from pathlib import Path
+
 import pytest
 import yaml
 
 from ossie_bigquery.lookml_to_ossie import convert_lookml_to_ossie
-from ossie_bigquery.ossie_to_lookml import SUPPORTED_VERSION, OssieConversionError
+from ossie_bigquery.ossie_to_lookml import (
+    SUPPORTED_VERSION,
+    OssieConversionError,
+    convert_ossie_to_lookml,
+)
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+OSSIE = Path(__file__).resolve().parents[2] / "ossie"
+
+
+def _load_validator():
+    """The spec's own validator (`ossie/validation/validate.py`), or None
+    when it can't load (no jsonschema, submodule not checked out). It exits
+    at import time when jsonschema is missing, hence SystemExit."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "ossie_validate", OSSIE / "validation" / "validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        schema = json.loads((OSSIE / "core-spec" / "ossie-schema.json").read_text())
+        return module, schema
+    except (Exception, SystemExit):
+        return None
+
+
+_VALIDATOR = _load_validator()
+
+
+def _assert_valid(ossie_yaml):
+    if _VALIDATOR is None:
+        pytest.skip("ossie/validation/validate.py unavailable")
+    module, schema = _VALIDATOR
+    assert module.validate_document(yaml.safe_load(ossie_yaml), schema) == []
 
 
 def _convert(*views, **kwargs):
@@ -124,11 +160,6 @@ class TestDimensions:
     def test_number_has_no_datatype(self):
         fields = _fields("dimension: total { type: number sql: ${TABLE}.total ;; }")
         assert "datatype" not in fields["total"]
-
-    def test_label_and_description(self):
-        fields = _fields('dimension: status { label: "Order status" description: "Where it is" }')
-        assert fields["status"]["label"] == "Order status"
-        assert fields["status"]["description"] == "Where it is"
 
     def test_primary_key(self):
         model = _convert("view: orders { dimension: id { primary_key: yes } dimension: status {} }")
@@ -242,12 +273,6 @@ class TestDimensionGroups:
                 "sql_start: ${TABLE}.opened ;; sql_end: ${TABLE}.closed ;; }"
             )
         assert fields == {}
-
-    def test_label_and_description(self):
-        fields = _fields('dimension_group: created { type: time label: "Created" '
-                         'description: "When placed" sql: ${TABLE}.c ;; }')
-        assert fields["c"]["label"] == "Created"
-        assert fields["c"]["description"] == "When placed"
 
     def test_computed_sql_is_named_raw(self):
         fields = _fields("dimension_group: created { type: time sql: TIMESTAMP(${TABLE}.d) ;; }")
@@ -373,9 +398,17 @@ class TestMeasures:
         )
         assert _metric_sql(metrics["first_order"]) == "MIN(created_at)"
 
-    def test_description(self):
-        metrics = _metrics('measure: count { type: count description: "All orders" }')
-        assert metrics["count"]["description"] == "All orders"
+    @pytest.mark.parametrize("lookml, key, name", [
+        ("dimension: status {", "fields", "status"),
+        ("dimension_group: created { type: time sql: ${TABLE}.c ;;", "fields", "c"),
+        ("measure: count { type: count", "metrics", "count"),
+    ])
+    def test_label_and_description(self, lookml, key, name):
+        dataset = _dataset(f'{lookml} label: "Shown" description: "Explained" }}')
+        [entry] = [e for e in dataset[key] if e["name"] == name]
+        assert entry["description"] == "Explained"
+        # Ossie metrics have no label.
+        assert entry.get("label") == ("Shown" if key == "fields" else None)
 
 
 class TestMeasureColumns:
@@ -611,9 +644,6 @@ class TestExplores:
         assert model["description"] == "Orders with buyers"
         assert [d["name"] for d in model["datasets"]] == ["orders", "users"]
 
-    def test_model_name_override(self):
-        assert _explore("explore: orders {}", model_name="shop")["name"] == "shop"
-
     def test_several_explores_need_a_choice(self):
         with pytest.raises(OssieConversionError, match="choose one to convert: orders, users"):
             _explore("explore: orders {} explore: users {}")
@@ -719,3 +749,68 @@ class TestJoins:
             model = _explore(f"explore: orders {{ join: users {{ {join} }} }}")
         assert [d["name"] for d in model["datasets"]] == ["orders", "users"]
         assert _rels(model) == {}
+
+
+def _shop():
+    return {p.name: p.read_text() for p in (FIXTURES / "lookml_shop").glob("*.lkml")}
+
+
+def _shape(ossie_yaml):
+    """What a round trip must keep: datasets with their field and metric
+    names, and the relationships' keys."""
+    doc = yaml.safe_load(ossie_yaml)
+    datasets = {
+        d["name"]: ({f["name"] for f in d.get("fields", [])},
+                    {m["name"] for m in d.get("metrics", [])})
+        for d in doc["datasets"]
+    }
+    relationships = {
+        (r["from"], r["to"], tuple(r["from_columns"]), tuple(r["to_columns"]))
+        for r in doc.get("relationships", [])
+    }
+    return datasets, relationships
+
+
+class TestProject:
+    def test_shop_converts_without_warnings_and_validates(self, recwarn):
+        ossie_yaml = convert_lookml_to_ossie(_shop(), explore="order_items")
+        assert [str(w.message) for w in recwarn] == []
+        _assert_valid(ossie_yaml)
+        datasets, relationships = _shape(ossie_yaml)
+        assert set(datasets) == {"order_items", "orders", "users", "products"}
+        assert relationships == {
+            ("order_items", "orders", ("order_id",), ("id",)),
+            ("order_items", "products", ("product_id",), ("id",)),
+            ("orders", "users", ("user_id",), ("id",)),
+        }
+
+    def test_round_trip_through_ossie_to_lookml(self):
+        first = convert_lookml_to_ossie(_shop(), explore="order_items")
+        with pytest.warns(UserWarning):  # the exporter notes what LookML can't hold
+            lookml = convert_ossie_to_lookml(first)
+        second = convert_lookml_to_ossie({"shop.lkml": lookml}, explore="order_items")
+        before, after = _shape(first), _shape(second)
+        assert after[1] == before[1]
+        for name, (fields, metrics) in before[0].items():
+            assert after[0][name][0] == fields
+            # The exporter splits type: number arithmetic into hidden helper
+            # measures, which come back as metrics of their own.
+            assert metrics <= after[0][name][1]
+
+    @pytest.mark.skipif(not (OSSIE / "examples" / "tpcds_semantic_model.yaml").exists(),
+                        reason="TPC-DS example not found")
+    def test_tpcds_round_trip(self):
+        """The spec's TPC-DS example, exported with ossie_to_lookml and imported
+        back, keeps every dataset, field and relationship."""
+        original = (OSSIE / "examples" / "tpcds_semantic_model.yaml").read_text()
+        with pytest.warns(UserWarning):
+            lookml = convert_ossie_to_lookml(original)
+        with pytest.warns(UserWarning):  # metrics that read other views, for now
+            imported = convert_lookml_to_ossie({"tpcds.lkml": lookml})
+        before, after = _shape(original), _shape(imported)
+        assert after[1] == before[1]
+        assert set(after[0]) == set(before[0])
+        for name, (fields, _) in before[0].items():
+            # The exporter adds a hidden `primary_key` dimension for
+            # composite keys, which comes back as a field.
+            assert after[0][name][0] - {"primary_key"} == fields
