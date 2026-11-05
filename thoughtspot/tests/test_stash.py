@@ -251,3 +251,63 @@ class TestDataIsAcceptedInBothShapes:
         assert written["alias"] == "X"          # the arriving payload survived
         assert written["join_type"] == "LEFT_OUTER"
         assert written["_v"] == STASH_VERSION
+
+
+class TestABoolIsNotTheCurrentShapeVersion:
+    """`_v: true` must not read as version 1, though Python says `True == 1`.
+
+    Live under apache/ossie#522: with `data` an object the payload is YAML,
+    and a bare `true` is a boolean there under both 1.1 and 1.2 rules. The
+    loader's 1.1 narrowing (`yes`, `on` -> strings) does not help, because
+    `true` is a boolean in 1.2 as well.
+    """
+
+    def _obj(self, version):
+        return {"name": "orders", "custom_extensions": [
+            {"vendor_name": VENDOR_KEY, "data": {"_v": version, "alias": "X"}}
+        ]}
+
+    @pytest.mark.parametrize("version", [True, False])
+    def test_a_bool_shape_version_is_refused(self, version):
+        with pytest.raises(ConversionError, match="orders") as excinfo:
+            stash.read_stash(self._obj(version))
+        assert "shape version" in str(excinfo.value)
+
+    @pytest.mark.parametrize("version", [1, 1.0])
+    def test_what_it_still_accepts(self, version):
+        """Guards against fixing the bool by tightening the type too far.
+
+        `1.0` stays accepted deliberately. A float spelling of a version we
+        do recognise is not the hazard: a bool is, because `_v: true` is what
+        a YAML document actually produces and `True == 1` makes it look
+        current. Rejecting every non-int would also refuse a payload a JSON
+        producer may legitimately write, so the exclusion is bool-shaped, not
+        type-shaped, and this pins that distinction.
+        """
+        assert stash.read_stash(self._obj(version))["alias"] == "X"
+
+    def test_it_is_refused_in_the_string_form_too(self):
+        # Both shapes reach the same gate; neither is a way around it.
+        obj = {"name": "orders", "custom_extensions": [
+            {"vendor_name": VENDOR_KEY, "data": json.dumps({"_v": True, "alias": "X"})}
+        ]}
+        with pytest.raises(ConversionError, match="shape version"):
+            stash.read_stash(obj)
+
+    def test_a_yaml_true_loaded_through_our_own_loader_is_refused(self):
+        # End to end through _yaml, the path a hand-edited document takes.
+        from ossie_thoughtspot import _yaml
+
+        document = _yaml.load(
+            "datasets:\n"
+            "  - name: orders\n"
+            "    custom_extensions:\n"
+            "      - vendor_name: THOUGHTSPOT\n"
+            "        data:\n"
+            "          _v: true\n"
+            "          alias: X\n"
+        )
+        dataset = document["datasets"][0]
+        assert dataset["custom_extensions"][0]["data"]["_v"] is True  # the premise
+        with pytest.raises(ConversionError, match="shape version"):
+            stash.read_stash(dataset)

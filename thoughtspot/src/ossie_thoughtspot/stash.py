@@ -132,10 +132,20 @@ def read_stash(obj: dict) -> dict[str, Any]:
                 f"{type(raw).__name__}, expected a JSON string or a mapping"
             )
         version = parsed.get("_v") if isinstance(parsed, dict) else None
-        if version != STASH_VERSION:
+        if isinstance(version, bool) or version != STASH_VERSION:
             # An unrecognised shape version is a hard failure, not a
             # partial read — a future payload shape this converter has never
             # seen would otherwise be silently misread as the current one.
+            #
+            # A bool is excluded explicitly because Python reads `True == 1`,
+            # so `_v: true` would otherwise pass as version 1. That is not
+            # theoretical under apache/ossie#522: with `data` an object the
+            # payload is YAML, where a bare `true` is a boolean under both 1.1
+            # and 1.2 rules. `_yaml.Yaml12Loader` already narrows the 1.1-only
+            # spellings (`yes`, `on`) to strings, which is why those are
+            # refused -- but narrowing the resolver moves which spelling
+            # bites, it does not stop one biting, and this is the check whose
+            # whole job is to refuse a shape we do not recognise.
             raise ConversionError(
                 f"THOUGHTSPOT custom_extensions payload on "
                 f"{_object_label(obj)!r} has shape version {version!r}, "
