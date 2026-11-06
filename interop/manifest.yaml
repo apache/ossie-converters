@@ -24,12 +24,12 @@ converters:
     cwd: bigquery
     toolchain: uv
     prepare: [uv, sync, --locked, --no-dev]
-    import: null
-    export: [uv, run, --no-sync, ossie-bigquery, -i, '{input}', -o, '{output}']
+    import: [uv, run, --no-sync, ossie-bigquery, import, --all-explores, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-bigquery, export, -i, '{input}', -o, '{output}']
     native_format: lookml
     output: file
-    fixtures: {}
-    import_skip: No native-to-Ossie importer is implemented in this converter.
+    fixtures:
+      shop: bigquery/tests/fixtures/lookml_shop
   cube:
     cwd: cube
     toolchain: uv
