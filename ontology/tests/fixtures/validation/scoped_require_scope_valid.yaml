@@ -45,12 +45,15 @@ ontology:
     relationships:
       - name: ssn
         roles: [{concept: SocialSecurityNr}]
+        verbalizes: ['{Person} has {SocialSecurityNr}']
         multiplicity: OneToOne
       - name: monthly_income
         roles: [{concept: Money}]
+        verbalizes: ['{Person} has {Money}']
         multiplicity: ManyToOne
       - name: annual_income
         roles: [{concept: Money, name: annual_income}]
+        verbalizes: ['{Person} has {Money:annual_income}']
         multiplicity: ManyToOne
         # `monthly` is a local variable: the equality defines it from the
         # in-scope `Person`, which puts it in scope for the second conjunct.
@@ -58,9 +61,11 @@ ontology:
           - 'monthly == Person.monthly_income AND annual_income == monthly * 12'
       - name: name
         roles: [{concept: PersonName}]
+        verbalizes: ['{Person} has {PersonName}']
         multiplicity: ManyToOne
       - name: employer
         roles: [{concept: Company}]
+        verbalizes: ['{Person} has {Company}']
         multiplicity: ManyToOne
         # A relationship-scoped formula may reference every role player of its
         # parent relationship — here both `Person` and `Company`.
@@ -68,6 +73,7 @@ ontology:
           - 'Person.ssn > 0 AND Company.revenue > 0'
       - name: employment
         roles: [{concept: Company}, {concept: Position}]
+        verbalizes: ['{Person} has {Company} has {Position}']
         multiplicity: ManyToOne
   - concept: Company
     type: EntityType
@@ -75,12 +81,15 @@ ontology:
     relationships:
       - name: taxId
         roles: [{concept: TaxId}]
+        verbalizes: ['{Company} has {TaxId}']
         multiplicity: OneToOne
       - name: revenue
         roles: [{concept: Revenue}]
+        verbalizes: ['{Company} has {Revenue}']
         multiplicity: ManyToOne
       - name: subsidiary
         roles: [{concept: Subsidiary}]
+        verbalizes: ['{Company} has {Subsidiary}']
         multiplicity: ManyToOne
   - concept: Subsidiary
     type: EntityType
@@ -88,9 +97,11 @@ ontology:
     relationships:
       - name: subId
         roles: [{concept: TaxId}]
+        verbalizes: ['{Subsidiary} has {TaxId}']
         multiplicity: OneToOne
       - name: staff
         roles: [{concept: Headcount}]
+        verbalizes: ['{Subsidiary} has {Headcount}']
         multiplicity: ManyToOne
   - concept: Position
     type: EntityType
@@ -98,9 +109,11 @@ ontology:
     relationships:
       - name: title
         roles: [{concept: PositionTitle}]
+        verbalizes: ['{Position} has {PositionTitle}']
         multiplicity: OneToOne
       - name: level
         roles: [{concept: Headcount}]
+        verbalizes: ['{Position} has {Headcount}']
         multiplicity: ManyToOne
   - concept: Product
     type: EntityType
@@ -108,6 +121,7 @@ ontology:
     relationships:
       - name: sku
         roles: [{concept: Sku}]
+        verbalizes: ['{Product} has {Sku}']
         multiplicity: OneToOne
   - concept: Payment
     type: EntityType
@@ -115,9 +129,11 @@ ontology:
     relationships:
       - name: paymentId
         roles: [{concept: PaymentId}]
+        verbalizes: ['{Payment} has {PaymentId}']
         multiplicity: OneToOne
       - name: type
         roles: [{concept: PaymentType}]
+        verbalizes: ['{Payment} has {PaymentType}']
         multiplicity: ManyToOne
   - concept: Card
     type: EntityType

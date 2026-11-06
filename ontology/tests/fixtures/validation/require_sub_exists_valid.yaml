@@ -26,9 +26,11 @@ ontology:
     relationships:
       - name: ssn
         roles: [{concept: SocialSecurityNr}]
+        verbalizes: ['{Person} has {SocialSecurityNr}']
         multiplicity: OneToOne
       - name: name
         roles: [{concept: PersonName}]
+        verbalizes: ['{Person} has {PersonName}']
         multiplicity: ManyToOne
   - concept: Company
     type: EntityType
@@ -36,9 +38,11 @@ ontology:
     relationships:
       - name: taxId
         roles: [{concept: TaxId}]
+        verbalizes: ['{Company} has {TaxId}']
         multiplicity: OneToOne
       - name: revenue
         roles: [{concept: Revenue}]
+        verbalizes: ['{Company} has {Revenue}']
         multiplicity: ManyToOne
         requires:
           - 'EXISTS(Person.name)'

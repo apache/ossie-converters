@@ -17,7 +17,8 @@
 
 version: 0.2.0.dev0
 name: RETAIL_REFACTORED
-description: Retail ontology with employees, stores, products, transactions, orders, payments, and weekly sales facts.
+description: Retail ontology with employees, stores, products, transactions, orders,
+  payments, and weekly sales facts.
 ontology:
 - concept: Payment
   type: EntityType
@@ -28,17 +29,21 @@ ontology:
   - name: id
     roles:
     - concept: PaymentId
+    multiplicity: OneToOne
     verbalizes:
     - '{Payment} is identified by {PaymentId}'
-    multiplicity: OneToOne
   - name: type
     roles:
     - concept: String
     multiplicity: ManyToOne
+    verbalizes:
+    - '{Payment} has type {String}'
   - name: amount
     roles:
     - concept: Decimal
     multiplicity: ManyToOne
+    verbalizes:
+    - '{Payment} has amount {Decimal}'
 - concept: CashPayment
   type: EntityType
   description: Payment made in cash.
@@ -51,10 +56,14 @@ ontology:
     roles:
     - concept: Decimal
     multiplicity: ManyToOne
+    verbalizes:
+    - '{CashPayment} has cash received {Decimal}'
   - name: change
     roles:
     - concept: Decimal
     multiplicity: ManyToOne
+    verbalizes:
+    - '{CashPayment} has change {Decimal}'
 - concept: CardPayment
   type: EntityType
   description: Payment made by card.
@@ -67,10 +76,14 @@ ontology:
     roles:
     - concept: String
     multiplicity: ManyToOne
+    verbalizes:
+    - '{CardPayment} has card number {String}'
   - name: cardHolderName
     roles:
     - concept: String
     multiplicity: ManyToOne
+    verbalizes:
+    - '{CardPayment} has card holder name {String}'
 - concept: OrderLineItem
   type: EntityType
   description: LineItem in an Order.
@@ -81,51 +94,54 @@ ontology:
   - name: order
     roles:
     - concept: Order
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} belongs to {Order}'
-    multiplicity: ManyToOne
   - name: nr
     roles:
     - concept: Integer
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has line item number {Integer}'
-    multiplicity: ManyToOne
   - name: lineitem_extended_price
     description: Extended price for the line item.
     roles:
     - concept: Decimal
       name: lineitem_extended_price
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has extended price {Decimal:lineitem_extended_price}'
-    multiplicity: ManyToOne
   - name: lineitem_discount
     description: Discount factor applied to the line.
     roles:
     - concept: Decimal
       name: lineitem_discount
+    multiplicity: ManyToOne
     verbalizes:
     - '{OrderLineItem} has discount factor {Decimal:lineitem_discount}'
-    multiplicity: ManyToOne
   - name: net_revenue
-    description: The net extended price of the order line after discount, but before tax.
+    description: The net extended price of the order line after discount, but before
+      tax.
     roles:
     - concept: Decimal
       name: net_revenue
-    verbalizes:
-    - '{OrderLineItem} has net revenue {Decimal:net_revenue}'
     multiplicity: ManyToOne
     derived_by:
-    - extended_price == OrderLineItem.lineitem_extended_price AND discount == OrderLineItem.lineitem_discount AND net_revenue == extended_price * (1 - discount)
+    - extended_price == OrderLineItem.lineitem_extended_price AND discount == OrderLineItem.lineitem_discount
+      AND net_revenue == extended_price * (1 - discount)
+    verbalizes:
+    - '{OrderLineItem} has net revenue {Decimal:net_revenue}'
   - name: discounted_amount
-    description: The amount paid after subtracting the discount from the extended price.
+    description: The amount paid after subtracting the discount from the extended
+      price.
     roles:
     - concept: Amount
       name: discounted_amount
-    verbalizes:
-    - '{OrderLineItem} has discounted amount {Amount:discounted_amount}'
     multiplicity: ManyToOne
     derived_by:
     - discounted_amount == Amount(OrderLineItem.lineitem_extended_price - OrderLineItem.lineitem_discount)
+    verbalizes:
+    - '{OrderLineItem} has discounted amount {Amount:discounted_amount}'
 - concept: Order
   type: EntityType
   description: Order in a Store.
@@ -135,15 +151,15 @@ ontology:
   - name: nr
     roles:
     - concept: OrderNr
+    multiplicity: OneToOne
     verbalizes:
     - '{Order} is identified by {OrderNr}'
-    multiplicity: OneToOne
   - name: orderDate
     roles:
     - concept: Date
+    multiplicity: ManyToOne
     verbalizes:
     - '{Order} has {Date}'
-    multiplicity: ManyToOne
 - concept: Transaction
   type: EntityType
   description: Transaction registered by a point-of-sale terminal.
@@ -153,71 +169,71 @@ ontology:
   - name: nr
     roles:
     - concept: TransactionNr
+    multiplicity: OneToOne
     verbalizes:
     - '{Transaction} is identified by {TransactionNr}'
-    multiplicity: OneToOne
   - name: registeredBy
     roles:
     - concept: Terminal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Transaction} is registered by {Terminal}'
-    multiplicity: ManyToOne
   - name: returns
     roles:
     - concept: Item
     - concept: Amount
+    multiplicity: ManyToOne
     verbalizes:
     - '{Transaction} refunds {Item} for {Amount}'
-    multiplicity: ManyToOne
   - name: sales
     roles:
     - concept: Item
     - concept: Amount
+    multiplicity: ManyToOne
     verbalizes:
     - '{Transaction} sells {Item} for {Amount}'
-    multiplicity: ManyToOne
   - name: transactionTerminalStore
     roles:
     - concept: Terminal
     - concept: Store
-    verbalizes:
-    - '{Transaction} registered at {Terminal} deployed to {Store}'
     derived_by:
     - Transaction.registeredBy(Terminal) AND Terminal.deployedTo(Store)
+    verbalizes:
+    - '{Transaction} registered at {Terminal} deployed to {Store}'
   - name: storeNrViaBinaryChain
     roles:
     - concept: StoreNr
       name: store_nr
-    verbalizes:
-    - '{Transaction} was registered at a terminal deployed to store {StoreNr:store_nr}'
     multiplicity: ManyToOne
     derived_by:
     - store_nr == Transaction.registeredBy(Terminal).deployedTo.nr
+    verbalizes:
+    - '{Transaction} was registered at a terminal deployed to store {StoreNr:store_nr}'
   - name: storeNrViaTernaryChain
     roles:
     - concept: StoreNr
       name: store_nr
-    verbalizes:
-    - '{Transaction} occurred at store {StoreNr:store_nr}'
     multiplicity: ManyToOne
     derived_by:
     - store_nr == Transaction.transactionTerminalStore(Terminal).nr
+    verbalizes:
+    - '{Transaction} occurred at store {StoreNr:store_nr}'
   - name: transactionRegion
     roles:
     - concept: Region
-    verbalizes:
-    - '{Transaction} occurred in {Region}'
     multiplicity: ManyToOne
     derived_by:
     - Transaction.registeredBy(Terminal) AND Terminal.deployedTo(Store) AND Store.storeToRegion(Region)
+    verbalizes:
+    - '{Transaction} occurred in {Region}'
   - name: transactionStoreManager
     roles:
     - concept: Employee
-    verbalizes:
-    - '{Transaction} associated with store manager {Employee}'
     multiplicity: ManyToOne
     derived_by:
     - Transaction.registeredBy(Terminal) AND Terminal.deployedTo(Store) AND Store.storeToManager(Employee)
+    verbalizes:
+    - '{Transaction} associated with store manager {Employee}'
 - concept: Terminal
   type: EntityType
   description: A point-of-sale terminal for conducting retail transactions.
@@ -227,15 +243,15 @@ ontology:
   - name: id
     roles:
     - concept: RegisterId
+    multiplicity: OneToOne
     verbalizes:
     - '{Terminal} is identified by {RegisterId}'
-    multiplicity: OneToOne
   - name: deployedTo
     roles:
     - concept: Store
+    multiplicity: ManyToOne
     verbalizes:
     - '{Terminal} is deployed to {Store}'
-    multiplicity: ManyToOne
 - concept: Store
   type: EntityType
   description: Physical store that offers items for sale to the public.
@@ -245,41 +261,43 @@ ontology:
   - name: nr
     roles:
     - concept: StoreNr
+    multiplicity: OneToOne
     verbalizes:
     - '{Store} is identified by {StoreNr}'
-    multiplicity: OneToOne
   - name: storeToManager
     roles:
     - concept: Employee
+    multiplicity: ManyToOne
     verbalizes:
     - '{Store} is managed by {Employee}'
-    multiplicity: ManyToOne
   - name: storeToRegion
     roles:
     - concept: Region
+    multiplicity: ManyToOne
     verbalizes:
     - '{Store} belongs to {Region}'
-    multiplicity: ManyToOne
   - name: avgReturns
     roles:
     - concept: Item
     - concept: Amount
       name: amt
-    verbalizes:
-    - '{Store} reports returns of {Item} for average {Amount:amt}'
     multiplicity: ManyToOne
     derived_by:
-    - amt == AVG[Amount WHERE Transaction.registeredBy(Terminal) AND Transaction.returns(Transaction, Item, Amount) AND Terminal.deployedTo(Store) GROUP BY Item, Store]
+    - amt == AVG[Amount WHERE Transaction.registeredBy(Terminal) AND Transaction.returns(Transaction,
+      Item, Amount) AND Terminal.deployedTo(Store) GROUP BY Item, Store]
+    verbalizes:
+    - '{Store} reports returns of {Item} for average {Amount:amt}'
   - name: avgReturnsWithMarkup
     roles:
     - concept: Item
     - concept: Amount
       name: amt
-    verbalizes:
-    - '{Store} reports returns of {Item} for 10%-marked-up average {Amount:amt}'
     multiplicity: ManyToOne
     derived_by:
-    - amt == Amount(AVG[Amount WHERE Transaction.registeredBy(Terminal) AND Transaction.returns(Transaction, Item, Amount) AND Terminal.deployedTo(Store) GROUP BY Item, Store] * 1.1)
+    - amt == Amount(AVG[Amount WHERE Transaction.registeredBy(Terminal) AND Transaction.returns(Transaction,
+      Item, Amount) AND Terminal.deployedTo(Store) GROUP BY Item, Store] * 1.1)
+    verbalizes:
+    - '{Store} reports returns of {Item} for 10%-marked-up average {Amount:amt}'
 - concept: Region
   type: EntityType
   description: Region of a country.
@@ -289,9 +307,9 @@ ontology:
   - name: name
     roles:
     - concept: RegionName
+    multiplicity: OneToOne
     verbalizes:
     - '{Region} is identified by {RegionName}'
-    multiplicity: OneToOne
 - concept: Class
   type: EntityType
   description: Class of the Product.
@@ -301,21 +319,21 @@ ontology:
   - name: nr
     roles:
     - concept: ClassNr
+    multiplicity: OneToOne
     verbalizes:
     - '{Class} is identified by {ClassNr}'
-    multiplicity: OneToOne
   - name: classToCategory
     roles:
     - concept: Category
+    multiplicity: ManyToOne
     verbalizes:
     - '{Class} is part of {Category}'
-    multiplicity: ManyToOne
   - name: classToLabel
     roles:
     - concept: ClassLabel
+    multiplicity: OneToOne
     verbalizes:
     - '{Class} has {ClassLabel}'
-    multiplicity: OneToOne
 - concept: ClassLabel
   type: EntityType
   description: ClassLabel of the Product.
@@ -325,9 +343,9 @@ ontology:
   - name: name
     roles:
     - concept: ClassLabelName
+    multiplicity: OneToOne
     verbalizes:
     - '{ClassLabel} is identified by {ClassLabelName}'
-    multiplicity: OneToOne
 - concept: Category
   type: EntityType
   description: Category of the Product.
@@ -337,9 +355,9 @@ ontology:
   - name: name
     roles:
     - concept: CategoryName
+    multiplicity: OneToOne
     verbalizes:
     - '{Category} is identified by {CategoryName}'
-    multiplicity: OneToOne
 - concept: Item
   type: EntityType
   description: An item for sale at a retailer.
@@ -349,58 +367,60 @@ ontology:
   - name: upc
     roles:
     - concept: UniversalProductCode
+    multiplicity: OneToOne
     verbalizes:
     - '{Item} is identified by {UniversalProductCode}'
-    multiplicity: OneToOne
   - name: description
     roles:
     - concept: String
     multiplicity: ManyToOne
+    verbalizes:
+    - '{Item} has description {String}'
   - name: itemToClass
     roles:
     - concept: Class
+    multiplicity: ManyToOne
     verbalizes:
     - '{Item} is grouped by {Class}'
-    multiplicity: ManyToOne
   - name: weekly_sales
     roles:
     - concept: Store
     - concept: Integer
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Item} sold at {Store} in week {Integer} for {Decimal}'
-    multiplicity: ManyToOne
   - name: weekly_gross_sales
     roles:
     - concept: Store
     - concept: Integer
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Item} sold at {Store} in week {Integer} for gross {Decimal}'
-    multiplicity: ManyToOne
   - name: weekly_gross_returns
     roles:
     - concept: Store
     - concept: Integer
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Item} returned at {Store} in week {Integer} for {Decimal}'
-    multiplicity: ManyToOne
   - name: weekly_net_revenue
     roles:
     - concept: Store
     - concept: Integer
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Item} sold at {Store} in week {Integer} for net {Decimal}'
-    multiplicity: ManyToOne
   - name: item_store_sales
     roles:
     - concept: Store
     - concept: Decimal
+    multiplicity: ManyToOne
     verbalizes:
     - '{Item} sold at {Store} for total {Decimal}'
-    multiplicity: ManyToOne
 - concept: Employee
   type: EntityType
   description: Employee of the company.
@@ -410,24 +430,28 @@ ontology:
   - name: nr
     roles:
     - concept: EmployeeNr
+    multiplicity: OneToOne
     verbalizes:
     - '{Employee} is identified by {EmployeeNr}'
-    multiplicity: OneToOne
   - name: reportsTo
     roles:
     - concept: Employee
       name: mgr
+    multiplicity: ManyToOne
     verbalizes:
     - '{Employee} reports to {Employee:mgr}'
-    multiplicity: ManyToOne
   - name: firstName
     roles:
     - concept: String
     multiplicity: ManyToOne
+    verbalizes:
+    - '{Employee} has first name {String}'
   - name: lastName
     roles:
     - concept: String
     multiplicity: ManyToOne
+    verbalizes:
+    - '{Employee} has last name {String}'
 - concept: PermanentEmployee
   type: EntityType
   description: Employee with indefinite contract.
@@ -437,9 +461,9 @@ ontology:
   - name: salary
     roles:
     - concept: Integer
+    multiplicity: ManyToOne
     verbalizes:
     - '{PermanentEmployee} has monthly salary {Integer}'
-    multiplicity: ManyToOne
 - concept: Contractor
   type: EntityType
   description: Employee with temporary contract.
@@ -449,9 +473,9 @@ ontology:
   - name: hourlyRate
     roles:
     - concept: Integer
+    multiplicity: ManyToOne
     verbalizes:
     - '{Contractor} is paid hourly {Integer}'
-    multiplicity: ManyToOne
 - concept: PaymentId
   type: ValueType
   description: Unique id for a Payment.
@@ -914,20 +938,20 @@ ontology_mappings:
         - relationship: nr
           expression: EMPLOYEES.empNr
       children:
-      - object_mapping:
+      - relationship: reportsTo
+        object_mapping:
           concept: Employee
           referent_mappings:
           - relationship: nr
             expression: EMPLOYEES.mgr
-        relationship: reportsTo
-      - object_mapping:
+      - relationship: firstName
+        object_mapping:
           concept: String
           expression: EMPLOYEES.firstName
-        relationship: firstName
-      - object_mapping:
+      - relationship: lastName
+        object_mapping:
           concept: String
           expression: EMPLOYEES.lastName
-        relationship: lastName
   - concept: Contractor
     object_mappings:
     - concept: Employee
@@ -941,10 +965,10 @@ ontology_mappings:
         - relationship: nr
           expression: CONTRACTORS.empNr
       children:
-      - object_mapping:
+      - relationship: hourlyRate
+        object_mapping:
           concept: Integer
           expression: CONTRACTORS.hourlyRate
-        relationship: hourlyRate
   - concept: PermanentEmployee
     object_mappings:
     - concept: Employee
@@ -958,10 +982,10 @@ ontology_mappings:
         - relationship: nr
           expression: PERMANENT_EMPLOYEES.empNr
       children:
-      - object_mapping:
+      - relationship: salary
+        object_mapping:
           concept: Integer
           expression: PERMANENT_EMPLOYEES.salary
-        relationship: salary
   - concept: Item
     object_mappings:
     - referent_mappings:
@@ -973,16 +997,16 @@ ontology_mappings:
         - relationship: upc
           expression: PRODUCTS.upc
       children:
-      - object_mapping:
+      - relationship: itemToClass
+        object_mapping:
           concept: Class
           referent_mappings:
           - relationship: nr
             expression: PRODUCTS.classNr
-        relationship: itemToClass
-      - object_mapping:
+      - relationship: description
+        object_mapping:
           concept: String
           expression: PRODUCTS.description
-        relationship: description
     - object_mapping:
         referent_mappings:
         - relationship: upc
@@ -998,22 +1022,22 @@ ontology_mappings:
             concept: Integer
             expression: RETAIL_FACTS.week_nr
           children:
-          - object_mapping:
+          - relationship: weekly_sales
+            object_mapping:
               concept: Decimal
               expression: RETAIL_FACTS.sls
-            relationship: weekly_sales
-          - object_mapping:
+          - relationship: weekly_gross_sales
+            object_mapping:
               concept: Decimal
               expression: RETAIL_FACTS.sls + RETAIL_FACTS.returns
-            relationship: weekly_gross_sales
-          - object_mapping:
+          - relationship: weekly_gross_returns
+            object_mapping:
               concept: Decimal
               expression: RETAIL_FACTS.returns
-            relationship: weekly_gross_returns
-          - object_mapping:
+          - relationship: weekly_net_revenue
+            object_mapping:
               concept: Decimal
               expression: RETAIL_FACTS.sls * 0.9 - RETAIL_FACTS.returns * 1.1 + 100
-            relationship: weekly_net_revenue
     - object_mapping:
         referent_mappings:
         - relationship: upc
@@ -1025,10 +1049,11 @@ ontology_mappings:
           - relationship: nr
             expression: RETAIL_FACTS.store_nr
         children:
-        - object_mapping:
+        - relationship: item_store_sales
+          object_mapping:
             concept: Decimal
-            expression: SUM[RETAIL_FACTS.sls WHERE RETAIL_FACTS.sls > 0 GROUP BY RETAIL_FACTS.item_nr, RETAIL_FACTS.store_nr]
-          relationship: item_store_sales
+            expression: SUM[RETAIL_FACTS.sls WHERE RETAIL_FACTS.sls > 0 GROUP BY RETAIL_FACTS.item_nr,
+              RETAIL_FACTS.store_nr]
   - concept: Category
     object_mappings:
     - referent_mappings:
@@ -1050,18 +1075,18 @@ ontology_mappings:
         - relationship: nr
           expression: PRODUCTS.classNr
       children:
-      - object_mapping:
+      - relationship: classToCategory
+        object_mapping:
           concept: Category
           referent_mappings:
           - relationship: name
             expression: PRODUCTS.category
-        relationship: classToCategory
-      - object_mapping:
+      - relationship: classToLabel
+        object_mapping:
           concept: ClassLabel
           referent_mappings:
           - relationship: name
             expression: PRODUCTS.classLabel
-        relationship: classToLabel
   - concept: Region
     object_mappings:
     - referent_mappings:
@@ -1078,18 +1103,18 @@ ontology_mappings:
         - relationship: nr
           expression: LOCATIONS.storeNr
       children:
-      - object_mapping:
+      - relationship: storeToManager
+        object_mapping:
           concept: Employee
           referent_mappings:
           - relationship: nr
             expression: LOCATIONS.mgr
-        relationship: storeToManager
-      - object_mapping:
+      - relationship: storeToRegion
+        object_mapping:
           concept: Region
           referent_mappings:
           - relationship: name
             expression: LOCATIONS.region
-        relationship: storeToRegion
   - concept: Terminal
     object_mappings:
     - referent_mappings:
@@ -1101,12 +1126,12 @@ ontology_mappings:
         - relationship: id
           expression: TERMINALS.id
       children:
-      - object_mapping:
+      - relationship: deployedTo
+        object_mapping:
           concept: Store
           referent_mappings:
           - relationship: nr
             expression: TERMINALS.store
-        relationship: deployedTo
   - concept: Transaction
     object_mappings:
     - referent_mappings:
@@ -1118,26 +1143,26 @@ ontology_mappings:
         - relationship: nr
           expression: TRANSACTIONS.txn
       children:
-      - object_mapping:
+      - relationship: registeredBy
+        object_mapping:
           concept: Terminal
           referent_mappings:
           - relationship: id
             expression: TRANSACTIONS.terminal
-        relationship: registeredBy
       - object_mapping:
           concept: Item
           referent_mappings:
           - relationship: upc
             expression: TRANSACTIONS.sku
         children:
-        - object_mapping:
+        - relationship: returns
+          object_mapping:
             concept: Amount
             expression: TRANSACTIONS.amt WHERE (TRANSACTIONS.refundYN == 'Y')
-          relationship: returns
-        - object_mapping:
+        - relationship: sales
+          object_mapping:
             concept: Amount
             expression: TRANSACTIONS.amt WHERE (NOT TRANSACTIONS.refundYN == 'Y')
-          relationship: sales
   - concept: Order
     object_mappings:
     - referent_mappings:
@@ -1149,10 +1174,10 @@ ontology_mappings:
         - relationship: nr
           expression: ORDERS.nr
       children:
-      - object_mapping:
+      - relationship: orderDate
+        object_mapping:
           concept: Date
           expression: ORDERS.ordDate
-        relationship: orderDate
   - concept: OrderLineItem
     object_mappings:
     - referent_mappings:
@@ -1172,14 +1197,14 @@ ontology_mappings:
         - relationship: nr
           expression: LINEITEMS.lineItemNr
       children:
-      - object_mapping:
+      - relationship: lineitem_extended_price
+        object_mapping:
           concept: Decimal
           expression: LINEITEMS.extendedPrice
-        relationship: lineitem_extended_price
-      - object_mapping:
+      - relationship: lineitem_discount
+        object_mapping:
           concept: Decimal
           expression: LINEITEMS.discount
-        relationship: lineitem_discount
   - concept: Payment
     object_mappings:
     - referent_mappings:
@@ -1191,14 +1216,14 @@ ontology_mappings:
         - relationship: id
           expression: PAYMENTS.id
       children:
-      - object_mapping:
+      - relationship: type
+        object_mapping:
           concept: String
           expression: PAYMENTS.type
-        relationship: type
-      - object_mapping:
+      - relationship: amount
+        object_mapping:
           concept: Decimal
           expression: PAYMENTS.amount
-        relationship: amount
   - concept: CardPayment
     link_mappings:
     - object_mapping:
@@ -1206,14 +1231,14 @@ ontology_mappings:
         - relationship: id
           expression: PAYMENTS.id WHERE (PAYMENTS.type == 'card')
       children:
-      - object_mapping:
+      - relationship: cardNumber
+        object_mapping:
           concept: String
           expression: PAYMENTS.cardNumber
-        relationship: cardNumber
-      - object_mapping:
+      - relationship: cardHolderName
+        object_mapping:
           concept: String
           expression: PAYMENTS.cardHolderName
-        relationship: cardHolderName
   - concept: CashPayment
     link_mappings:
     - object_mapping:
@@ -1221,11 +1246,11 @@ ontology_mappings:
         - relationship: id
           expression: PAYMENTS.id WHERE (PAYMENTS.type == 'cash')
       children:
-      - object_mapping:
+      - relationship: cashReceived
+        object_mapping:
           concept: Decimal
           expression: PAYMENTS.cashReceived
-        relationship: cashReceived
-      - object_mapping:
+      - relationship: change
+        object_mapping:
           concept: Decimal
           expression: PAYMENTS.cashReceived - PAYMENTS.amount
-        relationship: change

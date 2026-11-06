@@ -283,6 +283,19 @@ def test_dialect_preference():
         "sql"] == "snow_col"
 
 
+def test_portable_sql_is_the_last_fallback():
+    fields = [
+        {"name": "x", "expression": {"sql": "portable_col"}},
+        {"name": "y", "expression": {"sql": "portable_col", "dialects": [
+            {"dialect": "ANSI_SQL", "expression": "ansi_col"}]}},
+    ]
+    files = export(minimal(datasets=[
+        {"name": "orders", "source": "db.sch.orders", "fields": fields}]))
+    dims = parse(files["views/orders.view.yaml"])["dimensions"]
+    assert dims["x"]["sql"] == "portable_col"
+    assert dims["y"]["sql"] == "ansi_col"
+
+
 def test_names_are_sanitized():
     files = export(dump_yaml({"version": "0.2.0.dev0", "name": "My Model",
         "datasets": [{"name": "Order Items", "source": "db.sch.t",

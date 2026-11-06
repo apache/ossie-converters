@@ -140,7 +140,9 @@ unrecognized files).
 connection, and the Ossie dialect enum has no `OMNI` entry -- so import emits
 `ANSI_SQL` expressions, and export prefers `ANSI_SQL` with `--dialect`
 prepending a warehouse dialect (e.g. `SNOWFLAKE` for a Snowflake-backed Omni
-model). A field/metric with neither is dropped with a warning.
+model), then falls back to the portable `sql` (`OSSIE_SQL_2026`) form. A
+field/metric with none of these is dropped with a warning. An Omni dimension or
+measure holds one SQL string, so the forms export does not pick are not kept.
 
 ## Requirements
 
