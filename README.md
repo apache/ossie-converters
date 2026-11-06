@@ -109,7 +109,6 @@ The Ossie specification currently defines extensions for the following vendors:
 | `SALESFORCE` | Salesforce / Tableau semantic layer |
 | `DBT` | dbt semantic models |
 | `DATABRICKS` | Databricks semantic layer |
-| `BIGQUERY` | Looker / LookML (Google Cloud semantic layer over BigQuery) |
 | `OMNI` | Omni semantic model |
 | `WISDOM` | WisdomAI domain |
 | `NVIDIA_AUTO_ONTOLOGY` | NVIDIA Auto Ontology model document YAML (formerly `NVIDIA_GSF`) |
