@@ -196,7 +196,8 @@ def test_the_documented_losses_of_an_ossie_export_are_exactly_these():
     }
     assert sum("custom_extensions for" in w for w in going) == 1
     assert sum("unique_keys have no Solid equivalent" in w for w in going) == 1
-    assert sum("computed field" in w for w in going) == 1
+    # customer_full_name, a concatenation: Solid has no computed columns.
+    assert sum("computed field" in w and "so it was dropped" in w for w in going) == 1
     assert sum("no datatype" in w for w in going) == 2
     # Solid types a metric by evaluating its formula, and its relationships carry no
     # free text, so a declared metric datatype and a relationship annotation both have
@@ -208,7 +209,10 @@ def test_the_documented_losses_of_an_ossie_export_are_exactly_these():
     # The spec's own examples of an explicit time role -- an Integer year, a String
     # quarter name, an untyped month -- have nowhere to land in Solid either.
     assert sum("dimension.is_time: true has no Solid equivalent" in w for w in going) == 3
-    assert len(going) == 21
+    # The example is in portable SQL, which names no warehouse for Solid's import.
+    assert sum("names no warehouse, so 'source_system' was left out" in w
+               for w in going) == 1
+    assert len(going) == 22
 
 
 def test_reimporting_that_export_loses_no_qualifier_or_datatype():
@@ -219,12 +223,14 @@ def test_reimporting_that_export_loses_no_qualifier_or_datatype():
     ossie, coming = convert_quietly(convert_solid_to_ossie, solid, dialect="ANSI_SQL")
     assert coming == []
     # Every field keeps its datatype: the type the export wrote for it reads back as
-    # the same one, rather than a Decimal returning as an Integer.
+    # the same one, rather than a Decimal returning as an Integer. The one computed
+    # field has no Solid form, and was dropped (see the test above).
     restored = model_of(ossie)
     for before, after in zip(original["datasets"], restored["datasets"]):
         types_after = {f["name"]: f.get("datatype") for f in after["fields"]}
+        assert "customer_full_name" not in types_after
         for field in before["fields"]:
-            if field.get("datatype"):
+            if field.get("datatype") and field["name"] != "customer_full_name":
                 assert types_after[field["name"]] == field["datatype"], (
                     f"{before['name']}.{field['name']}")
 

@@ -77,6 +77,14 @@ Each of these is checked by the test suite.
    [Known differences](#known-differences).
 5. **An edit made in Apache Ossie wins over the stash**, with a warning: a stashed value
    stands in for a field only while that field still holds what import wrote.
+6. **What export writes, Solid's YAML import accepts.** solid-server's import rejects a
+   whole model unless it names a `source_system`, and unless every table, column, key
+   column and join column it names is in the warehouse catalog. Export writes
+   `source_system` for a model whose SQL names a warehouse, and names only the columns
+   the model's fields read: a computed field, which no catalog has, is dropped with a
+   warning. Checked on the 300 generated models with their stash removed, as a model
+   built in Apache Ossie would arrive. A model in portable SQL names no warehouse, so
+   it is exported without `source_system`, with a warning saying to pass `--dialect`.
 
 ## Installation
 
@@ -165,7 +173,10 @@ expressions back in the dialect they were written in without being told again.
 
 On export, `--dialect` selects which expression dialect to *read*; without it the
 converter uses the dialect recorded at import, then the single vendor dialect the model's
-expressions use. When the chosen dialect is missing from an expression, its portable form
+expressions use. A model that did not come from Solid gets the `source_system` of that
+dialect (`snowflake`, `databricks`, `big_query`), which Solid's YAML import requires; one
+in portable SQL gets none, with a warning. A model that came from Solid keeps what its
+export had, even none. When the chosen dialect is missing from an expression, its portable form
 is read instead — `ANSI_SQL`, else `OSSIE_SQL_2026`, the spec's portable dialect built on
 ANSI SQL:2003 Core — with a warning naming which one was used. The `OSSIE_SQL_2026` form
 may be the expression's top-level `sql` (apache/ossie#617), which may stand alone and
@@ -195,7 +206,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 | `description` | `model_llm_description` | Import falls back to `business_context.model_description` when the model has no LLM description, and stashes both. An edit made in Apache Ossie replaces whichever one `description` was written from. |
 | `ai_context.instructions` | `business_context.custom_instructions` and the root `custom_instructions` list | Solid holds free text in `business_context` and, in its structured form, a list of titled entries, each enabled or not and optionally scoped by a condition and to catalog assets. Import renders the free text and then each enabled entry (title, condition, assets, content) into one text, resolving Solid's `@<assetlink …>` markup to the display names it carries, and stashes the originals, so an export restores both and the live catalog references. If the instructions were edited in Apache Ossie, the edited text is used instead, as free text. |
 | `ai_context.examples` | `business_context.business_questions` | |
-| `custom_extensions[SOLID]` | `business_context.model_description`, the `custom_instructions` entries, `version_number`, `source_system`, `target_system`, `model_llm_short_description`, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. |
+| `custom_extensions[SOLID]` | `business_context.model_description`, the `custom_instructions` entries, `version_number`, `source_system`, `target_system`, `model_llm_short_description`, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. Export writes `source_system` for a model not from Solid from its dialect; see [Dialect resolution](#dialect-resolution). |
 
 ### Datasets
 
@@ -250,8 +261,9 @@ marked the same way and keeps both on export. A **dimension with an `expression`
 which Solid's own export never writes but a hand-edited model can, is stashed as
 `computed` and keeps its expression on export too. A field with no stashed role becomes
 a table-scoped metric only when its expression aggregates (`SUM(amount)`); any other
-computed field (`first_name || ' ' || last_name`) is reported and exported as a plain
-column, since a Solid column is a catalog column.
+computed field (`first_name || ' ' || last_name`) is dropped with a warning, together with
+any key or join that names it. A Solid column is a catalog column, and Solid's YAML
+import rejects a whole model that names a column the warehouse does not have.
 
 A field that **reads another column** — `name: cust` over `expression: customer_id`, or
 `amount` over Snowflake's case-sensitive `"Amount"` — is an alias, and a Solid column is
@@ -483,7 +495,9 @@ It warns and drops the one construct when:
   do not pair up, or joins on a column that is not a declared field (both
   directions); a primary key names an undeclared field (export);
 - a field or metric has no expression in SQL Solid can run (`MDX`, `TABLEAU`,
-  `HOLISTICS_AQL`, …) — and so does a key or join that names such a field (export);
+  `HOLISTICS_AQL`, …), or a field is computed (`first_name || ' ' || last_name`) and so
+  is no warehouse column — and so does a key, join or metric that reads such a field
+  (export);
 - a dataset's `source` is a SQL query, with what reads it (export);
 - an Apache Ossie construct has no Solid slot — see the list at the top (export).
 

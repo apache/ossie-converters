@@ -70,6 +70,7 @@ from .expressions import (
     is_column_reference,
     is_query,
     referenced_datasets,
+    referenced_fields,
     rename_fields,
     unqualify_metric,
 )
@@ -227,6 +228,13 @@ def _convert_model(ossie, explicit_dialect, model_name):
     for key in ("version_number", "source_system", "target_system"):
         if stash.get(key) is not None:
             solid[key] = stash[key]
+        elif key == "source_system" and not stash:
+            # A model that did not come from Solid gets the warehouse its SQL is
+            # written for, which Solid's YAML import requires. One that did keeps what
+            # its export had, even none, as exports from before the key existed do.
+            source_system = datatypes.source_system_for(resolved_dialect)
+            if source_system:
+                solid[key] = source_system
     solid["business_context"] = business_context
     if entries:
         solid["custom_instructions"] = entries
@@ -272,14 +280,14 @@ def _convert_model(ossie, explicit_dialect, model_name):
     taken = set()
     metrics = _convert_metrics(as_list(ossie.get("metrics"), "model: metrics"),
                                by_name, resolved_dialect, taken=taken, dropped=dropped,
-                               aliases=aliases)
+                               aliases=aliases, unreadable=unreadable)
     for dataset in datasets:
         if dataset["name"] in dropped:
             continue
         metrics += _convert_metrics(
             as_list(dataset.get("metrics"), f"dataset '{dataset['name']}': metrics"),
             by_name, resolved_dialect, scope=dataset["name"], taken=taken,
-            dropped=dropped, aliases=aliases)
+            dropped=dropped, aliases=aliases, unreadable=unreadable)
     if metrics:
         solid["metrics"] = metrics
     relationships = _convert_relationships(
@@ -292,6 +300,10 @@ def _convert_model(ossie, explicit_dialect, model_name):
             solid[key] = stash[key]
     _restore_extra(business_context, stash, "business_context_extra", "model")
     _restore_extra(solid, stash, "extra", "model")
+    if not stash and "source_system" not in solid:
+        warn("model", f"{resolved_dialect} names no warehouse, so 'source_system' was "
+                      f"left out; Solid's YAML import needs it. Pass --dialect to name "
+                      f"the warehouse, or add it before importing")
     return solid
 
 
@@ -593,8 +605,10 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
 
 
 class _Unreadable(Exception):
-    """A field whose every expression is in a language Solid cannot run: one construct
-    Solid cannot hold, dropped with a warning like any other (see _convert_dataset)."""
+    """A field Solid cannot hold as a column -- one whose every expression is in a
+    language Solid cannot run, or a computed one -- dropped with a warning like any
+    other construct, together with the keys and joins that name it (see
+    _convert_dataset)."""
 
 
 def _unresolved(names, fields, unreadable=()):
@@ -618,8 +632,8 @@ def _why_unresolved(undeclared, dropped):
                      f"{'is not a declared field' if len(undeclared) == 1 else 'are not declared fields'}")
     if dropped:
         parts.append(f"{', '.join(dropped)}, which "
-                     f"{'was' if len(dropped) == 1 else 'were'} dropped as SQL Solid "
-                     f"cannot run")
+                     f"{'was' if len(dropped) == 1 else 'were'} dropped from the "
+                     f"table")
     return "; and ".join(parts)
 
 
@@ -691,12 +705,6 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
                       f"exported as a column")
         role = FACT
     is_dimension = role == DIMENSION
-    # A dropped `datatype` with a stashed type still implies the same one.
-    implied = datatype or (datatypes.to_ossie_datatype(recorded_type, recorded_dialect)
-                           if recorded_type else None)
-    _warn_time_role(field, implied, f"{dataset_name}.{name}")
-
-    column = {"name": solid_name}
     # A Solid fact may be a table-scoped metric instead of a catalog column, in which
     # case it carries an expression and no type. Everything else is a column, whose
     # expression is just its own name.
@@ -705,6 +713,21 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
     is_metric_fact = role == METRIC or (
         role == FACT and stash.get("role") is None and raw_type is None and computed
         and is_aggregate(expression, dialect))
+    # Whether the field stands for a column of the Solid table it came from, which the
+    # warehouse catalog has whatever its expression has since become.
+    solid_column = "role" in stash or "undeclared" in stash
+    if computed and not is_metric_fact and not solid_column:
+        # Solid has no computed columns: a column is one the warehouse catalog has, and
+        # Solid's YAML import rejects a whole model that names one it lacks.
+        raise _Unreadable(f"'{dataset_name}.{name}' is a computed field "
+                          f"(`{expression}`); a Solid column is a warehouse column, so "
+                          f"it was dropped")
+    # A dropped `datatype` with a stashed type still implies the same one.
+    implied = datatype or (datatypes.to_ossie_datatype(recorded_type, recorded_dialect)
+                           if recorded_type else None)
+    _warn_time_role(field, implied, f"{dataset_name}.{name}")
+
+    column = {"name": solid_name}
     if is_metric_fact:
         # A metric has no catalog type to derive one from, so it keeps one only if
         # Solid typed it or a datatype was given to it in Apache Ossie.
@@ -735,8 +758,8 @@ def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensi
         column["expression"] = expression
     elif computed:
         warn("field", f"'{dataset_name}.{name}' is a computed field "
-                      f"(`{expression}`); Solid columns map to catalog columns, so the "
-                      f"expression was dropped")
+                      f"(`{expression}`); it was a column of the Solid table, and a "
+                      f"Solid column is a warehouse column, so the expression was dropped")
     if alias and name not in (synonyms or []):
         synonyms = [*(synonyms or []), name]
     if synonyms:
@@ -987,16 +1010,21 @@ def _convert_relationships(relationships, by_name, dropped=frozenset(), aliases=
 
 
 def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
-                     dropped=frozenset(), aliases=None):
+                     dropped=frozenset(), aliases=None, unreadable=None):
     """Convert model-scoped metrics, or with `scope` (a dataset name), the
     dataset-scoped metrics that dataset declares. `taken` collects the Solid metric
     names used so far, across both. A metric reading a dataset in `dropped` (see
-    _query_datasets) is dropped too. `aliases` holds each dataset's fields that are
-    aliases for another column (see _convert_model); a metric reads the column."""
+    _query_datasets), or a field in `unreadable` (each dataset's fields dropped from
+    its table, see _convert_dataset), is dropped too. `aliases` holds each dataset's
+    fields that are aliases for another column (see _convert_model); a metric reads the
+    column."""
     aliases = aliases or {}
+    lost_fields = {d.lower(): {n.lower(): n for n in names}
+                   for d, names in (unreadable or {}).items()}
     renames = {d: {f: text for f, (_, text) in fields.items()}
                for d, fields in aliases.items()}
     dataset_names = list(by_name)
+    by_folded = {d.lower(): d for d in dataset_names}
     # Every dataset sharing a source, so a table a metric is bound to maps back to the
     # datasets whose fields it could read.
     by_source = {}
@@ -1071,6 +1099,16 @@ def _convert_metrics(metrics, by_name, dialect, scope=None, taken=None,
         if gone:
             warn("metric", f"'{label}' reads {', '.join(gone)}, whose source is a SQL "
                            f"query Solid cannot hold, so the metric was dropped")
+            taken.discard(solid_name.lower())
+            continue
+        lost = sorted(
+            f"{by_folded[d]}.{lost_fields[d][f]}"
+            for d, f in referenced_fields(expression, dialect, dataset_names, fields, scope)
+            if f in lost_fields.get(d, {}))
+        if lost:
+            warn("metric", f"'{label}' reads {', '.join(lost)}, which "
+                           f"{'was' if len(lost) == 1 else 'were'} dropped from the "
+                           f"table, so the metric was dropped")
             taken.discard(solid_name.lower())
             continue
         if scope:

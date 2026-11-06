@@ -193,7 +193,7 @@ def _split_expectations(path):
     that case is pinned in test_ossie_to_solid.py.
     """
     document = yaml.safe_load(path.read_text())
-    solid, _ = convert_quietly(convert_ossie_to_solid, path.read_text())
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, path.read_text())
     found = []
     tables = {table["name"].lower(): table for table in solid_model_of(solid)["tables"]}
     for dataset in document["datasets"]:
@@ -204,11 +204,17 @@ def _split_expectations(path):
             continue
         # A field that is an alias for another column becomes that column, with the
         # field's name as a synonym.
-        dimensions = {name for c in table.get("dimensions") or []
-                      for name in [c["name"], *(c.get("synonyms") or [])]}
+        listed = {
+            role: {name for c in table.get(role) or []
+                   for name in [c["name"], *(c.get("synonyms") or [])]}
+            for role in ("dimensions", "facts")
+        }
         for field in dataset.get("fields") or []:
             if _is_non_sql(field):
                 continue  # dropped, with a warning, before any role applies
+            if any(f"'{dataset['name']}.{field['name']}' is a computed field" in w
+                   and "so it was dropped" in w for w in warnings_):
+                continue  # Solid has no computed columns; dropped, with a warning
             if field.get("dimension") is not None:
                 expected = "dimensions"
             elif field.get("datatype") in NUMERIC_DATATYPES:
@@ -217,7 +223,8 @@ def _split_expectations(path):
                 expected = "dimensions"
             else:
                 continue
-            actual = "dimensions" if field["name"] in dimensions else "facts"
+            actual = next((role for role, names in listed.items()
+                           if field["name"] in names), "missing")
             found.append((f"{dataset['name']}.{field['name']}", expected, actual))
     return found
 
@@ -305,10 +312,12 @@ def test_the_documented_interop_gaps_are_exactly_these(foreign):
         # Solid resolves a metric's columns through `tables`, and a metric written
         # against bare column names carries nothing to resolve them from.
         "names no table": 2,
+        # Portable SQL names no warehouse, and Solid's YAML import needs one.
+        "ANSI_SQL names no warehouse, so 'source_system' was left out": 1,
     }
     for text, expected in counts.items():
         assert sum(text in w for w in warnings_) == expected, text
-    assert len(warnings_) == sum(counts.values()) == 15
+    assert len(warnings_) == sum(counts.values()) == 16
 
 
 def test_a_renamed_field_names_the_column_it_reads(foreign):

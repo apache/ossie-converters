@@ -31,6 +31,12 @@ from conftest import (
 
 from ossie_solid import ConversionError, convert_ossie_to_solid, convert_solid_to_ossie
 
+# The one warning a model in portable SQL always gets: Solid's YAML import needs the
+# warehouse, and ANSI_SQL names none.
+NO_WAREHOUSE = ("[model] ANSI_SQL names no warehouse, so 'source_system' was left out; "
+                "Solid's YAML import needs it. Pass --dialect to name the warehouse, or "
+                "add it before importing")
+
 
 @pytest.fixture(scope="module")
 def from_fixture():
@@ -747,14 +753,14 @@ def _one_field_model(dialects, metric_dialects=None):
 
 
 def test_an_ossie_sql_2026_only_model_is_read_as_portable_sql():
-    """OSSIE_SQL_2026 is the spec's portable dialect, so it is read like ANSI_SQL:
-    silently, and without being reported as a dialect this converter cannot read."""
+    """OSSIE_SQL_2026 is the spec's portable dialect, so it is read like ANSI_SQL,
+    without being reported as a dialect this converter cannot read."""
     ossie = _one_field_model(
         [{"dialect": "OSSIE_SQL_2026", "expression": "amt"}],
         metric_dialects=[{"dialect": "OSSIE_SQL_2026", "expression": "SUM(a.amt)"}],
     )
     solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
-    assert warnings_ == []
+    assert warnings_ == [NO_WAREHOUSE]
     model = solid_model_of(solid)
     assert model["tables"][0]["facts"][0]["name"] == "amt"
     assert model["metrics"][0]["expression"] == "SUM(amt)"
@@ -858,8 +864,7 @@ def test_a_field_or_metric_only_in_a_non_sql_language_is_dropped_with_what_names
     for expected in (("'a.region' has no ANSI_SQL or OSSIE_SQL_2026 expression, which is "
                      "SQL Solid can run, so it was dropped"),
                      "'total' has no ANSI_SQL or OSSIE_SQL_2026 expression",
-                     ("primary_key names region, which was dropped as SQL Solid cannot "
-                     "run")):
+                     "primary_key names region, which was dropped from the table"):
         assert any(expected in w for w in warnings_), (expected, warnings_)
 
 
@@ -1011,7 +1016,7 @@ def test_a_dataset_scoped_metric_is_bound_to_the_dataset_that_declares_it():
     metrics, warnings_ = _with_dataset_metrics([("total_qty", "SUM(qty)")])
     assert metrics["total_qty"] == {
         "name": "total_qty", "expression": "SUM(qty)", "tables": ["db.s.orders"]}
-    assert warnings_ == []
+    assert warnings_ == [NO_WAREHOUSE]
 
 
 def test_a_dataset_scoped_metric_sharing_a_model_metrics_name_is_renamed():
@@ -1226,7 +1231,7 @@ def test_an_expression_given_only_as_top_level_sql_is_read():
     assert model["tables"][0]["facts"][0]["name"] == "amt"
     assert model["metrics"][0] == {
         "name": "total", "expression": "SUM(amt)", "tables": ["db.s.a"]}
-    assert warnings_ == []
+    assert warnings_ == [NO_WAREHOUSE]
 
 
 def test_top_level_sql_is_authoritative_over_an_ossie_sql_2026_entry():
@@ -1351,13 +1356,19 @@ def _marked_model(field):
     }
 
 
-def test_an_untyped_scalar_computed_field_is_a_column_not_a_metric():
+def test_an_untyped_scalar_computed_field_is_dropped_not_made_a_metric():
+    """Only an aggregate becomes a table-scoped metric. A scalar computed field has no
+    Solid form: a Solid column is a warehouse column, and Solid's YAML import rejects a
+    whole model that names one the warehouse lacks."""
     solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(
         _marked_model({"name": "customer_name",
                        "expression": _ansi("first_name || ' ' || last_name")})))
-    fact = solid_model_of(solid)["tables"][0]["facts"][0]
-    assert fact == {"name": "customer_name", "type": ""}
-    assert any("'orders.customer_name' is a computed field" in w for w in warnings_)
+    table = solid_model_of(solid)["tables"][0]
+    assert table["facts"] == []
+    assert [c["name"] for c in table["dimensions"]] == ["created_at"]
+    assert ("[field] 'orders.customer_name' is a computed field (`first_name || ' ' || "
+            "last_name`); a Solid column is a warehouse column, so it was dropped"
+            in warnings_)
 
 
 def test_an_untyped_aggregate_field_is_still_a_table_scoped_metric():
@@ -1502,3 +1513,115 @@ def test_every_relationship_to_a_query_backed_dataset_is_dropped_not_just_the_fi
 def test_a_query_in_any_dialects_quoting_is_recognized(source):
     from ossie_solid.expressions import is_query
     assert is_query(source, "ANSI_SQL")
+
+
+# --- what Solid's YAML import requires ------------------------------------------------
+#
+# solid-server reads a Solid export back in (data_server/.../yaml_import). It rejects a
+# whole model unless it names a `source_system`, and unless every table, column, key
+# and join column it names is in the warehouse catalog.
+
+
+@pytest.mark.parametrize(("dialect", "source_system"), [
+    ("SNOWFLAKE", "snowflake"), ("DATABRICKS", "databricks"), ("BIGQUERY", "big_query")])
+def test_a_model_not_from_solid_names_its_warehouse(dialect, source_system):
+    ossie = _one_field_model([{"dialect": dialect, "expression": "amt"}])
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    model = solid_model_of(solid)
+    # Where solid-server's export template writes it: after the name.
+    assert list(model)[:2] == ["name", "source_system"]
+    assert model["source_system"] == source_system
+    assert not any("source_system" in w for w in warnings_)
+
+
+def test_a_solid_export_without_a_source_system_does_not_gain_one():
+    """Solid exports from before `source_system` existed round-trip as Solid wrote them;
+    the stash, not the dialect, says what the model had."""
+    solid_text = fixture("tpcds_solid.yaml")
+    assert "source_system" not in yaml.safe_load(solid_text)["semantic_model"]
+    ossie, _ = convert_quietly(convert_solid_to_ossie, solid_text)
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    assert "source_system" not in solid_model_of(solid)
+    assert not any("source_system" in w for w in warnings_)
+
+
+def _computed_model(metrics=(), dataset_metrics=(), primary_key=("id",),
+                    from_columns=("cid",)):
+    """`orders.label` is computed; `customers.id` a column. Keys, a join and metrics
+    can be pointed at either."""
+    def field(name, sql=None):
+        return {"name": name, "datatype": "String", "expression": _ansi(sql or name)}
+
+    def metric(name, sql):
+        return {"name": name, "expression": _ansi(sql)}
+
+    return {
+        "version": "0.2.0.dev0", "name": "m",
+        "datasets": [
+            {"name": "orders", "source": "db.s.orders", "primary_key": list(primary_key),
+             "fields": [field("id"), field("cid"), field("label", "UPPER(status)")],
+             "metrics": [metric(n, sql) for n, sql in dataset_metrics]},
+            {"name": "customers", "source": "db.s.customers", "primary_key": ["id"],
+             "fields": [field("id")]},
+        ],
+        "relationships": [{"name": "r", "from": "orders", "to": "customers",
+                           "from_columns": list(from_columns), "to_columns": ["id"]}],
+        "metrics": [metric(n, sql) for n, sql in metrics],
+    }
+
+
+def _export(ossie):
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    return solid_model_of(solid), warnings_
+
+
+def test_a_computed_field_is_left_out_of_the_table():
+    model, warnings_ = _export(_computed_model())
+    names = [c["name"] for t in model["tables"] for role in ("dimensions", "facts")
+             for c in t.get(role) or []]
+    assert "label" not in names
+    assert "[field] 'orders.label' is a computed field (`UPPER(status)`); a Solid column " \
+           "is a warehouse column, so it was dropped" in warnings_
+
+
+def test_a_key_on_a_computed_field_is_dropped_with_it():
+    model, warnings_ = _export(_computed_model(primary_key=("label",)))
+    assert "primary_key" not in model["tables"][0]
+    assert any("'orders': primary_key names label, which was dropped from the table, "
+               "so the key was dropped" in w for w in warnings_), warnings_
+
+
+def test_a_join_on_a_computed_field_is_dropped_with_it():
+    model, warnings_ = _export(_computed_model(from_columns=("label",)))
+    assert "relationships" not in model
+    assert any("orders.label, which was dropped from the table" in w
+               for w in warnings_), warnings_
+
+
+@pytest.mark.parametrize(("metrics", "dataset_metrics", "label"), [
+    ([("labels", "COUNT(DISTINCT orders.label)")], [], "labels"),
+    ([], [("labels", "COUNT(DISTINCT label)")], "orders.labels"),
+], ids=["model-scoped", "dataset-scoped"])
+def test_a_metric_reading_a_computed_field_is_dropped_with_it(
+        metrics, dataset_metrics, label):
+    """Solid's formula would read a column the warehouse does not have."""
+    model, warnings_ = _export(_computed_model(
+        metrics=[*metrics, ("buyers", "COUNT(DISTINCT orders.cid)")],
+        dataset_metrics=dataset_metrics))
+    assert [m["name"] for m in model["metrics"]] == ["buyers"]
+    assert (f"[metric] '{label}' reads orders.label, which was dropped from the table, "
+            f"so the metric was dropped") in warnings_
+
+
+def test_a_solid_column_given_a_computed_expression_stays_a_column():
+    """A field import made from a Solid column is a warehouse column whatever its
+    expression has become, so only the expression is dropped."""
+    ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    store_sales = next(d for d in ossie["datasets"] if d["name"] == "store_sales")
+    field = next(f for f in store_sales["fields"] if f["name"] == "ss_customer_sk")
+    field["expression"] = _ansi("ss_customer_sk + 0")
+    model, warnings_ = _export(ossie)
+    table = next(t for t in model["tables"] if t["name"].endswith("store_sales"))
+    assert "ss_customer_sk" in [c["name"] for c in table["dimensions"]]
+    assert any("'store_sales.ss_customer_sk' is a computed field (`ss_customer_sk + 0`); "
+               "it was a column of the Solid table" in w for w in warnings_), warnings_
