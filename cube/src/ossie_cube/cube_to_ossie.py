@@ -59,7 +59,6 @@ from ._common import (
     is_simple_identifier,
     lookup_map,
     match_keys,
-    measure_signature,
     sanitize_name,
     uncollided_view_name,
     normalize_identifier,
@@ -80,6 +79,8 @@ from ._common import (
     read_stash,
     write_stash,
 )
+from ._dataset_metric import (count_key_signature, expression_fields, field_signatures,
+                              model_fields_resolve, origin_signature)
 from .converter_issues import IssueLog, IssueType
 from .expressions import (
     has_top_level_operator,
@@ -1405,10 +1406,17 @@ class _MeasureResolver:
         self._raw = {}
         self._caches = {False: {}, True: {}}
         self._metric_names = {}
+        self._blocked = {}
         self._cube_names = set(cubes)
         for cname, cube in cubes.items():
             for m in _as_named_list(cube.get("measures"), f"cube '{cname}' measures"):
                 self._raw[(cname, require_str(m, "name", f"cube '{cname}': measure"))] = m
+
+    def block(self, key, detail):
+        """Preserve a measure natively when its former field binding is unsafe."""
+        self._blocked[key] = detail
+        for cache in self._caches.values():
+            cache.clear()
 
     def set_metric_names(self, metric_names):
         """{(cube, measure): the Ossie metric name it becomes} -- what a measure
@@ -1457,6 +1465,10 @@ class _MeasureResolver:
             return cache[key]
         measure = self._raw[key]
         scope = f"{cname}.{mname}"
+        if key in self._blocked:
+            if not inline_refs:
+                self._issues.add(IssueType.PARKED_IN_META, scope, self._blocked[key])
+            return self._remember(cache, key, None)
         mtype = snake(measure.get("type") or "")
         if not mtype:
             raise ConversionError(f"measure '{scope}': missing required 'type'")
@@ -1626,6 +1638,11 @@ class _MeasureResolver:
         inner = self._expression(target_cube, target_name, stack,
                                  inline_refs=inline_refs)
         if inner is None:
+            if target in self._blocked:
+                raise _NoStaticForm(
+                    f"references '{target_cube}.{target_name}', whose dataset field "
+                    "bindings changed; preserved in custom_extensions only",
+                    IssueType.PARKED_IN_META)
             # The referenced measure has no static Ossie form (it is windowed), so
             # neither does this one. Aborting the whole conversion over it was wrong: the
             # dependent is parked alongside its dependency, the same as any other measure
@@ -1863,9 +1880,8 @@ def _field_owners_of(member_names):
 def _valid_dataset_metric_expression(expression):
     """Check the parked expression's shape before replacing valid native SQL.
 
-    Metadata is deliberately outside the definition signature, so even an
-    unchanged measure can carry a damaged origin. Non-SQL alternatives remain
-    opaque, but every alternative must still have the Ossie expression shape.
+    Non-SQL alternatives remain opaque, but every alternative must have the
+    Ossie expression shape before it can replace the native definition.
     """
     if not isinstance(expression, dict) or set(expression) != {"dialects"}:
         return False
@@ -1879,18 +1895,71 @@ def _valid_dataset_metric_expression(expression):
         for entry in entries)
 
 
-def _dataset_metric_of(measure):
-    """Restore origins only while the native measure still matches its export."""
-    origin = parked_of(measure.get("meta")).get("dataset_metric")
-    if (isinstance(origin, dict) and isinstance(origin.get("name"), str)
-            and origin["name"] and _valid_dataset_metric_expression(origin.get("expression"))
-            and isinstance(origin.get("overrides", {}), dict)
-            and origin.get("signature") == measure_signature(measure)):
-        return origin
-    return None
+def _dataset_metric_origins(cubes, resolver, member_names):
+    """Validate local origins before allocating the model-level metric namespace."""
+    restored = {}
+    candidates = {}
+    for key, measure in resolver.measures().items():
+        if "dataset_metric" in parked_of(measure.get("meta")):
+            candidates.setdefault(key[0], []).append((key, measure))
+    for cname, cube in cubes.items():
+        measures = candidates.get(cname, ())
+        if not measures:
+            continue
+        dimensions = _as_named_list(cube.get("dimensions"), f"cube '{cname}' dimensions")
+        bindings = field_signatures(dimensions, cname)
+        for key, measure in measures:
+            origin = parked_of(measure.get("meta")).get("dataset_metric")
+            if not isinstance(origin, dict):
+                continue
+            saved = origin.get("bindings")
+            if ("bindings" not in origin
+                    and _valid_dataset_metric_expression(origin.get("expression"))):
+                resolver.block(key, "dataset-metric origin has no field binding record; "
+                               "preserved the native definition in custom_extensions only")
+                continue
+            if isinstance(saved, dict) and any(bindings.get(f) != sig for f, sig in saved.items()):
+                # Even a model-level expression could bind a native raw column
+                # to the edited dimension. Keep the native measure and its name.
+                resolver.block(key, "dataset-metric field bindings changed or disappeared; "
+                               "preserved the native definition in custom_extensions only")
+                continue
+            if (not isinstance(origin.get("name"), str) or not origin["name"]
+                    or not _valid_dataset_metric_expression(origin.get("expression"))
+                    or not isinstance(origin.get("overrides", {}), dict)
+                    or not isinstance(saved, dict)
+                    or origin.get("signature") != origin_signature(measure, origin)):
+                continue
+            try:
+                used = expression_fields(origin["expression"], bindings, f"{cname}.{key[1]}")
+            except ConversionError:
+                resolver.block(key, "dataset-metric expression no longer resolves in its "
+                               "dataset; preserved the native definition in custom_extensions only")
+                continue
+            if used != set(saved):
+                continue
+            if origin.get("key_signature") != count_key_signature(measure, cube, dimensions):
+                resolver.block(key, "dataset-metric row-count key changed; preserved the native "
+                               "definition in custom_extensions only")
+                continue
+            restored[key] = origin
+    for measures in candidates.values():
+        for key, measure in measures:
+            if key in restored or key in resolver._blocked:
+                continue
+            try:
+                expr = resolver.inlined(*key)
+                safe = expr is None or model_fields_resolve(
+                    expr, measure_dialect(measure, resolver.source_dialect), member_names)
+            except ConversionError:
+                safe = False
+            if not safe:
+                resolver.block(key, "the current native definition has no valid model-level "
+                               "field binding; preserved in custom_extensions only")
+    return restored
 
 
-def _metric_names_of(resolver, decomposed, *, dataset_scoped=False):
+def _metric_names_of(resolver, decomposed, *, scoped=()):
     """{(cube, measure): the Ossie metric name it becomes}, for every measure that
     produces a metric at all.
 
@@ -1907,8 +1976,10 @@ def _metric_names_of(resolver, decomposed, *, dataset_scoped=False):
     """
     converts = {key: resolver.inlined(*key) is not None
                 for key in resolver.measures()}
-    scoped = {key for key, measure in resolver.measures().items()
-              if dataset_scoped and _dataset_metric_of(measure)}
+    logical_names = {}
+    for key, measure in resolver.measures().items():
+        name = parked_of(measure.get("meta")).get("model_metric_name")
+        logical_names[key] = name if isinstance(name, str) and name else key[1]
 
     # Counted by *normalized* name: Ossie regular identifiers are case-insensitive, so
     # `revenue` on one cube and `Revenue` on another are one name in the model-level
@@ -1919,7 +1990,7 @@ def _metric_names_of(resolver, decomposed, *, dataset_scoped=False):
     for key, measure in resolver.measures().items():
         if (converts[key] and key not in scoped
                 and not _is_generated_part(measure, decomposed)):
-            norm = normalize_identifier(key[1])
+            norm = normalize_identifier(logical_names[key])
             counts[norm] = counts.get(norm, 0) + 1
     metric_names = {}
     for key, measure in resolver.measures().items():
@@ -1928,7 +1999,8 @@ def _metric_names_of(resolver, decomposed, *, dataset_scoped=False):
         cname, mname = key
         # The emitted name keeps its original spelling; only the *comparison* is
         # normalized.
-        metric_names[key] = (mname if counts[normalize_identifier(mname)] == 1
+        logical_name = logical_names[key]
+        metric_names[key] = (logical_name if counts[normalize_identifier(logical_name)] == 1
                              else f"{cname}__{mname}")
     return metric_names
 
@@ -1952,8 +2024,9 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                                 source_dialect=source_dialect)
     member_names = _member_names_of(cubes)
     decomposed = _decomposed_measure_names(cubes)
-    metric_names = _metric_names_of(
-        resolver, decomposed, dataset_scoped=restore_dataset_metrics)
+    origins = (_dataset_metric_origins(cubes, resolver, member_names)
+               if restore_dataset_metrics else {})
+    metric_names = _metric_names_of(resolver, decomposed, scoped=origins)
     resolver.set_metric_names(metric_names)
 
     # What the stash decisions need to know about the metric namespace: which cube
@@ -2005,8 +2078,9 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                         f"identifiers are case-insensitive); rename the colliding "
                         f"measures in Cube")
                 seen.add(derived)
-            local = _dataset_metric_of(measure) if restore_dataset_metrics else None
+            local = origins.get((cname, mname))
             if (restore_dataset_metrics and local is None
+                    and (cname, mname) not in resolver._blocked
                     and "dataset_metric" in parked_of(measure.get("meta"))):
                 issues.add(
                     IssueType.APPROXIMATED, f"{cname}.{mname}",
@@ -2062,7 +2136,12 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         "expression": {"dialects": [{"dialect": resolver.source_dialect or DIALECT_ANSI,
                                      "expression": expr}]},
     }
-    _restore_expression(metric, parked_of(measure.get("meta")))
+    parked = parked_of(measure.get("meta"))
+    if dataset_metric is None and "dataset_metric" in parked:
+        # A rejected local origin must not restore another stale expression
+        # from the same measure's parking metadata.
+        parked = {k: v for k, v in parked.items() if k != "expression"}
+    _restore_expression(metric, parked)
     # A datatype parked by a previous export wins: Cube has no field for a measure's
     # result type, and only the count family can be inferred from the aggregate.
     parked_dt = parked_of(measure.get("meta")).get("datatype")
@@ -2148,6 +2227,8 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
                 stash[snake(key)] = value
     if metric_name != mname:
         stash["name"] = mname
+        if parked_of(measure.get("meta")).get("model_metric_name") == metric_name:
+            stash["model_metric_name"] = True
     if measure.get("title"):
         stash["title"] = measure["title"]
     leftover_meta = _meta_without_ai_context(measure.get("meta"))
@@ -2160,6 +2241,8 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         for key in ("cube", "sql", "type", "filters", "name"):
             stash.pop(key, None)
         stash.update(dataset_metric.get("overrides", {}))
+        if "name" not in stash:
+            stash["dataset_metric_member"] = mname
     write_stash(metric, stash)
     _restore_parked_extensions(metric, measure.get("meta"))
     return metric
