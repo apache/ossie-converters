@@ -367,6 +367,18 @@ def foreign_vendor_extensions(obj):
     ]
 
 
+def relationship_binding(relationship, datasets):
+    """The declared field expressions a saved native join SQL was imported against."""
+    binding = []
+    for side in ("from", "to"):
+        name = relationship[side]
+        fields = lookup_map({f["name"]: f for f in datasets[name].get("fields") or []})
+        for column in relationship[side + "_columns"]:
+            field = resolve_identifier(fields, column)
+            binding.append([name, field["name"], field["expression"]])
+    return binding
+
+
 # --- expressions ----------------------------------------------------------------
 
 def pick_expression(ossie_expression, preferred=None):
@@ -1235,8 +1247,8 @@ def primary_key_operand(cube_name, primary_keys, render=None, source_dialect=Non
     language, so the result stays portable.
 
     `render` turns one key into the SQL that reads it, `cube.key` by default. View
-    projection passes the key member's own SQL instead, since a projected model
-    publishes no field for a hidden key to name.
+    projection passes physical key SQL for dependency and fan-out analysis, and
+    uses declared field aliases for the published expression.
     """
     if not primary_keys:
         raise ConversionError(
