@@ -331,6 +331,15 @@ _SOURCE_SYSTEM_DIALECTS = {
 }
 
 
+def source_system_for(dialect):
+    """Solid's `source_system` for a warehouse dialect, or None for a portable one
+    (ANSI_SQL, OSSIE_SQL_2026), which names no warehouse."""
+    for source_system, mapped in _SOURCE_SYSTEM_DIALECTS.items():
+        if mapped == dialect:
+            return source_system
+    return None
+
+
 def resolve_dialect(explicit, raw_types, scope="model", source_system=None):
     """Pick the dialect for a conversion: an explicit choice wins, then the warehouse
     the Solid export names as its `source_system`, else inference from the types.

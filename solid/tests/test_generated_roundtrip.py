@@ -24,6 +24,8 @@ columns a table does not list, single- and cross-table metrics, table-scoped met
 facts, and keys a later solid-server might add -- and checks the README's guarantees on
 each: Solid -> Apache Ossie -> Solid gives the same model back, and every Apache Ossie
 document import writes is schema-valid with each key and join column a declared field.
+Each is also exported again without its SOLID stash, as a model built in Apache Ossie
+would be, and checked against what Solid's own YAML import requires.
 
 Seeded, so a failure names the model that produced it and reruns the same.
 """
@@ -35,6 +37,7 @@ import yaml
 from conftest import convert_quietly, model_of, normalized_yaml
 
 from ossie_solid import convert_ossie_to_solid, convert_solid_to_ossie
+from ossie_solid.datatypes import source_system_for
 
 MODELS = 300
 
@@ -180,3 +183,86 @@ def test_a_generated_solid_export_round_trips_and_imports_valid(seed, assert_val
     assert _unresolved_keys(model_of(ossie)) == []
     back, _ = convert_quietly(convert_ossie_to_solid, ossie)
     assert normalized_yaml(back) == normalized_yaml(solid)
+
+
+def _without_stash(node):
+    """`node` with every SOLID custom_extensions entry removed, recursively."""
+    if isinstance(node, dict):
+        return {k: _without_stash(v) for k, v in node.items()
+                if not (k == "custom_extensions" and all(
+                    e.get("vendor_name") == "SOLID" for e in v))}
+    if isinstance(node, list):
+        return [_without_stash(v) for v in node]
+    return node
+
+
+def _catalog(solid):
+    """The warehouse columns a Solid export shows exist, per table (casefolded): every
+    column a table lists, and every key and join column, listed or not."""
+    model = yaml.safe_load(solid)["semantic_model"]
+    catalog = {t["name"].casefold(): {c["name"].casefold()
+                                      for c in (t.get("dimensions") or []) + t["facts"]
+                                      if "expression" not in c}
+               for t in model["tables"]}
+    for t in model["tables"]:
+        catalog[t["name"].casefold()] |= {
+            k.strip().casefold() for k in (t.get("primary_key") or "").split(",")}
+    for r in model.get("relationships") or []:
+        for end in ("left", "right"):
+            catalog[r[f"{end}_table"].casefold()] |= {
+                c.casefold() for c in r["join_keys"][end]}
+    return catalog
+
+
+def _solid_import_rejects(model, catalog):
+    """What solid-server's YAML import (data_server/.../yaml_import) would reject this
+    Solid model for: a missing `source_system`, or a table, column, key column, join or
+    metric table the warehouse catalog does not have. Its resolver matches names
+    ignoring case, and rejects the whole model on any one of these."""
+    problems = [] if model.get("source_system") else ["no source_system"]
+    for t in model["tables"]:
+        columns = catalog.get(t["name"].casefold())
+        if columns is None:
+            problems.append(f"table {t['name']}")
+            continue
+        problems += [f"column {t['name']}.{c['name']}"
+                     for c in (t.get("dimensions") or []) + t["facts"]
+                     if "expression" not in c and c["name"].casefold() not in columns]
+        problems += [f"primary key {t['name']}.{k}"
+                     for k in (t.get("primary_key") or "").split(", ")
+                     if k and k.casefold() not in columns]
+    for r in model.get("relationships") or []:
+        left, right = r["join_keys"]["left"], r["join_keys"]["right"]
+        if not left or len(left) != len(right):
+            problems.append(f"join keys {r}")
+        for end, keys in (("left", left), ("right", right)):
+            columns = catalog.get(r[f"{end}_table"].casefold(), set())
+            problems += [f"join column {r[f'{end}_table']}.{k}" for k in keys
+                         if k.casefold() not in columns]
+    for m in model.get("metrics") or []:
+        if not m.get("expression"):
+            problems.append(f"metric {m['name']}")
+        problems += [f"metric {m['name']} table {t}" for t in m["tables"]
+                     if t.casefold() not in catalog]
+    return problems
+
+
+@pytest.mark.parametrize("seed", range(MODELS))
+def test_a_generated_model_without_its_stash_exports_what_solid_can_import(seed):
+    """As if the model were built in Apache Ossie: no stash restores what Solid wrote,
+    so this is the export a model from any other tool gets."""
+    solid = _model(seed)
+    ossie, _ = convert_quietly(convert_solid_to_ossie, solid)
+    stripped = _without_stash(yaml.safe_load(ossie))
+    dialect = stripped["datasets"][0]["fields"][0]["expression"]["dialects"][0]["dialect"]
+    back, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(stripped))
+    model = yaml.safe_load(back)["semantic_model"]
+    problems = _solid_import_rejects(model, _catalog(solid))
+    if source_system_for(dialect) is None:
+        # Portable SQL names no warehouse; the export says so instead of guessing.
+        assert problems == ["no source_system"]
+        assert any("names no warehouse, so 'source_system' was left out" in w
+                   for w in warnings_)
+    else:
+        assert problems == []
+        assert model["source_system"] == source_system_for(dialect)

@@ -489,6 +489,25 @@ def referenced_datasets(expression, dialect, datasets, fields=None, scope=None):
     return [d for d in datasets if d.lower() in seen]
 
 
+def referenced_fields(expression, dialect, datasets, fields=None, scope=None):
+    """Return the (dataset, field) pairs, lower-cased, a metric expression reads:
+    `dataset.field`, the head of a path into a field (`orders.customer.id`), and, in a
+    metric scoped to the dataset `scope`, a bare name of one of its fields. Arguments
+    are as for referenced_datasets; an expression that does not parse reads none.
+    """
+    tree = _parse(expression, dialect)
+    if tree is None:
+        return set()
+    known = {d.lower() for d in datasets}
+    owned = {d.lower(): {n.lower() for n in names} for d, names in (fields or {}).items()}
+    local = owned.get(scope.lower(), set()) if scope else set()
+    pairs = set(_qualified_columns(tree, known, owned, local))
+    if scope:
+        pairs |= {(scope.lower(), path[0]) for path in map(_path, tree.find_all(exp.Column))
+                  if path[0] in local}
+    return pairs
+
+
 RENAMED = "renamed"
 
 
