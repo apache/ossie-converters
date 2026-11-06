@@ -139,6 +139,7 @@ class TestDimensions:
             "name": "status",
             "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "status"},
                                         {"dialect": "ANSI_SQL", "expression": "status"}]},
+            "dimension": {"is_time": False},
             "datatype": "String",
         }
 
@@ -1218,3 +1219,19 @@ class TestDialects:
         assert [d["dialect"] for d in dialects] == ["ANSI_SQL", "OSSIE_SQL_2026"]
         assert {d["expression"] for d in dialects} == {
             "COUNT(*) FILTER(WHERE status = 'complete')"}
+
+
+class TestDimensionMarker:
+    def test_dimension_and_group_are_dimensions(self):
+        fields = _fields("dimension: status {} "
+                         "dimension_group: created { type: time sql: ${TABLE}.created_at ;; }")
+        assert fields["status"]["dimension"] == {"is_time": False}
+        assert fields["created_at"]["dimension"] == {"is_time": True}
+
+    def test_date_time_dimension_is_time(self):
+        fields = _fields("dimension: shipped { type: date_time sql: ${TABLE}.shipped ;; }")
+        assert fields["shipped"]["dimension"] == {"is_time": True}
+
+    def test_measure_column_is_not_a_dimension(self):
+        dataset = _dataset("measure: total { type: sum sql: ${TABLE}.amount ;; }")
+        assert "dimension" not in dataset["fields"][0]

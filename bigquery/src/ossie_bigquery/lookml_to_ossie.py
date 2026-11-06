@@ -25,7 +25,8 @@ so views and explores can live in separate files, as they do in Looker.
 Mapping summary:
     LookML view           -> Ossie dataset (sql_table_name or derived_table sql
                              becomes the dataset source)
-    LookML dimension      -> Ossie field; `${TABLE}.col` becomes `col`, and
+    LookML dimension      -> Ossie field marked as a dimension (`is_time` for
+                             temporal ones); `${TABLE}.col` becomes `col`, and
                              `${other_dimension}` is replaced by that
                              dimension's SQL, since Ossie field expressions
                              reference columns, not other fields
@@ -100,6 +101,8 @@ _DATATYPES = {
 # (tier, location, distance, duration, bin, ...) compute their value from
 # `sql` or have none, so they are skipped.
 _VALUE_TYPES = set(_DATATYPES) | {"number", "date_time"}
+
+_TEMPORAL_DATATYPES = {"Date", "DateTime", "DateTimeTz"}
 
 # Dimension `type: date_time` -> Ossie `datatype`. Looker reads a timestamp
 # and only converts its display timezone, so the value is the same instant.
@@ -608,7 +611,13 @@ def _build_field(view_name, entry, name, datatype, scope, dimensions, groups):
         _warn(scope, f"SQL '{sql}' could not be parsed; skipping")
         return None
 
-    field = {"name": name, "expression": _expression_dialects(sql, tree)}
+    # A LookML dimension can be grouped and filtered by, which is what
+    # Ossie's `dimension` marks. Fields added for measure columns are not.
+    field = {
+        "name": name,
+        "expression": _expression_dialects(sql, tree),
+        "dimension": {"is_time": datatype in _TEMPORAL_DATATYPES},
+    }
     if datatype is not None:
         field["datatype"] = datatype
     for key in ("label", "description"):
