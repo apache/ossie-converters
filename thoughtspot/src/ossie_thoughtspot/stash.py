@@ -81,7 +81,20 @@ def find_forbidden_key(value: Any, forbidden: frozenset[str] | None = None) -> s
 
 
 def read_stash(obj: dict) -> dict[str, Any]:
-    """Return this object's parsed THOUGHTSPOT payload, or {} if it has none."""
+    """Return this object's parsed THOUGHTSPOT payload, or {} if it has none.
+
+    `data` is accepted in both shapes: the JSON string the spec defines today,
+    and the object apache/ossie#522 proposes.
+
+    The two are NOT equivalent, and saying so was wrong in an earlier revision
+    of this docstring. A JSON string is parsed by a JSON parser, so every
+    scalar in it is typed by what was written. An object has already been
+    through a YAML loader, which types unquoted scalars by guessing: `2024` is
+    an int, `12:30` is 750, `2024-01-01` is a date. This function normalises
+    the object form to JSON types and refuses what JSON cannot hold, which
+    closes the gap for value KINDS but not for a string that was written
+    unquoted and came back a number. A reader that needs a string checks.
+    """
     extensions = obj.get("custom_extensions") or []
     if not isinstance(extensions, list):
         raise ConversionError(
@@ -103,25 +116,71 @@ def read_stash(obj: dict) -> dict[str, Any]:
         raw = entry.get("data")
         if raw is None:
             return {}
-        if not isinstance(raw, str):
-            # `data` is typed as a string; a nested object is a spec violation.
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                # Name the object; never surface a bare json traceback.
+                raise ConversionError(
+                    f"malformed THOUGHTSPOT custom_extensions payload on "
+                    f"{_object_label(obj)!r}: {exc}"
+                ) from exc
+        elif isinstance(raw, dict):
+            # The object form apache/ossie#522 proposes. The reader accepts it
+            # before any writer emits it: a document written under the new shape
+            # is then readable here whenever that lands, and whichever way the
+            # vote goes, where the reverse order would leave every such document
+            # unreadable until we shipped a release of our own. `write_stash`
+            # deliberately still emits the string form, which is what the spec
+            # says today -- a test pins that, and it is not an oversight.
+            #
+            # Round-tripped through JSON rather than taken as-is, for two
+            # reasons that are easy to miss:
+            #
+            # 1. In the object form the payload has been through a YAML
+            #    loader, so it carries YAML types. `_yaml.Yaml12Loader`
+            #    narrows only the bool resolver; the rest is SafeLoader's
+            #    YAML 1.1 set, under which an unquoted `2024-01-01` is a
+            #    `datetime.date`, `12:30` is 750 and `0755` is 493. A date,
+            #    set or binary value has no JSON form at all and would
+            #    otherwise reach `write_stash`'s `json.dumps` and fail there
+            #    with a bare TypeError, which `_write_stash_safely` does not
+            #    catch -- a traceback in front of a user.
+            # 2. Taking `raw` as-is returns a live reference INTO the caller's
+            #    document, and what this returns is put straight into TML
+            #    bodies by `_shared_body` and `build_model`. The round trip
+            #    is also the copy.
+            #
+            # It does not turn an unquoted `2024` into `"2024"`; nothing here
+            # can know which keys were meant as strings. The three readers
+            # that require one check for themselves and say so.
+            try:
+                parsed = json.loads(json.dumps(raw))
+            except (TypeError, ValueError) as exc:
+                raise ConversionError(
+                    f"THOUGHTSPOT custom_extensions payload on "
+                    f"{_object_label(obj)!r} is not JSON-representable: {exc}"
+                ) from exc
+        else:
             raise ConversionError(
                 f"custom_extensions data for {_object_label(obj)!r} is "
-                f"{type(raw).__name__}, expected a JSON string"
+                f"{type(raw).__name__}, expected a JSON string or a mapping"
             )
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            # Name the object; never surface a bare json traceback.
-            raise ConversionError(
-                f"malformed THOUGHTSPOT custom_extensions payload on "
-                f"{_object_label(obj)!r}: {exc}"
-            ) from exc
         version = parsed.get("_v") if isinstance(parsed, dict) else None
-        if version != STASH_VERSION:
+        if isinstance(version, bool) or version != STASH_VERSION:
             # An unrecognised shape version is a hard failure, not a
             # partial read — a future payload shape this converter has never
             # seen would otherwise be silently misread as the current one.
+            #
+            # A bool is excluded explicitly because Python reads `True == 1`,
+            # so `_v: true` would otherwise pass as version 1. That is not
+            # theoretical under apache/ossie#522: with `data` an object the
+            # payload is YAML, where a bare `true` is a boolean under both 1.1
+            # and 1.2 rules. `_yaml.Yaml12Loader` already narrows the 1.1-only
+            # spellings (`yes`, `on`) to strings, which is why those are
+            # refused -- but narrowing the resolver moves which spelling
+            # bites, it does not stop one biting, and this is the check whose
+            # whole job is to refuse a shape we do not recognise.
             raise ConversionError(
                 f"THOUGHTSPOT custom_extensions payload on "
                 f"{_object_label(obj)!r} has shape version {version!r}, "
