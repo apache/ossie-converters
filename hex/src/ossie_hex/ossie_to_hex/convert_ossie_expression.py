@@ -40,7 +40,7 @@ def convert_ossie_expression(
     to Hex semantic reference syntax.
     """
     ossie_dialect_expression = pick_ossie_dialect_expression(
-        ossie_expression.dialects, ctx=ctx
+        ossie_expression.dialects or [], ctx=ctx
     )
     hex_sql = convert_ossie_dialect_expression(
         ossie_dialect_expression,

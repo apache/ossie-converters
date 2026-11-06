@@ -247,7 +247,7 @@ class SigmaToOssieConverter:
                 formula = column.get("formula", "")
                 field_name = _column_display_name(column)
                 expression = build_expression(formula, dataset_alias=dataset_name)
-                if not any(d.dialect == OssieDialect.ANSI_SQL for d in expression.dialects):
+                if not any(d.dialect == OssieDialect.ANSI_SQL for d in expression.dialects or []):
                     issues.append(
                         ConverterIssue(
                             ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE,

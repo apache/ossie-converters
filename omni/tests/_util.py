@@ -85,6 +85,8 @@ def strip_normalized(ossie):
       instructions text maps (onto the topic).
     - `dimension: {is_time: false}`: equivalent to an absent `dimension`
       (only `is_time: true` has an Omni form -- `timeframes`).
+    - `expression.sql`: Omni keeps a single SQL string, which the import emits
+      as an ANSI_SQL dialect entry, so the portable `sql` form is not restored.
     - a primary-key column no field covers materializes as a hidden
       dimension on export, so it comes back as an extra (stash-only) field.
     """
@@ -119,6 +121,7 @@ def strip_normalized(ossie):
                 else:
                     is_time = field.get("datatype") in ("Date", "Time", "DateTime", "DateTimez")
             field.pop("datatype", None)
+            (field.get("expression") or {}).pop("sql", None)
             if is_time:
                 field["dimension"] = {"is_time": True}
             else:
@@ -141,6 +144,7 @@ def strip_normalized(ossie):
     for metric in model.get("metrics", []) or []:
         metric.pop("custom_extensions", None)
         metric.pop("datatype", None)
+        (metric.get("expression") or {}).pop("sql", None)
     # Metric order is not semantic; the import regroups metrics by the view
     # their measure lives on.
     if model.get("metrics"):
