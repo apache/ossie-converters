@@ -19,6 +19,7 @@
 
 import importlib.util
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -478,7 +479,7 @@ class TestUnsupportedMeasures:
         assert metrics == {}
 
     def test_other_view_is_skipped(self):
-        with pytest.warns(UserWarning, match="another view"):
+        with pytest.warns(UserWarning, match="reads view 'users'.*without an explore"):
             metrics = _metrics("measure: m { type: sum sql: ${users.age} ;; }")
         assert metrics == {}
 
@@ -751,6 +752,12 @@ def _shop():
     return {p.name: p.read_text() for p in (FIXTURES / "lookml_shop").glob("*.lkml")}
 
 
+def _metric_names(ossie_yaml):
+    doc = yaml.safe_load(ossie_yaml)
+    return ({m["name"] for m in doc.get("metrics", [])}
+            | {m["name"] for d in doc["datasets"] for m in d.get("metrics", [])})
+
+
 def _shape(ossie_yaml):
     """What a round trip must keep: datasets with their field and metric
     names, and the relationships' keys."""
@@ -797,13 +804,17 @@ class TestProject:
                         reason="TPC-DS example not found")
     def test_tpcds_round_trip(self):
         """The spec's TPC-DS example, exported with ossie_to_lookml and imported
-        back, keeps every dataset, field and relationship."""
+        back without warnings, keeps every dataset, field, relationship and
+        metric."""
         original = (OSSIE / "examples" / "tpcds_semantic_model.yaml").read_text()
         with pytest.warns(UserWarning):
             lookml = convert_ossie_to_lookml(original)
-        with pytest.warns(UserWarning):  # metrics that read other views, for now
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
             imported = convert_lookml_to_ossie({"tpcds.lkml": lookml})
+        _assert_valid(imported)
         before, after = _shape(original), _shape(imported)
+        assert _metric_names(original) <= _metric_names(imported)
         assert after[1] == before[1]
         assert set(after[0]) == set(before[0])
         for name, (fields, _) in before[0].items():
@@ -1055,3 +1066,90 @@ class TestExtends:
     def test_cycle_warns(self):
         with pytest.warns(UserWarning, match="in a cycle"):
             _convert("view: a { extends: [b] }", "view: b { extends: [a] }")
+
+
+_CROSS = {
+    "shop.model.lkml": 'include: "*.view" explore: orders { '
+                       "join: users { sql_on: ${orders.user_id} = ${users.id} ;; } }",
+    "users.view.lkml": "view: users { sql_table_name: s.users ;; "
+                       "dimension: id { primary_key: yes type: number } "
+                       "dimension: age { type: number } dimension: country {} "
+                       "measure: count { type: count } "
+                       "measure: total_age { type: sum sql: ${age} ;; } }",
+}
+
+
+def _cross(measures, user_dims=""):
+    files = dict(_CROSS)
+    files["orders.view.lkml"] = (
+        "view: orders { sql_table_name: s.orders ;; dimension: id { primary_key: yes } "
+        f"dimension: user_id {{}} dimension: status {{}} {measures} }}"
+    )
+    model = yaml.safe_load(convert_lookml_to_ossie(files))
+    return model, {m["name"]: m for m in model.get("metrics", [])}
+
+
+class TestModelScopedMetrics:
+    def test_measure_reading_another_view(self):
+        model, metrics = _cross("measure: buyer_age { type: average sql: ${users.age} ;; }")
+        assert _metric_sql(metrics["buyer_age"]) == "AVG(users.age)"
+        assert "metrics" not in model["datasets"][0]
+        _assert_valid(yaml.safe_dump(model))
+
+    def test_own_fields_are_qualified(self):
+        _, metrics = _cross(
+            "measure: m { type: count_distinct sql: ${user_id} || ${users.country} ;; }")
+        assert _metric_sql(metrics["m"]) == "COUNT(DISTINCT orders.user_id || users.country)"
+
+    def test_number_inlines_measures_of_both_views(self):
+        _, metrics = _cross("measure: count { type: count } "
+                            "measure: per_user { type: number sql: ${count} / ${users.count} ;; }")
+        assert _metric_sql(metrics["per_user"]) == (
+            "COUNT(DISTINCT orders.id) / COUNT(DISTINCT users.id)"
+        )
+
+    def test_dataset_scoped_measures_stay_in_their_dataset(self):
+        model, metrics = _cross("measure: count { type: count } "
+                                "measure: buyer_age { type: sum sql: ${users.age} ;; }")
+        assert [m["name"] for m in model["datasets"][0]["metrics"]] == ["count"]
+        assert set(metrics) == {"buyer_age"}
+
+    def test_filter_on_the_aggregated_view(self):
+        _, metrics = _cross('measure: dutch_age { type: sum sql: ${users.age} ;; '
+                            'filters: [users.country: "NL"] }')
+        assert _metric_sql(metrics["dutch_age"], "OSSIE_SQL_2026") == (
+            "SUM(users.age) FILTER(WHERE users.country = 'NL')"
+        )
+
+    def test_count_filtered_on_another_view_is_skipped(self):
+        # Ossie's FILTER reads only the aggregate's dataset.
+        with pytest.warns(UserWarning, match="filters and aggregate read different views"):
+            _, metrics = _cross('measure: dutch { type: count filters: [users.country: "NL"] }')
+        assert metrics == {}
+
+    def test_count_without_primary_key_is_skipped(self):
+        files = dict(_CROSS)
+        files["orders.view.lkml"] = (
+            "view: orders { dimension: user_id {} "
+            "measure: count { type: count } "
+            "measure: per_user { type: number sql: ${count} / ${users.count} ;; } }"
+        )
+        with pytest.warns(UserWarning, match="count of view 'orders'.*needs its primary key"):
+            model = yaml.safe_load(convert_lookml_to_ossie(files))
+        assert "metrics" not in model
+
+    def test_view_outside_the_explore_is_skipped(self):
+        with pytest.warns(UserWarning, match="reads view 'products', which the explore does not join"):
+            _, metrics = _cross("measure: m { type: sum sql: ${products.price} ;; }")
+        assert metrics == {}
+
+    def test_name_clash_gets_the_view_prefix(self):
+        files = dict(_CROSS)
+        files["users.view.lkml"] = _CROSS["users.view.lkml"].replace(
+            "measure: count", "measure: mix { type: sum sql: ${orders.id} ;; } measure: count")
+        files["orders.view.lkml"] = (
+            "view: orders { dimension: id { primary_key: yes } dimension: user_id {} "
+            "measure: mix { type: sum sql: ${users.age} ;; } }"
+        )
+        model = yaml.safe_load(convert_lookml_to_ossie(files))
+        assert {m["name"] for m in model["metrics"]} == {"mix", "users_mix"}

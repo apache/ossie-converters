@@ -38,7 +38,9 @@ Mapping summary:
                              field of its own. `type: number` measures inline
                              the measures they reference, since Ossie metrics
                              cannot reference metrics. `filters:` become
-                             `FILTER (WHERE ...)`
+                             `FILTER (WHERE ...)`. A measure that reads
+                             another view of the explore becomes a
+                             model-scoped metric over `dataset.field`
     LookML explore        -> Ossie model: the base view and every joined view
                              become datasets (named by their alias)
     LookML join           -> Ossie relationship from the many side to the one
@@ -136,6 +138,11 @@ class _Unsupported(Exception):
     """A LookML construct with no Ossie form. The message says which."""
 
 
+class _CrossView(_Unsupported):
+    """A measure that reads another view: not dataset-scoped, but it can be
+    a model-scoped metric when the explore joins that view."""
+
+
 def _warn(scope, msg):
     warnings.warn(f"[{scope}] {msg}")
 
@@ -191,16 +198,22 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None):
     if explore is None:
         converted = {name: _convert_view(view) for name, view in views.items()
                      if view.get("extension") != "required"}
-        model["datasets"] = [ds for ds, _ in converted.values() if ds is not None]
+        model["datasets"] = [ds for ds, _, _ in converted.values() if ds is not None]
+        for _, _, builder in converted.values():
+            for measure, reason in builder.deferred if builder else ():
+                _warn(f"measure '{builder.view_name}.{measure['name']}'",
+                      f"{reason}; without an explore there is no join to reach it; skipping")
         return yaml.safe_dump(model, sort_keys=False)
 
     spec = explores[explore]
     if "description" in spec:
         model["description"] = spec["description"]
-    datasets, relationships = _convert_explore(spec, views)
+    datasets, relationships, metrics = _convert_explore(spec, views)
     model["datasets"] = datasets
     if relationships:
         model["relationships"] = relationships
+    if metrics:
+        model["metrics"] = metrics
     return yaml.safe_dump(model, sort_keys=False)
 
 
@@ -427,14 +440,16 @@ def _convert_view(view, alias=None):
     """Converts one LookML view to an Ossie dataset named `alias` (default:
     the view's name).
 
-    Returns (dataset, ref_names): `ref_names` maps each LookML field name the
-    view exposes (`created_raw` for a group) to its Ossie field name. The
-    dataset is None if the view has no SQL source Ossie can express.
+    Returns (dataset, ref_names, builder): `ref_names` maps each LookML field
+    name the view exposes (`created_raw` for a group) to its Ossie field name;
+    `builder` holds the measures that read other views, for the explore to
+    convert as model-scoped metrics. The dataset is None if the view has no
+    SQL source Ossie can express.
     """
     name = view["name"]
     source = _convert_source(view)
     if source is None:
-        return None, {}
+        return None, {}, None
     dataset = {"name": alias or name, "source": source}
 
     dimensions = {d["name"]: d for d in view.get("dimensions", [])}
@@ -459,7 +474,7 @@ def _convert_view(view, alias=None):
             ref_names[f"{group['name']}_raw"] = field["name"]
 
     measures = {m["name"]: m for m in view.get("measures", [])}
-    builder = _MetricBuilder(name, measures, dimensions, groups, fields, ref_names)
+    builder = _MetricBuilder(name, dataset, measures, dimensions, groups, fields, ref_names)
     metrics = [m for m in (builder.convert(m) for m in measures.values()) if m]
 
     if primary_key:
@@ -468,7 +483,7 @@ def _convert_view(view, alias=None):
         dataset["fields"] = fields
     if metrics:
         dataset["metrics"] = metrics
-    return dataset, ref_names
+    return dataset, ref_names, builder
 
 
 def _convert_source(view):
@@ -652,16 +667,23 @@ def _is_identifier(sql):
 # ---------------------------------------------------------------------------
 
 class _MetricBuilder:
-    """Converts the measures of one view to dataset-scoped Ossie metrics.
+    """Converts the measures of one view to Ossie metrics.
 
     Ossie metric expressions reference the dataset's fields, never its source
     columns. A measure over `${TABLE}.col` uses the field that reads `col`;
     if there is none, a field for `col` is added to the dataset (only once the
     measure converts, so a skipped measure leaves no stray field).
+
+    A measure that reads only its own view becomes a dataset-scoped metric
+    over bare field names. One that reads another view is set aside in
+    `deferred`; given the explore's builders (`explore`), `convert` turns it
+    into a model-scoped metric over `dataset.field`.
     """
 
-    def __init__(self, view_name, measures, dimensions, groups, fields, ref_names):
+    def __init__(self, view_name, dataset, measures, dimensions, groups, fields, ref_names):
         self.view_name = view_name
+        self.dataset = dataset
+        self.alias = dataset["name"]
         self.measures = measures
         self.dimensions = dimensions
         self.groups = groups
@@ -673,14 +695,23 @@ class _MetricBuilder:
             if _is_identifier(sql):
                 self.by_column.setdefault(sql, field["name"])
         self.taken = {f["name"] for f in fields} | set(measures) | set(dimensions) | set(groups)
+        self.deferred = []            # (measure, reason) for measures reading other views
 
-    def convert(self, measure):
-        """Returns the Ossie metric for `measure`, or None with a warning."""
+    def convert(self, measure, explore=None):
+        """Returns the Ossie metric for `measure`, or None. Without `explore`
+        it is dataset-scoped, and a measure reading another view is deferred;
+        with `explore` ({alias: builder}) it is model-scoped."""
         name = measure["name"]
         scope = f"measure '{self.view_name}.{name}'"
-        new_fields = {}  # column SQL -> field name, added if the measure converts
+        new_fields = {}  # builder -> {column SQL: field name}, added if the measure converts
         try:
-            sql = self._expression(measure, (), new_fields)
+            sql = self._expression(measure, (), new_fields, explore)
+        except _CrossView as e:
+            if explore is None:
+                self.deferred.append((measure, str(e)))
+                return None
+            _warn(scope, f"{e}; skipping")
+            return None
         except _Unsupported as e:
             _warn(scope, f"{e}; skipping")
             return None
@@ -690,13 +721,8 @@ class _MetricBuilder:
             _warn(scope, f"SQL '{sql}' could not be parsed; skipping")
             return None
 
-        for column, field_name in new_fields.items():
-            self.fields.append({
-                "name": field_name,
-                "expression": {"dialects": [{"dialect": DIALECT, "expression": column}]},
-            })
-            self.by_column[column] = field_name
-            self.taken.add(field_name)
+        for builder, columns in new_fields.items():
+            builder._add_fields(columns)
 
         if tree.find(exp.Filter) is not None:
             # BigQuery has no FILTER clause; Ossie's expression language does.
@@ -713,94 +739,161 @@ class _MetricBuilder:
             metric["description"] = measure["description"]
         return metric
 
-    def _expression(self, measure, path, new_fields):
-        """Returns the SQL for a measure, over field names."""
+    def _add_fields(self, columns):
+        for column, field_name in columns.items():
+            self.fields.append({
+                "name": field_name,
+                "expression": {"dialects": [{"dialect": DIALECT, "expression": column}]},
+            })
+            self.by_column[column] = field_name
+            self.taken.add(field_name)
+        if self.fields:
+            self.dataset["fields"] = self.fields
+
+    def _ref(self, field, explore):
+        """How a metric names one of this view's fields."""
+        return f"{self.alias}.{field}" if explore is not None else field
+
+    def _expression(self, measure, path, new_fields, explore, datasets=None):
+        """Returns the SQL for a measure, over field names. `datasets`
+        collects the aliases its aggregate reads, to check FILTER."""
         name = measure["name"]
-        if name in path:
-            raise _Unsupported(f"circular reference {' -> '.join(path + (name,))}")
-        path = path + (name,)
+        if (self.alias, name) in path:
+            chain = " -> ".join(n for _, n in path + ((self.alias, name),))
+            raise _Unsupported(f"circular reference {chain}")
+        path = path + ((self.alias, name),)
         lookml_type = measure.get("type")
         sql = measure.get("sql", "").strip()
 
-        if lookml_type == "count":
-            body = "COUNT(*)"
-        elif lookml_type in _AGGREGATES:
-            if not sql:
-                raise _Unsupported(f"type '{lookml_type}' without sql")
-            body = _AGGREGATES[lookml_type].format(self._substitute(sql, path, new_fields))
-        elif lookml_type == "number":
+        if lookml_type == "number":
             if not sql:
                 raise _Unsupported("type 'number' without sql")
             if _filter_entries(measure):
                 raise _Unsupported("filters on a type 'number' measure")
-            return self._substitute(sql, path, new_fields, measures=True)
+            return self._substitute(sql, path, new_fields, explore, set(), measures=True)
+
+        read = {self.alias}
+        if lookml_type == "count":
+            body = "COUNT(*)" if explore is None else self._count_rows(explore)
+        elif lookml_type in _AGGREGATES:
+            if not sql:
+                raise _Unsupported(f"type '{lookml_type}' without sql")
+            read = set()
+            body = _AGGREGATES[lookml_type].format(
+                self._substitute(sql, path, new_fields, explore, read))
         else:
             raise _Unsupported(f"type '{lookml_type}' has no Ossie form")
 
-        conditions = [self._filter(field, value) for field, value in _filter_entries(measure)]
+        conditions = [self._filter(field, value, explore, read)
+                      for field, value in _filter_entries(measure)]
         if conditions:
+            if len(read) > 1:
+                # Ossie: the FILTER predicate reads the aggregate's dataset only.
+                raise _Unsupported("filters and aggregate read different views "
+                                   f"({', '.join(sorted(read))})")
             body = f"{body} FILTER (WHERE {' AND '.join(conditions)})"
         return body
 
-    def _substitute(self, sql, path, new_fields, measures=False):
+    def _count_rows(self, explore):
+        """COUNT(*) in a model-scoped metric would count joined rows, which a
+        fanning join multiplies; Looker counts the view's primary keys."""
+        keys = [d["name"] for d in self.dimensions.values() if d.get("primary_key") == "yes"]
+        if not keys or keys[0] not in self.ref_names:
+            raise _Unsupported(f"count of view '{self.alias}' in a metric across "
+                               "views needs its primary key")
+        return f"COUNT(DISTINCT {self._ref(self.ref_names[keys[0]], explore)})"
+
+    def _substitute(self, sql, path, new_fields, explore, read, measures=False):
         """Replaces LookML substitutions in a measure's SQL with field names,
         and, when `measures` is set (type: number), `${measure}` with that
-        measure's SQL."""
+        measure's SQL. Adds the aliases it reads to `read`."""
         if "{%" in sql or "{{" in sql:
             raise _Unsupported("Liquid templating has no Ossie form")
-        sql = _TABLE_COLUMN.sub(lambda m: self._column_field(m.group(1), new_fields), sql)
+
+        def column(match):
+            read.add(self.alias)
+            return self._ref(self._column_field(match.group(1), new_fields), explore)
+
+        sql = _TABLE_COLUMN.sub(column, sql)
 
         def substitute(match):
             ref = match.group(1).strip()
-            parts = ref.split(".")
-            if len(parts) == 2 and parts[0] == self.view_name:
-                parts = parts[1:]
             if ref == "TABLE":
                 raise _Unsupported("'${TABLE}' is used without a column")
+            parts = ref.split(".")
+            if len(parts) == 2 and parts[0] in (self.view_name, self.alias):
+                parts = parts[1:]
+            if len(parts) == 2:
+                return self._other_view(parts, path, new_fields, explore, read, measures)
             if len(parts) != 1:
-                raise _Unsupported(f"'${{{ref}}}' references another view or a "
-                                   f"field property")
-            target = parts[0]
-            if measures and target in self.measures:
-                inner = self._expression(self.measures[target], path, new_fields)
-                return inner if _is_atom(inner) else f"({inner})"
-            if target in self.ref_names:
-                return self.ref_names[target]
-            if target in self.measures:
-                raise _Unsupported(f"'${{{target}}}' is a measure inside an aggregate")
-            _lookup(target, self.dimensions, self.groups)  # raises the reason
-            raise _Unsupported(f"references '${{{target}}}', which was skipped")
+                raise _Unsupported(f"'${{{ref}}}' references a field property")
+            return self._own(parts[0], path, new_fields, explore, read, measures)
 
         return _SUBSTITUTION.sub(substitute, sql)
+
+    def _own(self, target, path, new_fields, explore, read, measures):
+        """Resolves `${target}` in this view."""
+        if measures and target in self.measures:
+            inner = self._expression(self.measures[target], path, new_fields, explore)
+            return inner if _is_atom(inner) else f"({inner})"
+        if target in self.ref_names:
+            read.add(self.alias)
+            return self._ref(self.ref_names[target], explore)
+        if target in self.measures:
+            raise _Unsupported(f"'${{{target}}}' is a measure inside an aggregate")
+        _lookup(target, self.dimensions, self.groups)  # raises the reason
+        raise _Unsupported(f"references '${{{target}}}', which was skipped")
+
+    def _other_view(self, parts, path, new_fields, explore, read, measures):
+        """Resolves `${view.target}` for another view of the explore."""
+        alias, target = parts
+        if target.startswith("_"):
+            raise _Unsupported(f"'${{{alias}.{target}}}' references a field property")
+        if explore is None:
+            raise _CrossView(f"reads view '{alias}'")
+        other = explore.get(alias)
+        if other is None:
+            raise _Unsupported(f"reads view '{alias}', which the explore does not join")
+        return other._own(target, path, new_fields, explore, read, measures)
 
     def _column_field(self, column, new_fields):
         """Returns the name of the field that reads `column`, planning a new
         one if no field does."""
+        planned = new_fields.setdefault(self, {})
         if column in self.by_column:
             return self.by_column[column]
-        if column in new_fields:
-            return new_fields[column]
+        if column in planned:
+            return planned[column]
         base = column.strip("`")
         if not _is_identifier(base):
             raise _Unsupported(f"column {column} is not a valid field name")
-        taken = self.taken | set(new_fields.values())
+        taken = self.taken | set(planned.values())
         name, n = base, 1
         while name in taken:
             name = f"{base}_value" if n == 1 else f"{base}_value_{n}"
             n += 1
-        new_fields[column] = name
+        planned[column] = name
         return name
 
-    def _filter(self, field, value):
+    def _filter(self, field, value, explore, read):
         """Translates one `field: "value"` filter to a SQL condition."""
         ref = field.split(".")
-        if len(ref) == 2 and ref[0] == self.view_name:
+        if len(ref) == 2 and ref[0] in (self.view_name, self.alias):
             ref = ref[1:]
+        if len(ref) == 2:
+            if explore is None:
+                raise _CrossView(f"filters on view '{ref[0]}'")
+            other = explore.get(ref[0])
+            if other is None:
+                raise _Unsupported(f"filters on view '{ref[0]}', which the explore does not join")
+            return other._filter(ref[1], value, explore, read)
         if len(ref) != 1 or ref[0] not in self.dimensions or ref[0] not in self.ref_names:
             raise _Unsupported(f"filter on '{field}', which is not a converted "
                                f"dimension of this view")
+        read.add(self.alias)
         dim = self.dimensions[ref[0]]
-        return _filter_condition(self.ref_names[ref[0]], dim.get("type", "string"), value)
+        table = self.alias if explore is not None else None
+        return _filter_condition(self.ref_names[ref[0]], dim.get("type", "string"), value, table)
 
 
 def _filter_entries(measure):
@@ -816,7 +909,7 @@ def _filter_entries(measure):
     return entries
 
 
-def _filter_condition(field, lookml_type, value):
+def _filter_condition(field, lookml_type, value, table=None):
     """Translates a Looker filter expression to SQL over `field`.
 
     Only the forms whose meaning is certain are translated: exact values,
@@ -824,7 +917,7 @@ def _filter_condition(field, lookml_type, value):
     (negation, whose NULL handling Looker does not document; ranges; dates;
     escapes) raises _Unsupported, since a wrong filter is a wrong number.
     """
-    column = exp.column(field)
+    column = exp.column(field, table=table)
     text = value.strip()
     unsupported = _Unsupported(f"filter '{field}: \"{value}\"' has no exact Ossie form")
 
@@ -890,8 +983,9 @@ _EXPLORE_FILTERS = (
 
 
 def _convert_explore(explore, views):
-    """Returns (datasets, relationships) for an explore: one dataset per view
-    alias in it (base view first), and one relationship per join."""
+    """Returns (datasets, relationships, metrics) for an explore: one dataset
+    per view alias in it (base view first), one relationship per join, and
+    the model-scoped metrics for measures that read other views."""
     name = explore["name"]
     scope = f"explore '{name}'"
     for param in _EXPLORE_FILTERS:
@@ -910,6 +1004,7 @@ def _convert_explore(explore, views):
         aliases[join["name"]] = join.get("from", join["name"])
 
     datasets = []
+    builders = {}  # alias -> _MetricBuilder
     ref_names = {}  # alias -> {LookML field name: Ossie field name}
     primary_keys = {}  # alias -> LookML primary key dimension name
     for alias, view_name in aliases.items():
@@ -919,11 +1014,12 @@ def _convert_explore(explore, views):
                 f"Explore '{name}': view '{view_name}' is not defined in or "
                 f"included by its model"
             )
-        dataset, refs = _convert_view(view, alias)
+        dataset, refs, builder = _convert_view(view, alias)
         if dataset is None:
             continue
         datasets.append(dataset)
         ref_names[alias] = refs
+        builders[alias] = builder
         primary_keys[alias] = next(
             (d["name"] for d in view.get("dimensions", []) if d.get("primary_key") == "yes"),
             None,
@@ -943,7 +1039,19 @@ def _convert_explore(explore, views):
                   "Ossie form; the relationship keeps only the keys")
         relationship["name"] = _unique(f"{relationship['from']}_to_{relationship['to']}", used)
         relationships.append(relationship)
-    return datasets, relationships
+
+    metrics = []
+    names = set()
+    for alias, builder in builders.items():
+        for measure, _ in builder.deferred:
+            metric = builder.convert(measure, explore=builders)
+            if metric is None:
+                continue
+            if metric["name"] in names:
+                metric["name"] = _unique(f"{alias}_{metric['name']}", names)
+            names.add(metric["name"])
+            metrics.append(metric)
+    return datasets, relationships, metrics
 
 
 def _convert_join(join, base_alias, ref_names, primary_keys):

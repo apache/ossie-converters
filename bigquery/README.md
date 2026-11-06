@@ -138,7 +138,7 @@ Views are read the way the Looker model sees them: the files its `include:` stat
 | `view` | `dataset`; `sql_table_name` (backticks removed) or `derived_table.sql` is the `source`, and a view with neither uses its own name, as Looker does |
 | `dimension` | `field`. `${TABLE}.col` becomes `col`; a reference to another dimension of the view is replaced by that dimension's SQL, since field expressions reference columns. `primary_key: yes` sets the dataset's `primary_key` |
 | `dimension_group` (`type: time`) | One field holding the raw value. Ossie has no time grain, so timeframes are not carried over. The field is named after the column it reads (`created_at`, not `created`), which also round-trips with `export`; computed SQL or a taken name falls back to `<group>_raw` |
-| `measure` | Dataset-scoped `metric` over field names. A column no dimension exposes gets a field of its own. `type: number` measures inline the measures they reference, since metrics cannot reference metrics. `filters:` become `FILTER (WHERE ...)` |
+| `measure` | Dataset-scoped `metric` over field names. A column no dimension exposes gets a field of its own. `type: number` measures inline the measures they reference, since metrics cannot reference metrics. `filters:` become `FILTER (WHERE ...)`. A measure that reads another view of the explore becomes a model-scoped metric over `dataset.field`; there, `type: count` counts the view's primary key (`COUNT(DISTINCT users.id)`), since `COUNT(*)` would count joined rows |
 | `explore` / `join` | The model, and one `relationship` per join from the many side to the one side, keyed by `sql_on` equalities or `foreign_key`; `from:` aliases become datasets of their own |
 
 | LookML type | Ossie `datatype` |
@@ -154,7 +154,7 @@ Expressions are tagged `BIGQUERY`, except metrics with `FILTER (WHERE ...)`: Big
 
 Anything without an exact Ossie form is skipped with a warning naming it, rather than translated approximately:
 
-- references to other views, Liquid, `${field._sql}`, timeframes other than `_raw`, and dimension `type: date` (Looker converts the timezone before truncating);
+- dimensions that read other views (an Ossie field belongs to one dataset), measures that do so without an explore to join them, filters on a different view than the aggregate's, Liquid, `${field._sql}`, timeframes other than `_raw`, and dimension `type: date` (Looker converts the timezone before truncating);
 - dimension types that compute their value (`tier`, `duration`, `location`, ...), `epoch` / `yyyymmdd` groups;
 - measure types other than `count`, `sum`, `average`, `min`, `max`, `count_distinct` and `number` (`percent_of_total`, `running_total`, `median`, `sum_distinct`, ...);
 - filters other than exact values, lists, numeric comparisons, `%` / `_` wildcards, yes/no and `NULL`. Negation (`-cancelled`) is skipped because Looker does not document whether it matches NULL;
@@ -167,7 +167,7 @@ Refinements (`view: +orders`, `explore: +orders`) are merged into what they refi
 
 Things this converter does not do yet, in rough order of value:
 
-- **LookML import follow-ups**: measures that reference other views as model-scoped metrics; `percent_of_total` and `running_total` in `custom_extensions`.
+- **LookML import follow-ups**: `percent_of_total` and `running_total` in `custom_extensions`.
 - **`OSSIE_SQL_2026` as the primary source**: once the Ossie expression language settles, translating its portable functions (`DATE_TRUNC('month', d)` → `DATE_TRUNC(d, MONTH)`, `DATEADD` → `DATE_ADD`, …) to BigQuery with sqlglot would let models written only in the Ossie dialect convert without a hand-written `BIGQUERY` expression; sqlglot already does most of that transpilation.
 - **Explore-level descriptions and `ai_context`**: relationship and model `ai_context` could feed Looker's explore `description` or `sql_always_where`-style hints once Looker exposes a stable place for agent context.
 - **Vendor extension passthrough**: a `LOOKER` (or `BIGQUERY`) `custom_extensions` vendor could carry LookML-only settings such as `value_format`, `drill_fields`, `group_label` and `view_label` on round trips.
