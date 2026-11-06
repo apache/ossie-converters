@@ -15,9 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import assert_type
-
 from ossie import OssieDialect
+
+from ossie_hex.ossie import OssieDialectName
 
 from .context import ExportContext
 
@@ -26,18 +26,23 @@ def load_ossie_dialect(
     ossie_dialect: OssieDialect | str | None,
     *,
     ctx: ExportContext,
-) -> OssieDialect | None:
+) -> OssieDialectName | None:
+    """
+    Parse an Ossie dialect into a string value.
+
+    Accepts an OssieDialect enum member or a free-form string value. A
+    free-form value is normalized to uppercase.
+
+    Returns the string value of the dialect.
+    """
     if isinstance(ossie_dialect, OssieDialect):
-        return ossie_dialect
+        return ossie_dialect.value
     elif isinstance(ossie_dialect, str):
+        value = ossie_dialect.upper()
         try:
-            value = ossie_dialect.upper()
-            return OssieDialect(value)
+            OssieDialect(value)
         except ValueError:
-            ctx.warn(
-                message=f"Invalid Ossie dialect: {ossie_dialect}.",
-            )
-            return None
+            ctx.info(f"Unknown dialect: {value}.")
+        return value
     else:
-        assert_type(ossie_dialect, None)
         return None

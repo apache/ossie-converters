@@ -15,22 +15,21 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import Literal
+from typing import Annotated
 
 from ossie import OssieDialect
 
-OssieDialectName = Literal[
-    "ANSI_SQL",
-    "SNOWFLAKE",
-    "MDX",
-    "MAQL",
-    "TABLEAU",
-    "DATABRICKS",
-    "BIGQUERY",
-    "THOUGHTSPOT",
-    "SIGMA",
-    "DAX",
-    "OSSIE_SQL_2026",
+OssieDialectName = Annotated[
+    str,
+    """An Ossie dialect identifier for Ossie expression entries.
+
+    Can be a well-known OssieDialect value or a free-form string. The value
+    may represent a SQL engine or expression language.
+    
+    Values are uppercase ASCII identifiers in `SCREAMING_SNAKE_CASE`. Any
+    string may appear when carrying a dialect preference; it is not required
+    to match a fixed catalog of names.
+    """,
 ]
 
 
