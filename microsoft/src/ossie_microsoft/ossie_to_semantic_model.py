@@ -111,6 +111,7 @@ _LOSSY_TEMPORAL = {
 }
 
 DIRECT_LAKE_COMPATIBILITY_LEVEL = 1702
+SQL_MEASURE_COMPATIBILITY_LEVEL = 1000000
 DIRECT_LAKE_EXPRESSION = "DatabaseQuery"
 ONELAKE_ENDPOINT = "https://onelake.dfs.fabric.microsoft.com"
 PLACEHOLDER_DATABASE = "database"
@@ -128,6 +129,7 @@ def convert_ossie_to_semantic_model(
     ossie_yaml_str,
     source: dict = None,
     output_format: Literal["TMSL", "TMDL"] = "TMSL",
+    use_sql_measures: bool = False,
 ) -> dict | str:
     """Convert an Apache Ossie document into a Power BI semantic model.
 
@@ -138,6 +140,9 @@ def convert_ossie_to_semantic_model(
             ``{"workspaceId": ..., "itemId": ...}``.
         output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
             ``"TMDL"`` for a single TMDL document as text.
+        use_sql_measures: Preserve selected ANSI_SQL or OSSIE_SQL_2026 metric
+            expressions as native SQL instead of translating to DAX. Requires
+            a SQL-measure preview runtime and compatible serialization clients.
 
     Returns:
         The TMSL model mapping or the TMDL text selected by ``output_format``.
@@ -146,6 +151,8 @@ def convert_ossie_to_semantic_model(
         TypeError: if the input is neither YAML text nor a parsed document.
         ValueError: if the document contains no semantic model or the output format is
             unsupported.
+        ConversionError: if native SQL mode selects an unsupported metric dialect
+            or the preserved compatibility level cannot be promoted.
     """
     normalized_format = str(output_format).upper()
     if normalized_format not in {"TMSL", "TMDL"}:
@@ -193,7 +200,9 @@ def convert_ossie_to_semantic_model(
     # Restore excluded hosts before placing model-level metrics so a metric whose
     # home table was a calculated table retains its original table placement.
     tables.extend(stash.get("excludedTables") or [])
-    _apply_measures(tables, semantic_model.get("metrics") or [])
+    has_sql_measures = _apply_measures(
+        tables, semantic_model.get("metrics") or [], use_sql_measures
+    )
     _restore_excluded_measures(tables, stash.get("excludedMeasures") or [])
 
     relationships = _convert_relationships(
@@ -229,16 +238,22 @@ def convert_ossie_to_semantic_model(
         bim["description"] = description
     bim.update(document_properties)
     bim.setdefault("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL)
-    if generated_partitions:
+    if generated_partitions or has_sql_measures:
         compatibility_level = bim["compatibilityLevel"]
         if not isinstance(compatibility_level, int) or isinstance(compatibility_level, bool):
+            operation = (
+                "emitting SQL measures" if has_sql_measures else "generating Direct Lake partitions"
+            )
             raise ConversionError(
                 "POWER_BI custom_extensions document 'compatibilityLevel' must be "
-                "an integer when generating Direct Lake partitions, got "
+                f"an integer when {operation}, got "
                 f"{compatibility_level!r}"
             )
         bim["compatibilityLevel"] = max(
-            compatibility_level, DIRECT_LAKE_COMPATIBILITY_LEVEL
+            compatibility_level,
+            SQL_MEASURE_COMPATIBILITY_LEVEL
+            if has_sql_measures
+            else DIRECT_LAKE_COMPATIBILITY_LEVEL,
         )
     bim["model"] = model
     if normalized_format == "TMSL":
@@ -731,9 +746,10 @@ def _translate_metric_expression(expression, dialect, tables, scope):
     return dax
 
 
-def _apply_measures(tables, metrics):
+def _apply_measures(tables, metrics, use_sql_measures=False):
     """Attach Apache Ossie metrics to their home Power BI table as measures."""
     by_name = {table["name"]: table for table in tables}
+    has_sql_measures = False
     for metric in metrics:
         if not isinstance(metric, dict) or not metric.get("name"):
             continue
@@ -747,12 +763,20 @@ def _apply_measures(tables, metrics):
             warn(scope, "metric has no expression; skipped")
             continue
         dialect, expression = _preferred_expression(expressions)
+        native_sql = use_sql_measures and dialect != DIALECT_DAX
         if dialect == DIALECT_DAX:
-            dax = _tmsl_text(expression)
+            measure_expression = _tmsl_text(expression)
+        elif native_sql:
+            if dialect not in (DIALECT_ANSI, DIALECT_OSSIE_SQL):
+                raise ConversionError(
+                    f"{scope}: source dialect '{dialect}' is not supported for native SQL measures"
+                )
+            measure_expression = expression
+            has_sql_measures = True
         else:
-            dax = _translate_metric_expression(expression, dialect, tables, scope)
-            if dax is None:
-                dax = "BLANK()"
+            measure_expression = _translate_metric_expression(expression, dialect, tables, scope)
+            if measure_expression is None:
+                measure_expression = "BLANK()"
 
         table = by_name.get(stash.get("table"))
         if table is None:
@@ -764,16 +788,19 @@ def _apply_measures(tables, metrics):
 
         measure = {
             "name": stash.get("name", metric["name"]),
-            "expression": dax,
+            "expression": measure_expression,
         }
+        if native_sql:
+            measure["dialect"] = "sql"
         if metric.get("description"):
             measure["description"] = metric["description"]
         if metric.get("datatype") and "dataType" not in stash:
             # A Power BI measure has no writable data type: the engine infers the result
-            # type from the DAX. Emitting one would be a property the model does not own.
+            # type from the expression. Emitting one would be a property the model does not own.
             warn(
                 scope,
-                f"Power BI infers a measure's data type from its DAX expression, so "
+                f"Power BI infers a measure's data type from its "
+                f"{'SQL' if native_sql else 'DAX'} expression, so "
                 f"datatype '{metric['datatype']}' is not applied",
             )
         for key, value in stash.items():
@@ -783,6 +810,7 @@ def _apply_measures(tables, metrics):
             _apply_expression_annotations(measure, dialect, expression)
         _apply_ai_context(measure, metric.get("ai_context"))
         table.setdefault("measures", []).append(measure)
+    return has_sql_measures
 
 
 def _restore_excluded_measures(tables, excluded_measures):

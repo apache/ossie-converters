@@ -190,6 +190,18 @@ ossie_yaml = import_powerbi_project("Report.pbip", translate_dax=True)
 JSON text, or a single TMDL document as text. TMDL input and output require the
 optional TOM setup described above.
 
+`convert_ossie_to_semantic_model(..., use_sql_measures=True)` bypasses SQL-to-DAX
+translation for selected `ANSI_SQL` and `OSSIE_SQL_2026` metric expressions,
+including portable `sql`. It preserves their text and emits `dialect: sql`,
+raising compatibility to at least `1000000` only when SQL measures are emitted.
+Expression preference is unchanged: DAX remains preferred and is not replaced
+by historical SQL annotations. Other selected non-DAX dialects raise
+`ConversionError`; missing expressions still warn and are skipped. Fields and
+default conversion are unchanged. This opt-in requires a SQL-measure preview
+runtime, not ordinary public Power BI. SQL text is not validated for runtime
+support. Use TMSL with the public TOM setup above; SQL TMDL serialization
+requires a compatible client.
+
 Each report is emitted twice, because the two channels answer different questions:
 
 - a `UserWarning`, so `warnings.simplefilter("error")` gives a hard, programmatic
