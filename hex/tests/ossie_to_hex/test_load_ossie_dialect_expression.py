@@ -34,14 +34,14 @@ def ctx() -> ExportContext:
 
 
 def test_valid_field_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "id")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "id")
     result = validate_ossie_field_dialect_expression(expression, ctx=ctx)
     assert result is True
     assert not ctx.problems
 
 
 def test_invalid_field_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "SELECT FROM")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "SELECT FROM")
     result = validate_ossie_field_dialect_expression(expression, ctx=ctx)
     assert result is False
     assert problems_snapshot(ctx.problems) == snapshot(
@@ -53,7 +53,7 @@ def test_invalid_field_expression(ctx: ExportContext) -> None:
 
 
 def test_parses_valid_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "id")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "id")
     result = parse_ossie_dialect_expression(expression, ctx=ctx)
     assert result is not None
     assert not ctx.problems
@@ -61,7 +61,7 @@ def test_parses_valid_expression(ctx: ExportContext) -> None:
 
 def test_valid_metric_expression(ctx: ExportContext) -> None:
     field_names = [("foo", "bar")]
-    expression = Quick.dialect_expression("ANSI_SQL", "SUM(foo.bar)")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "SUM(foo.bar)")
     result = validate_ossie_metric_dialect_expression(
         expression, field_names=field_names, ctx=ctx
     )
@@ -71,7 +71,7 @@ def test_valid_metric_expression(ctx: ExportContext) -> None:
 
 def test_warns_about_unknown_field_reference(ctx: ExportContext) -> None:
     field_names = [("other", "bar")]
-    expression = Quick.dialect_expression("ANSI_SQL", "foo.bar")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "foo.bar")
     result = validate_ossie_metric_dialect_expression(
         expression, field_names=field_names, ctx=ctx
     )
@@ -82,7 +82,7 @@ def test_warns_about_unknown_field_reference(ctx: ExportContext) -> None:
 
 
 def test_invalid_metric_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "SELECT FROM")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "SELECT FROM")
     result = validate_ossie_metric_dialect_expression(
         expression, field_names=[], ctx=ctx
     )

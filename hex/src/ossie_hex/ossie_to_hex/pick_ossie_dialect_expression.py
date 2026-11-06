@@ -27,24 +27,40 @@ def pick_ossie_dialect_expression(
 ) -> OssieDialectExpression | None:
     """Pick an Ossie dialect expression from a list of Ossie dialect expressions.
 
-    Prefers to pick the current dialect, then falls back to ANSI SQL, then the first in the list.
+    Prefers to pick the current dialect, then falls back to a portable dialect,
+    then the first in the list.
 
     Returns a dialect expression or None if no fallback is found.
     """
-    fallback: OssieDialectExpression | None = None
+    # the pydantic model definition guarantees at least one entry
+    fallback = ossie_dialect_expressions[0]
     for entry in ossie_dialect_expressions:
-        if entry.dialect == ctx.ossie_dialect:
+        if ctx.ossie_dialect is not None and entry.dialect == ctx.ossie_dialect:
             return entry
-        # fallback preference: (1) ansi sql, (2) first in the list
-        elif entry.dialect == OssieDialect.ANSI_SQL or fallback is None:
+        # fallback preference: (1) portable dialect, (2) first in the list
+        elif entry.dialect == PORTABLE_OSSIE_DIALECT or (
+            entry.dialect == LEGACY_PORTABLE_OSSIE_DIALECT
+            and fallback.dialect != PORTABLE_OSSIE_DIALECT
+        ):
             fallback = entry
-    if ctx.current_phase_name == "load":
-        if fallback is not None:
+    if ctx.current_phase_name == "load":  # noqa: SIM102 preferable to maintain single block for phase behavior umbrella
+        if ctx.ossie_dialect is not None and fallback.dialect not in (
+            PORTABLE_OSSIE_DIALECT,
+            LEGACY_PORTABLE_OSSIE_DIALECT,
+        ):
+            # explicit preference is missing and fallback is non-portable
             ctx.warn(
                 f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
             )
-        else:
-            ctx.error(
-                f"Preferred dialect {ctx.ossie_dialect} not found for expression and no fallback dialect found"
-            )
     return fallback
+
+
+PORTABLE_OSSIE_DIALECT = OssieDialect.OSSIE_SQL_2026
+"""The canonical portable dialect of Ossie."""
+
+LEGACY_PORTABLE_OSSIE_DIALECT = OssieDialect.ANSI_SQL
+"""The legacy portable dialect of Ossie.
+
+A significant subset of converters still output ANSI_SQL as if it were the
+portable, default dialect of Ossie.
+"""

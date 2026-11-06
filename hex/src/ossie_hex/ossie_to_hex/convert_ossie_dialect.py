@@ -41,10 +41,12 @@ _DIALECT_NAME_MAP: Mapping[OssieDialect, HexDialectName | None] = {
 
 
 def convert_ossie_dialect(
-    ossie_dialect: OssieDialect,
+    ossie_dialect: OssieDialect | None,
     *,
     ctx: ExportContext,
 ) -> HexDialect:
+    if ossie_dialect is None:
+        return HexDialect("duckdb")
     hex_dialect_name = _DIALECT_NAME_MAP.get(ossie_dialect)
     if hex_dialect_name is None:
         ctx.info(
