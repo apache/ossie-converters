@@ -54,6 +54,7 @@ EXPORT_PROBLEM_SUMMARIES: dict[ExportProblemCode, str] = {
     "missing-dialect": "No dialect was specified; ANSI SQL was used.",
     "missing-datatype": "A datatype is required in Hex; a default was used.",
     "project-description": (
-        "Project descriptions are not supported in Hex and were dropped."
+        "Project description is not supported in Hex and was dropped. "
+        "Other descriptions (dataset, field, metric, ...) are preserved."
     ),
 }
