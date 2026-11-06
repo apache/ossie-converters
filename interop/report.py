@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
-from .portability import COLUMNS
+from .portability import COLUMNS, KINDS
 
 
 def _cell(value):
@@ -286,35 +286,51 @@ def write_report(report, output):
 
 
 def _portability_section(cases, output):
-    """Metric outcomes per converter, then per case. Report-only."""
+    """Metric and field outcomes per converter, then per case. Report-only."""
     lines = [
         "",
         "## Portability (report-only)",
         "",
         "Each fixture in `ossie/compliance/portability/` is exported and re-imported by every "
         "converter that can round-trip, then graded against its input by the core grader. "
-        "Counts are metrics; `portable` includes rewrites the grader proves cosmetic, `review` "
-        "the rewrites it cannot. These scores never change the exit status, with or without `--strict`.",
-        "",
-        "| Converter | Round trips | " + " | ".join(COLUMNS) + " | authored |",
-        "|---|---|" + "---:|" * (len(COLUMNS) + 1),
+        "Metrics and fields are totalled separately. `portable` includes rewrites the grader "
+        "proves cosmetic and relabels to another portable tag, `review` the rewrites it cannot "
+        "prove cosmetic, and `vendor` what came back only under a vendor tag. These scores "
+        "never change the exit status, with or without `--strict`.",
     ]
     totals = {}
     for case in cases:
         label = case["mode"] or case["target"]
-        entry = totals.setdefault(label, {"grades": Counter(), "metrics": Counter()})
+        entry = totals.setdefault(
+            label, {"grades": Counter(), **{kind: Counter() for kind in KINDS}}
+        )
         entry["grades"][case["grade"]] += 1
         if case["grading"]:
-            entry["metrics"].update(case["grading"]["metrics"])
-    for label, entry in totals.items():
-        grades = ", ".join(
-            f"{grade} {count}" for grade, count in sorted(entry["grades"].items())
-        )
-        lines.append(
-            f"| {label} | {grades} | "
-            + " | ".join(str(entry["metrics"][column]) for column in COLUMNS)
-            + f" | {entry['metrics']['authored']} |"
-        )
+            for kind in KINDS:
+                entry[kind].update(case["grading"].get(kind + "s", {}))
+    for kind in KINDS:
+        lines += [
+            "",
+            f"### {kind.capitalize()}s",
+            "",
+            "| Converter | Round trips | " + " | ".join(COLUMNS) + " | authored |",
+            "|---|---|" + "---:|" * (len(COLUMNS) + 1),
+        ]
+        for label, entry in totals.items():
+            grades = ", ".join(
+                f"{grade} {count}" for grade, count in sorted(entry["grades"].items())
+            )
+            lines.append(
+                f"| {label} | {grades} | "
+                + " | ".join(str(entry[kind][column]) for column in COLUMNS)
+                + f" | {entry[kind]['authored']} |"
+            )
+    errors = sum(1 for case in cases if case.get("grading_error"))
+    if errors:
+        lines += [
+            "",
+            f"{errors} round trip(s) could not be graded; the grader error is on each case below.",
+        ]
     lines += [
         "",
         "| Fixture | Converter | Round trip | Grader outcomes | Reason / evidence |",
@@ -327,7 +343,11 @@ def _portability_section(cases, output):
                 f"{name}={count}" for name, count in sorted(grading["summary"].items())
             )
             if grading
-            else "not graded"
+            else (
+                f"grader error: {case['grading_error']}"
+                if case.get("grading_error")
+                else "not graded"
+            )
         )
         evidence = _link(Path(case["input"]).parent / "result.json", output)
         lines.append(

@@ -367,8 +367,8 @@ class Runner:
         )
         return result
 
-    def pair(self, source, before, converter, acceptance):
-        directory = Path(acceptance["output"]).parent
+    def pair(self, source, before, converter, acceptance, *, directory=None):
+        directory = directory or Path(acceptance["output"]).parent
         dest = directory / "returned.yaml"
         result = {
             **_result(),
@@ -464,10 +464,14 @@ class Runner:
                     self.document_regression(name, regression, target)
                 )
         if self.manifest.portability:
+            # Converters come before their modes, so a mode finds its export here.
+            exports = {}
             for target, mode in self.portability_targets():
                 for variant, path in self.manifest.portability.variants.items():
                     self.report["portability"].append(
-                        self.portability_case(variant, path, target, mode)
+                        self.portability_case(
+                            variant, path, target, mode, exports=exports
+                        )
                     )
         return self.report
 
@@ -490,13 +494,15 @@ class Runner:
                 )
         return targets
 
-    def portability_case(self, variant, path, converter, mode=None):
+    def portability_case(self, variant, path, converter, mode=None, *, exports=None):
         """One portability fixture through one converter and back, then graded.
 
         The grade is the same as a Tier B return; `grading` holds the core grader's
         findings. A converter that refuses the document (export or re-import fails,
         or nothing comes back) is graded against an empty document, which the
-        grader reports as REJECTED. A skip is not graded."""
+        grader reports as REJECTED. A skip is not graded. A mode re-imports the
+        export its converter's case recorded in `exports`. A case the grader cannot
+        grade keeps its round-trip grade and says why in `grading_error`."""
         label = mode or converter.name
         case_id = f"{variant}--to--{label}"
         directory = self.output / "portability" / case_id
@@ -525,19 +531,25 @@ class Runner:
             "grade": "OK",
             "reason": "",
         }
-        accepted = self.acceptance(
-            source, data, converter, directory=directory / "conversion"
-        )
+        accepted = exports.get((converter.name, variant)) if mode and exports else None
+        if accepted is None:
+            accepted = self.acceptance(
+                source, data, converter, directory=directory / "conversion"
+            )
+        if exports is not None and not mode:
+            exports[(converter.name, variant)] = accepted
         result.update(
-            commands=accepted["commands"],
-            diagnostics=accepted["diagnostics"],
+            commands=list(accepted["commands"]),
+            diagnostics=list(accepted["diagnostics"]),
             native_gate=accepted["native_gate"],
         )
         returned = None
         if accepted["grade"] == "SKIP":
             return _skip(result, accepted["reason"], because=accepted)
         if accepted["grade"] in ("OK", "LOSSY"):
-            returned = self.pair(source, data, converter, accepted)
+            returned = self.pair(
+                source, data, converter, accepted, directory=directory / "conversion"
+            )
             result.update(
                 commands=accepted["commands"] + returned["commands"],
                 diagnostics=returned["diagnostics"],
@@ -550,10 +562,25 @@ class Runner:
             result.update(grade=returned["grade"], reason=returned["reason"])
         else:
             result.update(grade=accepted["grade"], reason=accepted["reason"])
+        # A converter can write its output and still exit non-zero (thoughtspot does
+        # when any element fails): only a successful re-import is graded as returned.
+        reimported = (
+            returned is not None
+            and bool(returned["commands"])
+            and succeeded(returned["commands"][-1])
+        )
+        try:
+            result["grading"] = self._grade(result, label, reimported)
+        except Exception as error:
+            # Report-only: a grading failure stays on this case, never a harness error.
+            result["grading_error"] = f"{type(error).__name__}: {error}"
+        return result
+
+    def _grade(self, result, label, reimported):
         grader = load_grader(self.root / GRADER)
         output = Path(result["output"])
         document = {}
-        if returned is not None and output.is_file() and output.stat().st_size:
+        if reimported and output.is_file() and output.stat().st_size:
             try:
                 document = grader._load(str(output))
             except (UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
@@ -562,11 +589,10 @@ class Runner:
         report = grader.grade(
             grader._load(result["input"]),
             document,
-            diagnostics_text=diagnostics_text(result["commands"]),
+            diagnostics_text=diagnostics_text(result["diagnostics"]),
             converter=label,
         )
-        result["grading"] = as_dict(report)
-        return result
+        return as_dict(report)
 
     def document_regression(self, name, regression, target):
         case_id = f"{name}--to--{target}"
