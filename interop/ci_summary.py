@@ -41,6 +41,7 @@ def render(report, artifact_url=""):
         ("Tier B returns", [case for case in report["cases"] if case["tier"] == "B"]),
         ("Metric bindings", report["regressions"]),
         ("Document contracts", report["document_regressions"]),
+        ("Portability round trips", report.get("portability", [])),
     ]
     lines = [
         "## Interop matrix",
