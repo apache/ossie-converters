@@ -62,9 +62,11 @@ Only the views a Looker model can see are converted: the files its
 as long as no model includes both, as in Looker. Without a .model.lkml file,
 every file is read.
 
-Expressions are tagged BIGQUERY, as written in LookML, except metrics with a
-`FILTER (WHERE ...)` clause: that is Ossie's expression language, not
-BigQuery's, so those are transpiled with sqlglot and tagged OSSIE_SQL_2026.
+Every expression is given twice: BIGQUERY, as written in LookML, and ANSI_SQL,
+transpiled by sqlglot, which is the dialect most Ossie consumers read. A
+metric with a `FILTER (WHERE ...)` clause is ANSI_SQL and OSSIE_SQL_2026
+instead: BigQuery has no FILTER clause, and SQL:2003 and Ossie's expression
+language both do.
 """
 
 import posixpath
@@ -82,6 +84,7 @@ from .ossie_to_lookml import SUPPORTED_VERSION, OssieConversionError
 DEFAULT_MODEL_NAME = "lookml_model"
 
 DIALECT = "BIGQUERY"
+ANSI_DIALECT = "ANSI_SQL"
 OSSIE_DIALECT = "OSSIE_SQL_2026"
 
 # LookML dimension `type` -> Ossie `datatype`. `number` is absent on purpose:
@@ -133,6 +136,18 @@ _NUMBER_FILTER = re.compile(r"(>=|<=|>|<)?\s*(-?\d+(?:\.\d+)?)")
 
 # ${TABLE}.col, with the column bare or backtick-quoted.
 _TABLE_COLUMN = re.compile(r"\$\{\s*TABLE\s*\}\.(`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _expression_dialects(sql, tree):
+    """The Ossie `expression` for SQL read as BigQuery (`tree` is its parse):
+    BIGQUERY as written plus ANSI_SQL, or, with a FILTER clause, which
+    BigQuery lacks, ANSI_SQL plus OSSIE_SQL_2026."""
+    ansi = tree.sql()
+    if tree.find(exp.Filter) is not None:
+        dialects = [(ANSI_DIALECT, ansi), (OSSIE_DIALECT, ansi)]
+    else:
+        dialects = [(DIALECT, sql), (ANSI_DIALECT, ansi)]
+    return {"dialects": [{"dialect": d, "expression": e} for d, e in dialects]}
 
 
 class _Unsupported(Exception):
@@ -588,15 +603,12 @@ def _build_field(view_name, entry, name, datatype, scope, dimensions, groups):
         _warn(scope, f"{e}; skipping")
         return None
     try:
-        sqlglot.parse_one(sql, read="bigquery")
+        tree = sqlglot.parse_one(sql, read="bigquery")
     except sqlglot.errors.ParseError:
         _warn(scope, f"SQL '{sql}' could not be parsed; skipping")
         return None
 
-    field = {
-        "name": name,
-        "expression": {"dialects": [{"dialect": DIALECT, "expression": sql}]},
-    }
+    field = {"name": name, "expression": _expression_dialects(sql, tree)}
     if datatype is not None:
         field["datatype"] = datatype
     for key in ("label", "description"):
@@ -735,15 +747,7 @@ class _MetricBuilder:
         for builder, columns in new_fields.items():
             builder._add_fields(columns)
 
-        if tree.find(exp.Filter) is not None:
-            # BigQuery has no FILTER clause; Ossie's expression language does.
-            dialect, sql = OSSIE_DIALECT, tree.sql()
-        else:
-            dialect = DIALECT
-        metric = {
-            "name": name,
-            "expression": {"dialects": [{"dialect": dialect, "expression": sql}]},
-        }
+        metric = {"name": name, "expression": _expression_dialects(sql, tree)}
         if measure.get("type") in _INTEGER_MEASURES:
             metric["datatype"] = "Integer"
         if "description" in measure:
@@ -754,7 +758,8 @@ class _MetricBuilder:
         for column, field_name in columns.items():
             self.fields.append({
                 "name": field_name,
-                "expression": {"dialects": [{"dialect": DIALECT, "expression": column}]},
+                "expression": _expression_dialects(
+                    column, sqlglot.parse_one(column, read="bigquery")),
             })
             self.by_column[column] = field_name
             self.taken.add(field_name)

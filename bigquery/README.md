@@ -150,7 +150,7 @@ Views are read the way the Looker model sees them: the files its `include:` stat
 | group `datatype: date` / `datetime` | `Date` / `DateTime` |
 | `count`, `count_distinct` measures | `Integer` |
 
-Expressions are tagged `BIGQUERY`, except metrics with `FILTER (WHERE ...)`: BigQuery has no `FILTER` clause, so those are transpiled with sqlglot and tagged `OSSIE_SQL_2026`.
+Every expression is given in two dialects: `BIGQUERY`, as written in LookML, and `ANSI_SQL`, transpiled by sqlglot (`SAFE_DIVIDE(a, b)` becomes a `CASE`, `DATE_TRUNC(d, MONTH)` becomes `DATE_TRUNC('MONTH', d)`), which is what most Ossie consumers read. A BigQuery function sqlglot cannot translate stays as written in the `ANSI_SQL` expression. Metrics with `FILTER (WHERE ...)` are `ANSI_SQL` and `OSSIE_SQL_2026` instead, since BigQuery has no `FILTER` clause.
 
 Anything without an exact Ossie form is skipped with a warning naming it, rather than translated approximately:
 

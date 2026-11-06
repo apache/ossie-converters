@@ -123,10 +123,13 @@ def _fields(dimensions, view="orders"):
     return {f["name"]: f for f in model["datasets"][0].get("fields", [])}
 
 
+def _dialect(entry, dialect):
+    found = {d["dialect"]: d["expression"] for d in entry["expression"]["dialects"]}
+    return found[dialect]
+
+
 def _sql(field):
-    [dialect] = field["expression"]["dialects"]
-    assert dialect["dialect"] == "BIGQUERY"
-    return dialect["expression"]
+    return _dialect(field, "BIGQUERY")
 
 
 class TestDimensions:
@@ -134,7 +137,8 @@ class TestDimensions:
         fields = _fields("dimension: status { type: string sql: ${TABLE}.status ;; }")
         assert fields["status"] == {
             "name": "status",
-            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "status"}]},
+            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "status"},
+                                        {"dialect": "ANSI_SQL", "expression": "status"}]},
             "datatype": "String",
         }
 
@@ -240,11 +244,8 @@ class TestDimensionGroups:
             "dimension_group: created { type: time timeframes: [raw, date, month] "
             "sql: ${TABLE}.created_at ;; }"
         )
-        assert fields["created_at"] == {
-            "name": "created_at",
-            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "created_at"}]},
-            "datatype": "DateTimeTz",
-        }
+        assert _sql(fields["created_at"]) == "created_at"
+        assert fields["created_at"]["datatype"] == "DateTimeTz"
 
     @pytest.mark.parametrize("lookml, ossie", [
         ("date", "Date"),
@@ -338,19 +339,14 @@ def _metrics(body):
 
 
 def _metric_sql(metric, dialect="BIGQUERY"):
-    [d] = metric["expression"]["dialects"]
-    assert d["dialect"] == dialect
-    return d["expression"]
+    return _dialect(metric, dialect)
 
 
 class TestMeasures:
     def test_count(self):
         metrics = _metrics("measure: count { type: count }")
-        assert metrics["count"] == {
-            "name": "count",
-            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "COUNT(*)"}]},
-            "datatype": "Integer",
-        }
+        assert _metric_sql(metrics["count"]) == "COUNT(*)"
+        assert metrics["count"]["datatype"] == "Integer"
 
     @pytest.mark.parametrize("lookml_type, sql", [
         ("sum", "SUM(amount)"),
@@ -412,10 +408,8 @@ class TestMeasureColumns:
     def test_column_without_dimension_gets_a_field(self):
         dataset = _dataset("measure: total { type: sum sql: ${TABLE}.amount ;; }")
         assert _metric_sql(dataset["metrics"][0]) == "SUM(amount)"
-        assert dataset["fields"] == [{
-            "name": "amount",
-            "expression": {"dialects": [{"dialect": "BIGQUERY", "expression": "amount"}]},
-        }]
+        assert [f["name"] for f in dataset["fields"]] == ["amount"]
+        assert _sql(dataset["fields"][0]) == "amount"
 
     def test_field_named_after_measure_gets_suffix(self):
         dataset = _dataset("measure: revenue { type: sum sql: ${TABLE}.revenue ;; }")
@@ -1196,3 +1190,31 @@ class TestAllExplores:
             _project({"one.model.lkml": 'include: "a.view" explore: a {}',
                       "two.model.lkml": 'include: "a.view" explore: b { from: a }',
                       "a.view.lkml": "view: a {}"})
+
+
+class TestDialects:
+    def test_field_has_bigquery_and_ansi(self):
+        fields = _fields("dimension: ratio { type: number "
+                         "sql: SAFE_DIVIDE(${TABLE}.a, ${TABLE}.`order total`) ;; }")
+        assert _dialect(fields["ratio"], "BIGQUERY") == "SAFE_DIVIDE(a, `order total`)"
+        assert _dialect(fields["ratio"], "ANSI_SQL") == (
+            'CASE WHEN "order total" <> 0 THEN a / "order total" ELSE NULL END'
+        )
+
+    def test_bigquery_function_order_is_transpiled(self):
+        fields = _fields("dimension: month { sql: DATE_TRUNC(${TABLE}.d, MONTH) ;; }")
+        assert _dialect(fields["month"], "ANSI_SQL") == "DATE_TRUNC('MONTH', d)"
+
+    def test_metric_has_bigquery_and_ansi(self):
+        metrics = _metrics("dimension: amount { type: number } "
+                           "measure: total { type: sum sql: ${amount} ;; }")
+        assert [d["dialect"] for d in metrics["total"]["expression"]["dialects"]] == [
+            "BIGQUERY", "ANSI_SQL"]
+
+    def test_filtered_metric_is_ansi_and_ossie(self):
+        metrics = _metrics('dimension: status {} measure: done { type: count '
+                           'filters: [status: "complete"] }')
+        dialects = metrics["done"]["expression"]["dialects"]
+        assert [d["dialect"] for d in dialects] == ["ANSI_SQL", "OSSIE_SQL_2026"]
+        assert {d["expression"] for d in dialects} == {
+            "COUNT(*) FILTER(WHERE status = 'complete')"}
