@@ -307,6 +307,48 @@ Foreign-extension counts are a conservative text heuristic, not an exact measure
 of extension loss. Source diagnostics stay on source rows; they are not counted
 against every downstream exporter.
 
+## Portability scores (report-only)
+
+The core repository's portability ladder (`ossie/compliance/portability/`,
+[apache/ossie#596](https://github.com/apache/ossie/pull/596)) is graded on every
+run, as agreed on [#24](https://github.com/apache/ossie-converters/issues/24):
+
+```yaml
+portability:
+  fixtures: ossie/compliance/portability/manifest.yaml
+  modes:
+    microsoft-translate-dax:
+      converter: microsoft
+      import: [uv, run, --no-sync, ossie-microsoft, import, --translate-dax, -i, '{input}', -o, '{output}']
+```
+
+Every variant listed in the core `manifest.yaml` is exported to, and re-imported
+from, each registration that can round-trip from its command line (not `skip`,
+`roundtrip_skip`, `import_skip`, or a missing import prerequisite; those stay in
+the capabilities table). The export and re-import are the same Tier A and Tier B
+code as the matrix, so preparation, timeouts, diagnostics and validation behave
+the same. The returned document is then graded against the fixture by the pinned
+core grader (`ossie/compliance/portability/grader/grade.py`), element by element:
+PORTABLE, RELABELED, REWRITTEN, SURVIVED_VENDOR_ONLY, PLACEHOLDER, DROPPED_DIAGNOSED,
+DROPPED_SILENT, ADDED, or REJECTED. The commands' stdout and stderr are the
+diagnostics that separate a diagnosed drop from a silent one. A failed export or
+re-import, or a return with nothing in it, is graded against an empty document,
+which the grader reports as REJECTED. A skip is not graded.
+
+A mode re-imports with a second command for the same converter (an opt-in flag
+such as Microsoft's `--translate-dax`). It shares the converter's preparation and
+export, and `--converters` keeps a mode only when its converter is selected.
+
+The report's portability section totals the metric outcomes per converter or mode:
+`portable` (PORTABLE, RELABELED, and REWRITTEN the grader proves cosmetic),
+`review` (other REWRITTEN), `vendor`, `placeholder`, `dropped`, `rejected`, `added`
+(invented by the converter, not counted in `authored`), and `other` (an outcome a
+newer grader adds). Per-case results with every finding are saved under
+`portability/<variant>--to--<converter>/`. Scores are evidence about the round
+trip, not a pass: they never change the exit status, with or without `--strict`.
+The grader compares normalized sqlglot trees, so REWRITTEN can be cosmetic or a
+change in meaning; an execution check can take the same graded report per case.
+
 ## Manifest
 
 `manifest.yaml` is versioned and validated before execution. Each entry declares

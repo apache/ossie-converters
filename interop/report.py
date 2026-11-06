@@ -22,6 +22,8 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
+from .portability import COLUMNS
+
 
 def _cell(value):
     return str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
@@ -105,6 +107,12 @@ def write_report(report, output):
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "result.json").write_text(
             json.dumps(_portable(regression, output), indent=2) + "\n", encoding="utf-8"
+        )
+    for case in report.get("portability", []):
+        directory = Path(case["input"]).parent
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "result.json").write_text(
+            json.dumps(_portable(case, output), indent=2) + "\n", encoding="utf-8"
         )
     counts = Counter(case["grade"] for case in report["cases"])
     lines = [
@@ -265,6 +273,8 @@ def write_report(report, output):
                     f"| {name} | {stage}: {_cell(check['path'])} | {_cell(json.dumps(check['expected']))} "
                     f"| {_cell(json.dumps(check['actual']))} {_cell(check['error'] or '')} |"
                 )
+    if report.get("portability"):
+        lines += _portability_section(report["portability"], output)
     for error in report["harness_errors"]:
         lines += ["", "## Harness error", "", _cell(error)]
     lines += [
@@ -273,3 +283,55 @@ def write_report(report, output):
         "",
     ]
     (output / "report.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _portability_section(cases, output):
+    """Metric outcomes per converter, then per case. Report-only."""
+    lines = [
+        "",
+        "## Portability (report-only)",
+        "",
+        "Each fixture in `ossie/compliance/portability/` is exported and re-imported by every "
+        "converter that can round-trip, then graded against its input by the core grader. "
+        "Counts are metrics; `portable` includes rewrites the grader proves cosmetic, `review` "
+        "the rewrites it cannot. These scores never change the exit status, with or without `--strict`.",
+        "",
+        "| Converter | Round trips | " + " | ".join(COLUMNS) + " | authored |",
+        "|---|---|" + "---:|" * (len(COLUMNS) + 1),
+    ]
+    totals = {}
+    for case in cases:
+        label = case["mode"] or case["target"]
+        entry = totals.setdefault(label, {"grades": Counter(), "metrics": Counter()})
+        entry["grades"][case["grade"]] += 1
+        if case["grading"]:
+            entry["metrics"].update(case["grading"]["metrics"])
+    for label, entry in totals.items():
+        grades = ", ".join(
+            f"{grade} {count}" for grade, count in sorted(entry["grades"].items())
+        )
+        lines.append(
+            f"| {label} | {grades} | "
+            + " | ".join(str(entry["metrics"][column]) for column in COLUMNS)
+            + f" | {entry['metrics']['authored']} |"
+        )
+    lines += [
+        "",
+        "| Fixture | Converter | Round trip | Grader outcomes | Reason / evidence |",
+        "|---|---|---|---|---|",
+    ]
+    for case in cases:
+        grading = case["grading"]
+        outcomes = (
+            ", ".join(
+                f"{name}={count}" for name, count in sorted(grading["summary"].items())
+            )
+            if grading
+            else "not graded"
+        )
+        evidence = _link(Path(case["input"]).parent / "result.json", output)
+        lines.append(
+            f"| {case['variant']} | {case['mode'] or case['target']} | {case['grade']} "
+            f"| {_cell(outcomes)} | {_cell(case['reason'])} {evidence} |"
+        )
+    return lines
