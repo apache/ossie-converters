@@ -69,3 +69,11 @@ def test_every_function_translates_or_is_refused_by_name(name):
 
 def test_unknown_function_reason():
     assert "not a DAX function known" in refusal_reason("FOO")
+
+
+@pytest.mark.parametrize("name", ["ALL", "REMOVEFILTERS", "HASONEVALUE", "ISFILTERED", "ISINSCOPE"])
+def test_filter_context_reason_fits_functions_that_only_inspect_it(name):
+    # HASONEVALUE, ISFILTERED and ISINSCOPE read the filter context without changing it.
+    reason = refusal_reason(name)
+    assert "depends on the filter context" in reason
+    assert "changes" not in reason

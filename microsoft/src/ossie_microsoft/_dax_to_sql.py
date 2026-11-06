@@ -60,7 +60,9 @@ and composition over them:
                                  ELSE COALESCE(s, 0) - COALESCE(c, 0) END
 
 * ``a / n`` for a non-zero numeric literal ``n``.
-* Numeric literals, parentheses, unary ``+``, and ``-`` on a numeric literal.
+* Numeric literals, parentheses, unary ``+``, and ``-`` on a numeric literal. DAX also
+  accepts ``.5`` and ``2.``; they are written as ``0.5`` and ``2.0``, the forms every SQL
+  engine reads. An exponent (``1e3``) is kept: it is the SQL approximate numeric literal.
 * Measure references ``[Other Measure]``, expanded inline. At the top level of a
   measure there is no row context, so a referenced measure evaluates in the same
   filter context as the measure that references it, and inlining is exact.
@@ -110,6 +112,8 @@ from ._dax_parser import (
     DaxParseError,
     Name,
     Number,
+    Row,
+    TableConstructor,
     Unary,
     Var,
     parse_dax,
@@ -141,6 +145,7 @@ TRANSLATED_FUNCTIONS = frozenset(_AGGREGATES) | {"DIVIDE"}
 
 # A simple identifier: a letter or underscore, then letters, digits, underscores.
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_EXPONENT = re.compile(r"([^eE]*)(.*)")
 
 # Precedence of an emitted SQL fragment, for parenthesising only where needed.
 _ADD, _MUL, _ATOM = 1, 2, 3
@@ -212,7 +217,7 @@ class _Translator:
 
     def translate(self, node, variables):
         if isinstance(node, Number):
-            return _Sql(node.text, _ATOM, nullable=False)
+            return _Sql(_sql_number(node.text), _ATOM, nullable=False)
         if isinstance(node, Call):
             return self.call(node, variables)
         if isinstance(node, Binary):
@@ -229,6 +234,10 @@ class _Translator:
             raise _RefusedError(
                 f"a bare column reference ('{node.table}'[{node.column}]) is not a measure; "
                 "only aggregates over columns are translated"
+            )
+        if isinstance(node, (TableConstructor, Row)):
+            raise _RefusedError(
+                "a table constructor ({...}) is a table, which a metric expression cannot express"
             )
         raise _RefusedError(f"{type(node).__name__.lower()} expressions are a later tier")
 
@@ -285,7 +294,7 @@ class _Translator:
                     "which has no portable form; DIVIDE is translated"
                 )
             left = self.translate(node.left, variables)
-            text = f"{_wrap(left, _MUL)} / {node.right.text}"
+            text = f"{_wrap(left, _MUL)} / {_sql_number(node.right.text)}"
             return _Sql(text, _MUL, nullable=left.nullable)
         if node.op in ("+", "-"):
             return self.additive(node, variables)
@@ -310,7 +319,7 @@ class _Translator:
         if node.op == "+":
             return self.translate(node.operand, variables)
         if node.op == "-" and isinstance(node.operand, Number):
-            return _Sql(f"-{node.operand.text}", _ATOM, nullable=False)
+            return _Sql(f"-{_sql_number(node.operand.text)}", _ATOM, nullable=False)
         raise _RefusedError(f"the unary {node.op} operator on an expression is a later tier")
 
     # --- composition ------------------------------------------------------------
@@ -361,6 +370,15 @@ class _Translator:
 
 def _is_simple_identifier(name):
     return bool(name) and _IDENTIFIER.fullmatch(name) is not None
+
+
+def _sql_number(text):
+    mantissa, exponent = _EXPONENT.match(text).groups()
+    if mantissa.startswith("."):
+        mantissa = "0" + mantissa
+    if mantissa.endswith("."):
+        mantissa += "0"
+    return mantissa + exponent
 
 
 def _is_nonzero_number(node):

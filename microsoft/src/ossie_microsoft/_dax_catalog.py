@@ -32,7 +32,7 @@ Tiers (what kind of construct the function is):
 * ``T2`` filtered aggregate (``CALCULATE`` / ``KEEPFILTERS`` with predicates)
 * ``T3`` composition (measure references, ``VAR``)
 * ``T4`` time intelligence, windows, semi-additive
-* ``T5`` filter-context manipulation (``ALL``, ``REMOVEFILTERS``, ``USERELATIONSHIP``, ...)
+* ``T5`` filter context, changed or inspected (``ALL``, ``REMOVEFILTERS``, ``ISFILTERED``, ...)
 * ``T6`` table expressions (a calculated table, or a table argument)
 * ``T7`` not part of a portable semantic model (visual calculations, calculation groups,
   user/session functions, metadata)
@@ -468,7 +468,7 @@ _SPEC_GAP_FEATURES = {
 }
 
 _REFUSE_BY_TIER = {
-    "T5": "changes filter context, which has no declaration-scoped OSSIE_SQL_2026 form",
+    "T5": "depends on the filter context, which has no declaration-scoped OSSIE_SQL_2026 form",
     "T6": "operates on tables, which a metric expression cannot express",
     "T7": "is not part of a portable semantic model",
 }
