@@ -19,38 +19,50 @@ from collections.abc import Mapping
 
 from ossie import OssieDialect
 
+from ossie_hex.ossie import OssieDialectName
+
 from ..hex import HexDialect, HexDialectName
 from .context import ExportContext
 
-_DIALECT_NAME_MAP: Mapping[OssieDialect, HexDialectName | None] = {
-    OssieDialect.ANSI_SQL: "duckdb",
-    # Match the Snowflake approximation used to parse portable Ossie SQL.
-    OssieDialect.OSSIE_SQL_2026: "snowflake",
-    OssieDialect.BIGQUERY: "bigquery",
-    OssieDialect.DATABRICKS: "databricks",
-    OssieDialect.SNOWFLAKE: "snowflake",
-    # These are expression languages, not SQL dialects or engines
-    OssieDialect.MAQL: None,
-    OssieDialect.MDX: None,
-    OssieDialect.TABLEAU: None,
-    OssieDialect.SIGMA: None,
-    OssieDialect.THOUGHTSPOT: None,
-    OssieDialect.DAX: None,
-    OssieDialect.HOLISTICS_AQL: None,
+_DIALECT_NAME_MAP: Mapping[OssieDialectName, HexDialectName] = {
+    # enumerated dialects that are not a well-known dialect
+    OssieDialect.ANSI_SQL.value: "duckdb",
+    OssieDialect.OSSIE_SQL_2026.value: "snowflake",  # Match the approximation used for parsing
+    # raw strings -- well known dialects
+    "ALLOYDB": "alloydb",
+    "ATHENA": "athena",
+    "BIGQUERY": "bigquery",
+    "CLICKHOUSE": "clickhouse",
+    "DATABRICKS": "databricks",
+    "DUCKDB": "duckdb",
+    "MOTHERDUCK": "motherduck",
+    "MSSQL": "mssql",
+    "MYSQL": "mysql",
+    "POSTGRES": "postgres",
+    "PRESTODB": "prestodb",
+    "REDSHIFT": "redshift",
+    "SNOWFLAKE": "snowflake",
+    "SPARK": "spark",
+    "STARBURST": "starburst",
+    "TRINO": "trino",
+    "TSQL": "tsql",
 }
+"""
+Map of well-known dialect names that could appear in Ossie documents to dialect
+names supported by Hex.
+"""
 
 
 def convert_ossie_dialect(
-    ossie_dialect: OssieDialect | None,
+    ossie_dialect: OssieDialectName | None,
     *,
     ctx: ExportContext,
 ) -> HexDialect:
     if ossie_dialect is None:
         return HexDialect("duckdb")
-    hex_dialect_name = _DIALECT_NAME_MAP.get(ossie_dialect)
-    if hex_dialect_name is None:
+    if ossie_dialect not in _DIALECT_NAME_MAP:
         ctx.info(
-            "Ossie dialect is an expression language; using DuckDB as SQL dialect for Hex semantic project"
+            "The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
         )
         return HexDialect("duckdb")
-    return HexDialect(hex_dialect_name)
+    return HexDialect(_DIALECT_NAME_MAP[ossie_dialect])

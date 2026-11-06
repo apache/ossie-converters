@@ -17,7 +17,7 @@
 
 import pytest
 from inline_snapshot import snapshot
-from ossie import OssieDialect
+from ossie import OssieDialect, OssieDialectExpression, OssieExpression
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.load_ossie_expression import (
@@ -103,3 +103,37 @@ def test_reports_metric_expression_with_invalid_reference(ctx: ExportContext) ->
 [ERROR] Field expression references field not in semantic model: foo.missing
 Cause: ['dialects', 'OSSIE_SQL_2026']\
 """)
+
+
+def test_preserves_freeform_field_dialect(ctx: ExportContext) -> None:
+    ctx.set_ossie_dialect("UNKNOWN_DIALECT")
+    # Simulate the newer SDK's string field while retaining the current pin.
+    variant = OssieDialectExpression.model_construct(
+        dialect="UNKNOWN_DIALECT", expression="id"
+    )
+    expression = OssieExpression(dialects=[variant])
+
+    with ctx.phase_scope("load"):
+        result = load_ossie_field_expression(expression, ctx=ctx)
+
+    assert result is expression
+    assert result.dialects[0].dialect == "UNKNOWN_DIALECT"
+    assert ctx.ossie_dialect == "UNKNOWN_DIALECT"
+    assert not ctx.problems
+
+
+def test_preserves_freeform_metric_dialect(ctx: ExportContext) -> None:
+    ctx.set_ossie_dialect("UNKNOWN_DIALECT")
+    variant = OssieDialectExpression.model_construct(
+        dialect="UNKNOWN_DIALECT", expression="SUM(foo.bar)"
+    )
+    expression = OssieExpression(dialects=[variant])
+
+    with ctx.phase_scope("load"):
+        result = load_ossie_metric_expression(
+            expression, field_names=[("foo", "bar")], ctx=ctx
+        )
+
+    assert result is expression
+    assert result.dialects[0].dialect == "UNKNOWN_DIALECT"
+    assert not ctx.problems

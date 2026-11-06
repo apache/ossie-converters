@@ -597,6 +597,6 @@ def test_mixed_dialects_warn_only_for_nonportable_fallbacks(tmp_path: Path) -> N
         "dialects",
     ]
     assert problems[0].message == (
-        "Preferred dialect OssieDialect.BIGQUERY not found for expression; "
+        "Preferred dialect BIGQUERY not found for expression; "
         "using fallback dialect OssieDialect.SNOWFLAKE"
     )

@@ -15,7 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from ossie import OssieExpression
+from ossie import OssieDialect, OssieExpression
+
+from ossie_hex.ossie import OssieDialectName
 
 from .context import ExportContext
 from .load_ossie_dialect_expression import (
@@ -43,7 +45,13 @@ def load_ossie_field_expression(
     with ctx.problem_scope("dialects"):
         choice = pick_ossie_dialect_expression(ossie_expression.dialects, ctx=ctx)
         if choice is not None:
-            with ctx.problem_scope(choice.dialect.value):
+            # The pinned SDK returns enums; newer SDKs preserve string tokens.
+            dialect_name: OssieDialectName = (
+                choice.dialect.value
+                if isinstance(choice.dialect, OssieDialect)
+                else choice.dialect
+            )
+            with ctx.problem_scope(dialect_name):
                 validate_ossie_field_dialect_expression(choice, ctx=ctx)
         return ossie_expression
 
@@ -66,7 +74,13 @@ def load_ossie_metric_expression(
     with ctx.problem_scope("dialects"):
         choice = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
         if choice is not None:
-            with ctx.problem_scope(choice.dialect.value):
+            # The pinned SDK returns enums; newer SDKs preserve string tokens.
+            dialect_name: OssieDialectName = (
+                choice.dialect.value
+                if isinstance(choice.dialect, OssieDialect)
+                else choice.dialect
+            )
+            with ctx.problem_scope(dialect_name):
                 validate_ossie_metric_dialect_expression(
                     choice, field_names=field_names, ctx=ctx
                 )
