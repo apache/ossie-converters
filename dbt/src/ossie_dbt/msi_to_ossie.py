@@ -34,6 +34,7 @@ from ossie import (
     OssieRelationship,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
+from ossie_dbt.ratio_helpers import unchanged_ratio_helpers
 from ossie_dbt.expression_utils import _is_constant_expr
 from ossie_dbt.filter_utils import _collect_filter_sql, _merge_filter_sqls
 
@@ -146,6 +147,7 @@ class MSIToOssieConverter:
     def convert(
         self, manifest: PydanticSemanticManifest, ossie_model_name: str = "semantic_model"
     ) -> ConverterResult[OssieDocument]:
+        helper_families = unchanged_ratio_helpers(manifest.metrics, manifest.saved_queries)
         manifest = PydanticSemanticManifestTransformer.transform(manifest)
         issues: List[ConverterIssue] = []
 
@@ -218,6 +220,17 @@ class MSIToOssieConverter:
                         element_name=metric.name,
                     )
                 )
+
+        # Only an unchanged generated family with a loss-free exported owner can
+        # be folded away. Never suppress private-metric warnings: inlining an
+        # expression cannot preserve visibility, filters, or every other consumer.
+        exported = {metric.name for metric in ossie_metrics}
+        lossy = {issue.element_name for issue in issues}
+        helpers = set()
+        for owner, names in helper_families.items():
+            if owner in exported and not ({owner, *names} & lossy):
+                helpers.update(names)
+        ossie_metrics = [metric for metric in ossie_metrics if metric.name not in helpers]
 
         return ConverterResult(
             output=OssieDocument(
