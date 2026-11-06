@@ -102,3 +102,32 @@ def test_ossie_to_msi_reports_unsupported_metric(
         "[WARNING] UNSUPPORTED_METRIC_EXPRESSION: gross_margin was dropped during conversion"
         in capsys.readouterr().err
     )
+
+
+def test_ossie_to_msi_exports_dataset_metric_and_reports_a_taken_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    document = _ossie_doc(
+        datasets=[
+            _ossie_dataset(
+                name="orders",
+                fields=[_ossie_field("order_id"), _ossie_field("amount")],
+                primary_key=["order_id"],
+                metrics=[_ossie_metric("total_amount", "SUM(amount)"), _ossie_metric("total", "SUM(amount)")],
+            )
+        ],
+        metrics=[_ossie_metric("total", "COUNT(orders.order_id)")],
+    )
+    input_path = tmp_path / "model.yaml"
+    output_path = tmp_path / "semantic_manifest.json"
+    input_path.write_text(document.to_ossie_yaml())
+
+    _run_cli(["ossie-to-msi", "-i", str(input_path), "-o", str(output_path)], monkeypatch)
+
+    assert [metric["name"] for metric in json.loads(output_path.read_text())["metrics"]] == ["total", "total_amount"]
+    assert (
+        "[WARNING] DUPLICATE_METRIC_NAME_DROPPED: orders.total was dropped during conversion"
+        in capsys.readouterr().err
+    )

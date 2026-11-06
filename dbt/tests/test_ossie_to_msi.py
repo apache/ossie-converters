@@ -850,6 +850,147 @@ def _doc_with_metric_expression(expression: OssieExpression) -> OssieDocument:
     )
 
 
+class TestOssieToMSIDatasetScopedMetrics:
+    """Metrics declared on a dataset (`datasets[].metrics`) belong to that dataset.
+
+    Their expressions reference the dataset's own fields by unqualified name, so each
+    one is resolved against its own dataset only.
+    """
+
+    @staticmethod
+    def _orders_and_returns(orders_metrics=None, returns_metrics=None) -> list:
+        # Both datasets have an `amount` field, so an unqualified `amount` is ambiguous
+        # at the model root and only the declaring dataset can resolve it.
+        return [
+            _ossie_dataset(
+                "orders",
+                fields=[_ossie_field("order_id"), _ossie_field("amount")],
+                primary_key=["order_id"],
+                metrics=orders_metrics,
+            ),
+            _ossie_dataset(
+                "returns",
+                fields=[_ossie_field("return_id"), _ossie_field("amount")],
+                primary_key=["return_id"],
+                metrics=returns_metrics,
+            ),
+        ]
+
+    def test_dataset_metric_is_exported_on_its_own_semantic_model(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                returns_metrics=[_ossie_metric("returned_amount", "SUM(amount)", description="Refunds")]
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        (metric,) = result.output.metrics
+        assert metric.name == "returned_amount"
+        assert metric.description == "Refunds"
+        assert metric.type == MetricType.SIMPLE
+        assert metric.type_params.expr == "amount"
+        params = metric.type_params.metric_aggregation_params
+        assert params is not None
+        assert params.semantic_model == "returns"
+        assert params.agg == AggregationType.SUM
+        assert SemanticManifestValidator().validate_semantic_manifest(result.output).errors == ()
+
+    def test_the_same_expression_at_the_model_root_is_ambiguous(self) -> None:
+        """The unqualified `amount` resolves only because the metric names its dataset."""
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(),
+            metrics=[_ossie_metric("returned_amount", "SUM(amount)")],
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "returned_amount")
+        ]
+
+    def test_row_count_counts_its_own_dataset(self) -> None:
+        doc = _ossie_doc(datasets=self._orders_and_returns(orders_metrics=[_ossie_metric("order_count", "COUNT(*)")]))
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        (metric,) = result.output.metrics
+        params = metric.type_params.metric_aggregation_params
+        assert params is not None
+        assert params.semantic_model == "orders"
+        assert params.agg == AggregationType.COUNT
+
+    def test_ratio_stays_on_its_own_dataset(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                orders_metrics=[_ossie_metric("avg_order_amount", "SUM(amount) / COUNT(order_id)")]
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        by_type = {metric.type: metric for metric in result.output.metrics}
+        assert by_type[MetricType.RATIO].name == "avg_order_amount"
+        simple = [metric for metric in result.output.metrics if metric.type == MetricType.SIMPLE]
+        assert len(simple) == 2
+        for metric in simple:
+            params = metric.type_params.metric_aggregation_params
+            assert params is not None
+            assert params.semantic_model == "orders"
+
+    def test_name_taken_by_a_model_metric_is_dropped_with_issue(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(orders_metrics=[_ossie_metric("total", "SUM(amount)")]),
+            metrics=[_ossie_metric("total", "SUM(returns.amount)")],
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        (metric,) = result.output.metrics
+        params = metric.type_params.metric_aggregation_params
+        assert params is not None
+        assert params.semantic_model == "returns"
+        assert result.issues == [ConverterIssue(ConverterIssueType.DUPLICATE_METRIC_NAME_DROPPED, "orders.total")]
+
+    def test_name_taken_by_another_dataset_is_dropped_with_issue(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                orders_metrics=[_ossie_metric("total", "SUM(amount)")],
+                returns_metrics=[_ossie_metric("total", "SUM(amount)")],
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert [metric.name for metric in result.output.metrics] == ["total"]
+        assert result.issues == [ConverterIssue(ConverterIssueType.DUPLICATE_METRIC_NAME_DROPPED, "returns.total")]
+
+    def test_ratio_sub_metric_names_avoid_dataset_metric_names(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(orders_metrics=[_ossie_metric("rate_numerator", "SUM(amount)")]),
+            metrics=[_ossie_metric("rate", "SUM(orders.amount) / COUNT(orders.order_id)")],
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        names = [metric.name for metric in result.output.metrics]
+        assert sorted(names) == ["rate", "rate_denominator", "rate_numerator", "rate_numerator_2"]
+        (ratio,) = [metric for metric in result.output.metrics if metric.type == MetricType.RATIO]
+        assert ratio.type_params.numerator.name == "rate_numerator_2"
+        assert SemanticManifestValidator().validate_semantic_manifest(result.output).errors == ()
+
+    def test_unsupported_dataset_metric_is_reported_with_its_dataset(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                orders_metrics=[_ossie_metric("running_amount", "SUM(amount) OVER (ORDER BY order_id)")]
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "orders.running_amount")
+        ]
+
+
 class TestOssieToMSIDialectSelection:
     @pytest.mark.parametrize(
         "order",

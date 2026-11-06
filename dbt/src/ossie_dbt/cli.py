@@ -62,6 +62,10 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
         "MetricFlow SIMPLE metrics require one supported aggregation over a safe scalar expression "
         "owned by exactly one semantic model"
     ),
+    ConverterIssueType.DUPLICATE_METRIC_NAME_DROPPED: (
+        "MetricFlow metric names are unique across the manifest, and a model-level metric or another "
+        "dataset's metric already uses this name; rename one of them"
+    ),
 }
 
 _DROPPED_ISSUE_TYPES = {
@@ -72,6 +76,7 @@ _DROPPED_ISSUE_TYPES = {
     ConverterIssueType.AMBIGUOUS_REFERENCE_METRIC_DROPPED,
     ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION,
     ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS,
+    ConverterIssueType.DUPLICATE_METRIC_NAME_DROPPED,
 }
 
 
