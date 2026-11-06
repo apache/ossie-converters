@@ -26,6 +26,7 @@ column references Ossie expressions use.
 
 import dataclasses
 import datetime
+import hashlib
 import json
 import re
 from collections import deque
@@ -332,6 +333,14 @@ def json_safe(value):
     if isinstance(value, dict):
         return {k: json_safe(v) for k, v in value.items()}
     return value
+
+
+def measure_signature(measure):
+    """Change guard for parked metric origins, excluding descriptive metadata."""
+    definition = {k: v for k, v in measure.items()
+                  if k not in {"meta", "description", "title"}}
+    encoded = json.dumps(json_safe(definition), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def write_stash(obj, data):
