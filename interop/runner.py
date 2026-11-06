@@ -543,6 +543,10 @@ class Runner:
                 grade="FAIL",
                 reason=f"{regression.category} preservation assertions failed; see expected/actual evidence",
             )
+        elif "LOSSY" in (accepted["grade"], returned["grade"]):
+            # The property survived, but the conversion reported other degradation.
+            reason = accepted["reason"] if accepted["grade"] == "LOSSY" else returned["reason"]
+            result.update(grade="LOSSY", reason=reason)
         return result
 
     def binding_regression(self, name, regression):
