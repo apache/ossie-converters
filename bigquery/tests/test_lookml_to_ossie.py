@@ -642,7 +642,8 @@ class TestExplores:
         assert [d["name"] for d in model["datasets"]] == ["orders", "users"]
 
     def test_several_explores_need_a_choice(self):
-        with pytest.raises(OssieConversionError, match="choose one to convert: orders, users"):
+        with pytest.raises(OssieConversionError,
+                           match="choose one to convert \\(orders, users\\), or merge"):
             _explore("explore: orders {} explore: users {}")
 
     def test_chosen_explore(self):
@@ -1153,3 +1154,45 @@ class TestModelScopedMetrics:
         )
         model = yaml.safe_load(convert_lookml_to_ossie(files))
         assert {m["name"] for m in model["metrics"]} == {"mix", "users_mix"}
+
+
+class TestAllExplores:
+    def test_merges_datasets_and_relationships(self):
+        model = _explore("explore: orders { join: users { foreign_key: user_id } }"
+                         "explore: events { join: orders { sql_on: ${events.order_id} = ${orders.id} ;; }"
+                         " join: users { sql_on: ${orders.user_id} = ${users.id} ;; } }",
+                         all_explores=True)
+        assert model["name"] == "lookml_model"
+        assert [d["name"] for d in model["datasets"]] == ["orders", "users", "events"]
+        assert _rels(model) == {
+            "orders_to_users": {"from": "orders", "to": "users",
+                                "from_columns": ["user_id"], "to_columns": ["id"]},
+            "events_to_orders": {"from": "events", "to": "orders",
+                                 "from_columns": ["order_id"], "to_columns": ["id"]},
+        }
+
+    def test_alias_for_different_views_keeps_the_first(self):
+        with pytest.warns(UserWarning, match="'buyer' is a different view"):
+            model = _explore("explore: orders { join: buyer { from: users foreign_key: user_id } }"
+                             "explore: events { join: buyer { from: products "
+                             "sql_on: ${events.order_id} = ${buyer.id} ;; } }",
+                             all_explores=True)
+        assert {d["name"]: d["source"] for d in model["datasets"]}["buyer"] == "shop.users"
+
+    def test_not_with_an_explore(self):
+        with pytest.raises(OssieConversionError, match="not both"):
+            _explore("explore: orders {}", explore="orders", all_explores=True)
+
+    def test_round_trips_a_whole_exported_model(self):
+        first = convert_lookml_to_ossie(_shop(), all_explores=True)
+        with pytest.warns(UserWarning):
+            lookml = convert_ossie_to_lookml(first)
+        second = convert_lookml_to_ossie({"m.lkml": lookml}, all_explores=True)
+        assert _shape(second)[1] == _shape(first)[1]
+        assert set(_shape(second)[0]) == set(_shape(first)[0])
+
+    def test_explores_in_several_models_need_a_model(self):
+        with pytest.raises(OssieConversionError, match="Explores are in models one, two"):
+            _project({"one.model.lkml": 'include: "a.view" explore: a {}',
+                      "two.model.lkml": 'include: "a.view" explore: b { from: a }',
+                      "a.view.lkml": "view: a {}"})

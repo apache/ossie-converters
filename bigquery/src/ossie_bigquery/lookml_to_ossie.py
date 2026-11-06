@@ -46,8 +46,9 @@ Mapping summary:
     LookML join           -> Ossie relationship from the many side to the one
                              side, keyed by the sql_on or foreign_key columns
 
-One Ossie model per explore: with several explores, pick one. Without any,
-every view becomes a dataset and the model has no relationships.
+One Ossie model per explore: with several explores, pick one, or merge them
+all into one model (`all_explores`). Without any explore, every view becomes
+a dataset and the model has no relationships.
 
 Refinements (`view: +orders`, `explore: +orders`) are merged into what they
 refine, in include order, as Looker does: they add fields and joins, and
@@ -151,7 +152,8 @@ def _warn(scope, msg):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None):
+def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None,
+                            all_explores=False):
     """Top-level entry point. Parses LookML files, converts them, returns an
     Ossie document as a YAML string.
 
@@ -164,6 +166,11 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None):
         model: Name of the Looker model (`<model>.model.lkml`) whose
             includes define the views. Optional unless the explore is in
             several models.
+        all_explores: Merge every explore into one model instead of
+            converting one: the datasets of all of them, and their
+            relationships and metrics without duplicates. This reads back a
+            whole Ossie model exported by ossie_to_lookml, which makes one
+            explore per dataset on the many side of a relationship.
 
     Returns:
         Ossie YAML string.
@@ -174,14 +181,18 @@ def convert_lookml_to_ossie(files, explore=None, model_name=None, model=None):
     if not isinstance(files, dict) or not files:
         raise OssieConversionError("Expected a non-empty mapping of {filename: LookML}")
 
+    if all_explores and explore is not None:
+        raise OssieConversionError("Choose an explore or all_explores, not both")
     views, explores = _Project(files).scope(model, explore)
     if explore is None:
         # Explores that exist only to be extended are not choices.
         explores = {n: e for n, e in explores.items() if e.get("extension") != "required"}
+    if all_explores and explores:
+        return yaml.safe_dump(_merge_explores(explores, views, model_name), sort_keys=False)
     if explore is None and len(explores) > 1:
         raise OssieConversionError(
-            f"Found {len(explores)} explores; choose one to convert: "
-            + ", ".join(sorted(explores))
+            f"Found {len(explores)} explores; choose one to convert ("
+            + ", ".join(sorted(explores)) + "), or merge them with all_explores"
         )
     if explore is None and explores:
         explore = next(iter(explores))
@@ -266,10 +277,10 @@ class _Project:
             raise OssieConversionError(
                 f"Explore '{explore}' not found in any model. Models: {', '.join(models)}"
             )
-        if len(found) > 1 and explore is not None:
+        if len(found) > 1:
+            what = f"Explore '{explore}' is" if explore else "Explores are"
             raise OssieConversionError(
-                f"Explore '{explore}' is in models {', '.join(found)}; choose one "
-                f"with model="
+                f"{what} in models {', '.join(found)}; choose one with model="
             )
         return self._collect(self._closure(models[next(iter(found))]))
 
@@ -1052,6 +1063,47 @@ def _convert_explore(explore, views):
             names.add(metric["name"])
             metrics.append(metric)
     return datasets, relationships, metrics
+
+
+def _merge_explores(explores, views, model_name):
+    """Merges every explore into one Ossie model. A dataset, relationship or
+    metric that several explores share appears once; a name the explores
+    use for different things keeps the first, with a warning."""
+    datasets, relationships, metrics = {}, {}, {}
+    rel_names = set()
+    for name, spec in explores.items():
+        ds_list, rel_list, metric_list = _convert_explore(spec, views)
+        for dataset in ds_list:
+            kept = datasets.setdefault(dataset["name"], dataset)
+            if kept is dataset:
+                continue
+            if kept["source"] != dataset["source"]:
+                _warn(f"explore '{name}'", f"'{dataset['name']}' is a different view "
+                      "than in an earlier explore; keeping the first")
+                continue
+            # The same view; a model-scoped metric may have added fields.
+            have = {f["name"] for f in kept.get("fields", [])}
+            extra = [f for f in dataset.get("fields", []) if f["name"] not in have]
+            if extra:
+                kept.setdefault("fields", []).extend(extra)
+        for rel in rel_list:
+            key = (rel["from"], rel["to"], tuple(rel["from_columns"]), tuple(rel["to_columns"]))
+            if key not in relationships:
+                rel["name"] = _unique(rel["name"], rel_names)
+                relationships[key] = rel
+        for metric in metric_list:
+            kept = metrics.setdefault(metric["name"], metric)
+            if kept is not metric and kept["expression"] != metric["expression"]:
+                _warn(f"explore '{name}'", f"metric '{metric['name']}' differs from an "
+                      "earlier explore's; keeping the first")
+
+    model = {"version": SUPPORTED_VERSION, "name": model_name or DEFAULT_MODEL_NAME,
+             "datasets": list(datasets.values())}
+    if relationships:
+        model["relationships"] = list(relationships.values())
+    if metrics:
+        model["metrics"] = list(metrics.values())
+    return model
 
 
 def _convert_join(join, base_alias, ref_names, primary_keys):

@@ -172,3 +172,14 @@ class TestCommands:
         (project / "orders.view.lkml").write_text("view: orders {}")
         cli.main(["import", "-i", str(project), "--explore", "orders", "--model", "one"])
         assert yaml.safe_load(capsys.readouterr().out)["name"] == "orders"
+
+    def test_import_all_explores(self, tmp_path, capsys):
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "m.model.lkml").write_text(
+            'include: "*.view" explore: orders {} explore: users {}')
+        (project / "orders.view.lkml").write_text("view: orders {}")
+        (project / "users.view.lkml").write_text("view: users {}")
+        cli.main(["import", "-i", str(project), "--all-explores"])
+        model = yaml.safe_load(capsys.readouterr().out)
+        assert [d["name"] for d in model["datasets"]] == ["orders", "users"]
