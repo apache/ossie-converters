@@ -91,24 +91,23 @@ OSSIE_DIALECT = "OSSIE_SQL_2026"
 # LookML dimension `type` -> Ossie `datatype`. `number` is absent on purpose:
 # LookML does not say whether it is an integer or a decimal, and the Ossie
 # spec says to omit `datatype` when it is unknown.
+# `date_time` is a timestamp whose display timezone Looker converts, so the
+# value is the same instant. `type: date` is not here: Looker converts the
+# timestamp's timezone and then truncates it to a date, which the raw SQL
+# does not do.
 _DATATYPES = {
     "string": "String",
     "yesno": "Boolean",
     "zipcode": "String",
+    "date_time": "DateTimeTz",
 }
 
 # LookML types whose `sql` is a plain value Ossie can hold. Other types
 # (tier, location, distance, duration, bin, ...) compute their value from
 # `sql` or have none, so they are skipped.
-_VALUE_TYPES = set(_DATATYPES) | {"number", "date_time"}
+_VALUE_TYPES = set(_DATATYPES) | {"number"}
 
 _TEMPORAL_DATATYPES = {"Date", "DateTime", "DateTimeTz"}
-
-# Dimension `type: date_time` -> Ossie `datatype`. Looker reads a timestamp
-# and only converts its display timezone, so the value is the same instant.
-# `type: date` is not here: Looker converts the timestamp's timezone and then
-# truncates it to a date, which the raw SQL does not do.
-_DATE_TYPES = {"date_time": "DateTimeTz"}
 
 # dimension_group `datatype` -> Ossie `datatype`. Looker's default is
 # timestamp. epoch and yyyymmdd store a number, not a temporal value.
@@ -554,7 +553,7 @@ def _convert_dimension(view_name, dim, dimensions, groups):
     if lookml_type not in _VALUE_TYPES:
         _warn(scope, f"type '{lookml_type}' has no Ossie form; skipping")
         return None
-    datatype = _DATATYPES.get(lookml_type) or _DATE_TYPES.get(lookml_type)
+    datatype = _DATATYPES.get(lookml_type)
     return _build_field(view_name, dim, name, datatype, scope, dimensions, groups)
 
 
@@ -779,9 +778,8 @@ class _MetricBuilder:
         """How a metric names one of this view's fields."""
         return f"{self.alias}.{field}" if explore is not None else field
 
-    def _expression(self, measure, path, new_fields, explore, datasets=None):
-        """Returns the SQL for a measure, over field names. `datasets`
-        collects the aliases its aggregate reads, to check FILTER."""
+    def _expression(self, measure, path, new_fields, explore):
+        """Returns the SQL for a measure, over field names."""
         name = measure["name"]
         if (self.alias, name) in path:
             chain = " -> ".join(n for _, n in path + ((self.alias, name),))
@@ -822,11 +820,11 @@ class _MetricBuilder:
     def _count_rows(self, explore):
         """COUNT(*) in a model-scoped metric would count joined rows, which a
         fanning join multiplies; Looker counts the view's primary keys."""
-        keys = [d["name"] for d in self.dimensions.values() if d.get("primary_key") == "yes"]
-        if not keys or keys[0] not in self.ref_names:
+        keys = self.dataset.get("primary_key")
+        if not keys:
             raise _Unsupported(f"count of view '{self.alias}' in a metric across "
                                "views needs its primary key")
-        return f"COUNT(DISTINCT {self._ref(self.ref_names[keys[0]], explore)})"
+        return f"COUNT(DISTINCT {self._ref(keys[0], explore)})"
 
     def _substitute(self, sql, path, new_fields, explore, read, measures=False):
         """Replaces LookML substitutions in a measure's SQL with field names,
@@ -893,10 +891,7 @@ class _MetricBuilder:
         if not _is_identifier(base):
             raise _Unsupported(f"column {column} is not a valid field name")
         taken = self.taken | set(planned.values())
-        name, n = base, 1
-        while name in taken:
-            name = f"{base}_value" if n == 1 else f"{base}_value_{n}"
-            n += 1
+        name = base if base not in taken else _unique(f"{base}_value", taken)
         planned[column] = name
         return name
 
@@ -1045,10 +1040,7 @@ def _convert_explore(explore, views):
         datasets.append(dataset)
         ref_names[alias] = refs
         builders[alias] = builder
-        primary_keys[alias] = next(
-            (d["name"] for d in view.get("dimensions", []) if d.get("primary_key") == "yes"),
-            None,
-        )
+        primary_keys[alias] = (dataset.get("primary_key") or [None])[0]
 
     relationships = []
     used = set()

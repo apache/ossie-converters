@@ -31,6 +31,7 @@ command still means `export`. Conversions that drop information warn on stderr.
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from .lookml_to_ossie import convert_lookml_to_ossie
 from .ossie_to_lookml import OssieConversionError, convert_ossie_to_lookml
@@ -74,14 +75,9 @@ def _read_lookml(path):
             return {os.path.basename(path): f.read()}
     if not os.path.isdir(path):
         raise OSError(f"'{path}' is not a file or directory")
-    files = {}
-    for dirpath, dirnames, filenames in os.walk(path):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-        for fname in sorted(filenames):
-            if fname.endswith(".lkml"):
-                full = os.path.join(dirpath, fname)
-                with open(full) as f:
-                    files[os.path.relpath(full, path)] = f.read()
+    root = Path(path)
+    files = {str(p.relative_to(root)): p.read_text() for p in sorted(root.rglob("*.lkml"))
+             if not any(part.startswith(".") for part in p.relative_to(root).parts)}
     if not files:
         raise OSError(f"no .lkml files under '{path}'")
     return files
