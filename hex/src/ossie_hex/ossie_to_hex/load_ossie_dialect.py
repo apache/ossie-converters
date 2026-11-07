@@ -17,6 +17,8 @@
 
 from ossie import OssieDialect
 
+from ossie_hex.ossie import OssieDialectName
+
 from .context import ExportContext
 
 
@@ -24,25 +26,23 @@ def load_ossie_dialect(
     ossie_dialect: OssieDialect | str | None,
     *,
     ctx: ExportContext,
-) -> OssieDialect:
-    # Even though OssieDocument specifies `dialects` as a top-level field, this isn't
-    # technically part of the core spec. So we don't use it. Otherwise we would validate
-    # against it and pick the first as a fallback.
+) -> OssieDialectName | None:
+    """
+    Parse an Ossie dialect into a string value.
 
+    Accepts an OssieDialect enum member or a free-form string value. A
+    free-form value is normalized to uppercase.
+
+    Returns the string value of the dialect.
+    """
     if isinstance(ossie_dialect, OssieDialect):
-        return ossie_dialect
+        return ossie_dialect.value
     elif isinstance(ossie_dialect, str):
+        value = ossie_dialect.upper()
         try:
-            value = ossie_dialect.upper()
-            return OssieDialect(value)
+            OssieDialect(value)
         except ValueError:
-            ctx.warn(
-                message=f"Invalid Ossie dialect: {ossie_dialect}. Using ANSI_SQL instead.",
-            )
-            return OssieDialect.ANSI_SQL
+            ctx.info(f"Unknown dialect: {value}.")
+        return value
     else:
-        ctx.info(
-            "No Ossie dialect specified; using ANSI_SQL",
-            code="missing-dialect",
-        )
-        return OssieDialect.ANSI_SQL
+        return None

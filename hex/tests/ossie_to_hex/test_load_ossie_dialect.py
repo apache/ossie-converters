@@ -30,40 +30,48 @@ def ctx() -> ExportContext:
 
 
 @pytest.mark.parametrize("ossie_dialect", list(OssieDialect))
-def test_preserves_enum(ctx: ExportContext, ossie_dialect: OssieDialect) -> None:
+def test_load_enum(ctx: ExportContext, ossie_dialect: OssieDialect) -> None:
     result = load_ossie_dialect(ossie_dialect, ctx=ctx)
-    assert result is ossie_dialect
+
+    assert result == ossie_dialect.value
+    assert type(result) is str
     assert not ctx.problems
 
 
 @pytest.mark.parametrize("ossie_dialect", list(OssieDialect))
-def test_parses_valid_string(ctx: ExportContext, ossie_dialect: OssieDialect) -> None:
+def test_load_wellknown_string(ctx: ExportContext, ossie_dialect: OssieDialect) -> None:
     result = load_ossie_dialect(ossie_dialect.value, ctx=ctx)
-    assert result is ossie_dialect
+
+    assert result == ossie_dialect.value
     assert not ctx.problems
 
 
 @pytest.mark.parametrize("ossie_dialect", list(OssieDialect))
-def test_parses_lowercase_string(
+def test_load_wellknown_lowercase_string(
     ctx: ExportContext, ossie_dialect: OssieDialect
 ) -> None:
     result = load_ossie_dialect(ossie_dialect.value.lower(), ctx=ctx)
-    assert result is ossie_dialect
+
+    assert result == ossie_dialect.value
     assert not ctx.problems
 
 
-def test_warns_and_defaults_for_invalid_string(ctx: ExportContext) -> None:
-    ossie_dialect = "not_a_dialect"
+def test_load_freeform_string() -> None:
+    ctx = ExportContext()
+    ossie_dialect = "UNKNOWN_DIALECT"
+
     result = load_ossie_dialect(ossie_dialect, ctx=ctx)
-    assert result is OssieDialect.ANSI_SQL
+
+    assert result == ossie_dialect
     assert problems_snapshot(ctx.problems) == snapshot(
-        "[WARNING] Invalid Ossie dialect: not_a_dialect. Using ANSI_SQL instead."
+        "[INFO] Unknown dialect: UNKNOWN_DIALECT."
     )
 
 
-def test_defaults_when_missing(ctx: ExportContext) -> None:
-    result = load_ossie_dialect(None, ctx=ctx)
-    assert result is OssieDialect.ANSI_SQL
-    assert problems_snapshot(ctx.problems) == snapshot(
-        "[INFO] No Ossie dialect specified; using ANSI_SQL"
-    )
+def test_load_none(ctx: ExportContext) -> None:
+    ossie_dialect = None
+
+    result = load_ossie_dialect(ossie_dialect, ctx=ctx)
+
+    assert result is None
+    assert not ctx.problems
