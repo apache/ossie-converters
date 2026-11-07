@@ -25,6 +25,25 @@ examples, validation script, and shared Python package come from
 submodule, so clone with `--recurse-submodules` (or run
 `git submodule update --init`).
 
+## Filing issues
+
+Use one of the issue forms and pick the converter the issue is about; the
+issue is labeled `converter/<name>` automatically, so converter maintainers can
+filter for it. Requests for a converter that doesn't exist yet go in the
+**New converter** form and are labeled `new-converter`.
+
+## Adding a new converter
+
+When you add a converter, also:
+
+1. Add its `converter/<name>` path entry to `.github/labeler.yml`.
+2. Add a `converter-<name>-ci.yml` workflow under `.github/workflows/`.
+3. Add `<name>` to the **Converter** dropdown in both
+   `.github/ISSUE_TEMPLATE/bug_report.yml` and
+   `.github/ISSUE_TEMPLATE/feature_request.yml`.
+
+`dev/check-issue-templates` runs in CI and fails if these fall out of sync.
+
 ## Bumping the `ossie` submodule pin
 
 The pin is the submodule gitlink at path `ossie` (not a version file); read it
