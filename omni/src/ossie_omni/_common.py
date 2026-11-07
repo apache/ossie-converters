@@ -26,6 +26,7 @@ Ossie expressions use.
 
 import datetime
 import json
+import os
 import re
 
 import yaml
@@ -76,6 +77,65 @@ _OMNI_REF_RE = re.compile(r"\$\{\s*([^}]*?)\s*\}")
 
 class ConversionError(Exception):
     """Raised when an input cannot be converted."""
+
+
+def safe_relative_path(path, what):
+    """Validate a stashed file path before it is used as an output filename.
+
+    The stash is part of the input document, so a path in it is untrusted: an entry
+    like `../../x.yaml` in `extra_files` would make export write outside the
+    directory the caller named. Refuses anything that is not a plain relative path
+    inside the output root.
+    """
+    if not isinstance(path, str):
+        raise ConversionError(
+            f"{what}: stashed file path must be a string, got {type(path).__name__}")
+    if "\x00" in path:
+        raise ConversionError(f"{what}: stashed file path contains a NUL byte")
+    if not path.strip():
+        raise ConversionError(f"{what}: stashed file path is empty")
+    if path.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", path):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' is absolute; expected a path "
+            f"relative to the output directory")
+    parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".")]
+    # A drive on any component makes ntpath.join reset to it, so check each one.
+    if any(re.match(r"^[A-Za-z]:", p) for p in parts):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' is absolute; expected a path "
+            f"relative to the output directory")
+    if any(p == ".." for p in parts):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' escapes the output directory")
+    # Windows strips trailing spaces and dots from each component when it opens a
+    # file, so `.. ` would turn into `..` there. No Omni file name ends that way.
+    if any(p.endswith((" ", ".")) for p in parts):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' has a component ending in a "
+            f"space or dot")
+    if not parts:
+        raise ConversionError(f"{what}: stashed file path '{path}' names no file")
+    return "/".join(parts)
+
+
+def contained_output_path(root, rel):
+    """Join an exported file's `/`-separated relative path onto the output
+    directory, refusing a result that resolves outside it.
+
+    safe_relative_path() checks the string; this checks what the OS will actually
+    open, after Windows path normalization and any symlinks already inside the
+    output directory.
+    """
+    dest = os.path.join(root, *rel.split("/"))
+    real_root = os.path.realpath(root)
+    try:
+        contained = os.path.commonpath(
+            [real_root, os.path.realpath(dest)]) == real_root
+    except ValueError:  # different drives on Windows
+        contained = False
+    if not contained:
+        raise ConversionError(f"output path '{rel}' escapes the output directory")
+    return dest
 
 
 def require(obj, key, what):
