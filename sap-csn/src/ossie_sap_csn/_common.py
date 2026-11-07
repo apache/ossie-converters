@@ -40,6 +40,10 @@ OSSIE_AI_CONTEXT = "@Ossie.aiContext"
 OSSIE_EXTENSIONS = "@Ossie.customExtensions"
 OSSIE_IS_TIME = "@Ossie.isTime"
 OSSIE_METRIC = "@Ossie.metric"
+# On a derived measure: the metric is dataset-scoped (`datasets[].metrics`), not model-scoped.
+OSSIE_DATASET_METRIC = "@Ossie.datasetMetric"
+# On an entity: the dataset-scoped metrics no measure element can express.
+OSSIE_METRICS = "@Ossie.metrics"
 OSSIE_SQL = "@Ossie.sql"
 # The full key lists, written only when a key names a column CSN has no element for.
 OSSIE_PRIMARY_KEY = "@Ossie.primaryKey"
@@ -50,6 +54,8 @@ OSSIE_ANNOTATIONS = frozenset(
         OSSIE_EXTENSIONS,
         OSSIE_IS_TIME,
         OSSIE_METRIC,
+        OSSIE_DATASET_METRIC,
+        OSSIE_METRICS,
         OSSIE_SQL,
         OSSIE_PRIMARY_KEY,
         OSSIE_UNIQUE_KEYS,
@@ -58,6 +64,8 @@ OSSIE_ANNOTATIONS = frozenset(
 
 # `meta.ossie` on the CSN root holds what has no element-level home.
 META_KEY = "ossie"
+# `meta.creator` export writes when the CSN names no creator of its own.
+CREATOR = "apache-ossie-sap-csn"
 
 # Aggregations `@Aggregation.default` can carry that Ossie metrics express.
 AGGREGATIONS = ("SUM", "MIN", "MAX", "AVG", "COUNT", "COUNT_DISTINCT")

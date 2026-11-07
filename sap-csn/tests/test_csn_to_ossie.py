@@ -286,3 +286,158 @@ def test_element_named_like_a_sql_keyword_yields_valid_expressions():
     fields = by_name(CsnToOssieConverter().convert(csn).output.datasets[0].fields)
     assert sql_of(fields["from"]) == '"from"'
     assert sql_of(fields["plus"]) == '"from" + 1'
+
+
+def _two_entities(**extra_elements):
+    return {
+        "definitions": {
+            "A": {
+                "kind": "entity",
+                "elements": {
+                    "id": {"key": True, "type": "cds.Integer"},
+                    "b_id": {"type": "cds.Integer"},
+                    "amount": {"type": "cds.Decimal"},
+                    **extra_elements,
+                },
+            },
+            "B": {"kind": "entity", "elements": {"id": {"key": True, "type": "cds.Integer"}}},
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "on",
+    [
+        [{"ref": []}, "=", {"ref": ["b_id"]}],
+        [{"ref": ["b", "id"]}, "=", {"ref": []}],
+        [{"ref": ["b", "id"]}, "=", {"ref": ["$projection"]}],
+        [{"ref": ["b", "id"]}, "=", {"ref": ["$user", "id"]}],
+        [{"ref": ["b", "id"]}, "=", {"ref": "b_id"}],
+        [{"ref": ["b", "id"]}, "=", {"ref": ["b_id"]}, "and"],
+        [{"xpr": "b.id = b_id"}],
+        {"xpr": [{"ref": ["b", "id"]}, "=", {"ref": ["b_id"]}]},
+        "b.id = b_id",
+        [],
+    ],
+)
+def test_malformed_on_condition_is_kept_aside_not_a_crash(on):
+    csn = _two_entities(b={"type": "cds.Association", "target": "B", "on": on})
+    result = CsnToOssieConverter().convert(csn)
+    assert not result.output.relationships
+    assert [i.element_name for i in issues_of(result, ConverterIssueType.RELATIONSHIP_DROPPED)] == ["A.b"]
+    a = by_name(result.output.datasets)["A"]
+    assert sap_ext(a)["unmodeled_elements"]["b"]["on"] == on
+
+
+def test_type_of_reference_resolves_to_the_referenced_type():
+    csn = _two_entities(copy={"type": {"ref": ["A", "amount"]}}, loop={"type": {"ref": ["A", "loop"]}})
+    result = CsnToOssieConverter().convert(csn)
+    fields = by_name(by_name(result.output.datasets)["A"].fields)
+    assert fields["copy"].datatype.value == "Decimal"
+    assert fields["loop"].datatype.value == "Opaque"  # a cycle resolves to nothing
+    assert OssieToCsnConverter().convert(result.output).output["definitions"]["A"]["elements"]["copy"] == {
+        "type": {"ref": ["A", "amount"]}
+    }
+
+
+@pytest.mark.parametrize(
+    "measure",
+    [
+        # An expression the importer cannot parse as SQL.
+        {"@Ossie.sql": {"dialect": "ANSI_SQL", "expression": "amount ?: 0"}},
+        # An expression in another dialect cannot be wrapped in an ANSI_SQL aggregate.
+        {"@Ossie.sql": {"dialect": "DAX", "expression": "SUMX(A, A[amount])"}},
+    ],
+)
+def test_derived_measure_without_a_metric_expression_is_kept_aside(measure):
+    element = {"type": "cds.Decimal", "@Aggregation.default": {"#": "SUM"}, "@Ossie.metric": True, **measure}
+    csn = _two_entities(total=element)
+    result = CsnToOssieConverter().convert(csn)
+    # No metric falls back to aggregating `total` itself, which is not a field.
+    assert not result.output.metrics
+    assert "total" not in by_name(by_name(result.output.datasets)["A"].fields)
+    assert [i.element_name for i in issues_of(result, ConverterIssueType.METRIC_NOT_MODELED)] == ["A.total"]
+    assert OssieToCsnConverter().convert(result.output).output["definitions"]["A"]["elements"]["total"] == element
+
+
+def test_measure_flag_on_a_stored_column_keeps_the_field():
+    csn = _two_entities(total={"type": "cds.Decimal", "@Aggregation.default": {"#": "SUM"}, "@Ossie.metric": True})
+    result = CsnToOssieConverter().convert(csn)
+    assert "total" in by_name(by_name(result.output.datasets)["A"].fields)
+    assert [sql_of(m) for m in result.output.metrics] == ["SUM(A.total)"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"ref": ["amount"], "cast": "cds.Integer"},
+        {"xpr": [{"ref": ["amount"]}, "in", {"list": 5}]},
+        {"func": "f", "args": [{"xpr": 3}]},
+        {"xpr": [{"ref": ["amount"]}, "?:", {"val": 0}]},
+        {"func": "rank", "args": [], "xpr": ["over", {"xpr": ["order by", {"ref": ["amount"]}]}]},
+        {"ref": ["p"], "param": True},
+    ],
+)
+def test_calculated_element_with_a_malformed_or_unknown_shape_is_kept_aside(value):
+    result = CsnToOssieConverter().convert(_two_entities(calc={"type": "cds.Decimal", "value": value}))
+    assert [i.element_name for i in issues_of(result, ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE)] == ["A.calc"]
+    assert sap_ext(by_name(result.output.datasets)["A"])["unmodeled_elements"]["calc"]["value"] == value
+
+
+def _with(path, value):
+    csn = _two_entities()
+    node = csn
+    for key in path[:-1]:
+        node = node.setdefault(key, {})
+    node[path[-1]] = value
+    return csn
+
+
+@pytest.mark.parametrize(
+    "csn",
+    [
+        _with(["definitions", "A", "elements"], [1]),
+        _with(["definitions", "A", "elements", "x"], {"type": "cds.Integer", "@Ossie.aiContext": 5}),
+        _with(["definitions", "A", "elements", "x"], {"type": "cds.Integer", "@Ossie.customExtensions": [{"nope": 1}]}),
+        _with(["definitions", "A", "elements", "x"], {"type": "cds.Integer", "@Ossie.sql": {"dialect": "NOPE", "expression": "x"}}),
+        _with(["definitions", "A", "@Ossie.uniqueKeys"], [5]),
+        _with(["definitions", "A", "@Ossie.primaryKey"], [1]),
+        _with(["definitions", "A", "@Ossie.metrics"], {"name": "m"}),
+        _with(["meta", "ossie", "metrics"], 5),
+        _with(["meta", "ossie", "metrics"], [{"name": "m"}]),
+    ],
+)
+def test_malformed_ossie_payload_is_a_converter_error_not_a_crash(csn):
+    with pytest.raises(ConverterError):
+        CsnToOssieConverter().convert(csn)
+
+
+def test_dataset_metric_flag_restores_dataset_scope():
+    element = {
+        "type": "cds.Decimal",
+        "value": {"ref": ["amount"]},
+        "@Aggregation.default": {"#": "SUM"},
+        "@Ossie.metric": True,
+        "@Ossie.datasetMetric": True,
+    }
+    result = CsnToOssieConverter().convert(_two_entities(total=element))
+    a = by_name(result.output.datasets)["A"]
+    assert [(m.name, sql_of(m)) for m in a.metrics] == [("total", "SUM(amount)")]
+    assert not result.output.metrics
+    validate_against_schema(result.output)
+
+
+def test_dataset_metric_flag_on_an_expression_reaching_another_entity_is_model_scoped():
+    element = {
+        "type": "cds.Integer",
+        "value": {"ref": ["b", "id"]},
+        "@Aggregation.default": {"#": "COUNT_DISTINCT"},
+        "@Ossie.metric": True,
+        "@Ossie.datasetMetric": True,
+    }
+    csn = _two_entities(
+        b={"type": "cds.Association", "target": "B", "on": [{"ref": ["b", "id"]}, "=", {"ref": ["b_id"]}]}, n=element
+    )
+    result = CsnToOssieConverter().convert(csn)
+    assert not by_name(result.output.datasets)["A"].metrics
+    assert [sql_of(m) for m in result.output.metrics] == ["COUNT(DISTINCT B.id)"]

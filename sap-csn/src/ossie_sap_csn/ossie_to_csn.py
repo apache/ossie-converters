@@ -28,15 +28,18 @@ Mapping:
   ``on`` condition;
 * a metric becomes ``@Aggregation.default`` on the element it aggregates, or a
   derived measure element when it aggregates an expression of one dataset;
+* a dataset-scoped metric (``datasets[].metrics``) becomes a derived measure element
+  of its own entity, marked ``@Ossie.datasetMetric`` so import restores its scope;
 * a metric CSN cannot express (several datasets, ``COUNT(*)``, a ratio, ...) goes
-  into ``meta.ossie.metrics``, which this converter reads back and other CSN
-  consumers ignore.
+  into ``meta.ossie.metrics`` (a dataset-scoped one into its entity's
+  ``@Ossie.metrics``), which this converter reads back and other CSN consumers ignore.
 
 Ossie content with no CSN equivalent (AI context, other vendors' extensions)
 rides in ``@Ossie.*`` annotations, which CSN permits and consumers ignore.
 """
 
 import re
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from ossie import OssieDataset, OssieDocument, OssieField, OssieMetric, OssieRelationship
@@ -49,7 +52,7 @@ from ossie_sap_csn.converter_issues import (
     ConverterIssueType,
     ConverterResult,
 )
-from ossie_sap_csn.cxn import UnsupportedExpression, parse_sql, sql_to_cxn
+from ossie_sap_csn.cxn import ColumnResolver, UnsupportedExpression, parse_sql, sql_to_cxn
 from ossie_sap_csn.datatypes import builtin_type, cds_type, ossie_datatype
 
 _PERSISTENCE_NAME = "@cds.persistence.name"
@@ -76,6 +79,16 @@ class _Metric:
         self.inner = inner
 
 
+@dataclass(frozen=True)
+class _Measure:
+    """A metric exported as a derived measure element, with the CXN of what it aggregates."""
+
+    metric: OssieMetric
+    aggregation: str
+    value: dict[str, Any]
+    dataset_scoped: bool
+
+
 def _parse_aggregate(sql: str) -> Optional[_Metric]:
     try:
         tree = parse_sql(sql)
@@ -94,6 +107,35 @@ def _parse_aggregate(sql: str) -> Optional[_Metric]:
 
 def _identifier(name: str) -> str:
     return _IDENTIFIER_UNSAFE.sub("_", name)
+
+
+def _witness(ext: dict[str, Any], sql: Optional[str]) -> Any:
+    """The CXN an import read ``sql`` from, while ``sql`` is still what it rendered as."""
+    if sql is not None and ext.get("value") is not None and ext.get("value_sql") == sql:
+        return ext["value"]
+    return None
+
+
+def _column_resolver(dataset_name: str, plans: list[dict[str, Any]]) -> ColumnResolver:
+    """How a column ``table.col`` in an expression of ``dataset_name`` is written in CXN."""
+    # A path through an association (`customer.name`) is how CXN reaches another entity.
+    assoc_to_dataset: dict[str, list[str]] = {}
+    for p in plans:
+        assoc_to_dataset.setdefault(p["rel"].to, []).append(p["name"])
+
+    def resolve_column(table: Optional[str], column: str) -> list[str]:
+        if table is None or table == dataset_name:
+            return [column]
+        if len(assoc_to_dataset.get(table, [])) > 1:
+            raise UnsupportedExpression(
+                f"column {table}.{column} is reached through several associations "
+                f"({', '.join(assoc_to_dataset[table])}), so the path is ambiguous"
+            )
+        if table in assoc_to_dataset:
+            return [assoc_to_dataset[table][0], column]
+        raise UnsupportedExpression(f"column {table}.{column} reaches a dataset with no association from here")
+
+    return resolve_column
 
 
 class OssieToCsnConverter:
@@ -139,7 +181,7 @@ class OssieToCsnConverter:
         csn_residue = dict(model_ext.get("csn") or {})
         csn["$version"] = csn_residue.pop("$version", "2.0")
         meta = dict(csn_residue.pop("meta", None) or {})
-        meta.setdefault("creator", "apache-ossie-sap-csn")
+        meta.setdefault("creator", c.CREATOR)
         for key, value in csn_residue.items():
             csn[key] = value
 
@@ -220,18 +262,32 @@ class OssieToCsnConverter:
         plans: dict[str, list[dict[str, Any]]],
         issues: list[ConverterIssue],
     ) -> dict[str, Any]:
-        """Decide for each metric whether it is an annotation, a derived measure, or ``meta``."""
+        """Decide for each metric whether it is an annotation, a derived measure, or carried.
+
+        A model-scoped metric CSN cannot express is carried in ``meta``; a dataset-scoped
+        one in ``carried``, for its entity's ``@Ossie.metrics`` annotation.
+        """
         annotate: dict[tuple[str, str], tuple[OssieMetric, str]] = {}  # (dataset, field) -> (metric, aggregation)
-        derived: dict[str, list[tuple[OssieMetric, _Metric]]] = {n: [] for n in datasets}
+        derived: dict[str, list[_Measure]] = {n: [] for n in datasets}
         in_meta: list[OssieMetric] = []
+        carried: dict[str, list[OssieMetric]] = {n: [] for n in datasets}
         element_names = {n: {f.name for f in (d.fields or [])} for n, d in datasets.items()}
         # An association is an element too, so a measure may not take its name.
         taken_names = {n: element_names[n] | {p["name"] for p in plans[n]} for n in datasets}
+        measure_names: dict[str, set[str]] = {n: set() for n in datasets}
+        model_measure_names: set[str] = set()
+        resolvers = {n: _column_resolver(n, plans[n]) for n in datasets}
         # A dataset reached by two associations has no single path to it from here.
         reachable = {
             n: {t for t in (p["rel"].to for p in plans[n]) if sum(q["rel"].to == t for q in plans[n]) == 1}
             for n in datasets
         }
+
+        def measure_value(ds_name: str, inner: exp.Expression) -> "dict[str, Any] | UnsupportedExpression":
+            try:
+                return sql_to_cxn(inner.sql(), resolvers[ds_name])
+            except UnsupportedExpression as exc:
+                return exc
 
         for metric in document.metrics or []:
             sql, other = _select_sql(metric.expression)
@@ -264,21 +320,66 @@ class OssieToCsnConverter:
             plain = isinstance(inner, exp.Column) and not inner.table and inner.name == metric.name and inner.name in element_names[ds_name]
             if plain and (ds_name, metric.name) not in annotate:
                 annotate[(ds_name, metric.name)] = (metric, parsed.aggregation)
-            elif metric.name in taken_names[ds_name] or any(
-                m.name == metric.name for lst in derived.values() for m, _ in lst
-            ):
-                in_meta.append(metric)
+                continue
+            if metric.name in taken_names[ds_name] | measure_names[ds_name] | model_measure_names:
+                reason = f"a measure element named {metric.name!r} would collide with an existing element of the same name"
+            else:
+                value = measure_value(ds_name, inner)
+                if not isinstance(value, UnsupportedExpression):
+                    derived[ds_name].append(_Measure(metric, parsed.aggregation, value, dataset_scoped=False))
+                    measure_names[ds_name].add(metric.name)
+                    model_measure_names.add(metric.name)
+                    continue
+                reason = f"its expression has no CXN translation ({value})"
+            in_meta.append(metric)
+            issues.append(
+                ConverterIssue(
+                    ConverterIssueType.METRIC_NOT_MODELED,
+                    metric.name,
+                    f"CSN cannot hold this metric as a measure element: {reason}; carried in meta.ossie.metrics only.",
+                )
+            )
+
+        for ds_name, dataset in datasets.items():
+            for metric in dataset.metrics or []:
+                where = f"{ds_name}.{metric.name}"
+                sql, other = _select_sql(metric.expression)
+                if sql is None:
+                    carried[ds_name].append(metric)
+                    issues.append(
+                        ConverterIssue(
+                            ConverterIssueType.DIALECT_UNAVAILABLE,
+                            where,
+                            f"Dataset metric has no ANSI_SQL expression (only {other.split(':')[0]}); "
+                            f"carried in an {c.OSSIE_METRICS} annotation only.",
+                        )
+                    )
+                    continue
+                parsed = _parse_aggregate(sql)
+                columns = list(parsed.inner.find_all(exp.Column)) if parsed else []
+                if parsed is None:
+                    reason = f"{sql!r} is not one aggregation of an expression"
+                elif any(col.table for col in columns) or not {col.name for col in columns} <= element_names[ds_name]:
+                    reason = f"{sql!r} names something other than the dataset's own fields"
+                elif metric.name in taken_names[ds_name] | measure_names[ds_name]:
+                    reason = f"a measure element named {metric.name!r} would collide with an existing element of the same name"
+                else:
+                    value = measure_value(ds_name, parsed.inner)
+                    if not isinstance(value, UnsupportedExpression):
+                        derived[ds_name].append(_Measure(metric, parsed.aggregation, value, dataset_scoped=True))
+                        measure_names[ds_name].add(metric.name)
+                        continue
+                    reason = f"its expression has no CXN translation ({value})"
+                carried[ds_name].append(metric)
                 issues.append(
                     ConverterIssue(
                         ConverterIssueType.METRIC_NOT_MODELED,
-                        metric.name,
-                        f"A measure element named {metric.name!r} would collide with an existing element "
-                        "of the same name; carried in meta.ossie.metrics only.",
+                        where,
+                        f"CSN cannot hold this dataset metric as a measure element: {reason}; "
+                        f"carried in an {c.OSSIE_METRICS} annotation only.",
                     )
                 )
-            else:
-                derived[ds_name].append((metric, _Metric(parsed.aggregation, inner)))
-        return {"annotate": annotate, "derived": derived, "meta": in_meta}
+        return {"annotate": annotate, "derived": derived, "meta": in_meta, "carried": carried}
 
     @staticmethod
     def _home(
@@ -345,23 +446,7 @@ class OssieToCsnConverter:
                 )
             )
 
-        # A path through an association (`customer.name`) is how CXN reaches another entity.
-        assoc_to_dataset: dict[str, list[str]] = {}
-        for p in plans:
-            assoc_to_dataset.setdefault(p["rel"].to, []).append(p["name"])
-
-        def resolve_column(table: Optional[str], column: str) -> list[str]:
-            if table is None or table == dataset.name:
-                return [column]
-            if len(assoc_to_dataset.get(table, [])) > 1:
-                raise UnsupportedExpression(
-                    f"column {table}.{column} is reached through several associations "
-                    f"({', '.join(assoc_to_dataset[table])}), so the path is ambiguous"
-                )
-            if table in assoc_to_dataset:
-                return [assoc_to_dataset[table][0], column]
-            raise UnsupportedExpression(f"column {table}.{column} reaches a dataset with no association from here")
-
+        resolve_column = _column_resolver(dataset.name, plans)
         primary_key = set(dataset.primary_key or [])
         if not primary_key <= modeled:
             entity[c.OSSIE_PRIMARY_KEY] = list(dataset.primary_key)
@@ -389,8 +474,11 @@ class OssieToCsnConverter:
             elements[plan["name"]] = self._association(plan, primary_key)
 
         measures = metric_homes["derived"][dataset.name]
-        for metric, parsed in measures:
-            elements[metric.name] = self._derived_measure(dataset, metric, parsed, resolve_column, issues)
+        for measure in measures:
+            elements[measure.metric.name] = self._derived_measure(dataset, measure, issues)
+        carried = metric_homes["carried"][dataset.name]
+        if carried:
+            entity[c.OSSIE_METRICS] = [m.model_dump(mode="json", by_alias=True, exclude_none=True) for m in carried]
         # Only for an entity authored in Ossie: one read from CSN keeps the category it had.
         authored_here = not ext
         if authored_here and (measures or any(k[0] == dataset.name for k in annotate)):
@@ -432,6 +520,8 @@ class OssieToCsnConverter:
                     "with the original expression in an @Ossie.sql annotation.",
                 )
             )
+        elif (witness := _witness(ext, sql)) is not None:
+            element["value"] = witness
         else:
             try:
                 cxn = sql_to_cxn(sql, resolve_column)
@@ -467,28 +557,21 @@ class OssieToCsnConverter:
             element[key] = value
         return element
 
-    def _derived_measure(
-        self,
-        dataset: OssieDataset,
-        metric: OssieMetric,
-        parsed: _Metric,
-        resolve_column: Any,
-        issues: list[ConverterIssue],
-    ) -> dict[str, Any]:
+    def _derived_measure(self, dataset: OssieDataset, measure: _Measure, issues: list[ConverterIssue]) -> dict[str, Any]:
+        metric = measure.metric
         where = f"{dataset.name}.{metric.name}"
         ext = c.read_vendor_extension(metric.custom_extensions, f"metric {metric.name!r}")
         measure_ext = ext.get("measure") or {}
         datatype = metric.datatype.value if metric.datatype else None
-        if datatype is None and parsed.aggregation in ("COUNT", "COUNT_DISTINCT"):
+        if datatype is None and measure.aggregation in ("COUNT", "COUNT_DISTINCT"):
             datatype = "Integer"
         element: dict[str, Any] = {"type": self._type(datatype, measure_ext.get("type"), where, issues)}
-        try:
-            element["value"] = sql_to_cxn(parsed.inner.sql(), resolve_column)
-        except UnsupportedExpression as exc:
-            # Unreachable for metrics that passed placement unless a column path is unresolvable.
-            raise ConverterError(f"{where}: {exc}") from exc
-        element[c.AGGREGATION_KEY] = c.enum_annotation(parsed.aggregation)
+        witness = _witness(measure_ext, _select_sql(metric.expression)[0])
+        element["value"] = measure.value if witness is None else witness
+        element[c.AGGREGATION_KEY] = c.enum_annotation(measure.aggregation)
         element[c.OSSIE_METRIC] = True
+        if measure.dataset_scoped:
+            element[c.OSSIE_DATASET_METRIC] = True
         if metric.description:
             element["doc"] = metric.description
         if measure_ext.get("label"):
