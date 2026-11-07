@@ -21,7 +21,7 @@ from .context import ExportContext
 
 
 def pick_ossie_dialect_expression(
-    ossie_dialect_expressions: list[OssieDialectExpression],
+    ossie_dialect_expressions: list[OssieDialectExpression] | None,
     *,
     ctx: ExportContext,
 ) -> OssieDialectExpression | None:
@@ -32,7 +32,7 @@ def pick_ossie_dialect_expression(
     Returns a dialect expression or None if no fallback is found.
     """
     fallback: OssieDialectExpression | None = None
-    for entry in ossie_dialect_expressions:
+    for entry in ossie_dialect_expressions or []:
         if entry.dialect == ctx.ossie_dialect:
             return entry
         # fallback preference: (1) ansi sql, (2) first in the list

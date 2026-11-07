@@ -74,7 +74,7 @@ def build_expression(formula: str, dataset_alias: Optional[str] = None) -> Ossie
 
 def sigma_dialect_text(expression: OssieExpression) -> Optional[str]:
     """Return the raw Sigma formula text from *expression*, if a ``SIGMA`` dialect entry exists."""
-    for dialect_expr in expression.dialects:
+    for dialect_expr in expression.dialects or []:
         if dialect_expr.dialect == OssieDialect.SIGMA:
             return dialect_expr.expression
     return None
@@ -82,7 +82,7 @@ def sigma_dialect_text(expression: OssieExpression) -> Optional[str]:
 
 def ansi_sql_text(expression: OssieExpression) -> Optional[str]:
     """Return the ``ANSI_SQL`` dialect entry from *expression*, if present."""
-    for dialect_expr in expression.dialects:
+    for dialect_expr in expression.dialects or []:
         if dialect_expr.dialect == OssieDialect.ANSI_SQL:
             return dialect_expr.expression
     return None
