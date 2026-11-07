@@ -21,8 +21,9 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "lkml>=1.3",
     "pytest>=8.0",
+    # Test-only: validates converted documents with ossie/validation/validate.py.
+    "jsonschema>=4.26.0",
 ]
 
 [project]
@@ -41,6 +42,7 @@ keywords = [
     "Looker"
 ]
 dependencies = [
+    "lkml>=1.3",
     "PyYAML>=5.0",
     "sqlglot>=30.12.0",
 ]
