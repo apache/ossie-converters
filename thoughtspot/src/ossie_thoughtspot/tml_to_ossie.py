@@ -1954,6 +1954,33 @@ def _build_dataset(prefix: str, entry: dict, table_doc, log: IssueLog) -> tuple[
         # field) already carries this same query text, so a stash entry
         # here would be a pure duplicate nothing ever reads back.
         source = body.get("sql_query") or ""
+        if not source.strip():
+            # A SQL View IS its query, so without one there is no source to
+            # write and the dataset's `source` would go out empty -- which
+            # `minLength: 1` disallows, and which this converter's own
+            # to-tml leg now refuses. Emitting it silently meant to-ossie
+            # produced a document to-tml would not read back; raised by
+            # @jbonofre reviewing apache/ossie-converters#102.
+            #
+            # ERROR, not a raised ConversionError: the module reports a
+            # semantic defect in one object as an issue and keeps
+            # converting the rest (TS-DATASET-RLS-RULES is the precedent),
+            # and ERROR already makes the CLI exit non-zero. One malformed
+            # view should not abort a whole model's conversion.
+            log.add(
+                code="TS-SQL-VIEW-NO-QUERY",
+                severity=Severity.ERROR,
+                message=(
+                    f"SQL View {table_ref!r} has no sql_query; a SQL View is "
+                    f"defined by its query, so the dataset has no source to "
+                    f"write and the emitted document will not convert back"
+                ),
+                object_ref=f"dataset:{prefix}",
+                remedy=(
+                    "Re-export the SQL View from ThoughtSpot, or add its "
+                    "sql_query to the TML before converting."
+                ),
+            )
     else:
         db = body.get("db") or ""
         schema = body.get("schema") or ""
