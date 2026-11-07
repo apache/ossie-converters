@@ -330,24 +330,34 @@ code as the matrix, so preparation, timeouts, diagnostics and validation behave
 the same. The returned document is then graded against the fixture by the pinned
 core grader (`ossie/compliance/portability/grader/grade.py`), element by element:
 PORTABLE, RELABELED, REWRITTEN, SURVIVED_VENDOR_ONLY, PLACEHOLDER, DROPPED_DIAGNOSED,
-DROPPED_SILENT, ADDED, or REJECTED. The commands' stdout and stderr are the
-diagnostics that separate a diagnosed drop from a silent one. A failed export or
-re-import, or a return with nothing in it, is graded against an empty document,
-which the grader reports as REJECTED. A skip is not graded.
+DROPPED_SILENT, ADDED, or REJECTED. The diagnostics that separate a diagnosed
+drop from a silent one are the converter diagnostics the matrix reports (every
+key the converter wrote, such as ThoughtSpot's `object_ref`), not the raw command
+output, so success messages and file paths do not count. A failed export or
+re-import (including one that wrote a document and then exited non-zero), or a
+return with nothing in it, is graded against an empty document, which the grader
+reports as REJECTED. A skip is not graded. A case the grader cannot grade keeps
+its round-trip grade, shows the grader error in the report, and is not a harness
+error.
 
 A mode re-imports with a second command for the same converter (an opt-in flag
 such as Microsoft's `--translate-dax`). It shares the converter's preparation and
-export, and `--converters` keeps a mode only when its converter is selected.
+re-imports the export of the converter's own case, so the two rows grade the same
+export. `--converters` keeps a mode only when its converter is selected.
 
-The report's portability section totals the metric outcomes per converter or mode:
-`portable` (PORTABLE, RELABELED, and REWRITTEN the grader proves cosmetic),
-`review` (other REWRITTEN), `vendor`, `placeholder`, `dropped`, `rejected`, `added`
-(invented by the converter, not counted in `authored`), and `other` (an outcome a
-newer grader adds). Per-case results with every finding are saved under
-`portability/<variant>--to--<converter>/`. Scores are evidence about the round
-trip, not a pass: they never change the exit status, with or without `--strict`.
-The grader compares normalized sqlglot trees, so REWRITTEN can be cosmetic or a
-change in meaning; an execution check can take the same graded report per case.
+The report's portability section totals the outcomes per converter or mode, in
+one table for metrics and one for fields: `portable` (PORTABLE, a RELABELED to the
+other portable tag, and a REWRITTEN the grader proves cosmetic), `review` (a
+REWRITTEN the grader cannot prove cosmetic, or an element returned under another
+name), `vendor` (SURVIVED_VENDOR_ONLY, and a RELABELED to a vendor tag),
+`placeholder`, `dropped`, `rejected`, `added` (invented by the converter, not
+counted in `authored`), and `other` (an outcome, or a grader detail, this table
+cannot read, such as one a newer grader adds). Per-case results with every finding
+are saved under `portability/<variant>--to--<converter>/`. Scores are evidence
+about the round trip, not a pass: they never change the exit status, with or
+without `--strict`. The grader compares normalized sqlglot trees, so REWRITTEN can
+be cosmetic or a change in meaning; an execution check can take the same graded
+report per case.
 
 ## Manifest
 
