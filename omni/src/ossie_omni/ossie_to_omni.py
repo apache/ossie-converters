@@ -157,9 +157,11 @@ def _convert_model(model, explicit_base_view, dialect):
     for ds_name, ds in datasets.items():
         vname = view_names[ds_name]
         stashed_file = read_stash(ds).get("file")
+        # Only a missing/null entry means "canonical path"; any other value,
+        # including an empty string, must pass validation.
         view_paths[vname] = (
             safe_relative_path(stashed_file, f"dataset '{ds_name}' file")
-            if stashed_file else view_file(vname))
+            if stashed_file is not None else view_file(vname))
         view, dim_names = _convert_dataset(ds, vname, view_names, dialect)
         files[view_paths[vname]] = dump_yaml(view)
         dims_by_view[vname] = dim_names
@@ -233,7 +235,7 @@ def _convert_model(model, explicit_base_view, dialect):
                     topic["ai_context"] = instructions
             tpath = topic_paths.get(tname)
             tpath = (safe_relative_path(tpath, f"topic '{tname}' file")
-                     if tpath else topic_file(tname))
+                     if tpath is not None else topic_file(tname))
             files[tpath] = dump_yaml(topic)
     else:
         tname = sanitize_name(name, f"Model '{name}'", set())

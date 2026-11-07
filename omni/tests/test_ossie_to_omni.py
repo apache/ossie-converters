@@ -413,7 +413,9 @@ def _stash_ext(data):
 
 
 @pytest.mark.parametrize("bad", ["../../pwned.txt", "/etc/pwned", "a/../../b", "C:/x", "\\\\srv\\x", " ",
-                                 "views/C:evil.yaml", "a\x00b"])
+                                 "views/C:evil.yaml", "a\x00b", "",
+                                 # Windows trims trailing spaces/dots: `.. ` opens as `..`.
+                                 ".. /secret.yaml", "a/... /b", "views/x.yaml.", "views /x.yaml"])
 @pytest.mark.parametrize("where", ["extra_files", "topic_files", "dataset_file"])
 def test_stashed_paths_cannot_escape_output_dir(where, bad):
     if where == "extra_files":
@@ -435,8 +437,30 @@ def test_stashed_relative_path_is_normalized():
     assert "sub/q.view" in files
 
 
-def test_stashed_non_string_path_is_rejected():
-    document = parse(minimal())
-    document["datasets"][0]["custom_extensions"] = _stash_ext({"file": ["a", "b"]})
+@pytest.mark.parametrize("bad", [["a", "b"], [], 0, False])
+@pytest.mark.parametrize("where", ["topic_files", "dataset_file"])
+def test_stashed_non_string_path_is_rejected(where, bad):
+    # Falsy values too: only a missing/null entry falls back to the canonical path.
+    if where == "topic_files":
+        text = minimal(custom_extensions=_stash_ext(
+            {"topics": {"t": {}}, "topic_files": {"t": bad}}))
+    else:
+        document = parse(minimal())
+        document["datasets"][0]["custom_extensions"] = _stash_ext({"file": bad})
+        text = dump_yaml(document)
     with pytest.raises(ConversionError, match="must be a string"):
-        export(dump_yaml(document))
+        export(text)
+
+
+@pytest.mark.parametrize("where", ["topic_files", "dataset_file"])
+def test_stashed_null_path_falls_back_to_canonical(where):
+    if where == "topic_files":
+        text = minimal(custom_extensions=_stash_ext(
+            {"topics": {"t": {}}, "topic_files": {"t": None}}))
+        expected = "topics/t.topic.yaml"
+    else:
+        document = parse(minimal())
+        document["datasets"][0]["custom_extensions"] = _stash_ext({"file": None})
+        text = dump_yaml(document)
+        expected = "views/orders.view.yaml"
+    assert expected in export(text)
