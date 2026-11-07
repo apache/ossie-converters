@@ -65,6 +65,10 @@ dimensions:
     - profit
     - margin
 measures:
+  total_quantity:
+    sql: ${ss_quantity}
+    aggregate_type: sum
+    description: Total quantity sold across all store sales
   total_sales:
     sql: ${ss_ext_sales_price}
     aggregate_type: sum

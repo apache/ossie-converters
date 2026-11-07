@@ -41,8 +41,9 @@ schema-qualified view names (`delighted__response`) taken from each file's
 Original file paths are preserved through a round trip.
 
 - **Export** (`ossie-omni export`): Ossie -> Omni files. Datasets become views,
-  relationships become `relationships.yaml` joins, metrics become measures on
-  the view they reference, and the model becomes a topic (rooted at the
+  relationships become `relationships.yaml` joins, dataset-scoped metrics become
+  measures on their owning view, model-scoped metrics become measures on the
+  view they reference, and the model becomes a topic (rooted at the
   fact/FK-sink dataset, or `--base-view`).
 - **Import** (`ossie-omni import`): Omni files -> Ossie. Omni features Ossie has no
   native field for are preserved in `custom_extensions[OMNI]`, so
@@ -119,7 +120,8 @@ specific to **export** (Ossie -> Omni) or **import** (Omni -> Ossie).
 | `field.ai_context` synonyms / instructions | `synonyms` / `ai_context` | |
 | relationship | `relationships.yaml` entry | `from`(many) -> `join_from_view`, `to`(one) -> `join_to_view`, columns -> `on_sql` equi-join. Declared `join_type`/`relationship_type` (even Omni defaults) and any `on_sql` the rebuild would not reproduce (aliases, `and` casing, spacing) are stashed verbatim. |
 | `relationship.name` | -- | Regenerated as `<from>_to_<to>` on import (suffixed `_2`, `_3`, ... when several joins share a view pair). |
-| metric | measure on the view its expression references (else the base view) | `AGG(view.field)` <-> `aggregate_type` + `sql: ${field}`; `COUNT(*)` <-> `aggregate_type: count`; anything else <-> a raw-`sql` measure. |
+| `dataset.metrics[]` | measure on the owning dataset's view | Export: unqualified declared fields (`SUM(net_amount)`) reference the corresponding Omni dimensions, including computed fields. `COUNT(*)` stays on its owning view even when another view is the topic base. |
+| model-root `metrics[]` | measure on the view its expression references (else the base view) | `AGG(view.field)` <-> `aggregate_type` + `sql: ${field}`; `COUNT(*)` <-> `aggregate_type: count`; anything else <-> a raw-`sql` measure. |
 | `metric.description` / `ai_context` | measure `description` / `synonyms` / `ai_context` | |
 | `custom_extensions[OMNI]` | everything Omni-only | Import stashes; export restores -- keeping `Omni -> Ossie -> Omni` lossless. |
 
@@ -152,6 +154,8 @@ something invalid) when an input breaks one of these:
   (multiple FK sinks or a cycle) and `--base-view` is not given;
 - two names sanitize to the same Omni identifier, case-insensitively (never
   silently merged); two view files resolve to the same canonical view name;
+- a dataset-scoped metric collides with a field on the same view, or uses a
+  qualified field reference instead of its own declared fields;
 - a measure has an unknown `aggregate_type`; an import directory has no
   convertible view files; the input YAML is malformed.
 
@@ -170,6 +174,10 @@ something invalid) when an input breaks one of these:
 - A model containing *only* query/extends views (e.g. a pure GA4-export model)
   has nothing to convert and is rejected.
 - Ossie metric order is regrouped by view on import (order is not semantic).
+- Import retains the existing model-root metric representation, qualifying
+  same-view fields and stashing placement when needed. Importing exported
+  dataset-scoped metrics therefore normalizes their Ossie placement, while the
+  resulting Omni measures survive a subsequent export.
 
 ## Development
 
