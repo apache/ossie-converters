@@ -1,0 +1,53 @@
+{
+ "csat": {
+  "name": "csat",
+  "description": "Share of good scores among all good or bad survey answers",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "ROUND(COUNT(CASE WHEN (m.SCORE IN ('good', 'bad')) AND (m.ANSWERED_AT >= DATEADD(DAY, -30, CURRENT_TIMESTAMP())) AND (m.CHANNEL = 'store') THEN CASE WHEN m.SCORE = 'good' THEN 1 END END) * 100.0 / NULLIF(COUNT(CASE WHEN (m.SCORE IN ('good', 'bad')) AND (m.ANSWERED_AT >= DATEADD(DAY, -30, CURRENT_TIMESTAMP())) AND (m.CHANNEL = 'store') THEN CASE WHEN m.SCORE IN ('good', 'bad') THEN 1 END END), 0), 1)",
+   "aggregation": {
+    "type": "custom",
+    "reaggregation": "none"
+   },
+   "output": {
+    "alias": "csat",
+    "datatype": "decimal",
+    "unit": "percent"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.CUSTOMER_SURVEY",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.CUSTOMER_SURVEY",
+    "sql": null,
+    "parameters": [
+     {
+      "name": "window_days",
+      "datatype": "integer",
+      "default": 30
+     }
+    ]
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "answer_date",
+     "sql": "m.ANSWERED_AT",
+     "kind": "time",
+     "datatype": "date",
+     "description": "When the survey was answered."
+    }
+   ],
+   "examples": [
+    {
+     "question": "What is the CSAT for store surveys over the last 30 days?",
+     "sql": "SELECT ROUND(COUNT(CASE WHEN SCORE = 'good' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) FROM TPCDS.PUBLIC.CUSTOMER_SURVEY WHERE SCORE IN ('good','bad') AND CHANNEL = 'store' AND ANSWERED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)",
+     "source": "ossie"
+    }
+   ],
+   "grain": "TPCDS.PUBLIC.CUSTOMER_SURVEY.SURVEY_ID",
+   "population": "Survey answers with a good or bad score"
+  }
+ }
+}

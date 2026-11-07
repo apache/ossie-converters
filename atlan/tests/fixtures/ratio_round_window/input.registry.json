@@ -1,0 +1,56 @@
+{
+ "id": "metric_synth_defective_return_pct",
+ "kind": "metric",
+ "app": "metric",
+ "name": "defective_return_pct",
+ "display_name": "Defective Return Pct",
+ "description": "Share of defective returns among classified returns, and the count of classified returns",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:defective_return_pct",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "defective_return_pct",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [
+    {
+     "sql": "SELECT ROUND(COUNT(CASE WHEN SR_RETURN_REASON='defective' THEN 1 END)*100.0/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END),0),1) AS defective_pct FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_RETURNED_DATE >= '2026-04-01' AND SR_RETURNED_DATE < '2026-07-01'",
+     "source": "query_log"
+    }
+   ],
+   "exclusions": [
+    "returns with other reasons are excluded from the denominator"
+   ],
+   "grain": "aggregate over entire filtered date range",
+   "population": "Store returns with a reason of 'defective' or 'changed_mind'",
+   "provenance": {
+    "source": "query_log",
+    "trust_score": 7.5
+   },
+   "extensions": {},
+   "formula": "SELECT ROUND(COUNT(CASE WHEN SR_RETURN_REASON='defective' THEN 1 END)*100.0/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END),0),1) AS defective_pct, COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END) AS classified_returns FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_RETURNED_DATE >= '2026-04-01' AND SR_RETURNED_DATE < '2026-07-01'",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

@@ -1,0 +1,109 @@
+{
+ "sales_per_shopper": {
+  "name": "sales_per_shopper",
+  "description": "Average store sales per active shopper, by store and state, for active Majors customers.",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT(CASE WHEN (m.SS_CHANNEL = 'store') AND (NOT m.SS_CUSTOMER_EMAIL ILIKE '%@example.com%') AND (t1.C_SEGMENT = 'Majors') AND (t1.C_IS_ACTIVE = TRUE) THEN 1 END) / NULLIF(COUNT(DISTINCT CASE WHEN (m.SS_CHANNEL = 'store') AND (NOT m.SS_CUSTOMER_EMAIL ILIKE '%@example.com%') AND (t1.C_SEGMENT = 'Majors') AND (t1.C_IS_ACTIVE = TRUE) THEN m.SS_CUSTOMER_SK END), 0)",
+   "aggregation": {
+    "type": "ratio",
+    "reaggregation": "not additive: recompute sales and distinct shoppers, then divide",
+    "null_handling": "shoppers with no sales are not counted"
+   },
+   "output": {
+    "alias": "sales_per_shopper",
+    "datatype": "decimal",
+    "unit": "sales per shopper"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "sql": null,
+    "parameters": [
+     {
+      "name": "start_date",
+      "datatype": "date",
+      "default": "2026-03-18"
+     },
+     {
+      "name": "end_date",
+      "datatype": "date",
+      "default": "2026-06-16"
+     }
+    ],
+    "timeframe_column": "m.SS_SOLD_TIMESTAMP"
+   },
+   "joins": [
+    {
+     "name": "t1",
+     "to": "TPCDS.PUBLIC.CUSTOMER",
+     "sql": "LEFT(m.SS_CUSTOMER_ID, 15) = LEFT(t1.C_CUSTOMER_ID, 15)",
+     "cardinality": "many_to_one",
+     "origin": "ossie relationship"
+    },
+    {
+     "name": "t2",
+     "to": "TPCDS.PUBLIC.CUSTOMER_ADDRESS",
+     "sql": "t1.C_CURRENT_ADDR_SK = t2.CA_ADDRESS_SK",
+     "cardinality": "many_to_one",
+     "origin": "ossie relationship"
+    }
+   ],
+   "dimensions": [
+    {
+     "name": "store_sk",
+     "sql": "m.SS_STORE_SK",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "The store."
+    },
+    {
+     "name": "state",
+     "sql": "COALESCE(NULLIF(t2.CA_STATE, ''), '(unknown)')",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Customer state, '(unknown)' when missing."
+    },
+    {
+     "name": "sale_date",
+     "sql": "DATE_TRUNC('DAY', m.SS_SOLD_TIMESTAMP)",
+     "kind": "time",
+     "datatype": "date",
+     "description": "Day of sale."
+    },
+    {
+     "name": "segment",
+     "sql": "t1.C_SEGMENT",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Customer segment."
+    }
+   ],
+   "filters": [
+    "m.SS_SOLD_TIMESTAMP >= :start_date",
+    "m.SS_SOLD_TIMESTAMP < DATEADD(DAY, 1, :end_date)"
+   ],
+   "examples": [
+    {
+     "question": "Which stores have the most sales per shopper this quarter?",
+     "sql": "SELECT m.SS_STORE_SK, COALESCE(NULLIF(u.CA_STATE,''),'(unknown)') AS STATE, COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) LEFT JOIN TPCDS.PUBLIC.CUSTOMER_ADDRESS u ON a.C_CURRENT_ADDR_SK = u.CA_ADDRESS_SK WHERE a.C_SEGMENT = 'Majors' AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = 'store' AND m.SS_CUSTOMER_EMAIL NOT ILIKE '%@example.com%' AND m.SS_SOLD_TIMESTAMP >= '2026-03-18' AND m.SS_SOLD_TIMESTAMP < DATEADD(day,1,'2026-06-16') GROUP BY 1, 2 ORDER BY SALES_PER_SHOPPER DESC",
+     "source": "ossie"
+    },
+    {
+     "question": "What is the sales-per-shopper ratio for the Majors segment?",
+     "sql": "SELECT a.C_SEGMENT AS SEGMENT, COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) WHERE a.C_SEGMENT = 'Majors' AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = 'store' AND m.SS_SOLD_TIMESTAMP >= '2026-03-18' GROUP BY 1",
+     "source": "ossie"
+    }
+   ],
+   "grain": "store_sk, state",
+   "population": "Store-channel sales to active Majors customers, excluding test emails",
+   "exclusions": [
+    "online channel (SS_CHANNEL != 'store')",
+    "test accounts (email ILIKE '%@example.com%')"
+   ]
+  }
+ }
+}

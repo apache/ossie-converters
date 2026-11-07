@@ -1,0 +1,220 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 0.2.0.dev0
+name: ratio_joins_dims_window
+description: ratio, two joins, dimensions, filters, parameters and a date window
+datasets:
+- name: store_sales
+  source: TPCDS.PUBLIC.STORE_SALES
+  fields:
+  - name: left_ss_customer_id_15
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: LEFT(SS_CUSTOMER_ID, 15)
+      - dialect: ANSI_SQL
+        expression: LEFT(SS_CUSTOMER_ID, 15)
+  - name: store_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_STORE_SK
+      - dialect: ANSI_SQL
+        expression: SS_STORE_SK
+    dimension:
+      is_time: false
+    datatype: String
+    description: The store.
+  - name: sale_date
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: DATE_TRUNC('DAY', SS_SOLD_TIMESTAMP)
+      - dialect: ANSI_SQL
+        expression: DATE_TRUNC('DAY', SS_SOLD_TIMESTAMP)
+    dimension:
+      is_time: true
+    datatype: Date
+    description: Day of sale.
+  - name: ss_sold_timestamp
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_SOLD_TIMESTAMP
+      - dialect: ANSI_SQL
+        expression: SS_SOLD_TIMESTAMP
+    dimension:
+      is_time: true
+  - name: ss_channel
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_CHANNEL
+      - dialect: ANSI_SQL
+        expression: SS_CHANNEL
+  - name: ss_customer_email
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_CUSTOMER_EMAIL
+      - dialect: ANSI_SQL
+        expression: SS_CUSTOMER_EMAIL
+  - name: ss_customer_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_CUSTOMER_SK
+      - dialect: ANSI_SQL
+        expression: SS_CUSTOMER_SK
+- name: customer
+  source: TPCDS.PUBLIC.CUSTOMER
+  primary_key:
+  - left_c_customer_id_15
+  fields:
+  - name: left_c_customer_id_15
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: LEFT(C_CUSTOMER_ID, 15)
+      - dialect: ANSI_SQL
+        expression: LEFT(C_CUSTOMER_ID, 15)
+  - name: c_current_addr_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: C_CURRENT_ADDR_SK
+      - dialect: ANSI_SQL
+        expression: C_CURRENT_ADDR_SK
+  - name: segment
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: C_SEGMENT
+      - dialect: ANSI_SQL
+        expression: C_SEGMENT
+    dimension:
+      is_time: false
+    datatype: String
+    description: Customer segment.
+    custom_extensions:
+    - vendor_name: ATLAN
+      data: '{"values": ["Majors", "Growth"], "value_map": {"Majors": "large accounts", "Growth": "mid-size
+        accounts"}, "values_truncated": true, "filter_form": "customer.segment = :value"}'
+    ai_context: 'Values: Majors, Growth (sample, more exist). Meaning: Majors = large accounts; Growth
+      = mid-size accounts. Filter as: customer.segment = :value.'
+  - name: c_is_active
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: C_IS_ACTIVE
+      - dialect: ANSI_SQL
+        expression: C_IS_ACTIVE
+- name: customer_address
+  source: TPCDS.PUBLIC.CUSTOMER_ADDRESS
+  primary_key:
+  - ca_address_sk
+  fields:
+  - name: ca_address_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: CA_ADDRESS_SK
+      - dialect: ANSI_SQL
+        expression: CA_ADDRESS_SK
+  - name: state
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: COALESCE(NULLIF(CA_STATE, ''), '(unknown)')
+      - dialect: ANSI_SQL
+        expression: COALESCE(NULLIF(CA_STATE, ''), '(unknown)')
+    dimension:
+      is_time: false
+    datatype: String
+    description: Customer state, '(unknown)' when missing.
+relationships:
+- name: store_sales_to_customer
+  from: store_sales
+  to: customer
+  from_columns:
+  - left_ss_customer_id_15
+  to_columns:
+  - left_c_customer_id_15
+- name: customer_to_customer_address
+  from: customer
+  to: customer_address
+  from_columns:
+  - c_current_addr_sk
+  to_columns:
+  - ca_address_sk
+metrics:
+- name: sales_per_shopper
+  expression:
+    dialects:
+    - dialect: OSSIE_SQL_2026
+      expression: COUNT(CASE WHEN (store_sales.ss_channel = 'store') AND (NOT store_sales.ss_customer_email
+        ILIKE '%@example.com%') AND (customer.segment = 'Majors') AND (customer.c_is_active = TRUE) THEN
+        1 END) / NULLIF(COUNT(DISTINCT CASE WHEN (store_sales.ss_channel = 'store') AND (NOT store_sales.ss_customer_email
+        ILIKE '%@example.com%') AND (customer.segment = 'Majors') AND (customer.c_is_active = TRUE) THEN
+        store_sales.ss_customer_sk END), 0)
+    - dialect: ANSI_SQL
+      expression: COUNT(CASE WHEN (store_sales.ss_channel = 'store') AND (NOT store_sales.ss_customer_email
+        ILIKE '%@example.com%') AND (customer.segment = 'Majors') AND (customer.c_is_active = TRUE) THEN
+        1 END) / NULLIF(COUNT(DISTINCT CASE WHEN (store_sales.ss_channel = 'store') AND (NOT store_sales.ss_customer_email
+        ILIKE '%@example.com%') AND (customer.segment = 'Majors') AND (customer.c_is_active = TRUE) THEN
+        store_sales.ss_customer_sk END), 0)
+  datatype: Decimal
+  description: Average store sales per active shopper, by store and state, for active Majors customers.
+  ai_context:
+    instructions: 'Grain: store_sk, state. Counts: Store-channel sales to active Majors customers, excluding
+      test emails. Excludes: online channel (SS_CHANNEL != ''store''); test accounts (email ILIKE ''%@example.com%'').
+      Unit: sales per shopper. Re-aggregation: not additive: recompute sales and distinct shoppers, then
+      divide. Nulls: shoppers with no sales are not counted. Date range fixed in the source query, not
+      applied by this metric: store_sales.ss_sold_timestamp >= CAST(''2026-03-18'' AS DATE) AND store_sales.ss_sold_timestamp
+      < DATEADD(DAY, 1, CAST(''2026-06-16'' AS DATE)).'
+    examples:
+    - Which stores have the most sales per shopper this quarter?
+    - What is the sales-per-shopper ratio for the Majors segment?
+  custom_extensions:
+  - vendor_name: ATLAN
+    data: '{"registry": {"id": "metric_synth_sales_per_shopper", "definition_version": 1}, "agent_context":
+      {"grain": "store_sk, state", "population": "Store-channel sales to active Majors customers, excluding
+      test emails", "exclusions": ["online channel (SS_CHANNEL != ''store'')", "test accounts (email ILIKE
+      ''%@example.com%'')"], "unit": "sales per shopper", "reaggregation": "not additive: recompute sales
+      and distinct shoppers, then divide", "null_handling": "shoppers with no sales are not counted",
+      "sql_dialect": "snowflake", "window": ["store_sales.ss_sold_timestamp >= :start_date", "store_sales.ss_sold_timestamp
+      < DATEADD(DAY, 1, :end_date)"], "dimensions": ["store_sales.store_sk", "customer_address.state",
+      "store_sales.sale_date", "customer.segment"], "relationships": ["store_sales_to_customer", "customer_to_customer_address"],
+      "timeframe_field": "store_sales.ss_sold_timestamp", "parameters": [{"name": "start_date", "datatype":
+      "date", "default": "2026-03-18"}, {"name": "end_date", "datatype": "date", "default": "2026-06-16"}],
+      "depends_on": ["store_sales_count"], "examples": [{"question": "Which stores have the most sales
+      per shopper this quarter?", "sql": "SELECT m.SS_STORE_SK, COALESCE(NULLIF(u.CA_STATE,''''),''(unknown)'')
+      AS STATE, COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES
+      m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) LEFT JOIN
+      TPCDS.PUBLIC.CUSTOMER_ADDRESS u ON a.C_CURRENT_ADDR_SK = u.CA_ADDRESS_SK WHERE a.C_SEGMENT = ''Majors''
+      AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = ''store'' AND m.SS_CUSTOMER_EMAIL NOT ILIKE ''%@example.com%''
+      AND m.SS_SOLD_TIMESTAMP >= ''2026-03-18'' AND m.SS_SOLD_TIMESTAMP < DATEADD(day,1,''2026-06-16'')
+      GROUP BY 1, 2 ORDER BY SALES_PER_SHOPPER DESC"}, {"question": "What is the sales-per-shopper ratio
+      for the Majors segment?", "sql": "SELECT a.C_SEGMENT AS SEGMENT, COUNT(*) / NULLIF(COUNT(DISTINCT
+      m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER
+      a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) WHERE a.C_SEGMENT = ''Majors'' AND a.C_IS_ACTIVE
+      = TRUE AND m.SS_CHANNEL = ''store'' AND m.SS_SOLD_TIMESTAMP >= ''2026-03-18'' GROUP BY 1"}], "trust":
+      {"score": 8.0}}}'
+custom_extensions:
+- vendor_name: ATLAN
+  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

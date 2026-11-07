@@ -20,6 +20,16 @@ canonical:
   tpcds: ossie/examples/tpcds_semantic_model.yaml
   flights: ossie/examples/flights.semantic_model.yaml
 converters:
+  atlan:
+    cwd: atlan
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-atlan, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-atlan, export, -i, '{input}', -o, '{output}']
+    native_format: atlan
+    output: file
+    fixtures:
+      tpcds: interop/fixtures/atlan/records.json
   bigquery:
     cwd: bigquery
     toolchain: uv

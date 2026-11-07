@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize(
     "name",
     [
+        "atlan",
         "gooddata",
         "honeydew",
         "lightdash",
@@ -63,6 +64,7 @@ def test_registered_native_sources_have_real_members(name):
 @pytest.mark.parametrize(
     "fmt",
     [
+        "atlan",
         "gooddata",
         "hex",
         "honeydew",

@@ -1,0 +1,5 @@
+{
+ "metric": "preferred_customer_count",
+ "description": "Customers whose preferred flag is set.",
+ "agent_context.grain": "one row per preferred customer"
+}

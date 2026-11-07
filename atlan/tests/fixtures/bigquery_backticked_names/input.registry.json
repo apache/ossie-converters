@@ -1,0 +1,68 @@
+{
+ "id": "metric_synth_paid_by_birth_country",
+ "kind": "metric",
+ "app": "metric",
+ "name": "paid_by_birth_country",
+ "display_name": "Paid By Birth Country",
+ "description": "Net paid on store sales, by customer birth country",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:paid_by_birth_country",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "bigquery",
+   "aggregation": {
+    "type": "sum",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "paid_by_birth_country",
+    "datatype": "decimal",
+    "unit": "currency"
+   },
+   "joins": [
+    {
+     "name": "c",
+     "to": "`tpcds`.`public`.`customer`",
+     "cardinality": "many_to_one",
+     "origin": "declared",
+     "sql": "s.ss_customer_sk = c.c_customer_sk"
+    }
+   ],
+   "dimensions": [
+    {
+     "name": "birth_country",
+     "kind": "categorical",
+     "sql": "c.c_birth_country",
+     "datatype": "string",
+     "description": "Customer birth country."
+    }
+   ],
+   "filters": [
+    "s.ss_quantity > 0"
+   ],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "sale",
+   "population": "Store sales with a positive quantity",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "SUM(`store_sales`.ss_net_paid)",
+   "source": {
+    "sql": null,
+    "table": "`tpcds.public.store_sales`",
+    "alias": "s",
+    "entity": "`tpcds.public.store_sales`",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

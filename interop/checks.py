@@ -143,7 +143,7 @@ def native_content(path, native_format, output_shape):
             data = (
                 json.loads(item.read_text(encoding="utf-8"))
                 if native_format
-                in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+                in ("atlan", "dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
                 else yaml.safe_load(item.read_text(encoding="utf-8"))
             )
             if not isinstance(data, dict):
@@ -200,6 +200,13 @@ def _additional_members(data, native_format):
     """
     if native_format == "omni":
         return len(data.get("dimensions") or {}) + len(data.get("measures") or {})
+    if native_format == "atlan":
+        # A registry export lists metric records; each carries its definition's formula.
+        return sum(
+            1
+            for record in data.get("artifacts") or []
+            if (record.get("metadata") or {}).get("definition", {}).get("formula")
+        )
     if native_format == "hex":
         # Hex resource files wrap a model, dimension, measure or relation.
         return sum(len(data.get(key) or []) for key in ("dimensions", "measures"))
