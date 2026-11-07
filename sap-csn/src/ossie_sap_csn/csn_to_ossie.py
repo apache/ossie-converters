@@ -24,14 +24,16 @@ Mapping:
 * an association or composition with a resolvable target becomes a relationship,
   and a managed association's generated foreign-key columns become fields;
 * an element annotated ``@Aggregation.default`` (``SUM``, ``MIN``, ``MAX``, ``AVG``,
-  ``COUNT``, ``COUNT_DISTINCT``) becomes a metric;
+  ``COUNT``, ``COUNT_DISTINCT``) becomes a metric, model-scoped unless the element
+  is marked ``@Ossie.datasetMetric``;
 * ``@EndUserText.label`` and ``doc`` become the label and description.
 
 Whatever has no Ossie equivalent travels in ``custom_extensions`` under the
 ``SAP_CSN`` vendor, so the document can be exported back without loss.
 """
 
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 from ossie import (
     OssieCustomExtension,
@@ -45,6 +47,7 @@ from ossie import (
     OssieMetric,
     OssieRelationship,
 )
+from pydantic import ValidationError
 from sqlglot import exp
 
 from ossie_sap_csn import _common as c
@@ -83,13 +86,36 @@ def _first(obj: dict[str, Any], keys: tuple[str, ...]) -> tuple[Optional[str], O
     return None, None
 
 
-def _qualify(sql: str, table: str) -> str:
-    """Prefix every unqualified column of ``sql`` with ``table``."""
-    tree = parse_sql(sql)
+@contextmanager
+def _representable(where: str) -> Iterator[None]:
+    """Report a CSN value the Ossie models reject (a malformed ``@Ossie.*`` payload, say)."""
+    try:
+        yield
+    except ValidationError as exc:
+        raise ConverterError(f"{where} cannot be represented in Ossie: {exc}") from exc
+
+
+def _qualify(tree: exp.Expression, table: str) -> str:
+    """Prefix every unqualified column of ``tree`` with ``table``."""
+    tree = tree.copy()
     for column in tree.find_all(exp.Column):
         if not column.table:
             column.set("table", exp.to_identifier(table, quoted=quote_identifier(table) != table))
     return tree.sql()
+
+
+def _measure_target(sql: str, dialect: OssieDialect, dataset: str, dataset_scoped: bool) -> tuple[bool, str]:
+    """What a derived measure aggregates, and whether its metric is dataset-scoped.
+
+    A dataset-scoped metric names its own dataset's fields unqualified, so one whose
+    expression reaches another dataset is model-scoped instead, every column qualified.
+    """
+    if dialect is not OssieDialect.ANSI_SQL:
+        raise UnsupportedExpression(f"its expression is {dialect.value}, not ANSI_SQL")
+    tree = parse_sql(sql)
+    if dataset_scoped and not any(column.table for column in tree.find_all(exp.Column)):
+        return True, sql
+    return False, _qualify(tree, dataset)
 
 
 class _Entities:
@@ -127,17 +153,33 @@ def _key_elements(definitions: dict[str, Any], entity: str) -> list[tuple[str, O
 
 def _flatten_and(tokens: list[Any]) -> list[Any]:
     """Unwrap single nested ``xpr`` groups so an ``on`` condition reads as one token list."""
-    while len(tokens) == 1 and isinstance(tokens[0], dict) and "xpr" in tokens[0]:
+    while len(tokens) == 1 and isinstance(tokens[0], dict) and isinstance(tokens[0].get("xpr"), list):
         tokens = tokens[0]["xpr"]
     return tokens
 
 
-def _parse_on(assoc: str, on: list[Any]) -> list[tuple[str, str]]:
+def _column_path(side: Any) -> list[str]:
+    """The column path one side of an ``on`` equality names, without ``$self``."""
+    ref = side.get("ref") if isinstance(side, dict) else None
+    if not (isinstance(ref, list) and ref and all(isinstance(s, str) for s in ref)):
+        raise UnsupportedExpression("the on-condition compares something other than columns")
+    if ref[0] in ("$self", "$projection"):
+        if len(ref) == 1:
+            raise UnsupportedExpression("a $self backlink has no column pairs of its own")
+        ref = ref[1:]
+    if any(s.startswith("$") for s in ref):
+        raise UnsupportedExpression(f"{'.'.join(ref)!r} is not a column")
+    return ref
+
+
+def _parse_on(assoc: str, on: Any) -> list[tuple[str, str]]:
     """Return ``(from_column, to_column)`` pairs for an ``on`` condition of equalities.
 
     Raises :class:`UnsupportedExpression` for anything other than an AND of
     ``assoc.col = col`` terms.
     """
+    if not isinstance(on, list):
+        raise UnsupportedExpression("the on-condition is not a token list")
     tokens = _flatten_and(on)
     terms: list[list[Any]] = [[]]
     for token in tokens:
@@ -150,16 +192,7 @@ def _parse_on(assoc: str, on: list[Any]) -> list[tuple[str, str]]:
         term = _flatten_and(term)
         if len(term) != 3 or term[1] != "=":
             raise UnsupportedExpression("the on-condition is not a conjunction of equalities")
-        refs = []
-        for side in (term[0], term[2]):
-            if not (isinstance(side, dict) and "ref" in side and all(isinstance(s, str) for s in side["ref"])):
-                raise UnsupportedExpression("the on-condition compares something other than columns")
-            ref = side["ref"]
-            if ref[0] in ("$self", "$projection") and len(ref) > 1:
-                ref = ref[1:]
-            elif ref == ["$self"]:
-                raise UnsupportedExpression("a $self backlink has no column pairs of its own")
-            refs.append(ref)
+        refs = [_column_path(term[0]), _column_path(term[2])]
         target_side = [r for r in refs if len(r) == 2 and r[0] == assoc]
         local_side = [r for r in refs if len(r) == 1]
         if len(target_side) != 1 or len(local_side) != 1:
@@ -180,22 +213,34 @@ class CsnToOssieConverter:
         entities = _Entities(definitions)
         if not entities.csn_names:
             raise ConverterError("the CSN document defines no entities; an Ossie model needs at least one dataset")
+        for csn_name in entities.csn_names:
+            if not isinstance(definitions[csn_name].get("elements", {}), dict):
+                raise ConverterError(f"entity {csn_name!r}: 'elements' is not an object")
 
         meta = csn.get("meta") if isinstance(csn.get("meta"), dict) else {}
         ossie_meta = meta.get(c.META_KEY) if isinstance(meta.get(c.META_KEY), dict) else {}
 
-        datasets: list[OssieDataset] = []
+        dataset_args: dict[str, dict[str, Any]] = {}
         relationships: list[OssieRelationship] = []
         metrics: list[OssieMetric] = []
         measure_candidates: list[dict[str, Any]] = []
 
         for csn_name in entities.csn_names:
-            dataset, entity_relationships, entity_measures = self._entity(
-                csn_name, definitions[csn_name], definitions, entities, issues
-            )
-            datasets.append(dataset)
+            with _representable(f"entity {csn_name!r}"):
+                args, entity_relationships, entity_measures = self._entity(
+                    csn_name, definitions[csn_name], definitions, entities, issues
+                )
+            dataset_args[csn_name] = args
             relationships.extend(entity_relationships)
             measure_candidates.extend(entity_measures)
+
+        with _representable("a measure"):
+            model_metrics, dataset_metrics = self._metrics(measure_candidates)
+        datasets: list[OssieDataset] = []
+        for csn_name, args in dataset_args.items():
+            local = dataset_metrics.get(args["name"], []) + args.pop("carried_metrics")
+            with _representable(f"entity {csn_name!r}"):
+                datasets.append(OssieDataset(**args, metrics=local or None))
 
         # Relationship names are global; prefix the ones two entities both use.
         counts: dict[str, int] = {}
@@ -207,9 +252,12 @@ class CsnToOssieConverter:
                 for r in relationships
             ]
 
-        metrics.extend(self._metrics(measure_candidates))
-        for raw in ossie_meta.get("metrics") or []:
-            metrics.append(OssieMetric.model_validate(raw))
+        metrics.extend(model_metrics)
+        raw_metrics = ossie_meta.get("metrics") or []
+        if not isinstance(raw_metrics, list):
+            raise ConverterError("meta.ossie.metrics is not a list")
+        with _representable("meta.ossie.metrics"):
+            metrics.extend(OssieMetric.model_validate(raw) for raw in raw_metrics)
 
         other = {n: d for n, d in definitions.items() if n not in entities}
         for def_name, definition in other.items():
@@ -229,7 +277,11 @@ class CsnToOssieConverter:
             if key == "definitions":
                 continue
             if key == "meta":
-                value = {k: v for k, v in value.items() if k != c.META_KEY} if isinstance(value, dict) else value
+                if isinstance(value, dict):
+                    # Export writes its own creator stamp again, so a second pass stays the same.
+                    value = {
+                        k: v for k, v in value.items() if k != c.META_KEY and not (k == "creator" and v == c.CREATOR)
+                    }
                 if not value:
                     continue
             model_data.setdefault("csn", {})[key] = value
@@ -237,15 +289,16 @@ class CsnToOssieConverter:
             model_data["other_definitions"] = other
 
         model_info = ossie_meta.get("model") if isinstance(ossie_meta.get("model"), dict) else {}
-        document = OssieDocument(
-            name=name or model_info.get("name") or "sap_csn_model",
-            description=model_info.get("description"),
-            ai_context=model_info.get("ai_context"),
-            datasets=datasets,
-            relationships=relationships or None,
-            metrics=metrics or None,
-            custom_extensions=_extensions(model_data, {c.OSSIE_EXTENSIONS: model_info.get("custom_extensions")}),
-        )
+        with _representable("meta.ossie.model"):
+            document = OssieDocument(
+                name=name or model_info.get("name") or "sap_csn_model",
+                description=model_info.get("description"),
+                ai_context=model_info.get("ai_context"),
+                datasets=datasets,
+                relationships=relationships or None,
+                metrics=metrics or None,
+                custom_extensions=_extensions(model_data, {c.OSSIE_EXTENSIONS: model_info.get("custom_extensions")}),
+            )
         return ConverterResult(output=document, issues=issues)
 
     # ----------------------------------------------------------------------------------
@@ -257,7 +310,7 @@ class CsnToOssieConverter:
         definitions: dict[str, Any],
         entities: _Entities,
         issues: list[ConverterIssue],
-    ) -> tuple[OssieDataset, list[OssieRelationship], list[dict[str, Any]]]:
+    ) -> tuple[dict[str, Any], list[OssieRelationship], list[dict[str, Any]]]:
         dataset_name = entities.dataset_name[csn_name]
         elements: dict[str, Any] = entity.get("elements") or {}
 
@@ -292,7 +345,8 @@ class CsnToOssieConverter:
                     )
                 )
                 continue
-            if builtin is None and ("elements" in element or "items" in element or element.get("type") in definitions):
+            named_type = element.get("type") if isinstance(element.get("type"), str) else None
+            if builtin is None and ("elements" in element or "items" in element or named_type in definitions):
                 unmodeled[el_name] = element
                 issues.append(
                     ConverterIssue(
@@ -304,10 +358,17 @@ class CsnToOssieConverter:
                 )
                 continue
 
+            where = f"{dataset_name}.{el_name}"
             sql_override = element.get(c.OSSIE_SQL)
-            if isinstance(sql_override, dict) and "dialect" in sql_override and "expression" in sql_override:
+            has_override = isinstance(sql_override, dict) and "dialect" in sql_override and "expression" in sql_override
+            if has_override:
                 expression_sql: Optional[str] = sql_override["expression"]
-                dialect = OssieDialect(sql_override["dialect"])
+                try:
+                    dialect = OssieDialect(sql_override["dialect"])
+                except ValueError as exc:
+                    raise ConverterError(f"{where}: @Ossie.sql names an unknown dialect {sql_override['dialect']!r}") from exc
+                if not isinstance(expression_sql, str):
+                    raise ConverterError(f"{where}: @Ossie.sql has an expression that is not a string")
             elif "value" in element:
                 try:
                     expression_sql = cxn_to_sql(element["value"], resolve_path)
@@ -327,20 +388,43 @@ class CsnToOssieConverter:
                 expression_sql = quote_identifier(el_name)
                 dialect = OssieDialect.ANSI_SQL
 
+            aggregation = c.enum_value(element.get(c.AGGREGATION_KEY))
+            is_measure = aggregation in c.AGGREGATIONS
+            # A derived measure is a metric only, over the element's expression. Without
+            # one (no `value`, no @Ossie.sql) the element is a stored column, so a field.
+            derived = is_measure and bool(element.get(c.OSSIE_METRIC)) and ("value" in element or has_override)
+            dataset_scoped = False
+            if is_measure:
+                try:
+                    if derived:
+                        dataset_scoped, target = _measure_target(
+                            expression_sql, dialect, dataset_name, bool(element.get(c.OSSIE_DATASET_METRIC))
+                        )
+                    else:
+                        target = f"{quote_identifier(dataset_name)}.{quote_identifier(el_name)}"
+                except UnsupportedExpression as exc:
+                    # Never fall back to aggregating the element itself: it is not a field.
+                    unmodeled[el_name] = element
+                    issues.append(
+                        ConverterIssue(
+                            ConverterIssueType.METRIC_NOT_MODELED,
+                            where,
+                            f"Derived measure has no metric expression ({exc}); preserved in custom_extensions only.",
+                        )
+                    )
+                    continue
+                metric_sql = f"COUNT(DISTINCT {target})" if aggregation == "COUNT_DISTINCT" else f"{aggregation}({target})"
+
             datatype = ossie_datatype(builtin)
             if datatype is None:
                 datatype = "Opaque"
                 issues.append(
                     ConverterIssue(
                         ConverterIssueType.OPAQUE_DATATYPE,
-                        f"{dataset_name}.{el_name}",
+                        where,
                         f"CSN type {element.get('type')!r} has no portable Ossie datatype.",
                     )
                 )
-
-            aggregation = c.enum_value(element.get(c.AGGREGATION_KEY))
-            is_measure = aggregation in c.AGGREGATIONS
-            derived = bool(element.get(c.OSSIE_METRIC)) and is_measure
 
             consumed: set[str] = set()
             label_key, label = _first(element, c.LABEL_KEYS)
@@ -367,6 +451,12 @@ class CsnToOssieConverter:
                 own["native"] = native
             if derived and label:
                 own["label"] = label
+            if "value" in element and not has_override:
+                # SQL cannot tell some CXN apart (cds.Int32 and cds.Integer casts are both
+                # INT), so the original travels too; export reuses it while the expression
+                # it rendered as is unchanged.
+                own["value"] = element["value"]
+                own["value_sql"] = metric_sql if derived else expression_sql
 
             if is_measure:
                 measures.append(
@@ -377,7 +467,8 @@ class CsnToOssieConverter:
                         "aggregation": aggregation,
                         "aggregation_raw": element[c.AGGREGATION_KEY],
                         "derived": derived,
-                        "expression": expression_sql,
+                        "dataset_scoped": dataset_scoped,
+                        "sql": metric_sql,
                         "datatype": datatype,
                         "builtin": builtin,
                         "description": description,
@@ -448,7 +539,7 @@ class CsnToOssieConverter:
         if isinstance(entity.get(c.OSSIE_PRIMARY_KEY), list):
             primary_key = list(entity[c.OSSIE_PRIMARY_KEY])
         if isinstance(entity.get(c.OSSIE_UNIQUE_KEYS), list):
-            unique_keys = [list(k) for k in entity[c.OSSIE_UNIQUE_KEYS]]
+            unique_keys = [list(k) if isinstance(k, list) else k for k in entity[c.OSSIE_UNIQUE_KEYS]]
 
         consumed_entity: set[str] = set(consumed_unique)
         label_key, label = _first(entity, c.LABEL_KEYS)
@@ -475,18 +566,24 @@ class CsnToOssieConverter:
         if unmodeled:
             own_entity["unmodeled_elements"] = unmodeled
 
+        carried = entity.get(c.OSSIE_METRICS) or []
+        if not isinstance(carried, list):
+            raise ConverterError(f"entity {csn_name!r}: {c.OSSIE_METRICS} is not a list")
+
         source = entity.get("@cds.persistence.name") if isinstance(entity.get("@cds.persistence.name"), str) else csn_name
-        dataset = OssieDataset(
-            name=dataset_name,
-            source=source,
-            primary_key=primary_key or None,
-            unique_keys=unique_keys or None,
-            description=description,
-            ai_context=entity.get(c.OSSIE_AI_CONTEXT),
-            fields=fields or None,
-            custom_extensions=_extensions(own_entity, entity),
-        )
-        return dataset, relationships, measures
+        # Built into a dataset once the measures of every entity are known.
+        dataset_args = {
+            "name": dataset_name,
+            "source": source,
+            "primary_key": primary_key or None,
+            "unique_keys": unique_keys or None,
+            "description": description,
+            "ai_context": entity.get(c.OSSIE_AI_CONTEXT),
+            "fields": fields or None,
+            "custom_extensions": _extensions(own_entity, entity),
+            "carried_metrics": [OssieMetric.model_validate(raw) for raw in carried],
+        }
+        return dataset_args, relationships, measures
 
     def _association(
         self,
@@ -603,22 +700,21 @@ class CsnToOssieConverter:
             )
         )
 
-    def _metrics(self, candidates: list[dict[str, Any]]) -> list[OssieMetric]:
+    def _metrics(
+        self, candidates: list[dict[str, Any]]
+    ) -> tuple[list[OssieMetric], dict[str, list[OssieMetric]]]:
+        """The model-scoped metrics, and the dataset-scoped ones by dataset name."""
+        # Model-scoped names are global; a dataset-scoped one only shares its dataset's.
         counts: dict[str, int] = {}
         for m in candidates:
-            counts[m["element"]] = counts.get(m["element"], 0) + 1
-        metrics = []
+            if not m["dataset_scoped"]:
+                counts[m["element"]] = counts.get(m["element"], 0) + 1
+        model_metrics: list[OssieMetric] = []
+        dataset_metrics: dict[str, list[OssieMetric]] = {}
         for m in candidates:
-            name = m["element"] if counts[m["element"]] == 1 else f"{m['dataset']}_{m['element']}"
+            unique = m["dataset_scoped"] or counts[m["element"]] == 1
+            name = m["element"] if unique else f"{m['dataset']}_{m['element']}"
             agg = m["aggregation"]
-            if m["derived"]:
-                try:
-                    target = _qualify(m["expression"], m["dataset"])
-                except UnsupportedExpression:
-                    target = f"{quote_identifier(m['dataset'])}.{quote_identifier(m['element'])}"
-            else:
-                target = f"{quote_identifier(m['dataset'])}.{quote_identifier(m['element'])}"
-            sql = f"COUNT(DISTINCT {target})" if agg == "COUNT_DISTINCT" else f"{agg}({target})"
 
             if agg in ("COUNT", "COUNT_DISTINCT"):
                 datatype: Optional[str] = "Integer"
@@ -635,16 +731,18 @@ class CsnToOssieConverter:
             }
             if m["derived"]:
                 own["measure"] = m["own"]
-            metrics.append(
-                OssieMetric(
-                    name=name,
-                    expression=OssieExpression(
-                        dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=sql)]
-                    ),
-                    description=m["description"] if m["derived"] else None,
-                    datatype=datatype,
-                    ai_context=m["element_obj"].get(c.OSSIE_AI_CONTEXT) if m["derived"] else None,
-                    custom_extensions=_extensions(own, m["element_obj"] if m["derived"] else {}),
-                )
+            metric = OssieMetric(
+                name=name,
+                expression=OssieExpression(
+                    dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=m["sql"])]
+                ),
+                description=m["description"] if m["derived"] else None,
+                datatype=datatype,
+                ai_context=m["element_obj"].get(c.OSSIE_AI_CONTEXT) if m["derived"] else None,
+                custom_extensions=_extensions(own, m["element_obj"] if m["derived"] else {}),
             )
-        return metrics
+            if m["dataset_scoped"]:
+                dataset_metrics.setdefault(m["dataset"], []).append(metric)
+            else:
+                model_metrics.append(metric)
+        return model_metrics, dataset_metrics

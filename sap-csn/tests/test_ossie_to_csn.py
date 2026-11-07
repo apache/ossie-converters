@@ -270,12 +270,15 @@ def test_corrupt_vendor_extension_is_an_error():
 
 def test_tpcds_example_converts(tpcds):
     csn, issues = tpcds
-    assert {i.element_name for i in issues if i.issue_type is ConverterIssueType.PRIMARY_KEY_COLUMN_UNRESOLVED} == {"store_sales"}
+    assert not [i for i in issues if i.issue_type is ConverterIssueType.PRIMARY_KEY_COLUMN_UNRESOLVED]
     assert set(csn["definitions"]) == {"store_sales", "date_dim", "customer", "item", "store"}
     sales = csn["definitions"]["store_sales"]["elements"]
-    assert sales["ss_item_sk"]["key"]
-    assert csn["definitions"]["store_sales"]["@Ossie.primaryKey"] == ["ss_item_sk", "ss_ticket_number"]  # no such field in the example
+    assert sales["ss_item_sk"]["key"] and sales["ss_ticket_number"]["key"]
+    assert "@Ossie.primaryKey" not in csn["definitions"]["store_sales"]
     assert sales["store_sales_to_date"]["target"] == "date_dim"
+    # The example's dataset-scoped metric is a measure element of its own entity.
+    assert sales["total_quantity"]["value"] == {"ref": ["ss_quantity"]}
+    assert sales["total_quantity"]["@Ossie.datasetMetric"] is True
 
 
 def test_tpcds_metrics_are_placed_or_reported(tpcds):
@@ -391,3 +394,73 @@ def test_edited_source_replaces_a_stale_persistence_name():
     ]
     csn, _ = convert(OssieDocument.model_validate(raw))
     assert csn["definitions"]["cust"]["@cds.persistence.name"] == "db.cust"
+
+
+def test_measure_whose_expression_has_no_cxn_translation_goes_to_meta_not_an_error():
+    # It parses and has one home, so placement used to accept it and the export then failed.
+    csn, issues = convert(document(metrics=[metric("odd", "SUM(CAST(orders.qty AS GEOGRAPHY))")]))
+    assert [m["name"] for m in csn["meta"]["ossie"]["metrics"]] == ["odd"]
+    assert "odd" not in csn["definitions"]["orders"]["elements"]
+    assert [(i.issue_type, i.element_name) for i in issues] == [(ConverterIssueType.METRIC_NOT_MODELED, "odd")]
+
+
+def with_dataset_metrics(index, *metrics, **overrides):
+    raw = raw_document(**overrides)
+    raw["datasets"][index]["metrics"] = list(metrics)
+    return OssieDocument.model_validate(raw)
+
+
+def test_dataset_metric_becomes_a_measure_element_of_its_own_entity():
+    doc = with_dataset_metrics(1, metric("revenue", "SUM(qty * price)", datatype="Decimal"))
+    csn, issues = convert(doc)
+    element = csn["definitions"]["orders"]["elements"]["revenue"]
+    assert element["value"] == {"xpr": [{"ref": ["qty"]}, "*", {"ref": ["price"]}]}
+    assert element["@Aggregation.default"] == {"#": "SUM"}
+    assert element["@Ossie.metric"] is True and element["@Ossie.datasetMetric"] is True
+    assert csn["definitions"]["orders"]["@Analytics.dataCategory"] == {"#": "CUBE"}
+    assert "metrics" not in csn["meta"]["ossie"]
+    assert issues == []
+
+
+def test_dataset_metrics_may_share_a_name_across_datasets():
+    raw = raw_document()
+    raw["datasets"][0]["metrics"] = [metric("n", "COUNT(id)")]
+    raw["datasets"][1]["metrics"] = [metric("n", "COUNT(id)")]
+    csn, issues = convert(OssieDocument.model_validate(raw))
+    assert csn["definitions"]["cust"]["elements"]["n"]["value"] == {"ref": ["id"]}
+    assert csn["definitions"]["orders"]["elements"]["n"]["value"] == {"ref": ["id"]}
+    assert issues == []
+
+
+@pytest.mark.parametrize(
+    "sql, issue",
+    [
+        ("COUNT(*)", ConverterIssueType.METRIC_NOT_MODELED),
+        ("SUM(qty) / COUNT(id)", ConverterIssueType.METRIC_NOT_MODELED),
+        ("SUM(CAST(qty AS GEOGRAPHY))", ConverterIssueType.METRIC_NOT_MODELED),
+        ("SUM(ghost)", ConverterIssueType.METRIC_NOT_MODELED),  # not a field of the dataset
+    ],
+)
+def test_dataset_metric_csn_cannot_express_is_carried_on_its_entity(sql, issue):
+    csn, issues = convert(with_dataset_metrics(1, metric("m", sql)))
+    assert csn["definitions"]["orders"]["@Ossie.metrics"] == [metric("m", sql)]
+    assert "m" not in csn["definitions"]["orders"]["elements"]
+    assert [(i.issue_type, i.element_name) for i in issues] == [(issue, "orders.m")]
+
+
+def test_dataset_metric_without_ansi_sql_is_carried_on_its_entity():
+    snowflake = {"name": "m", "expression": {"dialects": [{"dialect": "SNOWFLAKE", "expression": "SUM(qty)"}]}}
+    csn, issues = convert(with_dataset_metrics(1, snowflake))
+    assert csn["definitions"]["orders"]["@Ossie.metrics"] == [snowflake]
+    assert [(i.issue_type, i.element_name) for i in issues] == [(ConverterIssueType.DIALECT_UNAVAILABLE, "orders.m")]
+
+
+def test_dataset_metric_named_like_a_model_measure_on_its_entity_is_carried():
+    doc = with_dataset_metrics(
+        1, metric("revenue", "SUM(qty)"), metrics=[metric("revenue", "SUM(orders.qty * orders.price)", datatype="Decimal")]
+    )
+    csn, issues = convert(doc)
+    elements = csn["definitions"]["orders"]["elements"]
+    assert "@Ossie.datasetMetric" not in elements["revenue"]  # the model metric holds the name
+    assert [m["name"] for m in csn["definitions"]["orders"]["@Ossie.metrics"]] == ["revenue"]
+    assert [(i.issue_type, i.element_name) for i in issues] == [(ConverterIssueType.METRIC_NOT_MODELED, "orders.revenue")]

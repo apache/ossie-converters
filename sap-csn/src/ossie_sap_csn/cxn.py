@@ -34,7 +34,7 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.tokens import TokenType
 
-from ossie_sap_csn.datatypes import CDS_TO_SQL_TYPE
+from ossie_sap_csn.datatypes import CAST_FACETS, CDS_TO_SQL_TYPE, SQL_TYPE_TO_CDS
 
 
 class UnsupportedExpression(Exception):
@@ -84,8 +84,33 @@ def _literal(value: Any) -> str:
     raise UnsupportedExpression(f"literal {value!r} has no SQL rendering")
 
 
-def _ref_to_sql(ref: list[Any], resolve_path: PathResolver) -> str:
-    if not ref or not all(isinstance(s, str) for s in ref):
+# Tokens of an `xpr` list that have an SQL rendering; anything else is refused.
+_KEYWORDS = frozenset(
+    {"and", "or", "not", "is", "null", "in", "like", "escape", "between", "case", "when", "then", "else", "end", "distinct"}
+)
+_OPERATORS = frozenset({"=", "!=", "<>", "<", ">", "<=", ">=", "+", "-", "*", "/", "||"})
+# Keys a node may carry besides the one that says what it is (`ref`, `val`, ...).
+_NODE_EXTRAS = {"val": {"literal"}, "func": {"args"}}
+
+
+def _cast_sql(cast: Any) -> str:
+    """The SQL type for a CXN ``cast`` object, with its facets as type parameters."""
+    cds = cast.get("type") if isinstance(cast, dict) else None
+    if not isinstance(cds, str) or cds not in CDS_TO_SQL_TYPE:
+        raise UnsupportedExpression(f"cast to {cds!r}")
+    facets = CAST_FACETS.get(cds, ())
+    unknown = sorted(set(cast) - {"type", *facets})
+    given = [f for f in facets if f in cast]
+    values = [cast[f] for f in given]
+    # Facets are positional in SQL, so `scale` cannot be given without `precision`.
+    if unknown or given != list(facets[: len(given)]) or any(type(v) is not int or v < 0 for v in values):
+        raise UnsupportedExpression(f"cast to {cds} with {', '.join(unknown or given)}")
+    sql_type = CDS_TO_SQL_TYPE[cds]
+    return f"{sql_type}({', '.join(map(str, values))})" if values else sql_type
+
+
+def _ref_to_sql(ref: Any, resolve_path: PathResolver) -> str:
+    if not isinstance(ref, list) or not ref or not all(isinstance(s, str) for s in ref):
         # A segment may be an object carrying a filter or arguments.
         raise UnsupportedExpression("reference with a filtered or parameterised segment")
     if ref[0] in ("$self", "$projection"):
@@ -99,11 +124,22 @@ def _ref_to_sql(ref: list[Any], resolve_path: PathResolver) -> str:
     return resolve_path(list(ref))
 
 
-def _tokens(tokens: list[Any], resolve_path: PathResolver) -> str:
+def _token(token: str) -> str:
+    if token in _OPERATORS:
+        return token
+    words = token.lower().split()
+    if words and all(w in _KEYWORDS for w in words):
+        return " ".join(words).upper()
+    raise UnsupportedExpression(f"token {token!r} has no SQL rendering")
+
+
+def _tokens(tokens: Any, resolve_path: PathResolver) -> str:
+    if not isinstance(tokens, list):
+        raise UnsupportedExpression(f"expression token list {tokens!r} is not a list")
     parts: list[str] = []
     for token in tokens:
         if isinstance(token, str):
-            parts.append(token.upper() if token.isalpha() else token)
+            parts.append(_token(token))
         else:
             parts.append(_node(token, resolve_path, nested_group=True))
     return " ".join(parts)
@@ -113,12 +149,16 @@ def _node(node: Any, resolve_path: PathResolver, nested_group: bool = False) -> 
     if not isinstance(node, dict):
         raise UnsupportedExpression(f"unexpected expression node {node!r}")
     if "cast" in node:
-        cast_type = (node["cast"] or {}).get("type")
-        sql_type = CDS_TO_SQL_TYPE.get(cast_type)
-        if sql_type is None:
-            raise UnsupportedExpression(f"cast to {cast_type!r}")
+        sql_type = _cast_sql(node["cast"])
         inner = {k: v for k, v in node.items() if k != "cast"}
         return f"CAST({_node(inner, resolve_path)} AS {sql_type})"
+    # Anything more (a window function's `xpr` on a `func`, a `param` flag on a `ref`)
+    # changes what the node means, so it is refused rather than rendered without it.
+    kinds = [k for k in ("func", "ref", "val", "xpr", "list") if k in node]
+    if kinds:
+        extras = {k for k in node if not k.startswith("$")} - {kinds[0]} - _NODE_EXTRAS.get(kinds[0], set())
+        if extras:
+            raise UnsupportedExpression(f"{kinds[0]} node with {', '.join(sorted(extras))}")
     if "ref" in node:
         return _ref_to_sql(node["ref"], resolve_path)
     if "val" in node:
@@ -127,9 +167,13 @@ def _node(node: Any, resolve_path: PathResolver, nested_group: bool = False) -> 
         body = _tokens(node["xpr"], resolve_path)
         return f"({body})" if nested_group else body
     if "list" in node:
+        if not isinstance(node["list"], list):
+            raise UnsupportedExpression(f"list {node['list']!r} is not a list")
         return "(" + ", ".join(_node(i, resolve_path) for i in node["list"]) + ")"
     if "func" in node:
         args = node.get("args", [])
+        if not isinstance(node["func"], str):
+            raise UnsupportedExpression(f"function name {node['func']!r}")
         if not isinstance(args, list):
             raise UnsupportedExpression(f"function {node['func']!r} with named arguments")
         rendered = []
@@ -141,7 +185,7 @@ def _node(node: Any, resolve_path: PathResolver, nested_group: bool = False) -> 
                 rendered.append(_tokens(arg["xpr"], resolve_path))
             else:
                 rendered.append(_node(arg, resolve_path))
-        return f"{str(node['func']).upper()}({', '.join(rendered)})"
+        return f"{node['func'].upper()}({', '.join(rendered)})"
     raise UnsupportedExpression(f"expression node with keys {sorted(node)}")
 
 
@@ -170,19 +214,22 @@ _BINARY_OPS: dict[type, str] = {
     exp.DPipe: "||",
 }
 
-_SQL_TYPE_TO_CDS: dict[str, str] = {
-    "VARCHAR": "cds.String",
-    "TEXT": "cds.String",
-    "INT": "cds.Integer",
-    "SMALLINT": "cds.Int16",
-    "BIGINT": "cds.Int64",
-    "DECIMAL": "cds.Decimal",
-    "DOUBLE": "cds.Double",
-    "BOOLEAN": "cds.Boolean",
-    "DATE": "cds.Date",
-    "TIME": "cds.Time",
-    "TIMESTAMP": "cds.Timestamp",
-}
+def _cast_type(to: exp.DataType) -> dict[str, Any]:
+    """The CXN ``cast`` object for an SQL type; the inverse of :func:`_cast_sql`."""
+    name = to.this.name if isinstance(to.this, exp.DataType.Type) else None
+    params: list[int] = []
+    for param in to.expressions:
+        value = param.this if isinstance(param, exp.DataTypeParam) else param
+        if not (isinstance(value, exp.Literal) and value.is_int):
+            raise UnsupportedExpression(f"cast to {to.sql()}")
+        params.append(int(value.this))
+    if name == "TIMESTAMP" and params == [0]:
+        name, params = "TIMESTAMP(0)", []
+    cds = SQL_TYPE_TO_CDS.get(name or "")
+    facets = CAST_FACETS.get(cds or "", ())
+    if cds is None or len(params) > len(facets):
+        raise UnsupportedExpression(f"cast to {to.sql()}")
+    return {"type": cds, **dict(zip(facets, params))}
 
 
 def parse_sql(sql: str) -> exp.Expression:
@@ -253,14 +300,11 @@ def _to_cxn(node: exp.Expression, resolve_column: ColumnResolver) -> Any:
         tokens.append("end")
         return {"xpr": tokens}
     if isinstance(node, (exp.Cast, exp.TryCast)):
-        to = node.args["to"]
-        cds = _SQL_TYPE_TO_CDS.get(to.this.name if isinstance(to.this, exp.DataType.Type) else str(to.this))
-        if cds is None:
-            raise UnsupportedExpression(f"cast to {to.sql()}")
+        cast = _cast_type(node.args["to"])
         inner = _to_cxn(node.this, resolve_column)
-        if not isinstance(inner, dict) or "xpr" in inner:
-            raise UnsupportedExpression("cast of a compound expression")
-        return {**inner, "cast": {"type": cds}}
+        if not isinstance(inner, dict) or "xpr" in inner or "cast" in inner:
+            raise UnsupportedExpression("cast of a compound or already cast expression")
+        return {**inner, "cast": cast}
     if isinstance(node, exp.Count) and isinstance(node.this, exp.Distinct):
         distinct_args = [_to_cxn(e, resolve_column) for e in node.this.expressions]
         return {"func": "count", "args": [{"xpr": ["distinct", *distinct_args]}]}

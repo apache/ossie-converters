@@ -1,0 +1,47 @@
+{
+  "$version": "2.0",
+  "definitions": {
+    "sap.types.Readings": {
+      "kind": "entity",
+      "elements": {
+        "ID": { "key": true, "type": "cds.Int32" },
+        "counter": { "type": "cds.Integer" },
+        "big": { "type": "cds.Int64" },
+        "small": { "type": "cds.Int16" },
+        "note": { "type": "cds.LargeString" },
+        "code": { "type": "cds.String", "length": 10 },
+        "amount": { "type": "cds.Decimal", "precision": 15, "scale": 2 },
+        "takenAt": { "type": "cds.DateTime" },
+        "loggedAt": { "type": "cds.Timestamp" },
+        "codeCopy": { "type": { "ref": ["sap.types.Readings", "code"] } },
+        "takenAtSeconds": {
+          "type": "cds.DateTime",
+          "value": { "ref": ["loggedAt"], "cast": { "type": "cds.DateTime" } }
+        },
+        "loggedAtFraction": {
+          "type": "cds.Timestamp",
+          "value": { "ref": ["takenAt"], "cast": { "type": "cds.Timestamp" } }
+        },
+        "counter32": {
+          "type": "cds.Int32",
+          "value": { "ref": ["counter"], "cast": { "type": "cds.Int32" } }
+        },
+        "noteText": {
+          "type": "cds.LargeString",
+          "value": { "ref": ["code"], "cast": { "type": "cds.LargeString" } }
+        },
+        "codeShort": {
+          "type": "cds.String",
+          "length": 3,
+          "value": { "ref": ["note"], "cast": { "type": "cds.String", "length": 3 } }
+        },
+        "amountRounded": {
+          "type": "cds.Decimal",
+          "precision": 15,
+          "scale": 0,
+          "value": { "ref": ["amount"], "cast": { "type": "cds.Decimal", "precision": 15, "scale": 0 } }
+        }
+      }
+    }
+  }
+}

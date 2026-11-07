@@ -18,6 +18,7 @@
 import pytest
 
 from ossie_sap_csn.cxn import UnsupportedExpression, cxn_to_sql, sql_to_cxn
+from ossie_sap_csn.datatypes import CDS_TO_SQL_TYPE
 
 
 def _bare(table, column):
@@ -99,6 +100,20 @@ def test_untranslatable_sql_is_refused_not_guessed(sql):
         {"func": "f", "args": {"x": {"ref": ["a"]}}},
         {"SELECT": {}},
         {"ref": ["a", "b", "c"]},
+        # Malformed shapes are refused too, never a crash.
+        {"ref": []},
+        {"ref": "a"},
+        {"ref": ["a"], "cast": "cds.Integer"},
+        {"ref": ["a"], "cast": None},
+        {"xpr": [{"ref": ["a"]}, "in", {"list": 5}]},
+        {"xpr": "a"},
+        {"func": "f", "args": [{"xpr": 3}]},
+        {"func": 5, "args": []},
+        # Tokens and keys whose meaning a rendering would drop or invent.
+        {"xpr": [{"ref": ["a"]}, "?:", {"val": 1}]},
+        {"xpr": [{"ref": ["a"]}, "@@", {"ref": ["b"]}]},
+        {"func": "rank", "args": [], "xpr": ["over", {"xpr": ["order by", {"ref": ["a"]}]}]},
+        {"ref": ["p"], "param": True},
     ],
 )
 def test_untranslatable_cxn_is_refused_not_guessed(cxn):
@@ -127,3 +142,58 @@ def test_parse_error_text_carries_no_ansi_escapes():
     with pytest.raises(UnsupportedExpression) as info:
         sql_to_cxn("this is not sql !!!", _bare)
     assert "\x1b" not in str(info.value)
+
+
+# cds.Int32 is CDS's other name for cds.Integer, so SQL cannot tell them apart; the
+# importer keeps the original CXN for it (see test_roundtrip).
+_DISTINCT_CAST_TYPES = sorted(set(CDS_TO_SQL_TYPE) - {"cds.Int32"})
+
+
+@pytest.mark.parametrize("cds", _DISTINCT_CAST_TYPES)
+def test_every_cast_type_reads_back_as_itself(cds):
+    cxn = {"ref": ["a"], "cast": {"type": cds}}
+    assert sql_to_cxn(cxn_to_sql(cxn), _bare) == cxn
+
+
+def test_cast_sql_types_are_distinct_except_for_the_int32_synonym():
+    rendered = [CDS_TO_SQL_TYPE[t] for t in _DISTINCT_CAST_TYPES]
+    assert len(set(rendered)) == len(rendered)
+    assert CDS_TO_SQL_TYPE["cds.Int32"] == CDS_TO_SQL_TYPE["cds.Integer"]
+
+
+@pytest.mark.parametrize(
+    "cast, sql",
+    [
+        ({"type": "cds.DateTime"}, "CAST(a AS TIMESTAMP(0))"),  # seconds
+        ({"type": "cds.Timestamp"}, "CAST(a AS TIMESTAMP)"),  # fractional seconds
+        ({"type": "cds.LargeString"}, "CAST(a AS CLOB)"),
+        ({"type": "cds.String", "length": 100}, "CAST(a AS VARCHAR(100))"),
+        ({"type": "cds.Decimal", "precision": 10}, "CAST(a AS DECIMAL(10))"),
+        ({"type": "cds.Decimal", "precision": 10, "scale": 2}, "CAST(a AS DECIMAL(10, 2))"),
+    ],
+)
+def test_cast_facets_and_precision_survive_sql(cast, sql):
+    cxn = {"ref": ["a"], "cast": cast}
+    assert cxn_to_sql(cxn) == sql
+    assert sql_to_cxn(sql, _bare) == cxn
+
+
+@pytest.mark.parametrize(
+    "cast",
+    [
+        {"type": "cds.Decimal", "scale": 2},  # SQL type parameters are positional
+        {"type": "cds.Integer", "length": 5},
+        {"type": "cds.Decimal", "precision": "10"},
+        {"type": "cds.Decimal", "precision": 10, "scale": "floating"},
+        {"type": "cds.UUID"},
+    ],
+)
+def test_cast_facets_without_an_sql_rendering_are_refused(cast):
+    with pytest.raises(UnsupportedExpression):
+        cxn_to_sql({"ref": ["a"], "cast": cast})
+
+
+@pytest.mark.parametrize("sql", ["CAST(a AS TIMESTAMP(3))", "CAST(a AS INT(11))", "CAST(a AS VARCHAR(MAX))", "CAST(CAST(a AS INT) AS VARCHAR)"])
+def test_sql_cast_with_no_cds_equivalent_is_refused(sql):
+    with pytest.raises(UnsupportedExpression):
+        sql_to_cxn(sql, _bare)

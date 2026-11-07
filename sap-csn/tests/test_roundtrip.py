@@ -23,7 +23,11 @@ from ossie import OssieDataType, OssieDocument
 
 from ossie_sap_csn import CsnToOssieConverter, OssieToCsnConverter
 
-from .helpers import by_name, load_fixture, load_tpcds, validate_against_schema
+from .helpers import TPCDS_PATH, by_name, load_fixture, load_tpcds, validate_against_schema
+
+
+def load_tpcds_text() -> str:
+    return TPCDS_PATH.read_text()
 
 
 def strip_additions(csn: dict) -> dict:
@@ -53,8 +57,9 @@ def test_csn_survives_through_yaml():
     assert OssieToCsnConverter().convert(reloaded).output == OssieToCsnConverter().convert(ossie).output
 
 
-def test_second_csn_to_ossie_pass_is_stable():
-    original = load_fixture("bookshop.csn.json")
+@pytest.mark.parametrize("name", ["bookshop.csn.json", "cds_types.csn.json"])
+def test_second_csn_to_ossie_pass_is_stable(name):
+    original = load_fixture(name)
     first = CsnToOssieConverter().convert(original, name="bookshop").output
     csn = OssieToCsnConverter().convert(first).output
     second = CsnToOssieConverter().convert(csn, name="bookshop").output
@@ -109,6 +114,93 @@ def test_tpcds_metrics_all_survive_whatever_their_home():
         assert got[name].description == want[name].description
 
 
-@pytest.mark.parametrize("name", ["bookshop.csn.json"])
+def test_tpcds_dataset_metrics_keep_their_dataset_scope():
+    original = OssieDocument.model_validate(load_tpcds())
+    back = CsnToOssieConverter().convert(OssieToCsnConverter().convert(original).output).output
+    for name, want in by_name(original.datasets).items():
+        got = by_name(by_name(back.datasets)[name].metrics)
+        assert {m: sql(got[m]) for m in got} == {m.name: sql(m) for m in want.metrics or []}, name
+    assert "total_quantity" in by_name(by_name(original.datasets)["store_sales"].metrics)  # the example has one
+
+
+@pytest.mark.parametrize("name", ["bookshop.csn.json", "cds_types.csn.json"])
 def test_converted_fixture_validates_against_the_schema(name):
     validate_against_schema(CsnToOssieConverter().convert(load_fixture(name), name="m").output)
+
+
+# --------------------------------------------------------------------------------------
+# CDS types: what an element and a cast say, kept exactly
+# --------------------------------------------------------------------------------------
+
+
+def test_cds_types_survive_csn_ossie_csn():
+    original = load_fixture("cds_types.csn.json")
+    ossie = CsnToOssieConverter().convert(original, name="types").output
+    assert strip_additions(OssieToCsnConverter().convert(ossie).output) == original
+
+
+def readings(document):
+    return by_name(by_name(document.datasets)["Readings"].fields)
+
+
+def test_cast_sql_says_what_the_cds_type_means():
+    fields = readings(CsnToOssieConverter().convert(load_fixture("cds_types.csn.json")).output)
+    assert fields["takenAtSeconds"].expression.dialects[0].expression == "CAST(loggedAt AS TIMESTAMP(0))"
+    assert fields["loggedAtFraction"].expression.dialects[0].expression == "CAST(takenAt AS TIMESTAMP)"
+    assert fields["noteText"].expression.dialects[0].expression == "CAST(code AS CLOB)"
+    assert fields["codeShort"].expression.dialects[0].expression == "CAST(note AS VARCHAR(3))"
+    assert fields["amountRounded"].expression.dialects[0].expression == "CAST(amount AS DECIMAL(15, 0))"
+    assert fields["codeCopy"].datatype == OssieDataType.STRING  # `type of Readings:code`
+
+
+def drop_kept_cxn(document: OssieDocument) -> OssieDocument:
+    """``document`` without the CXN the importer keeps, so export has only the SQL to go on."""
+    raw = json.loads(document.to_ossie_json())
+    for dataset in raw["datasets"]:
+        for field in dataset.get("fields") or []:
+            for extension in field.get("custom_extensions") or []:
+                if extension["vendor_name"] == "SAP_CSN":
+                    data = json.loads(extension["data"])
+                    data.pop("value", None)
+                    data.pop("value_sql", None)
+                    extension["data"] = json.dumps(data)
+    return OssieDocument.model_validate(raw)
+
+
+def test_cast_types_survive_on_the_sql_alone_except_the_int32_synonym():
+    original = load_fixture("cds_types.csn.json")
+    ossie = drop_kept_cxn(CsnToOssieConverter().convert(original).output)
+    elements = OssieToCsnConverter().convert(ossie).output["definitions"]["sap.types.Readings"]["elements"]
+    for name in ("takenAtSeconds", "loggedAtFraction", "noteText", "codeShort", "amountRounded"):
+        assert elements[name]["value"] == original["definitions"]["sap.types.Readings"]["elements"][name]["value"], name
+    # CDS defines cds.Int32 as cds.Integer; only the kept CXN tells them apart.
+    assert elements["counter32"]["value"] == {"ref": ["counter"], "cast": {"type": "cds.Integer"}}
+
+
+def test_an_edited_expression_is_translated_not_replaced_by_the_kept_cxn():
+    ossie = CsnToOssieConverter().convert(load_fixture("cds_types.csn.json")).output
+    raw = json.loads(ossie.to_ossie_json())
+    readings_raw = next(d for d in raw["datasets"] if d["name"] == "Readings")
+    field = next(f for f in readings_raw["fields"] if f["name"] == "counter32")
+    field["expression"]["dialects"][0]["expression"] = "CAST(counter AS INT) + 1"
+    csn = OssieToCsnConverter().convert(OssieDocument.model_validate(raw)).output
+    assert csn["definitions"]["sap.types.Readings"]["elements"]["counter32"]["value"] == {
+        "xpr": [{"ref": ["counter"], "cast": {"type": "cds.Integer"}}, "+", {"val": 1}]
+    }
+
+
+def test_dataset_metrics_csn_cannot_hold_as_measures_survive_the_round_trip():
+    raw = yaml.safe_load(load_tpcds_text())
+    store_sales = next(d for d in raw["datasets"] if d["name"] == "store_sales")
+    store_sales["metrics"].append(
+        {"name": "row_count", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]}}
+    )
+    original = OssieDocument.model_validate(raw)
+    result = OssieToCsnConverter().convert(original)
+    assert [m["name"] for m in result.output["definitions"]["store_sales"]["@Ossie.metrics"]] == ["row_count"]
+    back = CsnToOssieConverter().convert(result.output).output
+    assert {m.name: sql(m) for m in by_name(back.datasets)["store_sales"].metrics} == {
+        "total_quantity": "SUM(ss_quantity)",
+        "row_count": "COUNT(*)",
+    }
+    validate_against_schema(back)
