@@ -166,6 +166,9 @@ converters:
   relationalai:
     cwd: relationalai
     skip: Converts Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
+  sap-csn-ontology:
+    cwd: sap-csn-ontology
+    skip: Converts SAP CSN into Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
   polaris:
     cwd: polaris
     skip: Requires a provisioned Polaris REST catalog; the file matrix does not create or modify live catalogs.

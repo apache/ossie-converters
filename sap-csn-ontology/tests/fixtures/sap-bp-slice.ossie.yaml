@@ -1,0 +1,318 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# SAP Business Partner slice — expected ontology for sap-bp-slice.csn.json.
+# Validates against ontology/ontology.json (v0.2.0.dev0) from the pinned ossie submodule.
+# Scope: one Business-Partner-class entity family, compound identity, associations,
+#        DDIC domain machinery, and one mapping to a data-product-shaped dataset.
+# Deliberately out of scope (v1): actions/events (behavior-layer proposal is the join point),
+#        hierarchies, time-dependence, authorization semantics.
+
+version: "0.2.0.dev0"
+name: sap_business_partner_slice
+description: >
+  A thin slice of SAP Business Partner semantics (S/4HANA, CSN/CDS-sourced) expressed
+  in the Apache Ossie ontology layer. Field names follow SAP's One Domain Model business
+  naming; technical origins (KUNNR-class domains, check tables) are noted in descriptions.
+
+ontology:
+
+  # ---- Value types carrying DDIC domain semantics -------------------------
+
+  - concept: BusinessPartnerNumber
+    type: ValueType
+    description: >
+      Identifier of a business partner. Technical origin: DDIC domain BU_PARTNER
+      (CHAR 10, ALPHA conversion). The leading-zero conversion routine is a
+      representation concern and is recorded here, not modeled.
+    extends: [ String ]
+
+  - concept: BusinessPartnerCategory
+    type: ValueType
+    description: >
+      Category of a business partner. Technical origin: DDIC domain BU_TYPE with
+      fixed values — 1 = person, 2 = organization, 3 = group. Fixed values become
+      a closed-world requires constraint.
+    extends: [ String ]
+    requires:
+      - "BusinessPartnerCategory == '1' OR BusinessPartnerCategory == '2' OR BusinessPartnerCategory == '3'"
+
+  - concept: CustomerNumber
+    type: ValueType
+    description: >
+      Identifier of a business partner in its customer role. Technical origin:
+      DDIC domain KUNNR (CHAR 10, ALPHA).
+    extends: [ String ]
+
+  - concept: CountryCode
+    type: ValueType
+    description: >
+      Country key. Technical origin: DDIC domain LAND1 (CHAR 3); values are
+      commonly ISO 3166-1 alpha-2. The check table T005 is noted as provenance;
+      the population is carried through from the business partner dataset.
+    extends: [ String ]
+
+  - concept: SalesOrganization
+    type: ValueType
+    description: "Sales organization. DDIC domain VKORG (CHAR 4, check table TVKO)."
+    extends: [ String ]
+
+  - concept: DistributionChannel
+    type: ValueType
+    description: "Distribution channel. DDIC domain VTWEG (CHAR 2, check table TVTW)."
+    extends: [ String ]
+
+  - concept: Division
+    type: ValueType
+    description: "Division. DDIC domain SPART (CHAR 2, check table TSPA)."
+    extends: [ String ]
+
+  - concept: PartnerName
+    type: ValueType
+    description: "Full name of the business partner (BUT000 name fields, concatenated business view)."
+    extends: [ String ]
+
+  # ---- Entity types -------------------------------------------------------
+
+  - concept: BusinessPartner
+    type: EntityType
+    description: >
+      A person, organization, or group with which the company has a business
+      interest. CSN source: entity BusinessPartner (BUT000-class). Verbalizations
+      carry the language-dependent labels agents need.
+    identify_by: [ nr ]
+    relationships:
+      - name: nr
+        description: "Preferred identifier (CSN key element BusinessPartner)."
+        roles:
+          - concept: BusinessPartnerNumber
+        multiplicity: OneToOne
+        verbalizes:
+          - "{BusinessPartner} is identified by {BusinessPartnerNumber}"
+          - "{BusinessPartnerNumber} identifies {BusinessPartner}"
+      - name: category
+        description: "CSN element BusinessPartnerCategory (domain BU_TYPE)."
+        roles:
+          - concept: BusinessPartnerCategory
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{BusinessPartner} is of category {BusinessPartnerCategory}"
+      - name: full_name
+        description: "CSN element BusinessPartnerFullName (@EndUserText carried into verbalization)."
+        roles:
+          - concept: PartnerName
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{BusinessPartner} is named {PartnerName}"
+      - name: country
+        description: >
+          CSN element Country, foreign key into the country entity (check table
+          T005). Modeled as a relationship to the CountryCode value type; the
+          check-table population arrives via the country dataset mapping.
+        roles:
+          - concept: CountryCode
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{BusinessPartner} is based in country {CountryCode}"
+      - name: customer_nr
+        description: >
+          CSN association _Customer (I_Customer / FLCU00-class role view). A
+          business partner may hold the customer role; when it does, exactly one
+          customer number applies.
+        roles:
+          - concept: CustomerNumber
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{BusinessPartner} acts as customer {CustomerNumber}"
+
+  - concept: Customer
+    type: EntityType
+    description: >
+      A business partner in its customer role. CSN source: entity Customer
+      (I_Customer). Modeled as a derived subtype: the population is exactly
+      those business partners that carry a customer number — the closed-world
+      reading of SAP's role concept.
+    extends: [ BusinessPartner ]
+    identify_by: [ nr ]
+    derived_by:
+      - "EXISTS ( BusinessPartner.customer_nr )"
+
+  - concept: CustomerSalesArea
+    type: EntityType
+    description: >
+      Customer master data per sales area. CSN source: entity CustomerSalesArea
+      (KNVV-class), key = Customer + SalesOrganization + DistributionChannel +
+      Division. The compound identifier is declared as four identifying
+      relationships — the construct that breaks differently across today's
+      agent platforms, and the reason this slice exists.
+    identify_by: [ customer, sales_org, channel, division ]
+    requires:
+      - "CustomerSalesArea.customer"
+      - "CustomerSalesArea.sales_org"
+      - "CustomerSalesArea.channel"
+      - "CustomerSalesArea.division"
+    relationships:
+      - name: customer
+        roles:
+          - concept: Customer
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{CustomerSalesArea} is customer master data of {Customer}"
+          - "{Customer} sells through {CustomerSalesArea}"
+          - "{CustomerSalesArea} belongs to {Customer}"
+      - name: sales_org
+        roles:
+          - concept: SalesOrganization
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{CustomerSalesArea} is maintained in sales organization {SalesOrganization}"
+      - name: channel
+        roles:
+          - concept: DistributionChannel
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{CustomerSalesArea} sells via distribution channel {DistributionChannel}"
+      - name: division
+        roles:
+          - concept: Division
+        multiplicity: ManyToOne
+        verbalizes:
+          - "{CustomerSalesArea} covers division {Division}"
+      - name: delivery_blocked
+        description: >
+          CSN element DeliveryIsBlocked (domain with fixed values, reduced here
+          to a unary flag). The governed action that releases the block is
+          behavior, not structure — it stays out of this slice and joins via the
+          open behavior-layer proposal.
+        verbalizes:
+          - "{CustomerSalesArea} is blocked for delivery"
+
+# ---- Mapping: data-product dataset → ontology ----------------------------
+# The logical layer below is a minimal BDC-data-product-shaped semantic model;
+# expressions use the OSI_SQL_2026 core subset.
+
+ontology_mappings:
+
+  - name: customer_sales_area_from_data_product
+    description: >
+      Populates the Business Partner slice from a customer-sales data product.
+      The nested referent mapping under 'customer' is compound identity doing
+      real work: a sales-area row references its customer, which is itself
+      referenced by business partner number.
+    semantic_model:
+      version: "0.2.0.dev0"
+      name: sap_customer_sales_data_product
+      description: "Customer sales master data product (CDS-projected, Delta-shared)."
+      datasets:
+        - name: CUSTOMER_SALES_AREA
+          source: "bdc.customer_sales.customer_sales_area"
+          primary_key: [ CUSTOMER_ID, SALES_ORG, DISTR_CHANNEL, DIVISION ]
+          fields:
+            - name: CUSTOMER_ID
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "CUSTOMER_ID"
+              datatype: String
+            - name: SALES_ORG
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "SALES_ORG"
+              datatype: String
+            - name: DISTR_CHANNEL
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "DISTR_CHANNEL"
+              datatype: String
+            - name: DIVISION
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "DIVISION"
+              datatype: String
+            - name: DELIVERY_BLOCK
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "DELIVERY_BLOCK"
+              datatype: String
+        - name: BUSINESS_PARTNER
+          source: "bdc.master_data.business_partner"
+          primary_key: [ BP_NUMBER ]
+          fields:
+            - name: BP_NUMBER
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "BP_NUMBER"
+              datatype: String
+            - name: BP_CATEGORY
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "BP_CATEGORY"
+              datatype: String
+            - name: BP_FULL_NAME
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "BP_FULL_NAME"
+              datatype: String
+            - name: COUNTRY
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "COUNTRY"
+              datatype: String
+    concept_mappings:
+
+      - concept: BusinessPartner
+        object_mappings:
+          - referent_mappings:
+              - relationship: nr
+                expression: "BUSINESS_PARTNER.BP_NUMBER"
+        link_mappings:
+          - object_mapping:
+              referent_mappings:
+                - relationship: nr
+                  expression: "BUSINESS_PARTNER.BP_NUMBER"
+            children:
+              - relationship: category
+                object_mapping:
+                  expression: "BUSINESS_PARTNER.BP_CATEGORY"
+              - relationship: full_name
+                object_mapping:
+                  expression: "BUSINESS_PARTNER.BP_FULL_NAME"
+              - relationship: country
+                object_mapping:
+                  expression: "BUSINESS_PARTNER.COUNTRY"
+
+      - concept: CustomerSalesArea
+        object_mappings:
+          - referent_mappings:
+              - relationship: customer
+                referent_mappings:
+                  - relationship: BusinessPartner.nr
+                    expression: "CUSTOMER_SALES_AREA.CUSTOMER_ID"
+              - relationship: sales_org
+                expression: "CUSTOMER_SALES_AREA.SALES_ORG"
+              - relationship: channel
+                expression: "CUSTOMER_SALES_AREA.DISTR_CHANNEL"
+              - relationship: division
+                expression: "CUSTOMER_SALES_AREA.DIVISION"

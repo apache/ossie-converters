@@ -51,6 +51,7 @@ updates:
       - "/ontology"
       - "/orionbelt"
       - "/relationalai"
+      - "/sap-csn-ontology"
       - "/palantir"
       - "/sigma"
       - "/snowflake"
