@@ -39,7 +39,7 @@
 #   * LargeSale is derived and extends nothing, so the formula emitter takes its
 #     ref-scheme branch rather than the subtype branch that CardPayment in
 #     retail.yaml covers.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: KeyColumnBothWays
 ontology:
 - concept: StoreNr
@@ -106,7 +106,7 @@ ontology:
 ontology_mappings:
 - name: ref_scheme_mapping
   semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: Ref scheme semantic model
     datasets:
     - name: STORES

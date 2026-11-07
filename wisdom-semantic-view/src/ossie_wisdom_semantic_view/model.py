@@ -24,7 +24,7 @@ import sys
 
 import yaml
 
-SPEC_VERSION = "0.2.0.dev0"
+SPEC_VERSION = "0.3.0.dev0"
 BARE_COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ALLOWED_AGGREGATE = "SUM(bookings.amount)"
 

@@ -44,6 +44,9 @@
         <snakeyaml.version>2.7</snakeyaml.version>
         <jackson.version>2.22.4</jackson.version>
         <junit.version>6.1.3</junit.version>
+        <!-- The jar ships this converter's LICENSE, NOTICE and DISCLAIMER (copied below), not
+             the generic ones the ASF parent's resource bundle generates. -->
+        <remoteresources.skip>true</remoteresources.skip>
     </properties>
 
     <dependencies>
@@ -77,6 +80,35 @@
 
     <build>
         <plugins>
+            <!-- Ship the converter's LICENSE, NOTICE and DISCLAIMER in META-INF. They describe the
+                 shaded jar, including the dependencies it bundles. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-legal-files</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/META-INF</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/..</directory>
+                                    <includes>
+                                        <include>LICENSE</include>
+                                        <include>NOTICE</include>
+                                        <include>DISCLAIMER</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
@@ -114,6 +146,17 @@
                     <!-- Keep the module root clean: the reduced pom is an untracked build artifact
                          that the license audit below would flag. -->
                     <createDependencyReducedPom>false</createDependencyReducedPom>
+                    <!-- The converter's LICENSE and NOTICE cover the bundled Jackson, so drop
+                         Jackson's own copies rather than let them collide in META-INF. -->
+                    <filters>
+                        <filter>
+                            <artifact>com.fasterxml.jackson.*:*</artifact>
+                            <excludes>
+                                <exclude>META-INF/LICENSE</exclude>
+                                <exclude>META-INF/NOTICE</exclude>
+                            </excludes>
+                        </filter>
+                    </filters>
                 </configuration>
                 <executions>
                     <execution>

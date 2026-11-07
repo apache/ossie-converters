@@ -26,12 +26,13 @@ dev = [
 
 [project]
 name = "apache-ossie-sigma"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "Sigma Computing Data Model <> Apache Ossie converter"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
 requires-python = ">=3.11"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "DISCLAIMER"]
 keywords = [
     "Apache Ossie",
     "Ossie",
@@ -39,7 +40,7 @@ keywords = [
     "Sigma Computing"
 ]
 dependencies = [
-    "apache-ossie>=0.2.0.dev0",
+    "apache-ossie>=0.3.0.dev0",
     "PyYAML>=6.0",
     "sqlglot>=20.0",
 ]

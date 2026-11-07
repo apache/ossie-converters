@@ -1,0 +1,32 @@
+Apache Ossie Salesforce Converter (incubating)
+Copyright 2026 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+--------------------------------------------------------------------------------
+
+This product bundles Jackson, which carries the following notice:
+
+  Jackson is a high-performance, Free/Open Source JSON processing library.
+  It was originally written by Tatu Saloranta (tatu.saloranta@iki.fi), and has
+  been in development since 2007.
+  It is currently developed by a community of developers.
+
+  Copyright 2007-, Tatu Saloranta (tatu.saloranta@iki.fi)
+
+  jackson-core bundles a shaded copy of FastDoubleParser
+  <https://github.com/wrandelshofer/FastDoubleParser>.
+  That code is available under an MIT license
+  <https://github.com/wrandelshofer/FastDoubleParser/blob/main/LICENSE>
+  under the following copyright.
+
+  Copyright © 2023 Werner Randelshofer, Switzerland. MIT License.
+
+  jackson-core bundles a copy of the Schubfach number writing code
+  <https://github.com/c4f7fcce9cb06515/Schubfach>.
+  That code is available under an MIT license
+  <https://github.com/c4f7fcce9cb06515/Schubfach/blob/master/todec/LICENSE>
+  under the following copyright.
+
+  Copyright 2018-2020 Raffaello Giulietti

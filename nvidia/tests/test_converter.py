@@ -44,7 +44,7 @@ from ossie_nvidia_auto_ontology.native_converter import (
     _simple_source_column,
 )
 
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 FIXTURES = Path(__file__).parent / "fixtures"
 VALIDATOR = Path(__file__).resolve().parents[2] / "ossie" / "validation" / "validate.py"
 SCHEMA = Path(__file__).resolve().parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
@@ -1531,7 +1531,7 @@ def test_auto_ontology_sourced_catalog_is_never_widened_by_sql_identifiers() -> 
     assert "not_a_real_column" not in {column["name"] for column in after_columns}
 
 
-@pytest.mark.parametrize("version", ["0.2.0.dev0", "0.2.0", "0.2.1", "0.2.7.dev3"])
+@pytest.mark.parametrize("version", ["0.3.0.dev0", "0.3.0", "0.3.1", "0.3.7.dev3"])
 def test_any_release_in_the_supported_series_is_accepted(version: str) -> None:
     ossie = yaml.safe_load(_ossie_yaml())
     ossie["version"] = version
@@ -1541,7 +1541,7 @@ def test_any_release_in_the_supported_series_is_accepted(version: str) -> None:
     assert native["semantic_layer"]["terms"]
 
 
-@pytest.mark.parametrize("version", ["0.1.9", "0.3.0", "1.0.0", "", "dev"])
+@pytest.mark.parametrize("version", ["0.1.9", "0.2.0.dev0", "0.4.0", "1.0.0", "", "dev"])
 def test_versions_outside_the_supported_series_are_rejected(version: str) -> None:
     ossie = yaml.safe_load(_ossie_yaml())
     ossie["version"] = version

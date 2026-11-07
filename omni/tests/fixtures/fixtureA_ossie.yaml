@@ -23,7 +23,7 @@
 # regenerated (`<from>_to_<to>`), and unique_keys that merely restate the
 # primary key are absorbed by it.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 
 name: sales
 description: Sales orders with customer attributes

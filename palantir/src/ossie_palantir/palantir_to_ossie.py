@@ -155,7 +155,7 @@ class PalantirToOssieConverter:
         schema_name: str = "palantir",
     ) -> OssieOntology:
         ontology = OntologyComponent()
-        model = OssieOntology(name="Palantir model", ontology=ontology, version="0.2.0.dev0")
+        model = OssieOntology(name="Palantir model", ontology=ontology, version="0.3.0.dev0")
 
         semantic_model = SemanticModel(name="Palantir semantic model")
 

@@ -100,7 +100,7 @@ def _documents(draw):
             "custom_extensions": _stash(**payload),
         })
 
-    document = {"version": "0.2.0.dev0", "name": "m", "datasets": datasets}
+    document = {"version": "0.3.0.dev0", "name": "m", "datasets": datasets}
 
     # Relationships between consecutive datasets, sometimes composite.
     if n_datasets > 1 and draw(st.booleans()):

@@ -27,19 +27,20 @@ dev = [
 
 [project]
 name = "apache-ossie-dbt"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "dbt (MetricFlow Semantic Interface) <> Apache Ossie converter"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
 requires-python = ">=3.11"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "DISCLAIMER"]
 keywords = [
     "Apache Ossie",
     "Ossie",
     "dbt"
 ]
 dependencies = [
-    "apache-ossie>=0.2.0.dev0",
+    "apache-ossie>=0.3.0.dev0",
     "metricflow>=0.213.0",
     "sqlglot>=20.0",
     "jinja2>=3.0",

@@ -1337,7 +1337,7 @@ def test_cli_export_reports_errors_without_traceback(tmp_path, capsys):
     from ossie_microsoft.cli import main
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text("version: 0.2.0.dev0\n", encoding="utf-8")
+    bad.write_text("version: 0.3.0.dev0\n", encoding="utf-8")
     assert main(["export", "-i", str(bad)]) == 1
     assert "Error:" in capsys.readouterr().err
 

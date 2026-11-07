@@ -17,7 +17,7 @@
 # under the License.
 # name: TestOssieToMSIRoundTrip.test_ossie_to_msi_to_ossie_preserves_structure
   '''
-  version: 0.2.0.dev0
+  version: 0.3.0.dev0
   name: semantic_model
   datasets:
   - name: orders
