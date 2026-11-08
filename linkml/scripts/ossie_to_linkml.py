@@ -24,7 +24,7 @@
 #   Only the ontology crosses over: LinkML has nowhere to put an
 #   'ontology_mappings' block, so datasets, join paths and metrics are dropped.
 #   The full mapping and all limitations are documented at
-#   https://github.com/NeverBlink-OSS/ohi/blob/main/docs/ossie_mapping.md
+#   https://linkml.ohi.dev/docs/importers/ossie/
 #
 # Usage:
 #

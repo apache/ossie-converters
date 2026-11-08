@@ -38,7 +38,7 @@ class OssieToLinkmlConverter:
     Only the ontology crosses over. LinkML describes types and their slots and
     has nowhere to put an `ontology_mappings` block, so datasets, join paths
     and metrics are dropped. The full mapping is documented at
-    https://github.com/NeverBlink-OSS/ohi/blob/main/docs/ossie_mapping.md
+    https://linkml.ohi.dev/docs/importers/ossie/
 
         schema_yaml = OssieToLinkmlConverter.convert(model)
     """
