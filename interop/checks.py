@@ -127,6 +127,19 @@ def native_content(path, native_format, output_shape):
                     model_files.append(str(item))
                     members += count
                 continue
+            if native_format == "lookml":
+                # Source-content check only; LookML validation needs Looker.
+                text = item.read_text(encoding="utf-8")
+                count = len(
+                    re.findall(
+                        r"(?m)^\s*(?:dimension|dimension_group|measure):\s*\w+\s*\{",
+                        text,
+                    )
+                )
+                if count:
+                    model_files.append(str(item))
+                    members += count
+                continue
             data = (
                 json.loads(item.read_text(encoding="utf-8"))
                 if native_format
@@ -190,6 +203,17 @@ def _additional_members(data, native_format):
     if native_format == "hex":
         # Hex resource files wrap a model, dimension, measure or relation.
         return sum(len(data.get(key) or []) for key in ("dimensions", "measures"))
+    if native_format == "lightdash":
+        # A Lightdash model file declares `type: model`; `lightdash.config.yml`
+        # and dbt files in the same tree are not models.
+        if not str(data.get("type") or "").startswith("model"):
+            return 0
+        dimensions = data.get("dimensions") or []
+        return (
+            len(dimensions)
+            + sum(len(dimension.get("metrics") or {}) for dimension in dimensions)
+            + len(data.get("metrics") or {})
+        )
     if native_format == "honeydew":
         return len(data.get("attributes") or []) + int(
             data.get("type") in ("calculated_attribute", "metric")

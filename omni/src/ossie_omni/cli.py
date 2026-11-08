@@ -31,7 +31,7 @@ import argparse
 import os
 import sys
 
-from ._common import ConversionError
+from ._common import ConversionError, contained_output_path
 from .omni_to_ossie import convert_omni_to_ossie
 from .ossie_to_omni import convert_ossie_to_omni
 
@@ -94,8 +94,11 @@ def main(argv=None):
                 ossie_yaml = fh.read()
             files = convert_ossie_to_omni(ossie_yaml, base_view=args.base_view,
                                         dialect=args.dialect)
+            # Resolve every destination before writing, so a path that escapes
+            # the output directory fails the export without a partial write.
+            dests = {rel: contained_output_path(args.output, rel) for rel in files}
             for rel, text in files.items():
-                dest = os.path.join(args.output, *rel.split("/"))
+                dest = dests[rel]
                 os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
                 with open(dest, "w") as fh:
                     fh.write(text)

@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
     [
         "gooddata",
         "honeydew",
+        "lightdash",
         "microsoft",
         "nvidia",
         "omni",
@@ -65,6 +66,8 @@ def test_registered_native_sources_have_real_members(name):
         "gooddata",
         "hex",
         "honeydew",
+        "lightdash",
+        "lookml",
         "microsoft",
         "nvidia",
         "omni",
@@ -78,7 +81,7 @@ def test_registered_native_sources_have_real_members(name):
     ],
 )
 def test_metadata_and_logs_do_not_establish_native_content(tmp_path, fmt):
-    directory = fmt in ("hex", "honeydew", "omni", "thoughtspot")
+    directory = fmt in ("hex", "honeydew", "lightdash", "omni", "thoughtspot")
     file = tmp_path / (
         "empty.table.tml"
         if fmt == "thoughtspot"
@@ -103,6 +106,21 @@ def test_aml_inspection_counts_source_members_but_not_dataset_or_log(tmp_path):
     content = native_content(tmp_path, "holistics", "directory")
     assert content["members"] == 1
     assert len(content["files"]) == 1
+
+
+def test_lookml_inspection_counts_declared_fields_not_comments(tmp_path):
+    file = tmp_path / "native.lkml"
+    file.write_text(
+        "# dimension: commented {\n"
+        "view: orders {\n  sql_table_name: `p.d.orders` ;;\n"
+        "  dimension: id {\n    sql: ${TABLE}.id ;;\n  }\n"
+        "  dimension_group: created {\n    type: time\n  }\n"
+        "  measure: total {\n    type: sum\n  }\n}\n"
+        "explore: orders {}\n"
+    )
+    content = native_content(file, "lookml", "file")
+    assert content["members"] == 3
+    assert content["files"] == [str(file)]
 
 
 def test_malformed_added_native_model_is_failure(tmp_path):

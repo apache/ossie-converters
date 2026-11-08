@@ -38,11 +38,13 @@ updates:
   # "pip" ecosystem does not read, so they are updated as "uv" projects.
   - package-ecosystem: "uv"
     directories:
+      - "/bigquery"
       - "/cube"
       - "/dbt"
       - "/gooddata"
       - "/honeydew"
       - "/interop"
+      - "/lightdash"
       - "/microsoft"
       - "/nvidia"
       - "/omni"

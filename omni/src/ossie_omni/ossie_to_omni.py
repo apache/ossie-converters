@@ -48,6 +48,7 @@ from ._common import (
     pick_expression,
     read_stash,
     require_str,
+    safe_relative_path,
     sanitize_name,
     synonyms_of,
     topic_file,
@@ -155,8 +156,13 @@ def _convert_model(model, explicit_base_view, dialect):
     view_paths = {}
     for ds_name, ds in datasets.items():
         vname = view_names[ds_name]
+        stashed_file = read_stash(ds).get("file")
+        # Only a missing/null entry means "canonical path"; any other value,
+        # including an empty string, must pass validation.
+        view_paths[vname] = (
+            safe_relative_path(stashed_file, f"dataset '{ds_name}' file")
+            if stashed_file is not None else view_file(vname))
         view, dim_names = _convert_dataset(ds, vname, view_names, dialect)
-        view_paths[vname] = read_stash(ds).get("file") or view_file(vname)
         files[view_paths[vname]] = dump_yaml(view)
         dims_by_view[vname] = dim_names
 
@@ -227,7 +233,10 @@ def _convert_model(model, explicit_base_view, dialect):
                 instructions = instructions_of(model.get("ai_context"))
                 if instructions:
                     topic["ai_context"] = instructions
-            files[topic_paths.get(tname) or topic_file(tname)] = dump_yaml(topic)
+            tpath = topic_paths.get(tname)
+            tpath = (safe_relative_path(tpath, f"topic '{tname}' file")
+                     if tpath is not None else topic_file(tname))
+            files[tpath] = dump_yaml(topic)
     else:
         tname = sanitize_name(name, f"Model '{name}'", set())
         files[topic_file(tname)] = dump_yaml(
@@ -236,7 +245,7 @@ def _convert_model(model, explicit_base_view, dialect):
     # Files a prior import could not convert (query views, unrecognized files)
     # restore verbatim.
     for fname, text in (model_stash.get("extra_files") or {}).items():
-        files[fname] = text
+        files[safe_relative_path(fname, "extra_files entry")] = text
 
     _warn_dropped_model(model)
     return files
