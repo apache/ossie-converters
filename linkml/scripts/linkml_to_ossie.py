@@ -26,7 +26,7 @@
 #   A schema can load and still have errors and warnings against it.
 #   Any issues the loader reports are written to stderr. Only fatal problems stop the run.
 #   The full mapping and all limitations are documented at
-#   https://github.com/NeverBlink-OSS/ohi/blob/main/docs/ossie_mapping.md
+#   https://linkml.ohi.dev/docs/generators/ossie/
 #
 # Usage:
 #
