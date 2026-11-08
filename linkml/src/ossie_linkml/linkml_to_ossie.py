@@ -17,7 +17,7 @@
 
 """Converter from a LinkML schema to OssieOntology (runtime semantic model).
 
-`linkml_scala` – the `neverblink-linkml` distribution – loads the schema and
+`ohi_linkml` – the `neverblink-linkml` distribution – loads the schema and
 emits an Ossie document from it. This module feeds that through the existing
 spec -> model conversion from `apache-ossie-ontology`, so the result is the
 same OssieOntology every other Ossie converter produces.
@@ -29,7 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
-import linkml_scala
+import ohi_linkml
 
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 from ossie_ontology.model import FormulaFactory, MappingFormulaFactory, OssieOntology
@@ -45,7 +45,7 @@ class LinkmlToOssieConverter:
         model = LinkmlToOssieConverter().convert_file("model.yaml")
         model = LinkmlToOssieConverter(formula_factory=my_parser).convert(schema)
 
-    `convert` takes an already-loaded `linkml_scala.Schema`; use it when you
+    `convert` takes an already-loaded `ohi_linkml.Schema`; use it when you
     want to run other generators over the same schema, since loading is the
     expensive part. `convert_file` and `convert_text` load and release one for
     you.
@@ -58,7 +58,7 @@ class LinkmlToOssieConverter:
 
     def convert(
         self,
-        schema: linkml_scala.Schema,
+        schema: ohi_linkml.Schema,
         pruning_mode: str = "skip",
         tree_root: str | None = None,
         metadata_language: str = "en",
@@ -83,7 +83,7 @@ class LinkmlToOssieConverter:
 
     def convert_to_spec(
         self,
-        schema: linkml_scala.Schema,
+        schema: ohi_linkml.Schema,
         pruning_mode: str = "skip",
         tree_root: str | None = None,
         metadata_language: str = "en",
@@ -97,7 +97,7 @@ class LinkmlToOssieConverter:
             schema.ossie(
                 pruning_mode=pruning_mode,
                 tree_root=tree_root,
-                output_format="yaml",
+                format="yaml",
                 metadata_language=metadata_language,
             )
         )
@@ -105,7 +105,7 @@ class LinkmlToOssieConverter:
     def convert_file(self, path: str | Path, **options) -> OssieOntology:
         """Load a schema from disk — resolving its `imports` from disk too —
         and convert it. *options* are those of `convert`."""
-        with linkml_scala.load_file(path) as schema:
+        with ohi_linkml.load_file(path) as schema:
             return self.convert(schema, **options)
 
     def convert_text(
@@ -116,5 +116,5 @@ class LinkmlToOssieConverter:
     ) -> OssieOntology:
         """Convert a schema held in memory, resolving its `imports` against the
         *imports* map of filename to YAML text. *options* are those of `convert`."""
-        with linkml_scala.load_string(schema_text, imports) as schema:
+        with ohi_linkml.load_string(schema_text, imports) as schema:
             return self.convert(schema, **options)

@@ -17,7 +17,7 @@
 
 """Tests for the Ossie <-> LinkML converters.
 
-The translation itself lives in `linkml_scala` (the `neverblink-linkml`
+The translation itself lives in `ohi_linkml` (the `neverblink-linkml`
 package), which has its own test suite: 400+ tests, including unit tests,
 integration with Ossie JSON Schema and validator, round-trip tests, and
 expression parser fuzzing.
@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import re
 
-import linkml_scala
+import ohi_linkml
 import pytest
 import yaml
 
@@ -49,11 +49,11 @@ def flights_linkml(flights_model: OssieOntology) -> str:
 # ----- Ossie -> LinkML ---------------------------------------------------
 
 def test_schema_loads_without_errors(flights_linkml: str):
-    with linkml_scala.load_string(flights_linkml) as schema:
+    with ohi_linkml.load_string(flights_linkml) as schema:
         # A schema can load and still have errors against it, so check the
         # report rather than just that the load returned.
-        assert schema.issues(linkml_scala.ERROR) == []
-        assert schema.issues(linkml_scala.FATAL) == []
+        assert schema.issues(ohi_linkml.ERROR) == []
+        assert schema.issues(ohi_linkml.FATAL) == []
 
 
 def test_schema_carries_concepts(flights_linkml: str):
@@ -110,7 +110,7 @@ def test_convert_file_reads_from_disk(flights_linkml: str, tmp_path):
 
 
 def test_convert_to_spec_stops_at_the_dto(flights_linkml: str):
-    with linkml_scala.load_string(flights_linkml) as schema:
+    with ohi_linkml.load_string(flights_linkml) as schema:
         spec = LinkmlToOssieConverter().convert_to_spec(schema)
     assert isinstance(spec, OssieSpec)
     assert spec.name == "Flights"
@@ -314,7 +314,7 @@ def test_full_example_ossie_to_linkml():
 
 def test_full_example_linkml_to_ossie():
     """And back: the LinkML schema above converts to exactly the Ossie document."""
-    with linkml_scala.load_string(EXAMPLE_LINKML) as schema:
+    with ohi_linkml.load_string(EXAMPLE_LINKML) as schema:
         spec = LinkmlToOssieConverter().convert_to_spec(schema)
     assert yaml.safe_load(spec.dump_yaml()) == yaml.safe_load(EXAMPLE_OSSIE)
 
@@ -333,7 +333,7 @@ def test_iris_are_written_in_full_without_a_prefix_to_shorten_them():
         stripped = stripped.replace(line, "")
     stripped = re.sub(r"^ *(?:class_uri|slot_uri|uri): .*\n", "", stripped, flags=re.MULTILINE)
 
-    with linkml_scala.load_string(stripped) as schema:
+    with ohi_linkml.load_string(stripped) as schema:
         spec = LinkmlToOssieConverter().convert_to_spec(schema)
 
     assert spec.prefixes == {}

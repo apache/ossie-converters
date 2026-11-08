@@ -19,7 +19,7 @@
 
 `LinkmlToOssieConverter` turns a LinkML schema into an `OssieOntology` from the
 `apache-ossie-ontology` package, and `OssieToLinkmlConverter` goes the other
-way. The translation itself is done by `linkml_scala`, from the
+way. The translation itself is done by `ohi_linkml`, from the
 `neverblink-linkml` distribution.
 """
 

@@ -26,7 +26,7 @@
 #   A schema can load and still have errors and warnings against it.
 #   Any issues the loader reports are written to stderr. Only fatal problems stop the run.
 #   The full mapping and all limitations are documented at
-#   https://github.com/NeverBlink-OSS/linkml-scala/blob/main/docs/ossie_mapping.md
+#   https://github.com/NeverBlink-OSS/ohi/blob/main/docs/ossie_mapping.md
 #
 # Usage:
 #
@@ -40,7 +40,7 @@
 import sys
 from pathlib import Path
 
-import linkml_scala
+import ohi_linkml
 
 from ossie_linkml import LinkmlToOssieConverter
 
@@ -52,7 +52,7 @@ if __name__ == "__main__":
 
     # Loaded here rather than through LinkmlToOssieConverter.convert_file so the
     # schema's own issues can be reported before anything is converted.
-    with linkml_scala.load_file(path) as schema:
+    with ohi_linkml.load_file(path) as schema:
         for issue in schema.issues():
             print(f"{issue.get('severity')}: {issue.get('message')}", file=sys.stderr)
 
