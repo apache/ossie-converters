@@ -17,7 +17,7 @@
 
 """Converter from OssieOntology (runtime semantic model) to a LinkML schema.
 
-The translation is done by `linkml_scala` – the `neverblink-linkml`
+The translation is done by `ohi_linkml` – the `neverblink-linkml`
 distribution, a natively compiled LinkML implementation. This module only
 renders the runtime model back into an Ossie document and hands it over.
 
@@ -25,7 +25,7 @@ Pairs with linkml_to_ossie.LinkmlToOssieConverter for the other direction."""
 
 from __future__ import annotations
 
-import linkml_scala
+import ohi_linkml
 
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
 from ossie_ontology.model import OssieOntology
@@ -38,7 +38,7 @@ class OssieToLinkmlConverter:
     Only the ontology crosses over. LinkML describes types and their slots and
     has nowhere to put an `ontology_mappings` block, so datasets, join paths
     and metrics are dropped. The full mapping is documented at
-    https://github.com/NeverBlink-OSS/linkml-scala/blob/main/docs/ossie_mapping.md
+    https://github.com/NeverBlink-OSS/ohi/blob/main/docs/ossie_mapping.md
 
         schema_yaml = OssieToLinkmlConverter.convert(model)
     """
@@ -72,8 +72,8 @@ class OssieToLinkmlConverter:
         The shorter path when a document was read straight off disk and never
         needed to be built out into an OssieOntology.
         """
-        return linkml_scala.from_ossie(
+        return ohi_linkml.from_ossie(
             spec.dump_yaml(),
             schema_id=schema_id,
-            output_format=output_format,
-        )
+            format=output_format,
+        )["schema"]
