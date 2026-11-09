@@ -407,7 +407,7 @@ def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
     assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {"string", "boolean", "time"}
 
 
-def _relationship_model(dim_day_key: str = "date_key") -> OssieDocument:
+def _relationship_model(dim_day_key: str = "date_key", reverse: bool = False) -> OssieDocument:
     """One fact joined to two dimensions: one on a differently named column, one on a
     column that has the same name on both sides."""
 
@@ -426,13 +426,14 @@ def _relationship_model(dim_day_key: str = "date_key") -> OssieDocument:
             ],
         )
 
+    datasets = [
+        dataset("dim_day", "date_key"),
+        dataset("dim_day_alt", "calendar_date"),
+        dataset("fact_day", "calendar_date"),
+    ]
     return OssieDocument(
         name="m",
-        datasets=[
-            dataset("dim_day", "date_key"),
-            dataset("dim_day_alt", "calendar_date"),
-            dataset("fact_day", "calendar_date"),
-        ],
+        datasets=datasets[::-1] if reverse else datasets,
         relationships=[
             OssieRelationship(
                 name="fact_day_to_dim_day",
@@ -452,11 +453,13 @@ def _relationship_model(dim_day_key: str = "date_key") -> OssieDocument:
     )
 
 
-def test_relationship_keys_use_the_column_id_of_each_side():
+@pytest.mark.parametrize("reverse", [False, True], ids=["targets_first", "targets_last"])
+def test_relationship_keys_use_the_column_id_of_each_side(reverse):
     """The target key must be a column id of the target element. Looking it up in the
     source element wrote the bare name when the names differed, and the source column's
-    id when they matched; Sigma rejects both."""
-    result = OssieToSigmaConverter().convert(_relationship_model())
+    id when they matched; Sigma rejects both. Relationships are built after every
+    element, so a target that comes later in `datasets` resolves too."""
+    result = OssieToSigmaConverter().convert(_relationship_model(reverse=reverse))
 
     elements = {e["name"]: e for p in result.output["pages"] for e in p["elements"]}
     fact = elements["fact_day"]

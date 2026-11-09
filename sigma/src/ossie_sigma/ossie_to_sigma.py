@@ -398,9 +398,10 @@ class OssieToSigmaConverter:
                             ConverterIssue(
                                 ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED,
                                 f"{dataset_name}.{rel.name}",
-                                f"Join column '{column}' is not a field of dataset '{side}'; the "
-                                "bare name was written as the Sigma column id and Sigma will not "
-                                "resolve it.",
+                                f"Join column '{column}' is not a modeled field of dataset '{side}'; "
+                                "it was written unchanged as the Sigma column id. That is only valid "
+                                "if it is a raw warehouse reference (inode-<file>/<COLUMN>), so "
+                                "check it.",
                             )
                         )
                 keys.append(
