@@ -15,8 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from .ossie_dialect_name import OssieDialectName
+from .ossie_dialect_name import (
+    LEGACY_PORTABLE_OSSIE_DIALECT,
+    PORTABLE_OSSIE_DIALECT,
+    OssieDialectName,
+)
 
 __all__ = [
+    "LEGACY_PORTABLE_OSSIE_DIALECT",
+    "PORTABLE_OSSIE_DIALECT",
     "OssieDialectName",
 ]
