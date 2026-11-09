@@ -62,6 +62,7 @@ updates:
       - "/tableau"
       - "/thoughtspot"
       - "/wisdom"
+      - "/denodo"
     schedule:
       interval: "weekly"
     groups:

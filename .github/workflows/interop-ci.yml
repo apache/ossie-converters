@@ -54,6 +54,7 @@ on:
       - 'relationalai/**'
       - 'polaris/**'
       - 'salesforce/**'
+      - 'denodo/**'
   pull_request:
     branches: [main]
     paths:
@@ -90,6 +91,7 @@ on:
       - 'relationalai/**'
       - 'polaris/**'
       - 'salesforce/**'
+      - 'denodo/**'
   workflow_dispatch:
 
 permissions:
