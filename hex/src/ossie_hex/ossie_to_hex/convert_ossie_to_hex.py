@@ -43,8 +43,8 @@ def convert_ossie_to_hex(
         - `input`: A path to the Ossie document file.
         - `output`: Optional. A path to the desired output directory. If not provided,
           the output is not written to a file.
-        - `dialect`: Optional. Prefer this dialect of Ossie expressions. Only the
-          selected dialect is validated and preserved in Hex expressions.
+        - `dialect`: Optional. Prefer this dialect of Ossie expressions. If not provided,
+          a portable dialect or the first variant is chosen.
 
     Returns: a tuple of:
         - `hex_project`: A Hex semantic project.

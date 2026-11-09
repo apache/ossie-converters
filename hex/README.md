@@ -98,6 +98,17 @@ Returns: a tuple of
   produce a project.
 - `problems`: A list of problems encountered.
 
+Details:
+
+Providing a dialect that is not a SQL dialect will result in a warning. A Hex
+semantic project must specify a single SQL dialect that all its SQL expressions
+are written in.
+
+Providing a dialect that is not found in every list of dialect expressions will
+result in warnings. In the case it is not found, a best attempt will be made to
+maintain the member. The preference order is (1) a portable dialect
+(`OSSIE_SQL_2026` or `ANSI_SQL`), (2) the first dialect in the list.
+
 ## Conversion
 
 The conversion between Ossie and Hex is a multi-step process that is not
