@@ -77,6 +77,7 @@ from ossie_thoughtspot.constants import (
     DOCUMENT_VERSION,
     PORTABLE_DIALECT,
     RELATIONSHIP_STASH_CARDINALITY,
+    RELATIONSHIP_STASH_ON_EXPRESSION,
     RELATIONSHIP_STASH_TYPE,
 )
 from ossie_thoughtspot.datatypes import OSSIE_DATATYPES
@@ -1477,3 +1478,229 @@ class TestADeclinedSumDefaultSurvivesTheReturnTrip:
         # explicitly" is the existing convention here, not a new exception
         # carved out for the declined case.
         assert self._returned_column("INT64")["properties"]["aggregation"] == "SUM"
+
+
+class TestARenamedKeyColumnSurvivesAFullRoundTrip:
+    """TML -> Ossie -> TML over a join whose key columns are renamed and
+    mixed case, with a ONE_TO_MANY cardinality.
+
+    This is the fixture class the suite did not have, and its absence is
+    why apache/ossie-converters#99 shipped two regressions to review:
+    every existing fixture uses columns where the display name, the
+    warehouse name and the Ossie field name coincide, so nothing could
+    show a `db_column_name` replaced by a display name, and nothing could
+    show a stale endpoint-swap witness flipping which side of a
+    LEFT_OUTER join is preserved. Both were found by @jbonofre reading
+    the diff, not by this suite.
+
+    `Id`/`cust_pk` and `Customer Id`/`cust_id_fk` make the three names
+    distinct, so an identity bug cannot hide behind them being equal.
+    """
+
+    _CUSTOMERS = """table:
+  name: CUSTOMERS
+  db: SALES
+  schema: PUBLIC
+  db_table: CUSTOMERS
+  connection: {name: C}
+  columns:
+  - name: Id
+    db_column_name: cust_pk
+    db_column_properties: {data_type: INT64}
+  - name: Status
+    db_column_name: C_STATUS
+    db_column_properties: {data_type: VARCHAR}
+"""
+    _ORDERS = """table:
+  name: ORDERS
+  db: SALES
+  schema: PUBLIC
+  db_table: ORDERS
+  connection: {name: C}
+  columns:
+  - name: Customer Id
+    db_column_name: cust_id_fk
+    db_column_properties: {data_type: INT64}
+  - name: Amount
+    db_column_name: O_AMOUNT
+    db_column_properties: {data_type: DOUBLE}
+"""
+    _MODEL = """model:
+  name: M
+  model_tables:
+  - name: CUSTOMERS
+    joins:
+    - with: ORDERS
+      'on': '[CUSTOMERS::Id] = [ORDERS::Customer Id]'
+      type: LEFT_OUTER
+      cardinality: ONE_TO_MANY
+  - name: ORDERS
+  columns:
+  - name: Status
+    column_id: CUSTOMERS::Status
+    properties: {column_type: ATTRIBUTE}
+  - name: Amount
+    column_id: ORDERS::Amount
+    properties: {column_type: MEASURE, aggregation: SUM}
+"""
+
+    @pytest.fixture
+    def returned(self):
+        document_set = tml.load_document_set([
+            ("c.table.tml", self._CUSTOMERS),
+            ("o.table.tml", self._ORDERS),
+            ("m.model.tml", self._MODEL),
+        ])
+        return ossie_to_thoughtspot.convert(tml_to_ossie.convert(document_set).model).documents
+
+    @staticmethod
+    def _columns(documents, table_name):
+        table = next(t for t in documents.tables if t.body["name"] == table_name)
+        return {c["name"]: c for c in table.body.get("columns") or []}
+
+    @pytest.mark.parametrize("table,column,warehouse", [
+        ("CUSTOMERS", "Id", "cust_pk"),
+        ("CUSTOMERS", "Status", "C_STATUS"),
+        ("ORDERS", "Customer Id", "cust_id_fk"),
+        ("ORDERS", "Amount", "O_AMOUNT"),
+    ])
+    def test_every_column_keeps_its_warehouse_name(self, returned, table, column, warehouse):
+        """The key columns are the ones at risk: they are declared as
+        fields so a relationship can name them, and a field carries no
+        `db_column_name` of its own. Rebuilt from the field, `Id` came
+        back as `db_column_name: Id` -- a column SALES.PUBLIC.CUSTOMERS
+        does not have, emitted silently.
+        """
+        assert self._columns(returned, table)[column]["db_column_name"] == warehouse
+
+    def test_the_join_is_still_owned_by_the_one_side(self, returned):
+        """A stale endpoint-swap witness sent this back owned by ORDERS
+        with cardinality forced to MANY_TO_ONE. With LEFT_OUTER that
+        changes which side is preserved -- every order instead of every
+        customer -- so it is a different answer, not a different spelling.
+        """
+        owners = {
+            e["name"]: e.get("joins") or []
+            for e in returned.model.body.get("model_tables") or []
+        }
+        assert [j["with"] for j in owners["CUSTOMERS"]] == ["ORDERS"]
+        assert owners.get("ORDERS") == []
+
+    def test_the_join_keeps_its_type_and_cardinality(self, returned):
+        join = next(
+            j for e in returned.model.body["model_tables"] for j in e.get("joins") or []
+        )
+        assert (join["type"], join["cardinality"]) == ("LEFT_OUTER", "ONE_TO_MANY")
+
+    def test_the_join_condition_names_the_thoughtspot_columns(self, returned):
+        """Not the Ossie field names. `[CUSTOMERS::Id]`, never
+        `[CUSTOMERS::id]` -- TML resolves a bracket reference against the
+        Table's own column names.
+        """
+        join = next(
+            j for e in returned.model.body["model_tables"] for j in e.get("joins") or []
+        )
+        assert join["on"] == "[CUSTOMERS::Id] = [ORDERS::Customer Id]"
+
+    def test_the_model_surfaces_exactly_the_columns_it_started_with(self, returned):
+        """The declared fields must not arrive as extra Model columns."""
+        assert {c["name"] for c in returned.model.body.get("columns") or []} == {
+            "Status", "Amount",
+        }
+
+
+class TestAJoinWithNoStashedConditionStillNamesTmlColumns:
+    """The common case, and the one the renamed-column class above does
+    NOT reach.
+
+    `on_expression` is stashed only when the display name and the
+    warehouse name differ (`columns_were_resolved`) or the condition has
+    residual predicates. When they are equal -- which they are for most
+    warehouse columns nobody renamed in ThoughtSpot -- there is no stash,
+    and the condition is rebuilt from `from_columns`/`to_columns`. Those
+    are field names now, so the rebuilt condition named the Ossie field
+    instead of the Table column: `[ARBONNE_KITS::order_id]` where
+    ThoughtSpot wrote `[ARBONNE_KITS::ORDER_ID]`.
+
+    It held on 15 of the 31 models in the round-trip corpus and on zero
+    tests, because every fixture here has field names that match their
+    column names. Raised by @jbonofre reviewing
+    apache/ossie-converters#99.
+    """
+
+    _KITS = """table:
+  name: KITS
+  db: SALES
+  schema: PUBLIC
+  db_table: KITS
+  connection: {name: C}
+  columns:
+  - name: ORDER_ID
+    db_column_name: ORDER_ID
+    db_column_properties: {data_type: INT64}
+  - name: KIT_NAME
+    db_column_name: KIT_NAME
+    db_column_properties: {data_type: VARCHAR}
+"""
+    _ORDERS = """table:
+  name: ORDERS
+  db: SALES
+  schema: PUBLIC
+  db_table: ORDERS
+  connection: {name: C}
+  columns:
+  - name: ORDER_ID
+    db_column_name: ORDER_ID
+    db_column_properties: {data_type: INT64}
+"""
+    _MODEL = """model:
+  name: M
+  model_tables:
+  - name: KITS
+    joins:
+    - with: ORDERS
+      'on': '[KITS::ORDER_ID] = [ORDERS::ORDER_ID]'
+      type: LEFT_OUTER
+      cardinality: MANY_TO_ONE
+  - name: ORDERS
+  columns:
+  - name: KIT_NAME
+    column_id: KITS::KIT_NAME
+    properties: {column_type: ATTRIBUTE}
+"""
+
+    @pytest.fixture
+    def converted(self):
+        document_set = tml.load_document_set([
+            ("k.table.tml", self._KITS),
+            ("o.table.tml", self._ORDERS),
+            ("m.model.tml", self._MODEL),
+        ])
+        ossie = tml_to_ossie.convert(document_set).model
+        return ossie, ossie_to_thoughtspot.convert(ossie).documents
+
+    def test_the_premise_holds_no_condition_was_stashed(self, converted):
+        """Guards the test itself. If a future change starts stashing
+        `on_expression` here, the restore path stops being exercised and
+        the assertion below would pass for the wrong reason.
+        """
+        ossie, _ = converted
+        rel = ossie["relationships"][0]
+        payload = stash.read_stash(rel)
+        assert RELATIONSHIP_STASH_ON_EXPRESSION not in payload, payload
+
+    def test_the_relationship_names_fields_not_columns(self, converted):
+        # The #486 half: the Ossie document must name declared fields.
+        ossie, _ = converted
+        rel = ossie["relationships"][0]
+        fields = {d["name"]: {f["name"] for f in d.get("fields") or []} for d in ossie["datasets"]}
+        assert rel["from_columns"][0] in fields[rel["from"]]
+        assert rel["to_columns"][0] in fields[rel["to"]]
+
+    def test_the_rebuilt_condition_names_the_tml_columns(self, converted):
+        # The TML half: and it must come back naming the Table's columns.
+        _, returned = converted
+        join = next(
+            j for e in returned.model.body["model_tables"] for j in e.get("joins") or []
+        )
+        assert join["on"] == "[KITS::ORDER_ID] = [ORDERS::ORDER_ID]"
