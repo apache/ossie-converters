@@ -47,7 +47,8 @@ REPLACEMENTS = {
     "boolean": True,
     "null": None,
     "date": datetime.date(2024, 1, 1),
-    "datetime": datetime.datetime(2024, 1, 1, 12, 30),
+    # A YAML timestamp with no offset loads naive, which is the kind under test.
+    "datetime": datetime.datetime(2024, 1, 1, 12, 30),  # noqa: DTZ001
     "list of strings": ["a"],
     "list of mappings": [{"a": 1}],
     "list of dates": [datetime.date(2024, 1, 1)],
