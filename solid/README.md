@@ -608,7 +608,7 @@ should do with a foreign model, not a defect in the transform:
   rule may not; resolving bare names against each dataset's declared fields would fix
   most of them, but it is inference, so it is deliberately not done silently.
 
-And two are **format-level**:
+And three are **format-level**:
 
 - **Verified queries have no home in the core spec.** Solid's `example_queries` and
   `benchmark_questions` are currently stashed, but the same construct appears across the
