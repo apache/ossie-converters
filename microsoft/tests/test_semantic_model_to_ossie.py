@@ -395,6 +395,8 @@ def test_a_computed_sql_expression_is_not_read_back_as_a_column_name():
     assert sql_identifier_name('"a" + "b"') is None
     assert sql_identifier_name('"a""b"') == 'a"b'
     assert sql_identifier_name("a") is None
+    # The empty delimited identifier is not valid SQL, so it is not a name either.
+    assert sql_identifier_name('""') is None
 
 
 def test_a_calculated_column_keeps_its_dax_even_with_a_non_identifier_name():

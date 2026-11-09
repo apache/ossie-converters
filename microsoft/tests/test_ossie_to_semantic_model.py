@@ -1619,6 +1619,33 @@ def test_an_edited_expression_beats_a_preserved_source_column():
     assert column["sourceColumn"] == "other_column"
 
 
+def test_an_edited_quoted_expression_beats_a_preserved_source_column():
+    # The preserved name is compared against the expression in its quoted form: a
+    # different quoted name is an edit, not a replay of the stash.
+    semantic_model = _minimal()
+    field = semantic_model["datasets"][0]["fields"][0]
+    field["expression"] = make_expression('"Other Date"', "ANSI_SQL")
+    write_stash(field, {"sourceColumn": "Order Date"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        column = _column(_table(_convert(semantic_model), "T"), "C")
+    assert column["sourceColumn"] == "Other Date"
+
+
+def test_an_unedited_quoted_source_column_is_replayed_from_the_stash():
+    # The import writes a non-identifier sourceColumn as one quoted ANSI identifier and
+    # keeps the undecorated name in the stash. The export replays the stash instead of
+    # decoding the expression, so the value is the original name and never the quoting.
+    semantic_model = _minimal()
+    field = semantic_model["datasets"][0]["fields"][0]
+    field["expression"] = make_expression('"Order Date"', "ANSI_SQL")
+    write_stash(field, {"sourceColumn": "Order Date"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        column = _column(_table(_convert(semantic_model), "T"), "C")
+    assert column["sourceColumn"] == "Order Date"
+
+
 def test_a_stash_written_by_a_newer_converter_is_refused():
     """Replaying a payload we may misunderstand is worse than failing loudly."""
     from ossie_microsoft._common import STASH_VERSION, VENDOR, ConversionError

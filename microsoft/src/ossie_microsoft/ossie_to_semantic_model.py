@@ -63,6 +63,7 @@ from ._common import (
     foreign_vendor_extensions,
     prune,
     read_stash,
+    sql_identifier,
     sql_identifier_name,
     warn,
     warn_unsupported,
@@ -648,10 +649,15 @@ def _source_column(expressions, name, stash):
     dialect, expression = _preferred_expression(expressions)
     if dialect == DIALECT_DAX:
         return None
-    if stash.get("sourceColumn") == expression:
+
+    preserved = stash.get("sourceColumn")
+    if preserved is not None and sql_identifier(preserved) == expression.strip():
         # A preserved source column the source query exposes under a name that is not a
-        # bare SQL identifier, still unedited. Replay it rather than reparse it.
-        return expression
+        # bare SQL identifier, still unedited. The import wrote it into the expression
+        # as one quoted ANSI identifier while the stash kept the undecorated name, so
+        # compare against the quoted form and replay the preserved name -- never the
+        # expression, whose quoting must not leak into TMSL.
+        return preserved
 
     delimited = sql_identifier_name(expression)
     if delimited is not None:

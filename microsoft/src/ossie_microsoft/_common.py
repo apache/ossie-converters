@@ -112,7 +112,8 @@ def sql_identifier_name(expression):
 
     Only a lone double-quoted identifier is decoded. A computed SQL expression --
     including one that merely starts and ends with a quote, such as ``"a" + "b"`` --
-    is not a name and yields None.
+    is not a name and yields None. The empty delimited identifier ``""`` is not valid
+    SQL either, so it is not a name as well.
     """
     text = expression.strip()
     if len(text) < 2 or text[0] != '"' or text[-1] != '"':
@@ -132,7 +133,8 @@ def sql_identifier_name(expression):
             # An undoubled quote closes the identifier before the end: this is not
             # one delimited name but a computed expression.
             return None
-    return "".join(value)
+    # `""` is an empty delimited identifier: not a name the export can emit.
+    return "".join(value) or None
 
 
 # ---------------------------------------------------------------------------
