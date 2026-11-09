@@ -20,6 +20,7 @@
 from ossie import (
     OssieCustomExtension,
     OssieDataset,
+    OssieDataType,
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
@@ -176,6 +177,7 @@ def _ossie_field(
     description: str | None = None,
     label: str | None = None,
     custom_extensions: list[OssieCustomExtension] | None = None,
+    datatype: OssieDataType | None = None,
 ) -> OssieField:
     return OssieField(
         name=name,
@@ -184,6 +186,7 @@ def _ossie_field(
         description=description,
         label=label,
         custom_extensions=custom_extensions,
+        datatype=datatype,
     )
 
 
@@ -213,12 +216,14 @@ def _ossie_metric(
     description: str | None = None,
     dialect: OssieDialect = OssieDialect.ANSI_SQL,
     custom_extensions: list[OssieCustomExtension] | None = None,
+    datatype: OssieDataType | None = None,
 ) -> OssieMetric:
     return OssieMetric(
         name=name,
         expression=_ossie_expr(expression, dialect=dialect),
         description=description,
         custom_extensions=custom_extensions,
+        datatype=datatype,
     )
 
 
