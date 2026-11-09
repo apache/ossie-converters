@@ -1061,11 +1061,17 @@ class OntologyComponent:
         return None
 
     def lookup_concept_relationship(self, concept: Concept, name: str) -> Relationship | None:
-        rel = self._relationship_name_map.get(f"{concept.name}.{name}")
+        # A name may be qualified by its concept or an ancestor: ontology.md writes `CustOrder.nr`.
+        # The name as written wins, because a relationship's own name may contain a dot.
+        bare_name = name.removeprefix(f"{concept.name}.")
+        rel = (
+            self._relationship_name_map.get(f"{concept.name}.{name}")
+            or self._relationship_name_map.get(f"{concept.name}.{bare_name}")
+        )
         if rel:
             return rel
         for ext in concept.extends:
-            rel = self.lookup_concept_relationship(ext, name)
+            rel = self.lookup_concept_relationship(ext, bare_name)
             if rel:
                 return rel
         return None
