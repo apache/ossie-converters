@@ -108,6 +108,10 @@ converter/wisdom-semantic-view:
   - changed-files:
       - any-glob-to-any-file: 'wisdom-semantic-view/**'
 
+converter/denodo:
+  - changed-files:
+      - any-glob-to-any-file: 'denodo/**'
+
 # Other areas
 infra:
   - changed-files:
