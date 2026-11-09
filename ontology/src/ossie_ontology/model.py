@@ -1061,11 +1061,33 @@ class OntologyComponent:
         return None
 
     def lookup_concept_relationship(self, concept: Concept, name: str) -> Relationship | None:
+        rel = self._lookup_as_written(concept, name)
+        if rel:
+            return rel
+        # ontology.md also qualifies a name by its concept or an ancestor: `CustOrder.nr`. A dump
+        # writes the bare name, so accept this form only where the bare name selects the same
+        # relationship. Otherwise the selected relationship would change on a round trip.
+        rel = self._lookup_qualified(concept, name)
+        if rel and self._lookup_as_written(concept, rel.name) is rel:
+            return rel
+        return None
+
+    def _lookup_as_written(self, concept: Concept, name: str) -> Relationship | None:
         rel = self._relationship_name_map.get(f"{concept.name}.{name}")
         if rel:
             return rel
         for ext in concept.extends:
-            rel = self.lookup_concept_relationship(ext, name)
+            rel = self._lookup_as_written(ext, name)
+            if rel:
+                return rel
+        return None
+
+    def _lookup_qualified(self, concept: Concept, name: str) -> Relationship | None:
+        prefix = f"{concept.name}."
+        if name.startswith(prefix):
+            return self._lookup_as_written(concept, name.removeprefix(prefix))
+        for ext in concept.extends:
+            rel = self._lookup_qualified(ext, name)
             if rel:
                 return rel
         return None

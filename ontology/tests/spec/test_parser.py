@@ -816,3 +816,135 @@ def test_a_document_without_iris_dumps_neither_field(tmp_path: Path):
 
     assert "iri:" not in dumped
     assert "prefixes:" not in dumped
+
+
+# ----- Qualified relationship names -------------------------------------
+
+def _customer_ontology(tmp_path: Path) -> OntologyComponent:
+    path = _write_spec(tmp_path, [_concept("Partner"), _concept("Customer", extends=["Partner"]), _concept("Supplier")])
+    return OssieParser().parse(path).ontology
+
+
+@pytest.mark.parametrize(
+    "name, declared_as",
+    [
+        ("Customer.customer_id", "Customer.customer_id"),  # its own relationship
+        ("Partner.partner_id", "Partner.partner_id"),  # named through the ancestor that declares it
+        ("Customer.partner_id", "Partner.partner_id"),  # inherited, named through the subtype
+    ],
+)
+def test_lookup_accepts_a_name_qualified_by_the_concept_or_an_ancestor(tmp_path: Path, name: str, declared_as: str):
+    ontology = _customer_ontology(tmp_path)
+
+    rel = ontology.lookup_concept_relationship(ontology.lookup_concept("Customer"), name)
+
+    assert rel is not None
+    assert rel.full_name == declared_as
+
+
+@pytest.mark.parametrize("name", ["Supplier.supplier_id", "Customer.Customer.customer_id", "Customer.Partner.partner_id"])
+def test_lookup_rejects_other_dotted_names(tmp_path: Path, name: str):
+    ontology = _customer_ontology(tmp_path)
+
+    assert ontology.lookup_concept_relationship(ontology.lookup_concept("Customer"), name) is None
+
+
+def test_lookup_prefers_a_relationship_literally_named_with_a_dot(tmp_path: Path):
+    """The schema does not restrict relationship names, so an exact match wins
+    over reading the name as qualified."""
+    gadget = _concept("Gadget")
+    gadget["relationships"].append({"name": "Gadget.gadget_id", "roles": [{"concept": "String"}]})
+    ontology = OssieParser().parse(_write_spec(tmp_path, [gadget])).ontology
+
+    rel = ontology.lookup_concept_relationship(ontology.lookup_concept("Gadget"), "Gadget.gadget_id")
+
+    assert rel is not None
+    assert rel.name == "Gadget.gadget_id"
+
+
+def test_lookup_accepts_a_qualified_reference_to_a_dotted_name(tmp_path: Path):
+    customer = _concept("Customer")
+    customer["relationships"].append({"name": "billing.nr", "roles": [{"concept": "String"}]})
+    ontology = OssieParser().parse(_write_spec(tmp_path, [customer])).ontology
+
+    rel = ontology.lookup_concept_relationship(ontology.lookup_concept("Customer"), "Customer.billing.nr")
+
+    assert rel is not None
+    assert rel.name == "billing.nr"
+
+
+def test_lookup_prefers_a_dotted_name_declared_on_an_ancestor(tmp_path: Path):
+    """The name as written wins across the hierarchy, not only on the concept itself."""
+    partner = _concept("Partner")
+    partner["relationships"].append({"name": "Customer.partner_id", "roles": [{"concept": "String"}]})
+    path = _write_spec(tmp_path, [partner, _concept("Customer", extends=["Partner"])])
+    ontology = OssieParser().parse(path).ontology
+
+    rel = ontology.lookup_concept_relationship(ontology.lookup_concept("Customer"), "Customer.partner_id")
+
+    assert rel is not None
+    assert rel.full_name == "Partner.Customer.partner_id"
+
+
+def _with_id(concept: dict) -> dict:
+    concept["relationships"].append({"name": "id", "roles": [{"concept": "String"}]})
+    return concept
+
+
+def test_lookup_rejects_a_qualified_name_the_bare_name_does_not_select(tmp_path: Path):
+    """A dump writes the bare name, so accepting these would silently change
+    which relationship the name selects on a round trip."""
+    path = _write_spec(tmp_path, [
+        _with_id(_concept("Partner")),
+        _with_id(_concept("Vendor")),
+        _with_id(_concept("Customer", extends=["Partner"])),  # shadows Partner.id
+        _concept("Agent", extends=["Partner", "Vendor"]),  # a bare `id` selects Partner.id
+    ])
+    ontology = OssieParser().parse(path).ontology
+    customer, agent = ontology.lookup_concept("Customer"), ontology.lookup_concept("Agent")
+
+    assert ontology.lookup_concept_relationship(customer, "Partner.id") is None
+    assert ontology.lookup_concept_relationship(agent, "Vendor.id") is None
+    assert ontology.lookup_concept_relationship(agent, "Partner.id").full_name == "Partner.id"
+
+
+def test_a_qualified_mapping_name_selects_the_same_relationship_after_a_round_trip(tmp_path: Path):
+    path = _write_mapped_spec(tmp_path, [_concept("Partner"), _concept("Customer", extends=["Partner"])], [{
+        "concept": "Customer",
+        "object_mappings": [{"referent_mappings": [{"relationship": "Partner.partner_id", "expression": "T.id"}]}],
+    }])
+    model = OssieParser().parse(path)
+    dumped = tmp_path / "dumped.yaml"
+    dumped.write_text(OssieToSpecConverter.convert(model).dump_yaml())
+
+    def selected(parsed: OssieOntology) -> str:
+        mapping = parsed.ontology_mappings[0].concept_mappings[0].object_mappings[0]
+        return mapping.referent_mappings[0].relationship.full_name
+
+    assert selected(model) == "Partner.partner_id"
+    assert selected(OssieParser().parse(dumped)) == "Partner.partner_id"
+
+
+def test_a_nested_referent_mapping_accepts_the_qualified_name_the_spec_uses(tmp_path: Path):
+    """`ontology.md` writes the nested referent of a compound key as `CustOrder.nr`."""
+    line_item = _concept("LineItem")
+    line_item["relationships"].append(
+        {"name": "order", "roles": [{"concept": "CustOrder"}], "multiplicity": "ManyToOne"}
+    )
+    path = _write_mapped_spec(tmp_path, [_concept("CustOrder"), line_item], [{
+        "concept": "LineItem",
+        "object_mappings": [{
+            "referent_mappings": [
+                {"relationship": "lineitem_id", "expression": "T.id"},
+                {
+                    "relationship": "order",
+                    "referent_mappings": [{"relationship": "CustOrder.custorder_id", "expression": "T.id"}],
+                },
+            ],
+        }],
+    }])
+
+    object_mapping = OssieParser().parse(path).ontology_mappings[0].concept_mappings[0].object_mappings[0]
+
+    nested = object_mapping.referent_mappings[1].referent_mappings[0]
+    assert nested.relationship.full_name == "CustOrder.custorder_id"
