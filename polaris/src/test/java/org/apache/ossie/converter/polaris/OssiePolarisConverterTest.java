@@ -43,7 +43,7 @@ class OssiePolarisConverterTest {
     Path tempDirectory;
 
     private static final String MINIMAL_MODEL =
-            "version: \"0.2.0.dev0\"\n"
+            "version: \"0.3.0.dev0\"\n"
             + "\n"
             + "name: test_model\n"
             + "description: A test model\n"
@@ -115,7 +115,7 @@ class OssiePolarisConverterTest {
         OssieModel model = parser.parse(
                 new ByteArrayInputStream(MINIMAL_MODEL.getBytes(StandardCharsets.UTF_8)));
 
-        assertEquals("0.2.0.dev0", model.getVersion());
+        assertEquals("0.3.0.dev0", model.getVersion());
         assertNotNull(model.getSemanticModel());
 
         SemanticModel sm = model.getSemanticModel();
@@ -182,7 +182,7 @@ class OssiePolarisConverterTest {
         String yaml = generator.generate(model);
 
         // Verify key elements are present in generated YAML
-        assertTrue(yaml.contains("version: \"0.2.0.dev0\""));
+        assertTrue(yaml.contains("version: \"0.3.0.dev0\""));
         assertTrue(yaml.contains("name: test_model"));
         assertTrue(yaml.contains("name: orders"));
         assertTrue(yaml.contains("source: catalog.ns.orders"));
@@ -497,7 +497,7 @@ class OssiePolarisConverterTest {
     void testTypeInference() throws Exception {
         // Test that the exporter correctly infers Iceberg types from field names
         OssieModel model = new OssieModel();
-        model.setVersion("0.2.0.dev0");
+        model.setVersion("0.3.0.dev0");
 
         SemanticModel sm = new SemanticModel();
         sm.setName("type_test");
@@ -541,7 +541,7 @@ class OssiePolarisConverterTest {
 
     @Test
     void testEmptyModel() {
-        String emptyYaml = "version: \"0.2.0.dev0\"\n";
+        String emptyYaml = "version: \"0.3.0.dev0\"\n";
         OssieModelParser parser = new OssieModelParser();
         assertThrows(IllegalArgumentException.class, () -> parser.parse(
                 new ByteArrayInputStream(emptyYaml.getBytes(StandardCharsets.UTF_8))));
@@ -550,7 +550,7 @@ class OssiePolarisConverterTest {
     @Test
     void testRejectsLegacyWrappedDocuments() {
         for (String value : List.of("[]", "[{name: legacy, datasets: []}]", "{name: legacy, datasets: []}")) {
-            String yaml = "version: 0.2.0.dev0\nsemantic_model: " + value + "\n";
+            String yaml = "version: 0.3.0.dev0\nsemantic_model: " + value + "\n";
             IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
                     () -> new OssieModelParser().parse(
                             new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8))));
@@ -573,7 +573,7 @@ class OssiePolarisConverterTest {
 
     @Test
     void testEmptyDatasetListRoundTrips() {
-        String yaml = "version: 0.2.0.dev0\nname: empty\ndatasets: []\n";
+        String yaml = "version: 0.3.0.dev0\nname: empty\ndatasets: []\n";
         OssieModelParser parser = new OssieModelParser();
         OssieModel model = parser.parse(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         String generated = new OssieYamlGenerator().generate(model);

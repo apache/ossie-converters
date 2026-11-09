@@ -30,9 +30,9 @@ import re
 
 # ─── Spec version pin ───────────────────────────────────────────────────────
 # Single source of truth for the Ossie spec we emit. Bump when upstream cuts
-# a stable v0.2.0 (drop the ``.dev0`` suffix). All read paths accept both
-# 0.1.x (via the legacy shim) and 0.2.x.
-_OSSIE_VERSION = "0.2.0.dev0"
+# a stable v0.3.0 (drop the ``.dev0`` suffix). All read paths accept both
+# 0.1.x (via the legacy shim) and 0.2.x onward.
+_OSSIE_VERSION = "0.3.0.dev0"
 
 # SQL dialects (of the Ossie enum) whose aggregation expressions our regex-based
 # metric parser can read, in preference order. ANSI_SQL first, then

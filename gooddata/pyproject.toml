@@ -17,11 +17,13 @@
 
 [project]
 name = "apache-ossie-gooddata"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "Bidirectional converter between GoodData LDM and Apache Ossie semantic model"
 authors = [{name = "GoodData Corporation", email = "support@gooddata.com"}]
 readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "DISCLAIMER"]
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
@@ -29,9 +31,6 @@ classifiers = [
 dependencies = [
     "pyyaml>=6.0.1",
 ]
-
-[project.license]
-text = "Apache-2.0"
 
 [dependency-groups]
 dev = [

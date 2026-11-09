@@ -21,12 +21,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apache-ossie-cube"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "Bidirectional converter between Apache Ossie semantic models and Cube data models"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
 requires-python = ">=3.11"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "DISCLAIMER"]
 keywords = [
     "Apache Ossie",
     "Ossie",

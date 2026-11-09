@@ -188,7 +188,7 @@ class Metric(OssieObject):
 
 
 # The core semantic model version this package reads and writes.
-CoreVersion = Literal["0.2.0.dev0"]
+CoreVersion = Literal["0.3.0.dev0"]
 
 
 class SemanticModel(OssieObject):

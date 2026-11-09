@@ -33,7 +33,7 @@ dev = [
 
 [project]
 name = "apache-ossie-microsoft"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "Converter between Microsoft Power BI / Fabric semantic models (TMSL) and Apache Ossie semantic models"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
 maintainers = [
@@ -43,6 +43,7 @@ maintainers = [
 requires-python = ">=3.10"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "DISCLAIMER"]
 keywords = [
     "Apache Ossie",
     "Ossie",

@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: Customer_Orders_Model
 description: Example model demonstrating calculated dimensions with single and multiple
   data object dependencies

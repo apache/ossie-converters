@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: RETAIL_REFACTORED
 description: Retail ontology with employees, stores, products, transactions, orders, payments, and weekly sales facts.
 ontology:
@@ -523,7 +523,7 @@ ontology:
 ontology_mappings:
 - name: retail_refactored_mapping
   semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: Retail refactored semantic model
     datasets:
     - name: EMPLOYEES

@@ -157,7 +157,7 @@ class TestMinimalConversion:
 
         assert isinstance(result, OssieConversion)
         document = result.model
-        assert document["version"] == "0.2.0.dev0"
+        assert document["version"] == "0.3.0.dev0"
         semantic_model = document
         assert semantic_model["name"] == "sales_analytics"
 

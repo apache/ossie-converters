@@ -162,7 +162,7 @@ def _hello_world(metric_sql: str) -> dict[str, Any]:
         return {"dialects": [{"dialect": "OSSIE_SQL_2026", "expression": sql}]}
 
     return {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "hello_world",
         "datasets": [
             {

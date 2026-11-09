@@ -16,7 +16,7 @@
 # under the License.
 
 name: tpch_ontology
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 description: Business concepts of the tpch semantic model
 
 ontology requires:

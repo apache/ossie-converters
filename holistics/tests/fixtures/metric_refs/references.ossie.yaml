@@ -28,7 +28,7 @@
 # Holistics BigQuery demo connection carries, so the generated AML compiles
 # against a real schema rather than an invented one.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 name: metric_references
 description: Metrics that name other metrics, across both AML metric homes
 

@@ -118,7 +118,7 @@ def test_cli_import_reports_unreadable_yaml(tmp_path, capsys):
 
 
 _VALID_DOCUMENT = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "m",
     "datasets": [
         {

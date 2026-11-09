@@ -396,7 +396,7 @@ class OssieToSalesforceConverterTest {
      * Export has to carry the second relationship's own endpoints and columns across.
      */
     private static String ossieModelWithAFilteredRelationshipFirst() {
-        return "version: 0.2.0.dev0\n"
+        return "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + dataset("Customers", "customer_id")
@@ -459,7 +459,7 @@ class OssieToSalesforceConverterTest {
         // as an enabled, queryable relationship that joins nothing, so this is a spec violation
         // (core-spec/spec.md requires the same count on both sides), not a Salesforce
         // limitation: the whole conversion must fail instead of silently dropping it.
-        String model = "version: 0.2.0.dev0\n"
+        String model = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + dataset("Customers", "customer_id", "tenant_id")
@@ -486,7 +486,7 @@ class OssieToSalesforceConverterTest {
         // A relationship naming an undeclared dataset used to be dropped by the entity lookup
         // before the column-count check ran, so this case was silently filtered instead of
         // rejected.
-        String model = "version: 0.2.0.dev0\n"
+        String model = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + dataset("Orders", "customer_id", "product_id")
@@ -545,7 +545,7 @@ class OssieToSalesforceConverterTest {
         // unclaimed, and whatever is left unclaimed is applied generically once every
         // handler has run -- putting the rejected relationships back into the payload in
         // their Ossie shape, which the semantic model API answers with HTTP 500.
-        String ossieModel = "version: 0.2.0.dev0\n"
+        String ossieModel = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Orders\n"
@@ -1177,7 +1177,7 @@ class OssieToSalesforceConverterTest {
      */
     private static String ossieModelWithoutSalesforceExtensions(String... sources) {
         StringBuilder yaml = new StringBuilder()
-                .append("version: 0.2.0.dev0\n")
+                .append("version: 0.3.0.dev0\n")
                 .append("name: Imported_Model\n")
                 .append("datasets:\n");
         for (int i = 0; i < sources.length; i++) {
@@ -1214,7 +1214,7 @@ class OssieToSalesforceConverterTest {
      * declares only {@code regionDatatype}, which is either absent or a portable type.
      */
     private static String ossieModelWithUntypedFields(String regionDatatype) {
-        return "version: 0.2.0.dev0\n"
+        return "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Orders\n"
@@ -1278,7 +1278,7 @@ class OssieToSalesforceConverterTest {
      * {@code declareTheKeyAsAFieldToo} also puts it among the fields.
      */
     private static String ossieModelWithAPrimaryKey(boolean declareTheKeyAsAFieldToo) {
-        return "version: 0.2.0.dev0\n"
+        return "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Customers\n"
@@ -1350,7 +1350,7 @@ class OssieToSalesforceConverterTest {
         // The fallback can change the field's meaning -- a Time measurement ships as
         // Number -- so the warning has to say which dataType was chosen, not just that
         // one was. Omitting it instead is not an option: the API rejects such a field.
-        String ossieModel = "version: 0.2.0.dev0\n"
+        String ossieModel = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Orders\n"

@@ -42,8 +42,8 @@ DIALECT_IS_REGISTERED = True
 PORTABLE_DIALECT = "ANSI_SQL"
 
 #: Ossie spec series this converter targets, matched on major.minor. Not an exact
-#: version: upstream's first release is proposed as 0.3.0, not 0.2.0.
-SPEC_SERIES = "0.2"
+#: version: the spec is on 0.3.0.dev0 and its first release is 0.3.0.
+SPEC_SERIES = "0.3"
 
 #: The exact `version` this converter writes at the root of every document it
 #: emits (`{"version": DOCUMENT_VERSION, "name": ..., "datasets": [...]}`). Unlike
@@ -53,7 +53,7 @@ SPEC_SERIES = "0.2"
 #: fails schema validation outright. Bump in lockstep with core-spec/'s own
 #: `version` if it ever moves -- the same discipline databricks'
 #: `OSSIE_VERSION` constant documents.
-DOCUMENT_VERSION = "0.2.0.dev0"
+DOCUMENT_VERSION = "0.3.0.dev0"
 
 #: ThoughtSpot's grouped-aggregation calls, mapped to the plain aggregate each
 #: is shorthand for. `group_aggregate` is the general form and has no single

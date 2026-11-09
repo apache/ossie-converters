@@ -26,7 +26,7 @@
 #
 # I_NR is read by `nr` as an Integer and again inside `gross`: one column,
 # declared once.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: FieldExpressions
 ontology:
 - concept: Item
@@ -71,7 +71,7 @@ ontology:
 ontology_mappings:
 - name: field_expressions_mapping
   semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: Field expressions semantic model
     datasets:
     - name: ITEMS

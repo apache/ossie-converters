@@ -45,7 +45,7 @@ from ossie_snowflake.ossie_to_snowflake import (
 def _wrap_ossie(model_dict):
     """Wrap a model dict in the standard Ossie envelope."""
     return yaml.dump(
-        {"version": "0.2.0.dev0", **model_dict},
+        {"version": "0.3.0.dev0", **model_dict},
         default_flow_style=False,
     )
 
@@ -784,7 +784,7 @@ class TestConvertOssieToSnowflake:
             convert_ossie_to_snowflake(bad)
 
     def test_missing_model_name_raises(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "description": "x"})
+        bad = yaml.dump({"version": "0.3.0.dev0", "description": "x"})
         with pytest.raises(OssieConversionError, match="Missing required 'name'"):
             convert_ossie_to_snowflake(bad)
 
@@ -793,7 +793,7 @@ class TestConvertOssieToSnowflake:
         [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
     )
     def test_legacy_model_wrappers_are_rejected(self, wrapper):
-        bad = yaml.dump({"version": "0.2.0.dev0", "semantic_model": wrapper})
+        bad = yaml.dump({"version": "0.3.0.dev0", "semantic_model": wrapper})
         with pytest.raises(OssieConversionError, match="Legacy 'semantic_model'"):
             convert_ossie_to_snowflake(bad)
 

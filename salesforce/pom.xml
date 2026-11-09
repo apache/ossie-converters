@@ -52,6 +52,9 @@
         <json-schema-validator.version>1.5.9</json-schema-validator.version>
         <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         <maven-resources-plugin.version>3.5.0</maven-resources-plugin.version>
+        <!-- The jar ships this converter's LICENSE, NOTICE and DISCLAIMER (copied below), not
+             the generic ones the ASF parent's resource bundle generates. -->
+        <remoteresources.skip>true</remoteresources.skip>
         <!-- Pinned to 5.3: SqlMetricExpressionParser relies on JSqlParser 5.3
              AST internals that 5.4 changed. See #66. -->
         <jsqlparser.version>5.3</jsqlparser.version>
@@ -143,6 +146,28 @@
                             </resources>
                         </configuration>
                     </execution>
+                    <!-- Ship the converter's LICENSE, NOTICE and DISCLAIMER in META-INF. They
+                         describe the shaded jar, including the dependencies it bundles. -->
+                    <execution>
+                        <id>copy-legal-files</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/META-INF</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}</directory>
+                                    <includes>
+                                        <include>LICENSE</include>
+                                        <include>NOTICE</include>
+                                        <include>DISCLAIMER</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 
@@ -171,6 +196,32 @@
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                                <!-- The converter's LICENSE and NOTICE cover every bundled
+                                     dependency, so drop the dependencies' own top-level copies:
+                                     Jackson's would collide in META-INF, SLF4J's MIT text is
+                                     reproduced in LICENSE, and JSqlParser's GPL LICENSE and JMH
+                                     THIRD-PARTY files describe neither the license it is used
+                                     under nor anything bundled. -->
+                                <filter>
+                                    <artifact>com.fasterxml.jackson.*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/LICENSE</exclude>
+                                        <exclude>META-INF/NOTICE</exclude>
+                                    </excludes>
+                                </filter>
+                                <filter>
+                                    <artifact>org.slf4j:slf4j-api</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/LICENSE.txt</exclude>
+                                    </excludes>
+                                </filter>
+                                <filter>
+                                    <artifact>com.github.jsqlparser:jsqlparser</artifact>
+                                    <excludes>
+                                        <exclude>LICENSE</exclude>
+                                        <exclude>THIRD-PARTY</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
