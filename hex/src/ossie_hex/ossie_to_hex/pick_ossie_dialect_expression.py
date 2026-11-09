@@ -19,18 +19,28 @@ from ossie import OssieDialect, OssieDialectExpression
 
 from .context import ExportContext
 
+PORTABLE_OSSIE_DIALECT = OssieDialect.OSSIE_SQL_2026
+"""The canonical portable dialect of Ossie."""
+
+LEGACY_PORTABLE_OSSIE_DIALECT = OssieDialect.ANSI_SQL
+"""The legacy portable dialect of Ossie.
+
+A significant subset of converters still output ANSI_SQL as if it were the
+portable, default dialect of Ossie.
+"""
+
 
 def pick_ossie_dialect_expression(
     ossie_dialect_expressions: list[OssieDialectExpression],
     *,
     ctx: ExportContext,
-) -> OssieDialectExpression | None:
+) -> OssieDialectExpression:
     """Pick an Ossie dialect expression from a list of Ossie dialect expressions.
 
     Prefers to pick the current dialect, then falls back to a portable dialect,
     then the first in the list.
 
-    Returns a dialect expression or None if no fallback is found.
+    Returns a dialect expression.
     """
     # the pydantic model definition guarantees at least one entry
     fallback = ossie_dialect_expressions[0]
@@ -53,14 +63,3 @@ def pick_ossie_dialect_expression(
                 f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
             )
     return fallback
-
-
-PORTABLE_OSSIE_DIALECT = OssieDialect.OSSIE_SQL_2026
-"""The canonical portable dialect of Ossie."""
-
-LEGACY_PORTABLE_OSSIE_DIALECT = OssieDialect.ANSI_SQL
-"""The legacy portable dialect of Ossie.
-
-A significant subset of converters still output ANSI_SQL as if it were the
-portable, default dialect of Ossie.
-"""
