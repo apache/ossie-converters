@@ -1,0 +1,72 @@
+{
+  "name": "interop_orders",
+  "__fqn__": "interop_orders",
+  "distinct_rows": true,
+  "data_source_name": "interop_warehouse",
+  "models": [
+    {
+      "name": "orders",
+      "__fqn__": "orders",
+      "data_source_name": "interop_warehouse",
+      "dimension": {
+        "order_id": {
+          "name": "order_id",
+          "__doc__": "",
+          "__childIdx__": 3,
+          "hidden": false,
+          "definition": {
+            "__doc__": "",
+            "__type__": "Heredoc",
+            "name": "sql",
+            "content": "{{ #SOURCE.order_id }}"
+          },
+          "primary_key": true,
+          "label": "Order ID",
+          "type": "number",
+          "__type__": "Dimension"
+        },
+        "amount": {
+          "name": "amount",
+          "__doc__": "",
+          "__childIdx__": 4,
+          "hidden": false,
+          "definition": {
+            "__doc__": "",
+            "__type__": "Heredoc",
+            "name": "sql",
+            "content": "{{ #SOURCE.amount }}"
+          },
+          "primary_key": false,
+          "label": "Amount",
+          "type": "number",
+          "__type__": "Dimension"
+        }
+      },
+      "measure": {
+        "total_amount": {
+          "name": "total_amount",
+          "__doc__": "",
+          "__childIdx__": 5,
+          "hidden": false,
+          "aggregation_type": "sum",
+          "label": "Total Amount",
+          "type": "number",
+          "definition": {
+            "__doc__": "",
+            "__type__": "Heredoc",
+            "name": "sql",
+            "content": "{{ #SOURCE.amount }}"
+          },
+          "__type__": "Measure"
+        }
+      },
+      "type": "table",
+      "table_name": "analytics.sales.orders",
+      "__doc__": "",
+      "__type__": "TableModel"
+    }
+  ],
+  "relationships": [],
+  "__doc__": "",
+  "__type__": "Dataset"
+}
