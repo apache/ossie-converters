@@ -1323,6 +1323,25 @@ def test_a_field_over_a_column_another_field_already_is_is_listed_once():
                "already exports" in w for w in warnings_), warnings_
 
 
+def test_a_field_named_for_a_column_it_does_not_read_leaves_that_column_free():
+    """`customer_id` is renamed over `legacy_id`, so it exports `legacy_id`; the
+    `customer_id` column is `cust`'s, and both are listed."""
+    ossie = _alias_model()
+    ossie["datasets"][0]["fields"].append(
+        {"name": "customer_id", "datatype": "Integer", "expression": _ansi("legacy_id")})
+    ossie["metrics"].append(
+        {"name": "legacy_buyers", "expression": _ansi("COUNT(DISTINCT orders.customer_id)")})
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
+    model = solid_model_of(solid)
+    assert [(c["name"], c.get("synonyms")) for c in model["tables"][0]["facts"]] == [
+        ("order_id", ["oid"]), ("customer_id", ["cust"]), ("legacy_id", ["customer_id"])]
+    assert model["relationships"][0]["join_keys"]["left"] == ["customer_id"]
+    metrics = by_name(model["metrics"])
+    assert metrics["buyers"]["expression"] == "COUNT(DISTINCT customer_id)"
+    assert metrics["legacy_buyers"]["expression"] == "COUNT(DISTINCT legacy_id)"
+    assert not [w for w in warnings_ if "already exports" in w], warnings_
+
+
 @pytest.mark.parametrize(("expression", "column"), [
     # Quoted, the name is case-sensitive on Snowflake: `"Amount"` is not `amount`.
     ('"Amount"', "Amount"),
