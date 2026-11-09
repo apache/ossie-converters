@@ -39,7 +39,6 @@ def ctx() -> Iterator[ExportContext]:
 
 @pytest.mark.parametrize("preferred", ["ANSI_SQL", "SNOWFLAKE"])
 def test_picks_preferred_variant(ctx: ExportContext, preferred: str) -> None:
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
     preferred_dialect = Quick.dialect(preferred)
     ctx.set_ossie_dialect(preferred_dialect)
     expression = Quick.expression(

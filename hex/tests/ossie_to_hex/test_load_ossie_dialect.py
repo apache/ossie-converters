@@ -52,7 +52,7 @@ def test_parses_lowercase_string(
     assert not ctx.problems
 
 
-def test_warns_and_defaults_for_invalid_string(ctx: ExportContext) -> None:
+def test_warns_for_invalid_string(ctx: ExportContext) -> None:
     ossie_dialect = "not_a_dialect"
     result = load_ossie_dialect(ossie_dialect, ctx=ctx)
     assert result is None

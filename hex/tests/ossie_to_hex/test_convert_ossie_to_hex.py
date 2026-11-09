@@ -147,10 +147,7 @@ def test_selected_dialect_is_used_when_loading_and_converting(
                 "SUM(CASE WHEN ${amount} > 0 THEN ${amount} ELSE 0 END)",
             )
         )
-    if dialect is None:
-        assert problems_snapshot(problems) == snapshot("")
-    else:
-        assert problems_snapshot(problems) == snapshot("")
+    assert problems_snapshot(problems) == snapshot("")
 
 
 def test_convert_tpcds() -> None:
