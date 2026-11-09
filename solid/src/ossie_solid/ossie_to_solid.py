@@ -555,10 +555,13 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
                         f"table level and was dropped")
 
     fields = as_list(dataset.get("fields"), f"dataset '{name}': fields")
-    # Which field each column name belongs to, starting with every field's own name: an
-    # alias for a column another field already is would list it twice.
+    # Which field each column name belongs to, starting with the name of every field that
+    # is not itself over another column: an alias for a column another field already is
+    # would list it twice. A field over another column exports that column, never its own
+    # name, so its name stays free for the field that does read that column.
     taken = {f["name"].lower(): f["name"] for f in fields
-             if isinstance(f, dict) and isinstance(f.get("name"), str)}
+             if isinstance(f, dict) and isinstance(f.get("name"), str)
+             and _alias_read(f, dialect) is None}
     dimensions, facts, aliases = [], [], {}
     unreadable = set()
     for field in fields:
@@ -644,6 +647,23 @@ def _column_names(fields, aliases):
     by_folded = {name.casefold(): alias for name, alias in aliases.items()}
     return [by_folded[f.casefold()][0] if f.casefold() in by_folded else f
             for f in fields]
+
+
+def _alias_read(field, dialect):
+    """The column a field over another column reads (`cust` reading `customer_id`), as
+    `_convert_field` decides it; None for any other field, including one it can't read,
+    which `_convert_field` then reports."""
+    name = field["name"]
+    try:
+        if read_stash(field, f"field '{name}'").get("renamed") is not None:
+            return None
+        expression, _ = pick_expression(field.get("expression"), dialect, f"Field '{name}'")
+    except ConversionError:
+        return None
+    read = column_read(expression, dialect)
+    if read is None or is_column_reference(expression, name, dialect):
+        return None
+    return read
 
 
 def _convert_field(field, dialect, recorded_dialect, dataset_name, marks_dimensions,
