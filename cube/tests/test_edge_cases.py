@@ -529,6 +529,48 @@ def test_a_sql_defined_cube_is_not_reported_as_unqualified():
     assert not issues.of_type(IssueType.SOURCE_NOT_FULLY_QUALIFIED)
 
 
+@pytest.mark.parametrize("table,catalog,schema,expected,warns", [
+    ("orders", "main", "sales", "main.sales.orders", False),
+    ("reporting.orders", "main", "sales", "main.reporting.orders", False),
+    ("reporting.orders", "main", None, "main.reporting.orders", False),
+    ("orders", "main", None, "orders", True),
+    ("warehouse.sales.orders", "main", "sales", "warehouse.sales.orders", False),
+    ('"Sales.Reporting"."Order""Items"', '"Main.DB"', None,
+     '"Main.DB"."Sales.Reporting"."Order""Items"', False),
+    ("`Order.Items`", "`Main.DB`", "`Sales``Ops`",
+     "`Main.DB`.`Sales``Ops`.`Order.Items`", False),
+    ('"{CUBE}.orders"', "main", "sales", '"{CUBE}.orders"', True),
+    ("orders AS o", "main", "sales", "orders AS o", True),
+    ("server.db.schema.orders", "main", "sales", "server.db.schema.orders", False),
+])
+def test_source_defaults_complete_only_static_table_paths(table, catalog, schema, expected, warns):
+    files = _files(orders=dump_yaml({"cubes": [{"name": "orders", "sql_table": table}]}))
+    out, issues = convert_cube_to_ossie(files, default_catalog=catalog, default_schema=schema)
+    assert model_of(out)["datasets"][0]["source"] == expected
+    assert bool(issues.of_type(IssueType.SOURCE_NOT_FULLY_QUALIFIED)) is warns
+
+
+def test_source_defaults_leave_query_text_untouched():
+    sql = "-- keep this comment\nWITH base AS (SELECT * FROM orders) SELECT * FROM base"
+    files = _files(orders=dump_yaml({"cubes": [{"name": "orders", "sql": sql}]}))
+    out, issues = convert_cube_to_ossie(files, default_catalog="main", default_schema="sales")
+    assert model_of(out)["datasets"][0]["source"] == sql
+    assert not issues.of_type(IssueType.SOURCE_NOT_FULLY_QUALIFIED)
+
+
+@pytest.mark.parametrize("catalog,schema,message", [
+    ("main.sales", None, "default catalog must be a single"),
+    ("'main'", None, "default catalog must be a single"),
+    ("main", '"unfinished', "default schema must be a single"),
+    ("main", " ", "default schema must be a single"),
+    (None, "sales", "default schema requires a default catalog"),
+])
+def test_source_defaults_reject_invalid_names(catalog, schema, message):
+    files = _files(orders=dump_yaml({"cubes": [{"name": "orders", "sql_table": "orders"}]}))
+    with pytest.raises(ConversionError, match=message):
+        convert_cube_to_ossie(files, default_catalog=catalog, default_schema=schema)
+
+
 # --- join orientation, both ways ------------------------------------------------
 
 _ONE_TO_MANY = _files(m=(

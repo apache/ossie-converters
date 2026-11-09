@@ -1115,6 +1115,35 @@ def uncollided_view_name(vname, cube_names):
 
 _LEADING_NOISE_RE = re.compile(r"^(?:\s+|--[^\n]*|/\*.*?\*/|\()*", re.S)
 
+# Match identifiers rather than splitting on dots: quoted warehouse names can
+# contain dots and escaped quote delimiters. A SQL fragment, alias or dynamic
+# Cube reference must never be treated as a table name to prefix.
+_SOURCE_IDENTIFIER = (
+    r"(?:[A-Za-z_][A-Za-z0-9_$]*"
+    r'|"(?:[^"{}\r\n]|"")+"'
+    r"|`(?:[^`{}\r\n]|``)+`)"
+)
+_SOURCE_IDENTIFIER_RE = re.compile(_SOURCE_IDENTIFIER)
+_SOURCE_TABLE_RE = re.compile(
+    rf"{_SOURCE_IDENTIFIER}(?:\s*\.\s*({_SOURCE_IDENTIFIER}))?"
+    rf"(?:\s*\.\s*({_SOURCE_IDENTIFIER}))?")
+
+
+def validate_source_defaults(catalog, schema):
+    """Validate and trim explicit defaults, each exactly one identifier."""
+    def identifier(value, option):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not _SOURCE_IDENTIFIER_RE.fullmatch(value.strip()):
+            raise ConversionError(f"{option} must be a single quoted or unquoted identifier")
+        return value.strip()
+
+    catalog = identifier(catalog, "default catalog")
+    schema = identifier(schema, "default schema")
+    if schema is not None and catalog is None:
+        raise ConversionError("default schema requires a default catalog")
+    return catalog, schema
+
 
 def parse_source(source, dataset_name):
     """Classify an Ossie dataset `source` for placement on a Cube cube.
@@ -1136,11 +1165,12 @@ def parse_source(source, dataset_name):
     return ("sql_table", s)
 
 
-def join_source(cube, cube_name):
+def join_source(cube, cube_name, *, default_catalog=None, default_schema=None):
     """Rebuild an Ossie dataset `source` string from a Cube cube dict.
 
     Cube's schema requires exactly one of `sql` / `sql_table` (an `xor` in
     CubeValidator), so anything else is rejected rather than guessed at.
+    Defaults fill missing parts only when they can complete a static table path.
     """
     sql = cube.get("sql")
     table = cube.get("sql_table")
@@ -1149,7 +1179,15 @@ def join_source(cube, cube_name):
             f"Cube '{cube_name}': has both 'sql' and 'sql_table'; Cube allows "
             f"exactly one")
     if table is not None:
-        return str(table).strip()
+        source = str(table).strip()
+        if default_catalog is not None:
+            parts = _SOURCE_TABLE_RE.fullmatch(source)
+            if parts and parts.group(2) is None:
+                if parts.group(1) is not None:
+                    return f"{default_catalog}.{source}"
+                if default_schema is not None:
+                    return f"{default_catalog}.{default_schema}.{source}"
+        return source
     if sql is not None:
         return str(sql).strip()
     raise ConversionError(
