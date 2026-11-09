@@ -386,6 +386,12 @@ class OssiePolarisConverterTest {
         assertTrue(ds.getFields().get(4).isTime());
         assertEquals("Opaque", ds.getFields().get(5).getDatatype());
 
+        // Table properties are Polaris state, so they go under the Polaris vendor name.
+        assertEquals(1, ds.getCustomExtensions().size());
+        assertEquals("POLARIS", ds.getCustomExtensions().get(0).getVendorName());
+        assertEquals("test_user",
+                mapper.readTree(ds.getCustomExtensions().get(0).getData()).path("owner").asText());
+
         JsonNode tagsExtension = mapper.readTree(
                 ds.getFields().get(5).getCustomExtensions().get(0).getData());
         assertEquals("list", tagsExtension.path("iceberg_type").path("type").asText());
@@ -410,6 +416,7 @@ class OssiePolarisConverterTest {
         assertTrue(yaml.contains("datatype: Decimal"));
         assertTrue(yaml.contains("datatype: Opaque"));
         assertTrue(yaml.contains("vendor_name: POLARIS"));
+        assertFalse(yaml.contains("vendor_name: COMMON"));
 
         // Reparse the generated Ossie YAML and export it again. Exact physical
         // distinctions survive, while nested IDs are regenerated for the new schema.

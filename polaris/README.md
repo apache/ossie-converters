@@ -103,7 +103,7 @@ split older multi-model files and flatten each model before exporting.
 | `identifier-field-ids` | `dataset.primary_key` |
 | Temporal types (`timestamp`, `timestamptz`, `date`, `time`) | `field.dimension.is_time: true` |
 | Exact Iceberg type JSON | `field.custom_extensions` (vendor: `POLARIS`) |
-| Table properties | `dataset.custom_extensions` (vendor: `COMMON`) |
+| Table properties | `dataset.custom_extensions` (vendor: `POLARIS`) |
 
 ### Export (Apache Ossie → Polaris)
 

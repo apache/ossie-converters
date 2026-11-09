@@ -20,6 +20,16 @@ canonical:
   tpcds: ossie/examples/tpcds_semantic_model.yaml
   flights: ossie/examples/flights.semantic_model.yaml
 converters:
+  bigquery:
+    cwd: bigquery
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: null
+    export: [uv, run, --no-sync, ossie-bigquery, -i, '{input}', -o, '{output}']
+    native_format: lookml
+    output: file
+    fixtures: {}
+    import_skip: No native-to-Ossie importer is implemented in this converter.
   cube:
     cwd: cube
     toolchain: uv
@@ -282,3 +292,12 @@ document_regressions:
     input: interop/fixtures/contracts/source-quoted-parts/input.yaml
     targets: [cube, databricks, dbt]
     expectations: interop/fixtures/contracts/source-quoted-parts/expectations.yaml
+# Report-only portability scores (apache/ossie-converters#24): every fixture of the
+# core portability ladder, through every converter that can round-trip, graded by
+# the core grader. `modes` adds a second re-import for an opt-in converter flag.
+portability:
+  fixtures: ossie/compliance/portability/manifest.yaml
+  modes:
+    microsoft-translate-dax:
+      converter: microsoft
+      import: [uv, run, --no-sync, ossie-microsoft, import, --translate-dax, -i, '{input}', -o, '{output}']
