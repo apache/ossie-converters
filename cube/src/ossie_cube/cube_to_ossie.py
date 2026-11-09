@@ -174,7 +174,8 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
     the reduced cube set it builds, rather than serializing that set to YAML only to
     parse it straight back.
     """
-    default_catalog, default_schema = validate_source_defaults(default_catalog, default_schema)
+    default_catalog, default_schema = validate_source_defaults(
+        default_catalog, default_schema, source_dialect)
     # The mapped view supplies the Ossie model's identity. Cube users are
     # view-first, and Cube's own agent reads `meta.ai_context` only from views and
     # individual members -- so the view, not any cube, is the model boundary.
@@ -717,8 +718,9 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
     stash = {}
 
     ds["source"] = join_source(cube, cname, default_catalog=default_catalog,
-                               default_schema=default_schema)
-    parts = source_part_count(ds["source"]) if cube.get("sql_table") is not None else None
+                               default_schema=default_schema, source_dialect=source_dialect)
+    parts = (source_part_count(ds["source"], source_dialect)
+             if cube.get("sql_table") is not None else None)
     if parts is not None and parts < 3:
         # Cube accepts a one- or two-part `sql_table`, but the Ossie spec describes
         # `source` as `database.schema.table` and the Databricks, Snowflake and

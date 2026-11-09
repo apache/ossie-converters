@@ -494,11 +494,16 @@ ossie-cube import -i model/ -o model.yaml --default-catalog main --default-schem
 ```
 
 This converts `orders` to `main.sales.orders` and `reporting.orders` to
-`main.reporting.orders`. For Snowflake, pass the database as `--default-catalog`.
-Each default must be a single identifier; quote it for the warehouse if it
-contains spaces or dots (for example, `--default-catalog '"Analytics.DB"'`).
-The options also work with `--view ... --project`
-and as `default_catalog` / `default_schema` on the Python import functions.
+`main.reporting.orders`. Each default must be a single identifier. For
+Snowflake, pass the database as `--default-catalog`. For a quoted database name,
+use `--default-catalog '"Analytics.DB"'`. The Databricks exporter
+currently rejects identifiers with embedded dots or whitespace, even when
+quoted. Use names without those characters for that route.
+For BigQuery, set `--source-dialect BIGQUERY` so a path quoted as
+`` `project.dataset.table` `` is recognized as already qualified.
+
+The options also work with `--view ... --project` and as `default_catalog` /
+`default_schema` on the Python import functions.
 
 Defaults apply to the tables in the imported model or projected view. They
 preserve explicit qualifiers and quoting and leave SQL queries untouched. A
