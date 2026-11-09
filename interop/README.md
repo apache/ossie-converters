@@ -124,9 +124,9 @@ examples are intentionally outside this matrix.
   extensions are compared. Before/after counts and structural changes are saved.
   Extension comparisons include the owning model, dataset, field, metric, or
   relationship, so moving an unchanged payload between objects is reported as loss.
-  The full registry currently schedules 378 Tier A and 320 Tier B cases across
-  16 native fixtures and two canonical documents. Unsupported directions and
-  unavailable or invalid upstream sources remain visible as skips.
+  Case totals in the generated report reflect the selected converters and fixtures.
+  Unsupported directions and unavailable or invalid upstream sources appear as
+  skips. Each cell with a Tier B result links to its case evidence.
   For dbt targets, re-import exercises MetricFlow's manifest parser; Tier A
   alone checks JSON model content rather than MetricFlow compilation.
 - **Tier C:** optional native gates run on successful exports. Cube's existing
@@ -405,8 +405,9 @@ a Holistics compiler, a Salesforce schema, or a live Polaris catalog.
 
 After the run, two steps use `always()` so a runner failure still allows evidence
 publication and a summary. The Actions job summary contains grade counts for
-each tier and regression group plus a link to the uploaded artifact. Missing or
-invalid results produce a diagnostic summary and a publication error. The summary
+each tier and regression group plus a link to the uploaded artifact. It separates
+declared capability skips from cases blocked by prerequisites or upstream failures.
+Missing or invalid results produce a diagnostic summary and a publication error. The summary
 does not render artifact-relative links that would break in the Actions UI.
 
 Download `interop-<run-id>-<attempt>` from that workflow run's artifacts. It is

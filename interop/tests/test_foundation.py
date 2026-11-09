@@ -355,7 +355,19 @@ def test_all_six_ordered_pairs_prepare_and_import_sources_once(matrix):
     assert saved["cases"][0]["commands"][0]["stdout"].startswith("cases/")
     assert saved["cases"][0]["commands"][0]["argv"][-1].startswith(str(runner.output))
     assert (runner.output / "cases" / pairs[0]["acceptance"] / "tier-B.json").is_file()
-    assert "Tier B ordered matrix" in (runner.output / "report.md").read_text()
+    matrix = (
+        (runner.output / "report.md")
+        .read_text()
+        .split("## Tier B ordered matrix", 1)[1]
+        .split("## Case details", 1)[0]
+    )
+    assert "| alpha--orders | — | [OK]" in matrix
+    for pair in pairs:
+        path = Path(pair["output"]).with_name("tier-B.json")
+        assert (
+            f"[{pair['grade']}]({path.relative_to(runner.output).as_posix()})" in matrix
+        )
+        assert path.is_file()
 
 
 def test_source_failure_is_attributed_without_aborting_other_sources(matrix):
