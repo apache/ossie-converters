@@ -522,8 +522,8 @@ def test_a_list_or_mapping_in_a_text_slot_is_rejected_rather_than_dropped(key):
 
 
 def _current_export(source_system="databricks", types=None):
-    """databricks_solid.yaml as solid-server writes it since RND-9227, RND-9268 and
-    RND-9478: with `version_number`, `source_system`, `target_system` and
+    """databricks_solid.yaml as solid-server writes it since October 2026: with
+    `version_number`, `source_system`, `target_system` and
     `model_llm_short_description`, in the template's key order."""
     model = yaml.safe_load(fixture("databricks_solid.yaml"))["semantic_model"]
     if types:
