@@ -162,7 +162,7 @@ def test_convert_tpcds() -> None:
     assert hex_project is not None
     assert hex_project_snapshot(hex_project) == snapshot("""\
 name: tpcds_retail_model
-dialect: duckdb
+dialect: snowflake
 resources:
 - id: store_sales
   description: Fact table containing all store sales transactions

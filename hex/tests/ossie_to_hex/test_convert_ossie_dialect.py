@@ -71,7 +71,7 @@ def test_falls_back_to_duckdb_for_expression_language(
     )
 
 
-def test_falls_back_to_duckdb_for_none(ctx: ExportContext) -> None:
+def test_falls_back_to_snowflake_for_none(ctx: ExportContext) -> None:
     result = convert_ossie_dialect(None, ctx=ctx)
-    assert result == HexDialect("duckdb")
+    assert result == HexDialect("snowflake")
     assert not ctx.problems
