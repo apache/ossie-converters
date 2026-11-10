@@ -46,20 +46,20 @@ _ID_NAMESPACE = uuid5(NAMESPACE_URL, "ossie.apache.org/converters/sigma")
 # The only value the data model spec endpoints currently accept.
 _SCHEMA_VERSION = 1
 
-# A column's `format` tells Sigma how to SHOW a value (for example, how many decimals).
+# A column's `format` tells Sigma how to show a value (for example, how many decimals).
 #
-# What was broken: for date columns we used to write the format `"date"`. Sigma does not
-# know a format called `"date"` (it only knows `"number"` and `"datetime"`). When Sigma
-# sees a name it does not know, it rejects the WHOLE model, not just that column.
+# What was broken: for date columns we used to write `format.kind = "date"`. Sigma does
+# not know a kind called "date" (it only knows "number" and "datetime"). When Sigma sees
+# a kind it does not know, it rejects the whole model, not just that column.
 #
-# This is a small, safe fix. Only number columns get a format from us. Date, DateTime and
-# DateTimeTz columns now get no format, so Sigma shows them its own default way. That
-# always works. Whether we should pick a date format ourselves (for example "2026-11-10")
-# is a separate decision for later; see apache/ossie-converters#147.
+# This is a small, safe fix. Only number columns get a `format.kind` from us. Date,
+# DateTime and DateTimeTz columns now get no `format`, so Sigma shows them its own
+# default way. That always works. Whether we should pick a date format ourselves (for
+# example "2026-11-10") is a separate decision for later; see apache/ossie-converters#147.
 #
 # If the model already carries a format of its own (kept in custom_extensions), that one
 # is still used.
-_DATATYPE_TO_FORMAT = {
+_NUMERIC_DATATYPE_TO_FORMAT_KIND = {
     "Integer": "number",
     "Decimal": "number",
     "Float": "number",
@@ -324,8 +324,8 @@ class OssieToSigmaConverter:
         # currencySymbol, ...) that the coarse datatype mapping cannot reconstruct.
         if "format" in field_ext:
             column["format"] = field_ext["format"]
-        elif field.datatype in _DATATYPE_TO_FORMAT:
-            column["format"] = {"kind": _DATATYPE_TO_FORMAT[field.datatype]}
+        elif field.datatype in _NUMERIC_DATATYPE_TO_FORMAT_KIND:
+            column["format"] = {"kind": _NUMERIC_DATATYPE_TO_FORMAT_KIND[field.datatype]}
         elif field.datatype == "Opaque":
             issues.append(
                 ConverterIssue(
