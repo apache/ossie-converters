@@ -135,7 +135,8 @@ Every `OssieExpression` produced by `sigma-to-ossie` always carries **both**:
 
 `ossie-to-sigma` prefers the `SIGMA` dialect entry when present (perfect fidelity for anything that
 came from Sigma); for expressions authored by another tool it falls back to translating the
-`ANSI_SQL` entry back into Sigma formula syntax. If neither is possible, the column or metric is
+`ANSI_SQL` entry back into Sigma formula syntax, or else the `OSSIE_SQL_2026` form: the top-level
+`sql`, which wins over an `OSSIE_SQL_2026` entry. If neither is possible, the column or metric is
 **omitted** and flagged in `ConverterResult.issues`
 (`ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE`). `formula` is a required property and the data
 model API validates the whole document before applying any of it, so emitting a placeholder would

@@ -349,27 +349,48 @@ def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
     assert not any(i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE for i in result.issues)
 
 
-def test_a_sql_only_expression_is_reported_not_translatable_instead_of_crashing():
-    document = OssieDocument(
+def _orders_document(field_expression: OssieExpression, metric_expression: OssieExpression) -> OssieDocument:
+    return OssieDocument(
         name="m",
         datasets=[
             OssieDataset(
                 name="orders",
                 source="db.sch.orders",
-                fields=[OssieField(name="amount", expression=OssieExpression(sql="orders.amount"))],
+                fields=[OssieField(name="amount", expression=field_expression)],
             )
         ],
-        metrics=[OssieMetric(name="revenue", expression=OssieExpression(sql="SUM(orders.amount)"))],
+        metrics=[OssieMetric(name="revenue", expression=metric_expression)],
     )
 
-    result = OssieToSigmaConverter().convert(document)
+
+def _ansi(sql: str) -> OssieExpression:
+    return OssieExpression(dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=sql)])
+
+
+def test_a_sql_only_expression_is_translated_like_ansi_sql():
+    """The top-level `sql` is OSSIE_SQL_2026, Ossie's portable ANSI-SQL-based form."""
+    expected = OssieToSigmaConverter().convert(_orders_document(_ansi("amount"), _ansi("SUM(orders.amount)")))
+
+    result = OssieToSigmaConverter().convert(
+        _orders_document(OssieExpression(sql="amount"), OssieExpression(sql="SUM(orders.amount)"))
+    )
     element = result.output["pages"][0]["elements"][0]
 
-    assert not element["columns"]
-    assert not element.get("metrics")
-    assert [
-        i.element_name for i in result.issues if i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE
-    ] == ["orders.amount"]
+    assert element["columns"]
+    assert element["metrics"]
+    assert result.output == expected.output
+    assert not result.issues
+
+
+def test_sql_wins_over_an_ossie_sql_2026_entry():
+    stale = OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression="SUM(orders.stale)")
+    expected = OssieToSigmaConverter().convert(_orders_document(_ansi("amount"), _ansi("SUM(orders.amount)")))
+
+    result = OssieToSigmaConverter().convert(
+        _orders_document(_ansi("amount"), OssieExpression(sql="SUM(orders.amount)", dialects=[stale]))
+    )
+
+    assert result.output == expected.output
 
 
 def test_synthesized_spec_carries_a_schema_version():

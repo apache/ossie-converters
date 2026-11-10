@@ -81,11 +81,19 @@ def sigma_dialect_text(expression: OssieExpression) -> Optional[str]:
 
 
 def ansi_sql_text(expression: OssieExpression) -> Optional[str]:
-    """Return the ``ANSI_SQL`` dialect entry from *expression*, if present."""
+    """Return ANSI SQL text from *expression*, if it has any.
+
+    That is the ``ANSI_SQL`` entry, else the ``OSSIE_SQL_2026`` form, Ossie's
+    portable ANSI-SQL-based language. The top-level ``sql`` is that form, and the
+    specification has it win over an ``OSSIE_SQL_2026`` entry.
+    """
+    portable = expression.sql
     for dialect_expr in expression.dialects or []:
         if dialect_expr.dialect == OssieDialect.ANSI_SQL:
             return dialect_expr.expression
-    return None
+        if dialect_expr.dialect == OssieDialect.OSSIE_SQL_2026 and portable is None:
+            portable = dialect_expr.expression
+    return portable
 
 
 def infer_single_dataset_qualifier(sql: str, dataset_names: set) -> Optional[str]:
