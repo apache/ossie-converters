@@ -52,8 +52,18 @@ def test_load_wellknown_lowercase_string(
 ) -> None:
     result = load_ossie_dialect(ossie_dialect.value.lower(), ctx=ctx)
 
-    assert result == ossie_dialect.value
+    assert result == ossie_dialect.value.lower()
     assert not ctx.problems
+
+
+def test_load_freeform_string_preserves_case(ctx: ExportContext) -> None:
+    ossie_dialect = "Unknown_Dialect"
+    result = load_ossie_dialect(ossie_dialect, ctx=ctx)
+
+    assert result == "Unknown_Dialect"
+    assert problems_snapshot(ctx.problems) == snapshot(
+        "[INFO] Unknown dialect: Unknown_Dialect."
+    )
 
 
 def test_load_freeform_string() -> None:

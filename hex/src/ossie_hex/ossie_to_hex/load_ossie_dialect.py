@@ -31,18 +31,19 @@ def load_ossie_dialect(
     Parse an Ossie dialect into a string value.
 
     Accepts an OssieDialect enum member or a free-form string value. A
-    free-form value is normalized to uppercase.
+    free-form value is either normalized to an uppercase, well-known value
+    or preserved with given casing.
 
     Returns the string value of the dialect.
     """
     if isinstance(ossie_dialect, OssieDialect):
         return ossie_dialect.value
     elif isinstance(ossie_dialect, str):
-        value = ossie_dialect.upper()
         try:
-            OssieDialect(value)
+            # case-insensitive for well-known dialects
+            OssieDialect(ossie_dialect.upper())
         except ValueError:
-            ctx.info(f"Unknown dialect: {value}.")
-        return value
+            ctx.info(f"Unknown dialect: {ossie_dialect}.")
+        return ossie_dialect
     else:
         return None

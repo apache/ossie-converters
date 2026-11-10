@@ -40,7 +40,11 @@ def pick_ossie_dialect_expression(
     # the pydantic model definition guarantees at least one entry
     fallback = ossie_dialect_expressions[0]
     for entry in ossie_dialect_expressions:
-        if ctx.ossie_dialect is not None and entry.dialect == ctx.ossie_dialect:
+        if (
+            ctx.ossie_dialect is not None
+            # case-insensitive for well-known dialects
+            and entry.dialect.upper() == ctx.ossie_dialect.upper()
+        ):
             return entry
         # fallback preference: (1) portable dialect, (2) first in the list
         elif entry.dialect == PORTABLE_OSSIE_DIALECT or (

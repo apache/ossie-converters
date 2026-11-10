@@ -26,9 +26,10 @@ OssieDialectName = Annotated[
     Can be a well-known OssieDialect value or a free-form string. The value
     may represent a SQL engine or expression language.
     
-    Values are uppercase ASCII identifiers in `SCREAMING_SNAKE_CASE`. Any
-    string may appear when carrying a dialect preference; it is not required
-    to match a fixed catalog of names.
+    Well-known values are uppercase ASCII identifiers in `SCREAMING_SNAKE_CASE`.
+    Any string may appear when carrying a dialect preference; it is not
+    required to match a fixed catalog of names. Values are kept as written
+    and compared case-insensitively.
     """,
 ]
 

@@ -88,3 +88,31 @@ def test_handles_unknown_dialect_during_conversion(ctx: ExportContext) -> None:
     assert problems_snapshot(ctx.problems) == snapshot(
         "[INFO] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
     )
+
+
+def test_well_known_dialect_mixed_case(ctx: ExportContext) -> None:
+    """A well-known dialect specified in any casing should be normalized
+    and mapped to the corresponding Hex dialect."""
+    ossie_dialect = "BigQuery"
+
+    result = convert_ossie_dialect(ossie_dialect, ctx=ctx)
+
+    assert result == HexDialect("bigquery")
+    assert not ctx.problems
+
+
+def test_unknown_dialect(
+    ctx: ExportContext,
+) -> None:
+    """An unknown dialect should be preserved as-is with a problem.
+
+    This is also the "typo" case.
+    """
+    ossie_dialect = "snowflak"
+
+    result = convert_ossie_dialect(ossie_dialect, ctx=ctx)
+
+    assert result == HexDialect("duckdb")
+    assert problems_snapshot(ctx.problems) == snapshot(
+        "[INFO] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
+    )

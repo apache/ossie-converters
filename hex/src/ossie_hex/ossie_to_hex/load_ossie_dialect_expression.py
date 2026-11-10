@@ -90,7 +90,7 @@ def parse_ossie_dialect_expression(
 
 def _to_sqlglot_dialect(ossie_dialect: OssieDialectName) -> SQLGlotDialect | None:
     """Return a specialized reader, or None to use SQLGlot's base parser."""
-    return _SQLGLOT_DIALECT_MAP.get(ossie_dialect)
+    return _SQLGLOT_DIALECT_MAP.get(ossie_dialect.upper())
 
 
 _SQLGLOT_DIALECT_MAP: Mapping[OssieDialectName, SQLGlotDialect] = {

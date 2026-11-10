@@ -59,6 +59,22 @@ def test_picks_preferred_variant(ctx: ExportContext, preferred: str) -> None:
     assert problems_snapshot(ctx.problems) == snapshot("")
 
 
+def test_picks_preferred_variant_case_insensitively(ctx: ExportContext) -> None:
+    ossie_dialect = "snowflake"
+    ctx.set_ossie_dialect(ossie_dialect)
+    expression = Quick.expression(
+        [
+            ("ANSI_SQL", "foo.bar"),
+            ("SNOWFLAKE", "foo.bar + 1"),
+        ]
+    )
+
+    result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
+
+    assert result is expression.dialects[1]
+    assert not ctx.problems
+
+
 def test_prefers_legacy_portable_dialect_over_other_variants(
     ctx: ExportContext,
 ) -> None:
