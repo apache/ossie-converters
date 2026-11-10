@@ -92,7 +92,8 @@ def convert_ossie_to_omni(ossie_yaml_str, base_view=None, dialect=None):
     `base_view` names the dataset the generated topic is rooted at. When omitted,
     it is the dataset that is never a relationship `to` (the FK sink of a plain
     many-to-one star). `dialect` prepends a warehouse dialect (e.g. SNOWFLAKE) to
-    the expression preference order; ANSI_SQL is always the fallback.
+    the expression preference order. Other supported SQL dialects can supply
+    fields and metrics when both the preferred and ANSI_SQL entries are absent.
     """
     root = load_yaml(ossie_yaml_str, "Ossie model")
     if not isinstance(root, dict):
@@ -303,8 +304,7 @@ def _convert_dataset(ds, vname, view_names, dialect):
         taken.add(dname.lower())
         expr = pick_expression(field.get("expression"), dialect)
         if expr is None:
-            _warn(fscope, "no usable ANSI_SQL (or preferred-dialect) expression; "
-                          "dropping field")
+            _warn(fscope, "no usable SQL expression; dropping field")
             continue
         dim = _convert_field(field, dname, expr, fscope)
         dimensions[dname] = dim
@@ -553,8 +553,7 @@ def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect):
 
     expr = pick_expression(metric.get("expression"), dialect)
     if expr is None:
-        _warn(scope, "no usable ANSI_SQL (or preferred-dialect) expression; "
-                     "dropping metric")
+        _warn(scope, "no usable SQL expression; dropping metric")
         return None
 
     sanitized_views = set(view_names.values())

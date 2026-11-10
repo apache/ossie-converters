@@ -29,6 +29,9 @@ import json
 import os
 import re
 
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import ErrorLevel, SqlglotError
 import yaml
 
 # Ossie semantic model spec version this converter targets (see core-spec).
@@ -38,10 +41,16 @@ OSSIE_VERSION = "0.2.0.dev0"
 VENDOR = "OMNI"
 
 # Omni SQL is the SQL of the model's database connection, so there is no OMNI
-# entry in the Ossie dialect enum. Import emits ANSI_SQL; export prefers ANSI_SQL
-# and lets the caller prepend a warehouse dialect (e.g. SNOWFLAKE) that the
-# actual connection would accept.
+# entry in the Ossie dialect enum. Import emits ANSI_SQL. For export, the
+# default SQLGlot generator renders fallback SQL when no warehouse is selected.
 DIALECT_ANSI = "ANSI_SQL"
+_SQL_DIALECTS = {
+    DIALECT_ANSI: None,
+    "OSSIE_SQL_2026": None,
+    "DATABRICKS": "databricks",
+    "SNOWFLAKE": "snowflake",
+    "BIGQUERY": "bigquery",
+}
 
 # Bump when the shape of a stashed `data` blob changes.
 STASH_VERSION = 1
@@ -329,10 +338,9 @@ def foreign_vendor_extensions(obj):
 def pick_expression(ossie_expression, preferred=None):
     """Choose the SQL string for an Ossie expression.
 
-    Preference order: the caller-chosen warehouse dialect (Omni passes SQL through
-    to the connection's database, so e.g. SNOWFLAKE SQL is valid on a Snowflake-
-    backed Omni model), then ANSI_SQL. Returns None if neither is present (the
-    caller warns and skips).
+    Preserve a matching preferred or ANSI_SQL expression verbatim. Otherwise
+    translate a supported SQL alternative into the requested warehouse dialect
+    or generic SQL.
     """
     dialects = {
         d.get("dialect"): d.get("expression")
@@ -343,10 +351,35 @@ def pick_expression(ossie_expression, preferred=None):
         expr = dialects.get(preferred)
     if expr is None:
         expr = dialects.get(DIALECT_ANSI)
-    if expr is not None and not isinstance(expr, str):
-        raise ConversionError(
-            f"expression must be a string, got {type(expr).__name__}")
-    return expr
+    if expr is not None:
+        if not isinstance(expr, str):
+            raise ConversionError(
+                f"expression must be a string, got {type(expr).__name__}")
+        return expr
+
+    target = preferred or DIALECT_ANSI
+    if target not in _SQL_DIALECTS:
+        return None
+    for dialect, reader in _SQL_DIALECTS.items():
+        candidate = dialects.get(dialect)
+        if candidate is None:
+            continue
+        if not isinstance(candidate, str):
+            raise ConversionError(
+                f"expression must be a string, got {type(candidate).__name__}")
+        try:
+            statements = sqlglot.parse(candidate, read=reader)
+            if len(statements) != 1 or statements[0] is None:
+                continue
+            tree = statements[0]
+            # Unknown functions can carry warehouse-specific semantics. SQLGlot
+            # passes them through without detecting a translation failure.
+            if tree.find(exp.Anonymous, exp.Query, exp.Command, exp.DDL, exp.DML):
+                continue
+            return tree.sql(dialect=_SQL_DIALECTS[target], unsupported_level=ErrorLevel.RAISE)
+        except SqlglotError:
+            continue
+    return None
 
 
 def synonyms_of(ai_context):

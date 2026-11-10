@@ -283,6 +283,38 @@ def test_dialect_preference():
         "sql"] == "snow_col"
 
 
+@pytest.mark.parametrize("dialect", ["OSSIE_SQL_2026", "DATABRICKS", "SNOWFLAKE", "BIGQUERY"])
+def test_sql_only_dialect_exports_fields_and_measures(dialect):
+    fields = [_field("amount", dialect=dialect),
+              _field("discount", "amount * 0.9", dialect)]
+    files = export(minimal(
+        datasets=[{"name": "orders", "source": "db.sch.orders", "fields": fields}],
+        metrics=[_field("total", "SUM(orders.amount)", dialect)],
+    ))
+    view = parse(files["views/orders.view.yaml"])
+    assert view["dimensions"] == {"amount": {}, "discount": {"sql": "amount * 0.9"}}
+    assert view["measures"]["total"] == {"sql": "${amount}", "aggregate_type": "sum"}
+
+
+def test_fallback_translates_databricks_identifiers_into_snowflake():
+    field = _field("currency", "UPPER(`Currency Code`)", "DATABRICKS")
+    files = export(minimal(datasets=[
+        {"name": "orders", "source": "db.sch.orders", "fields": [field]}]),
+        dialect="SNOWFLAKE")
+    assert parse(files["views/orders.view.yaml"])["dimensions"]["currency"]["sql"] == (
+        'UPPER("Currency Code")'
+    )
+
+
+@pytest.mark.parametrize("sql", ["vendor_only(amount)", "amount; SELECT 1"])
+def test_untranslatable_warehouse_expression_is_omitted(sql):
+    source = minimal(datasets=[{"name": "orders", "source": "db.sch.orders",
+                                "fields": [_field("x", sql, "DATABRICKS")]}])
+    with pytest.warns(UserWarning, match="no usable SQL expression"):
+        files = convert_ossie_to_omni(source)
+    assert "dimensions" not in parse(files["views/orders.view.yaml"])
+
+
 def test_names_are_sanitized():
     files = export(dump_yaml({"version": "0.2.0.dev0", "name": "My Model",
         "datasets": [{"name": "Order Items", "source": "db.sch.t",
