@@ -140,7 +140,8 @@ unrecognized files).
 Import emits `ANSI_SQL`. Export first uses an exact `--dialect` match, then
 `ANSI_SQL`, preserving either verbatim. It can also translate
 `OSSIE_SQL_2026`, `DATABRICKS`, `SNOWFLAKE`, and `BIGQUERY` expressions into
-the selected warehouse dialect or generic SQL when no dialect is selected.
+the selected warehouse dialect or SQLGlot's generic SQL when no dialect is
+selected. SQLGlot's generic dialect also parses `OSSIE_SQL_2026` fallbacks.
 A field or metric with no usable expression is dropped with a warning.
 
 ## Requirements

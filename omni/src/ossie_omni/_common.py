@@ -30,7 +30,7 @@ import os
 import re
 
 import sqlglot
-from sqlglot import exp
+from sqlglot import Dialect, exp
 from sqlglot.errors import ErrorLevel, SqlglotError
 import yaml
 
@@ -41,15 +41,18 @@ OSSIE_VERSION = "0.2.0.dev0"
 VENDOR = "OMNI"
 
 # Omni SQL is the SQL of the model's database connection, so there is no OMNI
-# entry in the Ossie dialect enum. Import emits ANSI_SQL. For export, the
-# default SQLGlot generator renders fallback SQL when no warehouse is selected.
+# entry in the Ossie dialect enum. Import emits ANSI_SQL. SQLGlot has no ANSI
+# dialect, so explicitly use its generic Dialect for portable SQL.
 DIALECT_ANSI = "ANSI_SQL"
-_SQL_DIALECTS = {
-    DIALECT_ANSI: None,
-    "OSSIE_SQL_2026": None,
+_PORTABLE_SQL_DIALECTS = (DIALECT_ANSI, "OSSIE_SQL_2026")
+_WAREHOUSE_SQL_DIALECTS = {
     "DATABRICKS": "databricks",
     "SNOWFLAKE": "snowflake",
     "BIGQUERY": "bigquery",
+}
+_SQL_DIALECT_READERS = {
+    **dict.fromkeys(_PORTABLE_SQL_DIALECTS, Dialect),
+    **_WAREHOUSE_SQL_DIALECTS,
 }
 
 # Bump when the shape of a stashed `data` blob changes.
@@ -357,10 +360,11 @@ def pick_expression(ossie_expression, preferred=None):
                 f"expression must be a string, got {type(expr).__name__}")
         return expr
 
-    target = preferred or DIALECT_ANSI
-    if target not in _SQL_DIALECTS:
+    writer = (Dialect if not preferred or preferred in _PORTABLE_SQL_DIALECTS
+              else _WAREHOUSE_SQL_DIALECTS.get(preferred))
+    if writer is None:
         return None
-    for dialect, reader in _SQL_DIALECTS.items():
+    for dialect, reader in _SQL_DIALECT_READERS.items():
         candidate = dialects.get(dialect)
         if candidate is None:
             continue
@@ -376,7 +380,7 @@ def pick_expression(ossie_expression, preferred=None):
             # passes them through without detecting a translation failure.
             if tree.find(exp.Anonymous, exp.Query, exp.Command, exp.DDL, exp.DML):
                 continue
-            return tree.sql(dialect=_SQL_DIALECTS[target], unsupported_level=ErrorLevel.RAISE)
+            return tree.sql(dialect=writer, unsupported_level=ErrorLevel.RAISE)
         except SqlglotError:
             continue
     return None

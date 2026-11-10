@@ -296,11 +296,12 @@ def test_sql_only_dialect_exports_fields_and_measures(dialect):
     assert view["measures"]["total"] == {"sql": "${amount}", "aggregate_type": "sum"}
 
 
-def test_fallback_translates_databricks_identifiers_into_snowflake():
+@pytest.mark.parametrize("target", [None, "ANSI_SQL", "SNOWFLAKE"])
+def test_fallback_translates_databricks_identifier_quoting(target):
     field = _field("currency", "UPPER(`Currency Code`)", "DATABRICKS")
     files = export(minimal(datasets=[
         {"name": "orders", "source": "db.sch.orders", "fields": [field]}]),
-        dialect="SNOWFLAKE")
+        dialect=target)
     assert parse(files["views/orders.view.yaml"])["dimensions"]["currency"]["sql"] == (
         'UPPER("Currency Code")'
     )
