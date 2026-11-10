@@ -407,11 +407,15 @@ def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
     assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {"string", "boolean", "time"}
 
 
-def _relationship_model(dim_day_key: str = "date_key", reverse: bool = False) -> OssieDocument:
+def _relationship_model(
+    dim_day_key: str = "date_key",
+    reverse: bool = False,
+    dim_day_dialect: OssieDialect = OssieDialect.ANSI_SQL,
+) -> OssieDocument:
     """One fact joined to two dimensions: one on a differently named column, one on a
     column that has the same name on both sides."""
 
-    def dataset(name: str, *fields: str) -> OssieDataset:
+    def dataset(name: str, *fields: str, dialect: OssieDialect = OssieDialect.ANSI_SQL) -> OssieDataset:
         return OssieDataset(
             name=name,
             source=f"db.public.{name}",
@@ -419,7 +423,7 @@ def _relationship_model(dim_day_key: str = "date_key", reverse: bool = False) ->
                 OssieField(
                     name=f,
                     expression=OssieExpression(
-                        dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=f)]
+                        dialects=[OssieDialectExpression(dialect=dialect, expression=f)]
                     ),
                 )
                 for f in fields
@@ -427,7 +431,7 @@ def _relationship_model(dim_day_key: str = "date_key", reverse: bool = False) ->
         )
 
     datasets = [
-        dataset("dim_day", "date_key"),
+        dataset("dim_day", "date_key", dialect=dim_day_dialect),
         dataset("dim_day_alt", "calendar_date"),
         dataset("fact_day", "calendar_date"),
     ]
@@ -480,3 +484,19 @@ def test_relationship_column_missing_from_its_dataset_is_reported():
     assert len(unresolved) == 1
     assert "no_such_column" in unresolved[0].detail
     assert "dim_day" in unresolved[0].detail
+
+
+def test_relationship_to_an_omitted_column_is_dropped_and_reported():
+    """A field with no usable expression gets no Sigma column. A key pointing at it can
+    never resolve, so the relationship is dropped and the converter says why."""
+    result = OssieToSigmaConverter().convert(_relationship_model(dim_day_dialect=OssieDialect.DATABRICKS))
+
+    elements = {e["name"]: e for p in result.output["pages"] for e in p["elements"]}
+    dim_day_id = elements["dim_day"]["id"]
+    fact = elements["fact_day"]
+    assert [r["targetElementId"] for r in fact["relationships"]] != []
+    assert all(r["targetElementId"] != dim_day_id for r in fact["relationships"])
+    unresolved = [i for i in result.issues if i.issue_type is ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED]
+    assert len(unresolved) == 1
+    assert "date_key" in unresolved[0].detail
+    assert "omitted" in unresolved[0].detail

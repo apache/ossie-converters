@@ -215,13 +215,18 @@ class OssieToSigmaConverter:
             page = _page(ext.get("page_id"), ext.get("page_name"))
             page["elements"].append(element)
 
+        declared_fields = {d.name: {f.name for f in d.fields or []} for d in model.datasets}
         for dataset, element in built_elements:
             relationships = relationships_by_element.get(dataset_element_id[dataset.name], [])
-            if relationships:
-                element["relationships"] = [
-                    self._build_relationship(r, dataset.name, dataset_element_id, field_ids_by_dataset, issues)
-                    for r in relationships
-                ]
+            built = [
+                self._build_relationship(
+                    r, dataset.name, dataset_element_id, field_ids_by_dataset, declared_fields, issues
+                )
+                for r in relationships
+            ]
+            built = [r for r in built if r is not None]
+            if built:
+                element["relationships"] = built
 
         for entry in model_ext.get("non_table_elements", []):
             page = _page(entry.get("page_id"), entry.get("page_name"))
@@ -354,8 +359,9 @@ class OssieToSigmaConverter:
         dataset_name: str,
         dataset_element_id: dict[str, str],
         field_ids_by_dataset: dict[str, dict[str, str]],
+        declared_fields: dict[str, set[str]],
         issues: list[ConverterIssue],
-    ) -> dict[str, Any]:
+    ) -> Optional[dict[str, Any]]:
         ext = _sigma_ext(rel) or {}
         source_ids = field_ids_by_dataset.get(dataset_name, {})
         target_ids = field_ids_by_dataset.get(rel.to, {})
@@ -389,11 +395,24 @@ class OssieToSigmaConverter:
                     )
                 )
             keys = []
+            omitted = False
             for from_col, to_col in zip(rel.from_columns, rel.to_columns):
                 # Each side is a column of its own dataset: the target key must carry the
                 # target element's column id, not a lookup in the source element.
                 for side, column, ids in ((dataset_name, from_col, source_ids), (rel.to, to_col, target_ids)):
-                    if column not in ids:
+                    if column not in ids and column in declared_fields.get(side, set()):
+                        # A declared field with no usable expression gets no Sigma column, so
+                        # no key can point at it and Sigma would reject the whole spec.
+                        omitted = True
+                        issues.append(
+                            ConverterIssue(
+                                ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED,
+                                f"{dataset_name}.{rel.name}",
+                                f"Join column '{column}' of dataset '{side}' was omitted from the "
+                                "Sigma output (no usable expression), so the relationship was dropped.",
+                            )
+                        )
+                    elif column not in ids:
                         issues.append(
                             ConverterIssue(
                                 ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED,
@@ -410,6 +429,8 @@ class OssieToSigmaConverter:
                         "targetColumnId": target_ids.get(to_col, to_col),
                     }
                 )
+            if omitted:
+                return None
             result["keys"] = keys
         result.update(ext.get("native") or {})
         return result
