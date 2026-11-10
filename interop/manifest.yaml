@@ -20,6 +20,9 @@ canonical:
   tpcds: ossie/examples/tpcds_semantic_model.yaml
   flights: ossie/examples/flights.semantic_model.yaml
 converters:
+  celonis:
+    cwd: celonis
+    skip: First-pass Celonis JSON conversion preserves native PQL metrics but cannot translate the canonical SQL metrics to PQL required by the full pairwise matrix. Basic dataset and join conversion is tested in celonis/tests.
   bigquery:
     cwd: bigquery
     toolchain: uv
