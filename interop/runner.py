@@ -39,6 +39,7 @@ from .checks import (
 )
 from .execution import diagnostics, has_degradation, run_command, succeeded
 from .manifest import Manifest, expand
+from . import portability_execution
 from .portability import GRADER, as_dict, diagnostics_text, load_grader
 
 
@@ -494,9 +495,10 @@ class Runner:
         """One portability fixture through one converter and back, then graded.
 
         The grade is the same as a Tier B return; `grading` holds the core grader's
-        findings. A converter that refuses the document (export or re-import fails,
-        or nothing comes back) is graded against an empty document, which the
-        grader reports as REJECTED. A skip is not graded."""
+        findings and `execution` the execution check of the metrics it marks
+        REWRITTEN, read from the same report. A converter that refuses the document
+        (export or re-import fails, or nothing comes back) is graded against an
+        empty document, which the grader reports as REJECTED. A skip is not graded."""
         label = mode or converter.name
         case_id = f"{variant}--to--{label}"
         directory = self.output / "portability" / case_id
@@ -511,6 +513,7 @@ class Runner:
             "output": str(directory / "conversion" / "returned.yaml"),
             "native_gate": _result("SKIP", "export has not succeeded"),
             "grading": None,
+            "execution": None,
         }
         shutil.copyfile(path, result["input"])
         data = self.validate(result, Path(result["input"]))
@@ -559,13 +562,19 @@ class Runner:
             except (UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
                 # Nothing readable came back: graded as a refusal, and said so.
                 result["grading_note"] = f"returned document unreadable: {error}"
+        input_document = grader._load(result["input"])
         report = grader.grade(
-            grader._load(result["input"]),
+            input_document,
             document,
             diagnostics_text=diagnostics_text(result["commands"]),
             converter=label,
         )
         result["grading"] = as_dict(report)
+        result["execution"] = portability_execution.as_dict(
+            portability_execution.check(
+                input_document, document, converter=label, graded=report
+            )
+        )
         return result
 
     def document_regression(self, name, regression, target):

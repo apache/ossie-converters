@@ -347,7 +347,7 @@ newer grader adds). Per-case results with every finding are saved under
 `portability/<variant>--to--<converter>/`. Scores are evidence about the round
 trip, not a pass: they never change the exit status, with or without `--strict`.
 The grader compares normalized sqlglot trees, so REWRITTEN can be cosmetic or a
-change in meaning; an execution check can take the same graded report per case.
+change in meaning; the execution check below runs on the same graded report per case.
 
 ## Portability execution check
 
@@ -366,10 +366,14 @@ already proves equal are skipped unless `--all-rewrites` is given.
 | `DIFFERENT` | The results differ, or exactly one side fails. The finding carries the smallest row set found that shows it and both results on it |
 | `NOT_RUN` | The check could not run, with the reason (for example a vendor-only dialect) |
 
-A step that drives converters through the portability fixtures calls
-`check(input_document, returned_document, graded=...)` once per round trip,
-passing the grader's report so both read the same findings. A single pair can
-also be checked directly:
+The portability step (`Runner.portability_case`) calls
+`check(input_document, returned_document, converter=..., graded=report)` right
+after the grader, once per graded round trip, so both read the same findings,
+and stores the result as `execution` next to `grading` in the case's
+`result.json` and in `results.json`. A skipped case is not executed, and a
+rejected return has nothing to execute. Without DuckDB every check is `NOT_RUN`
+with the reason. Like the scores, these findings never change the exit status.
+A single pair can also be checked directly:
 
 ```sh
 uv run --project interop --locked python -m interop.portability_execution \
