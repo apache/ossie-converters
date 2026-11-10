@@ -202,13 +202,31 @@ class OssieToSigmaConverter:
             element_id = ext.get("element_id") or dataset_element_id.get(rel.from_dataset, "")
             relationships_by_element.setdefault(element_id, []).append(rel)
 
+        # A relationship key names a column on each side, so every dataset's column ids
+        # have to exist before any relationship is built.
+        field_ids_by_dataset: dict[str, dict[str, str]] = {}
+        built_elements: list[tuple[OssieDataset, dict[str, Any]]] = []
         for dataset in model.datasets:
             element = self._build_element(
-                dataset, dataset_element_id, metrics_by_element, relationships_by_element, issues
+                dataset, dataset_element_id, metrics_by_element, field_ids_by_dataset, issues
             )
+            built_elements.append((dataset, element))
             ext = _sigma_ext(dataset) or {}
             page = _page(ext.get("page_id"), ext.get("page_name"))
             page["elements"].append(element)
+
+        declared_fields = {d.name: {f.name for f in d.fields or []} for d in model.datasets}
+        for dataset, element in built_elements:
+            relationships = relationships_by_element.get(dataset_element_id[dataset.name], [])
+            built = [
+                self._build_relationship(
+                    r, dataset.name, dataset_element_id, field_ids_by_dataset, declared_fields, issues
+                )
+                for r in relationships
+            ]
+            built = [r for r in built if r is not None]
+            if built:
+                element["relationships"] = built
 
         for entry in model_ext.get("non_table_elements", []):
             page = _page(entry.get("page_id"), entry.get("page_name"))
@@ -223,7 +241,7 @@ class OssieToSigmaConverter:
         dataset: OssieDataset,
         dataset_element_id: dict[str, str],
         metrics_by_element: dict[str, list[OssieMetric]],
-        relationships_by_element: dict[str, list[OssieRelationship]],
+        field_ids_by_dataset: dict[str, dict[str, str]],
         issues: list[ConverterIssue],
     ) -> dict[str, Any]:
         ext = _sigma_ext(dataset) or {}
@@ -240,7 +258,7 @@ class OssieToSigmaConverter:
             # the preserved original. The other kinds have no such portable field.
             source["path"] = dataset.source.split(".")
 
-        field_ids: dict[str, str] = {}
+        field_ids: dict[str, str] = field_ids_by_dataset.setdefault(dataset.name, {})
         columns = []
         for field in dataset.fields or []:
             field_ext = _sigma_ext(field) or {}
@@ -276,12 +294,6 @@ class OssieToSigmaConverter:
         metrics = [m for m in metrics if m is not None]
         if metrics:
             element["metrics"] = metrics
-
-        relationships = relationships_by_element.get(element_id, [])
-        if relationships:
-            element["relationships"] = [
-                self._build_relationship(r, dataset.name, dataset_element_id, field_ids, issues) for r in relationships
-            ]
 
         return element
 
@@ -346,10 +358,13 @@ class OssieToSigmaConverter:
         rel: OssieRelationship,
         dataset_name: str,
         dataset_element_id: dict[str, str],
-        field_ids: dict[str, str],
+        field_ids_by_dataset: dict[str, dict[str, str]],
+        declared_fields: dict[str, set[str]],
         issues: list[ConverterIssue],
-    ) -> dict[str, Any]:
+    ) -> Optional[dict[str, Any]]:
         ext = _sigma_ext(rel) or {}
+        source_ids = field_ids_by_dataset.get(dataset_name, {})
+        target_ids = field_ids_by_dataset.get(rel.to, {})
         target_element_id = dataset_element_id.get(rel.to, rel.to)
         result: dict[str, Any] = {
             # Scoped by owning dataset, like column ids (dataset+field) and metric ids
@@ -379,12 +394,43 @@ class OssieToSigmaConverter:
                         "key column(s) were dropped from the Sigma relationship.",
                     )
                 )
-            result["keys"] = [
-                {
-                    "sourceColumnId": field_ids.get(from_col, from_col),
-                    "targetColumnId": field_ids.get(to_col, to_col),
-                }
-                for from_col, to_col in zip(rel.from_columns, rel.to_columns)
-            ]
+            keys = []
+            omitted = False
+            for from_col, to_col in zip(rel.from_columns, rel.to_columns):
+                # Each side is a column of its own dataset: the target key must carry the
+                # target element's column id, not a lookup in the source element.
+                for side, column, ids in ((dataset_name, from_col, source_ids), (rel.to, to_col, target_ids)):
+                    if column not in ids and column in declared_fields.get(side, set()):
+                        # A declared field with no usable expression gets no Sigma column, so
+                        # no key can point at it and Sigma would reject the whole spec.
+                        omitted = True
+                        issues.append(
+                            ConverterIssue(
+                                ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED,
+                                f"{dataset_name}.{rel.name}",
+                                f"Join column '{column}' of dataset '{side}' was omitted from the "
+                                "Sigma output (no usable expression), so the relationship was dropped.",
+                            )
+                        )
+                    elif column not in ids:
+                        issues.append(
+                            ConverterIssue(
+                                ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED,
+                                f"{dataset_name}.{rel.name}",
+                                f"Join column '{column}' is not a modeled field of dataset '{side}'; "
+                                "it was written unchanged as the Sigma column id. That is only valid "
+                                "if it is a raw warehouse reference (inode-<file>/<COLUMN>), so "
+                                "check it.",
+                            )
+                        )
+                keys.append(
+                    {
+                        "sourceColumnId": source_ids.get(from_col, from_col),
+                        "targetColumnId": target_ids.get(to_col, to_col),
+                    }
+                )
+            if omitted:
+                return None
+            result["keys"] = keys
         result.update(ext.get("native") or {})
         return result
