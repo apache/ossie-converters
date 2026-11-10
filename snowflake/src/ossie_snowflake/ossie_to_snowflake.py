@@ -379,23 +379,20 @@ def _extract_expression(expression, field_name):
     """Selects the best dialect expression for Snowflake.
 
     Preference order: SNOWFLAKE, then ANSI_SQL, then OSSIE_SQL_2026 (the last two
-    are ANSI-SQL-compatible fallbacks). Returns the expression string, or None if
-    only unsupported dialects are present (the field should be skipped). Raises
-    OssieConversionError if the expression or dialects list is missing entirely.
+    are ANSI-SQL-compatible fallbacks). The top-level `sql` is the OSSIE_SQL_2026
+    form and wins over an OSSIE_SQL_2026 entry, as the specification requires.
+    Returns the expression string, or None if only unsupported dialects are
+    present (the field should be skipped). Raises OssieConversionError if the
+    expression has neither `sql` nor dialects.
     """
     if expression is None or not isinstance(expression, dict):
         raise OssieConversionError(
             f"Missing or malformed expression for field/metric '{field_name}'"
         )
 
-    dialects = expression.get("dialects")
-    if not dialects:
-        if expression.get("sql") is not None:
-            warnings.warn(
-                f"Skipping field/metric '{field_name}': it has only a portable sql "
-                f"expression and no dialect entries"
-            )
-            return None
+    dialects = expression.get("dialects") or []
+    sql = expression.get("sql")
+    if not dialects and sql is None:
         raise OssieConversionError(
             f"Missing expression for field/metric '{field_name}'"
         )
@@ -413,6 +410,8 @@ def _extract_expression(expression, field_name):
             ansi_expr = d.get("expression")
         elif dialect_name == "OSSIE_SQL_2026":
             ossie_sql_expr = d.get("expression")
+    if sql is not None:
+        ossie_sql_expr = sql
 
     if snowflake_expr is not None:
         return snowflake_expr

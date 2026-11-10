@@ -446,13 +446,30 @@ class TestExtractExpression:
         assert len(w) == 1
         assert "my_field" in str(w[0].message)
 
-    def test_sql_only_returns_none_with_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = _extract_expression({"sql": "orders.amount"}, "my_field")
-        assert result is None
-        assert len(w) == 1
-        assert "my_field" in str(w[0].message)
+    def test_sql_only_is_used(self):
+        assert _extract_expression({"sql": "orders.amount"}, "f") == "orders.amount"
+
+    def test_sql_preferred_over_ossie_sql_2026(self):
+        """The spec makes `sql` authoritative over an OSSIE_SQL_2026 entry."""
+        expr = {
+            "sql": "sql_expr",
+            "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "ossie_expr"}],
+        }
+        assert _extract_expression(expr, "f") == "sql_expr"
+
+    def test_sql_used_beside_unsupported_dialect(self):
+        expr = {
+            "sql": "sql_expr",
+            "dialects": [{"dialect": "TABLEAU", "expression": "[tableau_expr]"}],
+        }
+        assert _extract_expression(expr, "f") == "sql_expr"
+
+    def test_snowflake_preferred_over_sql(self):
+        expr = {
+            "sql": "sql_expr",
+            "dialects": [{"dialect": "SNOWFLAKE", "expression": "snow_expr"}],
+        }
+        assert _extract_expression(expr, "f") == "snow_expr"
 
     def test_missing_expression_raises(self):
         with pytest.raises(OssieConversionError, match="Missing or malformed"):
