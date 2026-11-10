@@ -29,13 +29,18 @@ def _cell(value):
     return str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
-def _link(path, output):
+def _link(path, output, label="evidence"):
     path = Path(path)
     try:
         relative = path.relative_to(output)
     except ValueError:
         return _cell(path)
-    return f"[evidence]({quote(relative.as_posix(), safe='/')})"
+    escaped_label = str(label).replace("\\", "\\\\").replace("[", r"\[").replace("]", r"\]")
+    return f"[{_cell(escaped_label)}]({quote(relative.as_posix(), safe='/')})"
+
+
+def _case_evidence(case):
+    return Path(case["output"]).parent / f"tier-{case['tier']}.json"
 
 
 def _portable(value, output, key=None):
@@ -91,9 +96,9 @@ def write_report(report, output):
             json.dumps(_portable(source, output), indent=2) + "\n", encoding="utf-8"
         )
     for case in report["cases"]:
-        directory = Path(case["output"]).parent
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"tier-{case['tier']}.json").write_text(
+        evidence = _case_evidence(case)
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text(
             json.dumps(_portable(case, output), indent=2) + "\n", encoding="utf-8"
         )
     for regression in report.get("regressions", []):
@@ -175,22 +180,17 @@ def write_report(report, output):
         "| Source fixture | " + " | ".join(names) + " |",
         "|---|" + "---|" * len(names),
     ]
+    pair_links = {
+        (case["source"], case["target"]): _link(
+            _case_evidence(case), output, label=case["grade"]
+        )
+        for case in report["cases"]
+        if case["tier"] == "B"
+    }
     for source in report["sources"]:
         if source["owner"] == "canonical":
             continue
-        cells = []
-        for name in names:
-            case = next(
-                (
-                    case
-                    for case in report["cases"]
-                    if case["tier"] == "B"
-                    and case["source"] == source["id"]
-                    and case["target"] == name
-                ),
-                None,
-            )
-            cells.append(case["grade"] if case else "—")
+        cells = [pair_links.get((source["id"], name), "—") for name in names]
         lines.append(f"| {source['id']} | " + " | ".join(cells) + " |")
     lines += [
         "",
@@ -202,9 +202,7 @@ def write_report(report, output):
     for case in report["cases"]:
         issues = case["diagnostics"]
         reason = _cell(case["reason"])
-        evidence = _link(
-            Path(case["output"]).parent / f"tier-{case['tier']}.json", output
-        )
+        evidence = _link(_case_evidence(case), output)
         lines.append(
             f"| {case['tier']} | {case['source']} | {case['target']} | {case['grade']} | "
             f"{len(issues)} | {sum(x['foreign_extension'] for x in issues)} | "
