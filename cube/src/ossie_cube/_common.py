@@ -1128,6 +1128,8 @@ _LEADING_NOISE_RE = re.compile(r"^(?:\s+|--[^\n]*|/\*.*?\*/|\()*", re.S)
 # Match identifiers rather than splitting on dots: quoted warehouse names can
 # contain dots and escaped quote delimiters. A SQL fragment, alias or dynamic
 # Cube reference must never be treated as a table name to prefix.
+# Snowflake permits dollars after a letter or underscore. Databricks permits
+# digit-leading identifiers containing a letter or underscore, with no dollars.
 _SOURCE_UNQUOTED = r"(?:[A-Za-z_][A-Za-z0-9_$]*|[0-9]+[A-Za-z_][A-Za-z0-9_]*)"
 _SOURCE_ANSI_QUOTED = r'"(?:[^"{}\r\n]|"")+"'
 _SOURCE_BACKTICK_QUOTED = r"`(?:[^`{}\r\n]|``)+`"

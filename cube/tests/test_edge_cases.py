@@ -594,6 +594,8 @@ def test_bigquery_source_defaults_reject_a_quoted_path_as_a_catalog():
 
 @pytest.mark.parametrize("catalog,schema,message", [
     ("main.sales", None, "default catalog must be a single"),
+    ('"Analytics"DB"', None, "default catalog must be a single"),
+    ("123ware$house", None, "default catalog must be a single"),
     ("'main'", None, "default catalog must be a single"),
     ("main", '"unfinished', "default schema must be a single"),
     ("main", " ", "default schema must be a single"),

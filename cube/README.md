@@ -495,10 +495,16 @@ ossie-cube import -i model/ -o model.yaml --default-catalog main --default-schem
 
 This converts `orders` to `main.sales.orders` and `reporting.orders` to
 `main.reporting.orders`. Each default must be a single identifier. For
-Snowflake, pass the database as `--default-catalog`. For a quoted database name,
-use `--default-catalog '"Analytics.DB"'`. The Databricks exporter
-currently rejects identifiers with embedded dots or whitespace, even when
-quoted. Use names without those characters for that route.
+Snowflake, pass the database as `--default-catalog`. In Bash or Zsh, wrap a
+double-quoted database identifier in shell single quotes so the double quotes
+reach the converter as part of the identifier.
+
+```sh
+ossie-cube import -i model/ -o model.yaml --default-catalog '"Analytics.DB"' --default-schema sales
+```
+
+The Databricks exporter currently rejects identifiers with embedded dots or
+whitespace, even when quoted. Use names without those characters for that route.
 For BigQuery, set `--source-dialect BIGQUERY` so a path quoted as
 `` `project.dataset.table` `` is recognized as already qualified.
 
