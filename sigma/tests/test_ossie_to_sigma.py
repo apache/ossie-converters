@@ -349,6 +349,29 @@ def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
     assert not any(i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE for i in result.issues)
 
 
+def test_a_sql_only_expression_is_reported_not_translatable_instead_of_crashing():
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="orders",
+                source="db.sch.orders",
+                fields=[OssieField(name="amount", expression=OssieExpression(sql="orders.amount"))],
+            )
+        ],
+        metrics=[OssieMetric(name="revenue", expression=OssieExpression(sql="SUM(orders.amount)"))],
+    )
+
+    result = OssieToSigmaConverter().convert(document)
+    element = result.output["pages"][0]["elements"][0]
+
+    assert not element["columns"]
+    assert not element.get("metrics")
+    assert [
+        i.element_name for i in result.issues if i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE
+    ] == ["orders.amount"]
+
+
 def test_synthesized_spec_carries_a_schema_version():
     """`schemaVersion` is required by the create/update endpoints."""
     document = OssieDocument.model_validate(
