@@ -40,7 +40,7 @@ def analyze_ossie_metric(
     with ctx.problem_scope(ossie_metric.name):
         with ctx.problem_scope("expression"):
             ossie_dialect_expression = pick_ossie_dialect_expression(
-                ossie_metric.expression.dialects,
+                ossie_metric.expression,
                 ctx=ctx,
             )
             if ossie_dialect_expression is None:

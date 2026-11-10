@@ -15,9 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from ossie import OssieDialect, OssieExpression
-
-from ossie_hex.ossie import OssieDialectName
+from ossie import OssieExpression
 
 from .context import ExportContext
 from .load_ossie_dialect_expression import (
@@ -44,16 +42,10 @@ def load_ossie_field_expression(
     # field references (Ossie FieldExpr of any shape). So we do nothing to validate
     # the parsed output of the dialect expression(s).
     with ctx.problem_scope("dialects"):
-        choice = pick_ossie_dialect_expression(ossie_expression.dialects, ctx=ctx)
+        choice = pick_ossie_dialect_expression(ossie_expression, ctx=ctx)
         if choice is None:
             return None
-        # The pinned SDK returns enums; newer SDKs preserve string tokens.
-        dialect_name: OssieDialectName = (
-            choice.dialect.value
-            if isinstance(choice.dialect, OssieDialect)
-            else choice.dialect
-        )
-        with ctx.problem_scope(dialect_name):
+        with ctx.problem_scope(choice.dialect):
             validate_ossie_field_dialect_expression(choice, ctx=ctx)
         return ossie_expression
 
@@ -74,15 +66,9 @@ def load_ossie_metric_expression(
     Returns the original expression regardless of validation problems.
     """
     with ctx.problem_scope("dialects"):
-        choice = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
+        choice = pick_ossie_dialect_expression(expression, ctx=ctx)
         if choice is not None:
-            # The pinned SDK returns enums; newer SDKs preserve string tokens.
-            dialect_name: OssieDialectName = (
-                choice.dialect.value
-                if isinstance(choice.dialect, OssieDialect)
-                else choice.dialect
-            )
-            with ctx.problem_scope(dialect_name):
+            with ctx.problem_scope(choice.dialect):
                 validate_ossie_metric_dialect_expression(
                     choice, field_names=field_names, ctx=ctx
                 )

@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from ossie import OssieDialectExpression
+from ossie import OssieDialectExpression, OssieExpression
 
 from ..ossie import (
     LEGACY_PORTABLE_OSSIE_DIALECT,
@@ -26,21 +26,21 @@ from .context import ExportContext
 
 
 def pick_ossie_dialect_expression(
-    ossie_dialect_expressions: list[OssieDialectExpression] | None,
+    ossie_expression: OssieExpression,
     *,
     ctx: ExportContext,
 ) -> OssieDialectExpression | None:
-    """Pick an Ossie dialect expression from a list of Ossie dialect expressions.
+    """Pick an Ossie dialect expression from an Ossie expression.
 
     Prefers to pick the current dialect, then falls back to a portable dialect,
     then the first in the list.
 
     Returns a dialect expression, or None if there are no dialect expressions.
     """
+    ossie_dialect_expressions = list_ossie_dialect_expressions(ossie_expression)
     if not ossie_dialect_expressions:
-        # An expression may carry only the portable `sql`, which is not read yet.
         if ctx.current_phase_name == "load":
-            ctx.error("No dialect expression found; `sql` is not supported")
+            ctx.error("No dialect expression found")
         return None
     fallback = ossie_dialect_expressions[0]
     for entry in ossie_dialect_expressions:
@@ -75,3 +75,28 @@ def pick_ossie_dialect_expression(
                 f"Chosen dialect {fallback.dialect} is not a recognized SQL dialect and may not be supported by Hex"
             )
     return fallback
+
+
+def list_ossie_dialect_expressions(
+    ossie_expression: OssieExpression,
+) -> list[OssieDialectExpression]:
+    """List the dialect expressions of an Ossie expression.
+
+    The top-level `sql` is written in the canonical portable dialect and leads the
+    list. The specification has it win over an entry in that dialect, so it
+    replaces any.
+    """
+    entries = list(ossie_expression.dialects or [])
+    if ossie_expression.sql is None:
+        return entries
+    return [
+        OssieDialectExpression(
+            dialect=PORTABLE_OSSIE_DIALECT, expression=ossie_expression.sql
+        ),
+        *(
+            entry
+            for entry in entries
+            # case-insensitive for well-known dialects
+            if entry.dialect.upper() != PORTABLE_OSSIE_DIALECT
+        ),
+    ]
