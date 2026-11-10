@@ -117,6 +117,7 @@ def test_preserves_freeform_field_dialect(ctx: ExportContext) -> None:
         result = load_ossie_field_expression(expression, ctx=ctx)
 
     assert result is expression
+    assert result.dialects is not None
     assert result.dialects[0].dialect == "UNKNOWN_DIALECT"
     assert ctx.ossie_dialect == "UNKNOWN_DIALECT"
     assert not ctx.problems
@@ -135,5 +136,6 @@ def test_preserves_freeform_metric_dialect(ctx: ExportContext) -> None:
         )
 
     assert result is expression
+    assert result.dialects is not None
     assert result.dialects[0].dialect == "UNKNOWN_DIALECT"
     assert not ctx.problems
