@@ -59,7 +59,7 @@ def render(report, artifact_url=""):
         if counts.keys() - set(GRADES):
             raise ValueError(f"unknown result grade in {label}")
         declared_skips = sum(
-            result["grade"] == "SKIP" and result.get("expected_skip", False)
+            result["grade"] == "SKIP" and result.get("expected_skip") is True
             for result in results
         )
         values = (

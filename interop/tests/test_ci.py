@@ -82,6 +82,14 @@ def test_harness_failure_stays_blocking_even_when_summary_publishes(tmp_path, re
     assert exit_code(results) == 2
 
 
+def test_only_boolean_true_marks_an_expected_skip(results):
+    results["sources"].extend([
+        {"grade": "SKIP", "expected_skip": "yes"},
+        {"grade": "SKIP", "expected_skip": 1},
+    ])
+    assert "| Source import / validation | 0 | 0 | 0 | 0 | 1 | 4 |" in render(results)
+
+
 @pytest.mark.parametrize(
     "contents", [None, "{broken", "{}", "[]", '{"schema_version": 2}']
 )

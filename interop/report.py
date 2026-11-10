@@ -35,7 +35,8 @@ def _link(path, output, label="evidence"):
         relative = path.relative_to(output)
     except ValueError:
         return _cell(path)
-    return f"[{label}]({quote(relative.as_posix(), safe='/')})"
+    escaped_label = str(label).replace("\\", "\\\\").replace("[", r"\[").replace("]", r"\]")
+    return f"[{_cell(escaped_label)}]({quote(relative.as_posix(), safe='/')})"
 
 
 def _case_evidence(case):
