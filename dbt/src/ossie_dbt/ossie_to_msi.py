@@ -644,6 +644,9 @@ class OssieToMSIConverter:
         for dialect_expr in ossie_expr.dialects or []:
             if sql_only and self._sql_dialect(dialect_expr.dialect) is None:
                 continue
+            # Superseded by `sql`, even when OSSIE_SQL_2026 is the converter's dialect.
+            if dialect_expr.dialect == OssieDialect.OSSIE_SQL_2026 and ossie_expr.sql is not None:
+                continue
             if first_expr is None:
                 first_expr = dialect_expr
             if dialect_expr.dialect == self._dialect:
