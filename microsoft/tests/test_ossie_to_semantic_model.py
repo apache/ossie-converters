@@ -1029,14 +1029,27 @@ def test_the_tpcds_example_in_the_sql_form_is_valid_against_the_spec():
         (repo_root / "examples" / "tpcds_semantic_model.yaml").read_text(encoding="utf-8")
     )
     for element in [f for d in ossie["datasets"] for f in d["fields"]] + ossie["metrics"]:
-        element["expression"] = _ansi_to_sql_form(element["expression"])
+        element["expression"] = _in_form(element["expression"], "sql")
     jsonschema.validate(ossie, schema)
 
 
-def _ansi_to_sql_form(expression):
-    """Rewrite an expression's ANSI_SQL entry as the portable ``sql`` form."""
-    text = next(e["expression"] for e in expression["dialects"] if e["dialect"] == "ANSI_SQL")
-    return {"sql": text}
+def _expression_text(expression):
+    """The SQL text of an expression, from its portable ``sql`` form, its ANSI_SQL
+    dialect entry, or its first dialect entry."""
+    if "sql" in expression:
+        return expression["sql"]
+    dialects = expression["dialects"]
+    ansi = next((e["expression"] for e in dialects if e["dialect"] == "ANSI_SQL"), None)
+    return ansi if ansi is not None else dialects[0]["expression"]
+
+
+def _in_form(expression, form):
+    """Re-express ``expression`` in a single ``form``: the portable ``sql`` key, or a
+    lone dialect entry in that dialect."""
+    text = _expression_text(expression)
+    if form == "sql":
+        return {"sql": text}
+    return {"dialects": [{"dialect": form, "expression": text}]}
 
 
 @pytest.mark.parametrize("form", ["ANSI_SQL", "OSSIE_SQL_2026", "sql"])
@@ -1047,20 +1060,14 @@ def test_all_tpcds_example_metrics_translate_to_dax(form):
     )
     elements = [field for dataset in ossie["datasets"] for field in dataset["fields"]]
     elements += ossie["metrics"]
-    if form == "OSSIE_SQL_2026":
-        for element in elements:
-            for entry in element["expression"]["dialects"]:
-                if entry["dialect"] == "ANSI_SQL":
-                    entry["dialect"] = form
-    elif form == "sql":
-        for element in elements:
-            element["expression"] = _ansi_to_sql_form(element["expression"])
+    for element in elements:
+        element["expression"] = _in_form(element["expression"], form)
     # The portable `sql` form reads as OSSIE_SQL_2026.
     dialect = "OSSIE_SQL_2026" if form == "sql" else form
     full_name = next(
         f for d in ossie["datasets"] for f in d["fields"] if f["name"] == "customer_full_name"
     )
-    # Newer spec examples carry `sql` next to the ANSI_SQL copy; `sql` then wins.
+    # The portable `sql` form wins when present; it reads as OSSIE_SQL_2026.
     column_dialect = "OSSIE_SQL_2026" if "sql" in full_name["expression"] else dialect
 
     if form != "sql":

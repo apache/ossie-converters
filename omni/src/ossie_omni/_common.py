@@ -343,6 +343,10 @@ def pick_expression(ossie_expression, preferred=None):
         expr = dialects.get(preferred)
     if expr is None:
         expr = dialects.get(DIALECT_ANSI)
+    if expr is None:
+        # A portable `sql` expression carries no dialect; Omni passes it through as
+        # ANSI-compatible SQL, the same fallback as a bare ANSI_SQL dialect entry.
+        expr = (ossie_expression or {}).get("sql")
     if expr is not None and not isinstance(expr, str):
         raise ConversionError(
             f"expression must be a string, got {type(expr).__name__}")

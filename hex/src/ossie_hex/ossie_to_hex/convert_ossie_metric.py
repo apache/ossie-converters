@@ -27,7 +27,10 @@ from .convert_ossie_dialect_expression import (
     convert_parsed_ossie_dialect_expression,
 )
 from .load_ossie_dialect_expression import parse_ossie_dialect_expression
-from .pick_ossie_dialect_expression import pick_ossie_dialect_expression
+from .pick_ossie_dialect_expression import (
+    dialect_expressions_of,
+    pick_ossie_dialect_expression,
+)
 
 
 def analyze_ossie_metric(
@@ -40,7 +43,7 @@ def analyze_ossie_metric(
     with ctx.problem_scope(ossie_metric.name):
         with ctx.problem_scope("expression"):
             ossie_dialect_expression = pick_ossie_dialect_expression(
-                ossie_metric.expression.dialects,
+                dialect_expressions_of(ossie_metric.expression),
                 ctx=ctx,
             )
             if ossie_dialect_expression is None:

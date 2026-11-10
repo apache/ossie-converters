@@ -115,7 +115,8 @@ def _resolve_formula(
     if native is not None:
         return native
 
-    sql = ansi_sql_text(expression)
+    # A portable `sql` expression carries no dialect; it is ANSI-compatible SQL.
+    sql = ansi_sql_text(expression) or expression.sql
     if sql is not None:
         translated = sql_to_sigma_formula(sql, dataset_alias=dataset_alias)
         if translated is not None:
@@ -123,7 +124,7 @@ def _resolve_formula(
         detail = f"ANSI SQL expression {sql!r} has no Sigma formula equivalent"
     else:
         dialects = ", ".join(d.dialect for d in expression.dialects or []) or "none"
-        detail = f"no SIGMA or ANSI_SQL dialect expression to translate from (have: {dialects})"
+        detail = f"no SIGMA, ANSI_SQL, or portable sql expression to translate from (have: {dialects})"
 
     issues.append(
         ConverterIssue(
@@ -179,7 +180,8 @@ class OssieToSigmaConverter:
             ext = _sigma_ext(metric) or {}
             element_id = ext.get("element_id")
             if element_id is None:
-                sql = ansi_sql_text(metric.expression)
+                # A portable `sql` expression carries no dialect; it is ANSI-compatible SQL.
+                sql = ansi_sql_text(metric.expression) or metric.expression.sql
                 owning_dataset = infer_single_dataset_qualifier(sql, dataset_names) if sql else None
                 element_id = dataset_element_id.get(owning_dataset) if owning_dataset else None
                 if element_id is None:

@@ -349,7 +349,9 @@ def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
     assert not any(i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE for i in result.issues)
 
 
-def test_a_sql_only_expression_is_reported_not_translatable_instead_of_crashing():
+def test_a_sql_only_expression_is_translated():
+    """A portable ``sql`` expression carries no dialect; it is ANSI-compatible SQL and
+    is translated to a Sigma formula rather than dropped as untranslatable."""
     document = OssieDocument(
         name="m",
         datasets=[
@@ -365,11 +367,11 @@ def test_a_sql_only_expression_is_reported_not_translatable_instead_of_crashing(
     result = OssieToSigmaConverter().convert(document)
     element = result.output["pages"][0]["elements"][0]
 
-    assert not element["columns"]
-    assert not element.get("metrics")
-    assert [
-        i.element_name for i in result.issues if i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE
-    ] == ["orders.amount"]
+    assert [c["formula"] for c in element["columns"]] == ["[amount]"]
+    assert [m["name"] for m in element.get("metrics", [])] == ["revenue"]
+    assert not [
+        i for i in result.issues if i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE
+    ]
 
 
 def test_synthesized_spec_carries_a_schema_version():
