@@ -47,7 +47,9 @@ def load_ossie_field_expression(
     # field references (Ossie FieldExpr of any shape). So we do nothing to validate
     # the parsed output of the dialect expression(s).
     with ctx.problem_scope("dialects"):
-        choice = pick_ossie_dialect_expression(dialect_expressions_of(ossie_expression), ctx=ctx)
+        choice = pick_ossie_dialect_expression(
+            dialect_expressions_of(ossie_expression), ctx=ctx
+        )
         if choice is None:
             return None
         # The pinned SDK returns enums; newer SDKs preserve string tokens.
@@ -77,7 +79,9 @@ def load_ossie_metric_expression(
     Returns the original expression regardless of validation problems.
     """
     with ctx.problem_scope("dialects"):
-        choice = pick_ossie_dialect_expression(dialect_expressions_of(expression), ctx=ctx)
+        choice = pick_ossie_dialect_expression(
+            dialect_expressions_of(expression), ctx=ctx
+        )
         if choice is not None:
             # The pinned SDK returns enums; newer SDKs preserve string tokens.
             dialect_name: OssieDialectName = (
