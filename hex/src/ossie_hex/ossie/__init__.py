@@ -17,12 +17,14 @@
 
 from .ossie_dialect_name import (
     LEGACY_PORTABLE_OSSIE_DIALECT,
+    OSSIE_SQL_DIALECTS,
     PORTABLE_OSSIE_DIALECT,
     OssieDialectName,
 )
 
 __all__ = [
     "LEGACY_PORTABLE_OSSIE_DIALECT",
+    "OSSIE_SQL_DIALECTS",
     "PORTABLE_OSSIE_DIALECT",
     "OssieDialectName",
 ]

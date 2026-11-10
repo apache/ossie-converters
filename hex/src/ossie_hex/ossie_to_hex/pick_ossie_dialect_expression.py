@@ -17,7 +17,11 @@
 
 from ossie import OssieDialectExpression
 
-from ..ossie import LEGACY_PORTABLE_OSSIE_DIALECT, PORTABLE_OSSIE_DIALECT
+from ..ossie import (
+    LEGACY_PORTABLE_OSSIE_DIALECT,
+    OSSIE_SQL_DIALECTS,
+    PORTABLE_OSSIE_DIALECT,
+)
 from .context import ExportContext
 
 
@@ -44,7 +48,7 @@ def pick_ossie_dialect_expression(
             and fallback.dialect != PORTABLE_OSSIE_DIALECT
         ):
             fallback = entry
-    if ctx.current_phase_name == "load":  # noqa: SIM102 preferable to maintain single block for phase behavior umbrella
+    if ctx.current_phase_name == "load":
         if ctx.ossie_dialect is not None and fallback.dialect not in (
             PORTABLE_OSSIE_DIALECT,
             LEGACY_PORTABLE_OSSIE_DIALECT,
@@ -52,5 +56,9 @@ def pick_ossie_dialect_expression(
             # explicit preference is missing and fallback is non-portable
             ctx.warn(
                 f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
+            )
+        if fallback.dialect not in OSSIE_SQL_DIALECTS:
+            ctx.warn(
+                f"Chosen dialect {fallback.dialect} is not a recognized SQL dialect and may not be supported by Hex"
             )
     return fallback
