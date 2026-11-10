@@ -27,22 +27,17 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Any, NoReturn
 
 from ossie import OssieDialect
 
 from ..ossie_to_hex import convert_ossie_to_hex
 from .report import format_export_report
 
-# Ossie spells its dialects in upper case, but it's a bit nicer to show/take them
-# in lowercase. Parsing will transform them back.
-_OSSIE_DIALECTS = [d.value for d in OssieDialect]
-_OSSIE_DIALECT_CHOICES = [d.lower() for d in _OSSIE_DIALECTS]
-_OSSIE_DIALECT_LIST = ", ".join(_OSSIE_DIALECT_CHOICES)
+_OSSIE_DIALECT_VALUES = ", ".join(dialect.value.lower() for dialect in OssieDialect)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = _CustomArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="ossie-hex",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -53,7 +48,6 @@ def _build_parser() -> argparse.ArgumentParser:
     export = sub.add_parser(
         "export",
         help="Apache Ossie semantic model -> Hex project directory",
-        dialect_list=_OSSIE_DIALECT_LIST,
     )
     export.add_argument(
         "-i",
@@ -70,10 +64,12 @@ def _build_parser() -> argparse.ArgumentParser:
     export.add_argument(
         "-d",
         "--dialect",
-        type=str.lower,
-        choices=_OSSIE_DIALECT_CHOICES,
         metavar="DIALECT",
-        help=f"prefer this dialect of Ossie expressions, one of: {_OSSIE_DIALECT_LIST}",
+        help=(
+            "prefer this dialect of Ossie expressions (case-insensitive). "
+            "Accepts a freeform string or a well-known dialect name: "
+            f"{_OSSIE_DIALECT_VALUES}"
+        ),
     )
     export.add_argument(
         "-v",
@@ -84,30 +80,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
-
-
-class _CustomArgumentParser(argparse.ArgumentParser):
-    def __init__(
-        self,
-        *args: Any,
-        dialect_list: str | None = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.dialect_list = dialect_list
-
-    def error(self, message: str) -> NoReturn:
-        # Name the accepted dialects in every ``--dialect`` error. The usage line
-        # abbreviates the option as ``DIALECT`` to stay readable, so a missing or
-        # misspelled dialect would otherwise leave nothing on screen to infer the valid
-        # values from.
-        if (
-            "--dialect" in message
-            and "choose from" not in message
-            and self.dialect_list is not None
-        ):
-            message = f"{message} (choose from {self.dialect_list})"
-        super().error(message)
 
 
 def main(argv: list[str] | None = None) -> int:

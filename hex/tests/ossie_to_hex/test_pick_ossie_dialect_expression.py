@@ -59,6 +59,22 @@ def test_picks_preferred_variant(ctx: ExportContext, preferred: str) -> None:
     assert problems_snapshot(ctx.problems) == snapshot("")
 
 
+def test_picks_preferred_variant_case_insensitively(ctx: ExportContext) -> None:
+    ossie_dialect = "snowflake"
+    ctx.set_ossie_dialect(ossie_dialect)
+    expression = Quick.expression(
+        [
+            ("ANSI_SQL", "foo.bar"),
+            ("SNOWFLAKE", "foo.bar + 1"),
+        ]
+    )
+
+    result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
+
+    assert result is expression.dialects[1]
+    assert not ctx.problems
+
+
 def test_prefers_legacy_portable_dialect_over_other_variants(
     ctx: ExportContext,
 ) -> None:
@@ -94,6 +110,21 @@ def test_prefers_canonical_portable_dialect_over_other_variants(
 
     assert result is expression.dialects[-1]
     assert not ctx.problems
+
+
+def test_warns_when_legacy_portable_dialect_falls_back_to_canonical(
+    ctx: ExportContext,
+) -> None:
+    preferred_ossie_dialect = Quick.dialect("ANSI_SQL")
+    ctx.set_ossie_dialect(preferred_ossie_dialect)
+    expression = Quick.expression([("OSSIE_SQL_2026", "DATEADD(day, 1, foo.bar)")])
+
+    result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
+
+    assert result is expression.dialects[0]
+    assert problems_snapshot(ctx.problems) == snapshot(
+        "[WARNING] Preferred dialect OssieDialect.ANSI_SQL not found for expression; using fallback dialect OssieDialect.OSSIE_SQL_2026"
+    )
 
 
 def test_falls_back_to_first_variant_when_preferred_and_ansi_are_missing(

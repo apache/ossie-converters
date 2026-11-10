@@ -59,7 +59,8 @@ Options:
 - `-o, --output <directory>` — Optional. Directory where Hex YAML files are
   written. If omitted, the current working directory is used.
 - `-d, --dialect <dialect>` — Optional. Prefer this dialect of Ossie
-  expressions. If omitted, a portable dialect or first variant is chosen.
+  expressions. Accepts a freeform, case-insensitive name. If omitted, a portable
+  dialect or first variant is chosen.
 - `-v, --verbose` — Optional. Show a grouped problem summary. Repeat the flag
   (`-vv`) to show every occurrence with its conversion phase and cause path.
 
@@ -89,8 +90,8 @@ Options:
 - `input` — Required. Ossie YAML file to export.
 - `output` — Optional. Directory where Hex YAML files are written. If omitted,
   no files are written.
-- `dialect` — Optional. Prefer this dialect of Ossie expressions. If omitted,
-  a portable dialect or first variant is chosen.
+- `dialect` — Optional. Prefer this dialect of Ossie expressions. Accepts a
+  freeform value. If omitted, a portable dialect or first variant is chosen.
 
 Returns: a tuple of
 
@@ -108,6 +109,10 @@ Providing a dialect that is not found in every list of dialect expressions will
 result in warnings. In the case it is not found, a best attempt will be made to
 maintain the member. The preference order is (1) a portable dialect
 (`OSSIE_SQL_2026` or `ANSI_SQL`), (2) the first dialect in the list.
+
+Providing a dialect that can be normalized (by uppercasing) to a well-known
+value results in no problems. Otherwise, the dialect is considered unknown and
+results in a warning.
 
 ## Conversion
 

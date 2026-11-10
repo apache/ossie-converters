@@ -213,22 +213,44 @@ Errors (1)
     assert output.read_text(encoding="utf-8") == "existing file"
 
 
-def test_invalid_dialect(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """Should error"""
-    input_file = tmp_path / "model.yaml"
+def test_freeform_dialect(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, minimal_ossie_input: Path
+) -> None:
+    """Should accept a freeform dialect and use a fallback for the Hex dialect."""
+    input_file = minimal_ossie_input
     i = str(input_file)
     output_dir = tmp_path / "hex_out"
     o = str(output_dir)
-    dialect = "invalid"
+    dialect = "UNKNOWN_DIALECT"
 
-    with pytest.raises(SystemExit) as exc:
-        main(["export", "-i", i, "-o", o, "--dialect", dialect])
+    code = main(
+        [
+            "export",
+            "-vv",
+            "-i",
+            i,
+            "-o",
+            o,
+            "--dialect",
+            dialect,
+        ]
+    )
 
-    assert exc.value.code == 2
-    # argparse's quoting of choices varies across Python versions.
-    message, separator, choices = capsys.readouterr().err.partition("(choose from ")
-    message = message + separator + choices.replace("'", "")
+    assert code == 0
+    assert (output_dir / "foo" / "bar.yml").is_file()
+    message = (
+        capsys.readouterr()
+        .err.replace(str(output_dir), "OUTPUT")
+        .replace(str(input_file), "INPUT")
+    )
     assert message == snapshot("""\
-usage: ossie-hex export [-h] -i INPUT [-o OUTPUT] [-d DIALECT] [-v]
-ossie-hex export: error: argument -d/--dialect: invalid choice: 'invalid' (choose from ansi_sql, snowflake, mdx, maql, tableau, databricks, bigquery, sigma, thoughtspot, dax, holistics_aql, ossie_sql_2026)
+Success!
+Converted INPUT -> OUTPUT/foo/.
+Encountered 2 problems: 1 warning, 1 info.
+
+Warnings (1)
+  [convert] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project
+
+Info (1)
+  [load] Unknown dialect: UNKNOWN_DIALECT.
 """)
