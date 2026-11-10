@@ -258,7 +258,7 @@ def _single_field_spec(tmp_path: Path, expression: str, datatype: str, columns: 
     }]
     key = "flag" if identify_by_flag else "nr"
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "SingleField",
         "ontology": [{
             "concept": "Item", "type": "EntityType", "identify_by": [key],
@@ -273,7 +273,7 @@ def _single_field_spec(tmp_path: Path, expression: str, datatype: str, columns: 
         "ontology_mappings": [{
             "name": "single_field_mapping",
             "semantic_model": {
-                "version": "0.2.0.dev0", "name": "Single field semantic model",
+                "version": "0.3.0.dev0", "name": "Single field semantic model",
                 "datasets": [{"name": "ITEMS", "source": "DB.SCHEMA.ITEMS", "fields": fields}],
             },
             "concept_mappings": [{

@@ -601,7 +601,7 @@ def test_mixed_dialects_warn_only_for_nonportable_fallbacks(tmp_path: Path) -> N
 
 def test_sql_only_expressions_are_dropped_with_an_error(tmp_path: Path) -> None:
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sql_only",
         "datasets": [
             {
