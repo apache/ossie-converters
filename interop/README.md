@@ -347,7 +347,64 @@ newer grader adds). Per-case results with every finding are saved under
 `portability/<variant>--to--<converter>/`. Scores are evidence about the round
 trip, not a pass: they never change the exit status, with or without `--strict`.
 The grader compares normalized sqlglot trees, so REWRITTEN can be cosmetic or a
-change in meaning; an execution check can take the same graded report per case.
+change in meaning; the execution check below runs on the same graded report per case.
+
+## Portability execution check
+
+`portability_execution.py` is a report-only check that sits behind the core
+portability grader (`ossie/compliance/portability/grader/grade.py`, loaded from
+the pinned submodule; see [#24](https://github.com/apache/ossie-converters/issues/24)).
+The grader compares normalized SQLGlot trees, so a rewritten metric whose trees
+differ can only be marked for review. For each metric the grader marks
+`REWRITTEN`, this check runs the authored and the returned expression in DuckDB
+on the same small edge-case data and compares the results. Rewrites that SQLGlot
+already proves equal are skipped unless `--all-rewrites` is given.
+
+| Outcome | Meaning |
+|---|---|
+| `SAME_ON_TEST_DATA` | Equal results on every test group and on an empty table. Evidence, not proof |
+| `DIFFERENT` | The results differ, or exactly one side fails. The finding carries the smallest row set found that shows it and both results on it |
+| `NOT_RUN` | The check could not run, with the reason (for example a vendor-only dialect) |
+
+The portability step (`Runner.portability_case`) calls
+`check(input_document, returned_document, converter=..., graded=report)` right
+after the grader, once per graded round trip, so both read the same findings,
+and stores the result as `execution` next to `grading` in the case's
+`result.json` and in `results.json`. A skipped case is not executed, and a
+rejected return has nothing to execute. Without DuckDB every check is `NOT_RUN`
+with the reason. Like the scores, these findings never change the exit status.
+A single pair can also be checked directly:
+
+```sh
+uv run --project interop --locked python -m interop.portability_execution \
+  --input ossie/compliance/portability/m2/m2_aggregates_qualified.ossie.yaml \
+  --returned path/to/returned.yaml --converter dbt --json
+```
+
+It exits 0 whatever the findings and 2 when a document or the grader cannot be
+loaded.
+
+**Test data.** Columns come from the dataset's fields and their datatypes; a
+field without a datatype is treated as decimal. Values cover NULLs, an all-NULL
+group, a filter that matches nothing, zeros, duplicates, negatives, fractions,
+values next to every literal in either expression, and an empty table. Each side
+is evaluated on its own: exactly one side failing, or not returning a single row,
+is a difference; both sides failing on the same rows counts as agreeing. A
+counterexample is shrunk greedily until no single row can be dropped.
+
+**Engine settings.** DuckDB runs in memory with external access and extension
+loading off and its configuration locked. Division by zero is NULL
+(`ieee_floating_point_ops = false`, plus `error_on_division_by_zero = false` on
+DuckDB 2), so a rewrite that only adds a `NULLIF(..., 0)` guard agrees. `/` stays
+floating-point division.
+
+**Scope.** Top-level metrics over one dataset in `ANSI_SQL` or `OSSIE_SQL_2026`.
+An expression must be a single expression with no subquery or statement. Field
+rewrites, metrics over several datasets or over other metrics, dataset-scoped
+metrics, window functions, the `DateTimeTz` and `Opaque` datatypes, numeric
+literals that do not fit the column, and fields whose names differ only in case
+are not covered. Numbers match within `|a - b| <= 1e-9 * max(|a|, |b|, 1)`. Agreement on test data is
+not an equivalence proof, and the results are DuckDB's, not every warehouse's.
 
 ## Manifest
 
