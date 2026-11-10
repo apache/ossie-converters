@@ -53,11 +53,16 @@ def pick_ossie_dialect_expression(
         ):
             fallback = entry
     if ctx.current_phase_name == "load":
-        if ctx.ossie_dialect is not None and fallback.dialect not in (
-            PORTABLE_OSSIE_DIALECT,
-            LEGACY_PORTABLE_OSSIE_DIALECT,
+        if ctx.ossie_dialect is not None and (
+            fallback.dialect
+            not in (PORTABLE_OSSIE_DIALECT, LEGACY_PORTABLE_OSSIE_DIALECT)
+            # the portable dialects map to different Hex dialects
+            or (
+                fallback.dialect == PORTABLE_OSSIE_DIALECT
+                and ctx.ossie_dialect.upper() == LEGACY_PORTABLE_OSSIE_DIALECT
+            )
         ):
-            # explicit preference is missing and fallback is non-portable
+            # explicit preference is missing and fallback is incompatible
             ctx.warn(
                 f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
             )
