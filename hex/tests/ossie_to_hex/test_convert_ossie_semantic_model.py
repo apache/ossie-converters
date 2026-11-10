@@ -67,7 +67,7 @@ def sales_per_customer() -> OssieMetric:
     return Quick.metric(
         "sales_per_customer",
         "Decimal",
-        [("ANSI_SQL", "SUM(orders.amount) / COUNT(DISTINCT customers.id)")],
+        [("OSSIE_SQL_2026", "SUM(orders.amount) / COUNT(DISTINCT customers.id)")],
     )
 
 
@@ -77,8 +77,8 @@ def orders() -> OssieDataset:
         "orders",
         "public.orders",
         [
-            ("amount", "Integer", [("ANSI_SQL", "amount")]),
-            ("customer_id", "String", [("ANSI_SQL", "customer_id")]),
+            ("amount", "Integer", [("OSSIE_SQL_2026", "amount")]),
+            ("customer_id", "String", [("OSSIE_SQL_2026", "customer_id")]),
         ],
     )
 
@@ -88,14 +88,14 @@ def customers() -> OssieDataset:
     return Quick.dataset(
         "customers",
         "public.customers",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
 
 
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     return ctx
 
 
@@ -280,7 +280,7 @@ def test_drops_metric_without_a_dataset_reference(
     ctx: ExportContext,
     orders: OssieDataset,
 ) -> None:
-    row_count = Quick.metric("row_count", "Integer", [("ANSI_SQL", "COUNT(*)")])
+    row_count = Quick.metric("row_count", "Integer", [("OSSIE_SQL_2026", "COUNT(*)")])
     semantic_model = OssieSemanticModel(
         name="sales",
         datasets=[orders],
@@ -303,12 +303,12 @@ def test_reports_metric_with_more_than_two_dataset_references(
     stores = Quick.dataset(
         "stores",
         "public.stores",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     metric = Quick.metric(
         "three_dataset_metric",
         "Integer",
-        [("ANSI_SQL", "orders.amount + customers.id + stores.id")],
+        [("OSSIE_SQL_2026", "orders.amount + customers.id + stores.id")],
     )
     semantic_model = OssieSemanticModel(
         name="sales",
@@ -329,7 +329,7 @@ def test_fully_processes_unassigned_metric(
     ctx: ExportContext,
     orders: OssieDataset,
 ) -> None:
-    metric = Quick.metric("row_count", "Integer", [("ANSI_SQL", "COUNT(*)")])
+    metric = Quick.metric("row_count", "Integer", [("OSSIE_SQL_2026", "COUNT(*)")])
     semantic_model = OssieSemanticModel(
         name="sales",
         datasets=[orders],

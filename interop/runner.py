@@ -17,12 +17,15 @@
 
 """Execute an ordered matrix without hiding failed setup or empty conversions."""
 
+from dataclasses import replace
 from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+
+import yaml
 
 from .bindings import check_bindings
 from .contracts import check_document, check_native_sources
@@ -36,6 +39,7 @@ from .checks import (
 )
 from .execution import diagnostics, has_degradation, run_command, succeeded
 from .manifest import Manifest, expand
+from .portability import GRADER, as_dict, diagnostics_text, load_grader
 
 
 def _result(grade="OK", reason=""):
@@ -134,6 +138,7 @@ class Runner:
             "cases": [],
             "regressions": [],
             "document_regressions": [],
+            "portability": [],
             "harness_errors": [],
         }
 
@@ -297,6 +302,8 @@ class Runner:
             ".json"
             if converter.native_format
             in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+            else ".lkml"
+            if converter.native_format == "lookml"
             else ".yaml"
         )
         dest = directory / (
@@ -456,7 +463,110 @@ class Runner:
                 self.report["document_regressions"].append(
                     self.document_regression(name, regression, target)
                 )
+        if self.manifest.portability:
+            for target, mode in self.portability_targets():
+                for variant, path in self.manifest.portability.variants.items():
+                    self.report["portability"].append(
+                        self.portability_case(variant, path, target, mode)
+                    )
         return self.report
+
+    def portability_targets(self):
+        """(converter, mode) pairs to grade: every registration that can round-trip
+        from the command line, then each opt-in import mode. The others stay visible
+        in the capabilities table instead of adding a skip per fixture."""
+        targets = [
+            (converter, None)
+            for converter in self.manifest.converters.values()
+            if not converter.skip
+            and not converter.roundtrip_skip
+            and not _import_unavailable(converter)
+        ]
+        for name, mode in self.manifest.portability.modes.items():
+            base = self.manifest.converters.get(mode.converter)
+            if base and any(base is target for target, _ in targets):
+                targets.append(
+                    (replace(base, import_command=mode.import_command), name)
+                )
+        return targets
+
+    def portability_case(self, variant, path, converter, mode=None):
+        """One portability fixture through one converter and back, then graded.
+
+        The grade is the same as a Tier B return; `grading` holds the core grader's
+        findings. A converter that refuses the document (export or re-import fails,
+        or nothing comes back) is graded against an empty document, which the
+        grader reports as REJECTED. A skip is not graded."""
+        label = mode or converter.name
+        case_id = f"{variant}--to--{label}"
+        directory = self.output / "portability" / case_id
+        directory.mkdir(parents=True)
+        result = {
+            **_result(),
+            "id": case_id,
+            "variant": variant,
+            "target": converter.name,
+            "mode": mode,
+            "input": str(directory / "input.yaml"),
+            "output": str(directory / "conversion" / "returned.yaml"),
+            "native_gate": _result("SKIP", "export has not succeeded"),
+            "grading": None,
+        }
+        shutil.copyfile(path, result["input"])
+        data = self.validate(result, Path(result["input"]))
+        result["input_validation"] = result.pop("validation")
+        result.pop("inventory", None)
+        if data is None:
+            result["reason"] = "portability fixture: " + result["reason"]
+            return result
+        source = {
+            "id": "portability--" + variant,
+            "ossie": result["input"],
+            "grade": "OK",
+            "reason": "",
+        }
+        accepted = self.acceptance(
+            source, data, converter, directory=directory / "conversion"
+        )
+        result.update(
+            commands=accepted["commands"],
+            diagnostics=accepted["diagnostics"],
+            native_gate=accepted["native_gate"],
+        )
+        returned = None
+        if accepted["grade"] == "SKIP":
+            return _skip(result, accepted["reason"], because=accepted)
+        if accepted["grade"] in ("OK", "LOSSY"):
+            returned = self.pair(source, data, converter, accepted)
+            result.update(
+                commands=accepted["commands"] + returned["commands"],
+                diagnostics=returned["diagnostics"],
+            )
+            for key in ("validation", "inventory_changes"):
+                if key in returned:
+                    result[key] = returned[key]
+            if returned["grade"] == "SKIP":
+                return _skip(result, returned["reason"], because=returned)
+            result.update(grade=returned["grade"], reason=returned["reason"])
+        else:
+            result.update(grade=accepted["grade"], reason=accepted["reason"])
+        grader = load_grader(self.root / GRADER)
+        output = Path(result["output"])
+        document = {}
+        if returned is not None and output.is_file() and output.stat().st_size:
+            try:
+                document = grader._load(str(output))
+            except (UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
+                # Nothing readable came back: graded as a refusal, and said so.
+                result["grading_note"] = f"returned document unreadable: {error}"
+        report = grader.grade(
+            grader._load(result["input"]),
+            document,
+            diagnostics_text=diagnostics_text(result["commands"]),
+            converter=label,
+        )
+        result["grading"] = as_dict(report)
+        return result
 
     def document_regression(self, name, regression, target):
         case_id = f"{name}--to--{target}"
@@ -541,6 +651,10 @@ class Runner:
                 grade="FAIL",
                 reason=f"{regression.category} preservation assertions failed; see expected/actual evidence",
             )
+        elif "LOSSY" in (accepted["grade"], returned["grade"]):
+            # The property survived, but the conversion reported other degradation.
+            reason = accepted["reason"] if accepted["grade"] == "LOSSY" else returned["reason"]
+            result.update(grade="LOSSY", reason=reason)
         return result
 
     def binding_regression(self, name, regression):

@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 21 converter projects**, with explicit capability skips.
+The registry includes **all 23 converter projects**, with explicit capability skips.
 Cube, Databricks, and dbt remain the targets of the focused semantic regressions.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
@@ -79,7 +79,7 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |
-| Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
+| BigQuery, Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
 | Holistics | Compiled dataset JSON import and AML source export; re-import of generated AML requires a Holistics compiler |
 | Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
 | Ontology, Palantir, RelationalAI | Explicit skip: uses the ontology domain/schema, requiring a separate matrix |
@@ -89,6 +89,8 @@ inspectors count format-specific model members; these checks do not imply vendor
 compilation or platform acceptance. Holistics checks AML member declarations only.
 Its selected import/export dialect is BIGQUERY and exports use the placeholder
 connection `interop_warehouse`; no live connection is created.
+BigQuery (LookML export only) checks `dimension`, `dimension_group` and `measure`
+declarations in the single exported file; LookML validation needs a Looker instance.
 Existing vendor fixtures are reused, plus a small independently authored Honeydew
 workspace. OrionBelt installs its locked `obml-validation` extra so its native
 semantic validation is available during export checks. Missing directions never
@@ -304,6 +306,48 @@ degradation. The report's `Issues` column includes informational issues.
 Foreign-extension counts are a conservative text heuristic, not an exact measure
 of extension loss. Source diagnostics stay on source rows; they are not counted
 against every downstream exporter.
+
+## Portability scores (report-only)
+
+The core repository's portability ladder (`ossie/compliance/portability/`,
+[apache/ossie#596](https://github.com/apache/ossie/pull/596)) is graded on every
+run, as agreed on [#24](https://github.com/apache/ossie-converters/issues/24):
+
+```yaml
+portability:
+  fixtures: ossie/compliance/portability/manifest.yaml
+  modes:
+    microsoft-translate-dax:
+      converter: microsoft
+      import: [uv, run, --no-sync, ossie-microsoft, import, --translate-dax, -i, '{input}', -o, '{output}']
+```
+
+Every variant listed in the core `manifest.yaml` is exported to, and re-imported
+from, each registration that can round-trip from its command line (not `skip`,
+`roundtrip_skip`, `import_skip`, or a missing import prerequisite; those stay in
+the capabilities table). The export and re-import are the same Tier A and Tier B
+code as the matrix, so preparation, timeouts, diagnostics and validation behave
+the same. The returned document is then graded against the fixture by the pinned
+core grader (`ossie/compliance/portability/grader/grade.py`), element by element:
+PORTABLE, RELABELED, REWRITTEN, SURVIVED_VENDOR_ONLY, PLACEHOLDER, DROPPED_DIAGNOSED,
+DROPPED_SILENT, ADDED, or REJECTED. The commands' stdout and stderr are the
+diagnostics that separate a diagnosed drop from a silent one. A failed export or
+re-import, or a return with nothing in it, is graded against an empty document,
+which the grader reports as REJECTED. A skip is not graded.
+
+A mode re-imports with a second command for the same converter (an opt-in flag
+such as Microsoft's `--translate-dax`). It shares the converter's preparation and
+export, and `--converters` keeps a mode only when its converter is selected.
+
+The report's portability section totals the metric outcomes per converter or mode:
+`portable` (PORTABLE, RELABELED, and REWRITTEN the grader proves cosmetic),
+`review` (other REWRITTEN), `vendor`, `placeholder`, `dropped`, `rejected`, `added`
+(invented by the converter, not counted in `authored`), and `other` (an outcome a
+newer grader adds). Per-case results with every finding are saved under
+`portability/<variant>--to--<converter>/`. Scores are evidence about the round
+trip, not a pass: they never change the exit status, with or without `--strict`.
+The grader compares normalized sqlglot trees, so REWRITTEN can be cosmetic or a
+change in meaning; an execution check can take the same graded report per case.
 
 ## Manifest
 
