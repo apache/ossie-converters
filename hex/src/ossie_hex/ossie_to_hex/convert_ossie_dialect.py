@@ -70,7 +70,7 @@ def convert_ossie_dialect(
         return HexDialect(hex_dialect_name)
     hex_dialect_name = _DIALECT_NAME_MAP.get(ossie_dialect.upper())
     if hex_dialect_name is None:
-        ctx.info(
+        ctx.warn(
             "The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
         )
         return HexDialect("duckdb")

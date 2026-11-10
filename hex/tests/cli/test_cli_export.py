@@ -246,9 +246,11 @@ def test_freeform_dialect(
     assert message == snapshot("""\
 Success!
 Converted INPUT -> OUTPUT/foo/.
-Encountered 2 problems: 2 infos.
+Encountered 2 problems: 1 warning, 1 info.
 
-Info (2)
-  [load] Unknown dialect: UNKNOWN_DIALECT.
+Warnings (1)
   [convert] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project
+
+Info (1)
+  [load] Unknown dialect: UNKNOWN_DIALECT.
 """)

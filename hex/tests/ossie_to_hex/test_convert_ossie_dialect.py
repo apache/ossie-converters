@@ -67,7 +67,7 @@ def test_falls_back_to_duckdb_for_expression_language(
     result = convert_ossie_dialect(ossie_dialect, ctx=ctx)
     assert result == HexDialect("duckdb")
     assert problems_snapshot(ctx.problems) == snapshot(
-        "[INFO] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
+        "[WARNING] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
     )
 
 
@@ -86,7 +86,7 @@ def test_handles_unknown_dialect_during_conversion(ctx: ExportContext) -> None:
     assert result == HexDialect("duckdb")
     assert ctx.ossie_dialect == "UNKNOWN_DIALECT"
     assert problems_snapshot(ctx.problems) == snapshot(
-        "[INFO] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
+        "[WARNING] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
     )
 
 
@@ -114,5 +114,5 @@ def test_unknown_dialect(
 
     assert result == HexDialect("duckdb")
     assert problems_snapshot(ctx.problems) == snapshot(
-        "[INFO] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
+        "[WARNING] The given Ossie dialect does not map to a Hex dialect; using DuckDB as SQL dialect for Hex semantic project"
     )
