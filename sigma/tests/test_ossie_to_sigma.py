@@ -232,6 +232,46 @@ def test_model_level_metadata_round_trips_through_ossie_and_back():
         assert reconstructed[key] == spec[key]
 
 
+@pytest.mark.parametrize(
+    ("dialect", "amount", "metric_sql"),
+    [
+        (OssieDialect.OSSIE_SQL_2026, "amount", "SUM(orders.amount)"),
+        (OssieDialect.DATABRICKS, "`amount`", "SUM(`orders`.`amount`)"),
+        (OssieDialect.SNOWFLAKE, '"amount"', 'SUM("orders"."amount")'),
+        (OssieDialect.BIGQUERY, "`amount`", "SUM(`orders`.`amount`)"),
+    ],
+)
+def test_sql_only_dialect_exports_fields_and_places_metrics(dialect, amount, metric_sql):
+    def expression(sql):
+        return OssieExpression(dialects=[OssieDialectExpression(dialect=dialect, expression=sql)])
+
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="customers",
+                source="db.public.customers",
+                fields=[OssieField(name="customer_id", expression=expression("customer_id"))],
+            ),
+            OssieDataset(
+                name="orders",
+                source="db.public.orders",
+                fields=[
+                    OssieField(name="amount", expression=expression(amount)),
+                    OssieField(name="discount", expression=expression(f"{amount} * 0.9")),
+                ],
+            )
+        ],
+        metrics=[OssieMetric(name="total", expression=expression(metric_sql))],
+    )
+    result = OssieToSigmaConverter().convert(document)
+    customers, element = result.output["pages"][0]["elements"]
+    assert not customers.get("metrics")
+    assert [column["formula"] for column in element["columns"]] == ["[amount]", "([amount] * 0.9)"]
+    assert [metric["formula"] for metric in element["metrics"]] == ["Sum([amount])"]
+    assert not result.issues
+
+
 def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula():
     """`formula` is required on every Sigma column and the data model API validates the
     whole document before applying any of it, so a placeholder would fail the entire
@@ -489,7 +529,7 @@ def test_relationship_column_missing_from_its_dataset_is_reported():
 def test_relationship_to_an_omitted_column_is_dropped_and_reported():
     """A field with no usable expression gets no Sigma column. A key pointing at it can
     never resolve, so the relationship is dropped and the converter says why."""
-    result = OssieToSigmaConverter().convert(_relationship_model(dim_day_dialect=OssieDialect.DATABRICKS))
+    result = OssieToSigmaConverter().convert(_relationship_model(dim_day_dialect=OssieDialect.MDX))
 
     elements = {e["name"]: e for p in result.output["pages"] for e in p["elements"]}
     dim_day_id = elements["dim_day"]["id"]

@@ -133,10 +133,11 @@ Every `OssieExpression` produced by `sigma-to-ossie` always carries **both**:
    lossless round-tripping regardless of how much the ANSI SQL translator understands.
 2. An `ANSI_SQL`-dialect entry, present only when the formula translated successfully.
 
-`ossie-to-sigma` prefers the `SIGMA` dialect entry when present (perfect fidelity for anything that
-came from Sigma); for expressions authored by another tool it falls back to translating the
-`ANSI_SQL` entry back into Sigma formula syntax. If neither is possible, the column or metric is
-**omitted** and flagged in `ConverterResult.issues`
+`ossie-to-sigma` prefers the original `SIGMA` formula. It otherwise translates SQL
+from the first available dialect in this order: `ANSI_SQL`, `OSSIE_SQL_2026`,
+`DATABRICKS`, `SNOWFLAKE`, then `BIGQUERY`. The same SQL expression determines
+the owning dataset for metrics without a preserved Sigma element ID. When
+translation fails, the column or metric is **omitted** and flagged in `ConverterResult.issues`
 (`ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE`). `formula` is a required property and the data
 model API validates the whole document before applying any of it, so emitting a placeholder would
 fail the entire upload rather than degrade one field.

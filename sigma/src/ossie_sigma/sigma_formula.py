@@ -638,8 +638,10 @@ _REVERSE_AGG_FUNCTIONS = {
 _REVERSE_EXTRACT_PARTS = {v: k.capitalize() for k, v in _EXTRACT_PARTS.items()}
 
 
-def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optional[str]:
-    """Best-effort reverse translation of an ANSI SQL expression into Sigma formula syntax.
+def sql_to_sigma_formula(
+    sql: str, dataset_alias: Optional[str] = None, *, dialect: Optional[str] = None
+) -> Optional[str]:
+    """Best-effort translation from the given SQL dialect into Sigma formula syntax.
 
     Used only for fields/metrics that did not originate in Sigma (i.e. carry no
     ``SIGMA``-dialect expression to reuse verbatim). Returns ``None`` if *sql* cannot
@@ -647,7 +649,7 @@ def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optio
     callers should treat that as "not translatable", not fail the conversion.
     """
     try:
-        tree = sqlglot.parse_one(sql)
+        tree = sqlglot.parse_one(sql, read=dialect)
     except Exception:  # noqa: BLE001 - sqlglot raises several internal error types
         return None
 
@@ -757,7 +759,7 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Coalesce) and len(node.expressions) == 1:
         return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"
 
-    if isinstance(node, exp.Cast):
+    if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast):
         # Only a cast to an unsized text type has a Sigma equivalent (Text()). A
         # length such as CHAR(1) truncates, which Text() would not; that and other
         # target types fall through to the not-translatable error below.

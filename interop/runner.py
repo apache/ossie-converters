@@ -641,7 +641,10 @@ class Runner:
             Path(result["output"]).read_text(encoding="utf-8"), result["output"]
         )
         result["assertions"] = check_document(
-            after, regression.category, regression.assertions
+            after,
+            regression.category,
+            regression.assertions,
+            native_dialect="SIGMA" if converter.native_format == "sigma" else None,
         )
         if (
             result["assertions"]["grade"] != "OK"

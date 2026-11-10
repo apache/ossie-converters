@@ -80,15 +80,27 @@ def sigma_dialect_text(expression: OssieExpression) -> Optional[str]:
     return None
 
 
-def ansi_sql_text(expression: OssieExpression) -> Optional[str]:
-    """Return the ``ANSI_SQL`` dialect entry from *expression*, if present."""
-    for dialect_expr in expression.dialects:
-        if dialect_expr.dialect == OssieDialect.ANSI_SQL:
-            return dialect_expr.expression
+SQL_DIALECT_READERS = {
+    OssieDialect.ANSI_SQL: None,
+    OssieDialect.OSSIE_SQL_2026: None,
+    OssieDialect.DATABRICKS: "databricks",
+    OssieDialect.SNOWFLAKE: "snowflake",
+    OssieDialect.BIGQUERY: "bigquery",
+}
+
+
+def preferred_sql_expression(expression: OssieExpression) -> Optional[OssieDialectExpression]:
+    """Select SQL for both metric ownership and formula translation."""
+    for dialect in SQL_DIALECT_READERS:
+        for candidate in expression.dialects:
+            if candidate.dialect == dialect:
+                return candidate
     return None
 
 
-def infer_single_dataset_qualifier(sql: str, dataset_names: set) -> Optional[str]:
+def infer_single_dataset_qualifier(
+    sql: str, dataset_names: set, *, dialect: Optional[str] = None
+) -> Optional[str]:
     """Return the sole known dataset referenced by *sql*'s qualified columns, if unambiguous.
 
     Used to place a model-level metric with no preserved Sigma ``element_id`` (i.e. one
@@ -100,13 +112,13 @@ def infer_single_dataset_qualifier(sql: str, dataset_names: set) -> Optional[str
     from sqlglot import expressions as exp
 
     try:
-        tree = sqlglot.parse_one(sql)
+        tree = sqlglot.parse_one(sql, read=dialect)
     except Exception:  # noqa: BLE001
         return None
 
     qualifiers = {
         column.parts[0].name
         for column in tree.find_all(exp.Column)
-        if len(column.parts) > 1 and column.parts[0].name in dataset_names
+        if len(column.parts) > 1
     }
-    return qualifiers.pop() if len(qualifiers) == 1 else None
+    return qualifiers.pop() if len(qualifiers) == 1 and qualifiers <= dataset_names else None

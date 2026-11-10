@@ -24,7 +24,6 @@ from typing import Any, Optional, Union
 from uuid import NAMESPACE_URL, uuid5
 
 from ossie import (
-    OssieCustomExtension,
     OssieDataset,
     OssieDocument,
     OssieField,
@@ -34,7 +33,12 @@ from ossie import (
 )
 
 from ossie_sigma.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_sigma.expression_utils import ansi_sql_text, infer_single_dataset_qualifier, sigma_dialect_text
+from ossie_sigma.expression_utils import (
+    SQL_DIALECT_READERS,
+    infer_single_dataset_qualifier,
+    preferred_sql_expression,
+    sigma_dialect_text,
+)
 from ossie_sigma.sigma_formula import sql_to_sigma_formula
 from ossie_sigma.spec_keys import MODEL_LEVEL_SPEC_KEYS
 
@@ -103,7 +107,7 @@ def _emit_name(name: Optional[str], ext: dict[str, Any]) -> bool:
 def _resolve_formula(
     expression, dataset_alias: str, element_name: str, issues: list[ConverterIssue]
 ) -> Optional[str]:
-    """Prefer the native Sigma formula text; otherwise best-effort translate ANSI SQL.
+    """Prefer native Sigma formula text, then translate the preferred SQL dialect.
 
     Returns ``None`` when no valid Sigma formula can be produced. `formula` is a
     required property of every Sigma column and metric, and the data model API
@@ -115,15 +119,17 @@ def _resolve_formula(
     if native is not None:
         return native
 
-    sql = ansi_sql_text(expression)
+    sql = preferred_sql_expression(expression)
     if sql is not None:
-        translated = sql_to_sigma_formula(sql, dataset_alias=dataset_alias)
+        translated = sql_to_sigma_formula(
+            sql.expression, dataset_alias=dataset_alias, dialect=SQL_DIALECT_READERS[sql.dialect]
+        )
         if translated is not None:
             return translated
-        detail = f"ANSI SQL expression {sql!r} has no Sigma formula equivalent"
+        detail = f"{sql.dialect.value} expression {sql.expression!r} has no Sigma formula equivalent"
     else:
         dialects = ", ".join(d.dialect.value for d in expression.dialects) or "none"
-        detail = f"no SIGMA or ANSI_SQL dialect expression to translate from (have: {dialects})"
+        detail = f"no supported SQL dialect expression to translate from (have: {dialects})"
 
     issues.append(
         ConverterIssue(
@@ -179,8 +185,14 @@ class OssieToSigmaConverter:
             ext = _sigma_ext(metric) or {}
             element_id = ext.get("element_id")
             if element_id is None:
-                sql = ansi_sql_text(metric.expression)
-                owning_dataset = infer_single_dataset_qualifier(sql, dataset_names) if sql else None
+                sql = preferred_sql_expression(metric.expression)
+                owning_dataset = (
+                    infer_single_dataset_qualifier(
+                        sql.expression, dataset_names, dialect=SQL_DIALECT_READERS[sql.dialect]
+                    )
+                    if sql is not None
+                    else None
+                )
                 element_id = dataset_element_id.get(owning_dataset) if owning_dataset else None
                 if element_id is None:
                     issues.append(

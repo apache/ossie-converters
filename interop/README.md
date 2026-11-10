@@ -208,7 +208,9 @@ Dialect fixtures have one dataset, a computed discount field, a computed upperca
 field, and an aggregate metric. Expression assertions compare SQLGlot-normalized
 syntax trees through a common rendering, allowing the dialect label to change
 and normalizing bare versus own-dataset-qualified columns. They check every
-returned dialect alternative. This deliberately bounded comparison is not an
+returned SQL alternative and require at least one. For Sigma returns, the native
+`SIGMA` formula accompanies the SQL and is outside this assertion. This
+deliberately bounded comparison is not an
 algebraic or SQL-value equivalence proof, and it does not run warehouse queries.
 An accidental ANSI fallback in a dialect-only input fails the fixture's baseline
 check before conversion.
