@@ -50,6 +50,7 @@ def test_picks_preferred_variant(ctx: ExportContext, preferred: str) -> None:
         ]
     )
 
+    assert expression.dialects is not None
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     selected = next(
@@ -69,6 +70,7 @@ def test_picks_preferred_variant_case_insensitively(ctx: ExportContext) -> None:
         ]
     )
 
+    assert expression.dialects is not None
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     assert result is expression.dialects[1]
@@ -87,6 +89,7 @@ def test_prefers_legacy_portable_dialect_over_other_variants(
         ]
     )
 
+    assert expression.dialects is not None
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     assert result is expression.dialects[-1]
@@ -106,6 +109,7 @@ def test_prefers_canonical_portable_dialect_over_other_variants(
         ]
     )
 
+    assert expression.dialects is not None
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     assert result is expression.dialects[-1]
@@ -119,11 +123,12 @@ def test_warns_when_legacy_portable_dialect_falls_back_to_canonical(
     ctx.set_ossie_dialect(preferred_ossie_dialect)
     expression = Quick.expression([("OSSIE_SQL_2026", "DATEADD(day, 1, foo.bar)")])
 
+    assert expression.dialects is not None
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     assert result is expression.dialects[0]
     assert problems_snapshot(ctx.problems) == snapshot(
-        "[WARNING] Preferred dialect OssieDialect.ANSI_SQL not found for expression; using fallback dialect OssieDialect.OSSIE_SQL_2026"
+        "[WARNING] Preferred dialect OssieDialect.ANSI_SQL not found for expression; using fallback dialect OSSIE_SQL_2026"
     )
 
 
@@ -132,6 +137,7 @@ def test_falls_back_to_first_variant_when_preferred_and_ansi_are_missing(
 ) -> None:
     expression = Quick.expression([("BIGQUERY", "foo.bar"), ("DAX", "SELECT FROM")])
 
+    assert expression.dialects is not None
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     assert result is expression.dialects[0]
@@ -149,9 +155,10 @@ def test_warns_when_preferred_and_portable_dialects_are_missing(
         ]
     )
 
+    assert expression.dialects is not None
     result = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
 
     assert result is expression.dialects[0]
     assert problems_snapshot(ctx.problems) == snapshot(
-        "[WARNING] Preferred dialect OssieDialect.SNOWFLAKE not found for expression; using fallback dialect OssieDialect.BIGQUERY"
+        "[WARNING] Preferred dialect OssieDialect.SNOWFLAKE not found for expression; using fallback dialect BIGQUERY"
     )

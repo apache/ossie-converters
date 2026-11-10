@@ -595,5 +595,56 @@ def test_mixed_dialects_warn_only_for_nonportable_fallbacks(tmp_path: Path) -> N
     ]
     assert problems[0].message == (
         "Preferred dialect BIGQUERY not found for expression; "
-        "using fallback dialect OssieDialect.SNOWFLAKE"
+        "using fallback dialect SNOWFLAKE"
     )
+
+
+def test_sql_only_expressions_are_dropped_with_an_error(tmp_path: Path) -> None:
+    model = {
+        "version": "0.2.0.dev0",
+        "name": "sql_only",
+        "datasets": [
+            {
+                "name": "things",
+                "source": "public.things",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "datatype": "Integer",
+                        "expression": {
+                            "dialects": [{"dialect": "ANSI_SQL", "expression": "foo"}]
+                        },
+                    },
+                    {
+                        "name": "bar",
+                        "datatype": "Integer",
+                        "expression": {"sql": "foo * 2"},
+                    },
+                ],
+            }
+        ],
+        "metrics": [
+            {
+                "name": "total",
+                "datatype": "Integer",
+                "expression": {"sql": "SUM(things.foo)"},
+            }
+        ],
+    }
+    source = tmp_path / "model.yml"
+    source.write_text(dump_yaml(model), encoding="utf-8")
+
+    project, problems = convert_ossie_to_hex(source)
+
+    assert project is not None
+    resource = project.resources[0]
+    assert isinstance(resource, HexModel)
+    assert [dimension.expr_sql for dimension in resource.dimensions] == ["foo"]
+    assert not resource.measures
+    assert problems_snapshot(problems, include_causes=True) == snapshot("""\
+[ERROR] No dialect expression found; `sql` is not supported
+Cause: ['datasets', 'things', 'fields', 'bar', 'expression', 'dialects']
+
+[ERROR] No dialect expression found; `sql` is not supported
+Cause: ['metrics', 'total', 'expression', 'dialects']\
+""")

@@ -26,18 +26,22 @@ from .context import ExportContext
 
 
 def pick_ossie_dialect_expression(
-    ossie_dialect_expressions: list[OssieDialectExpression],
+    ossie_dialect_expressions: list[OssieDialectExpression] | None,
     *,
     ctx: ExportContext,
-) -> OssieDialectExpression:
+) -> OssieDialectExpression | None:
     """Pick an Ossie dialect expression from a list of Ossie dialect expressions.
 
     Prefers to pick the current dialect, then falls back to a portable dialect,
     then the first in the list.
 
-    Returns a dialect expression.
+    Returns a dialect expression, or None if there are no dialect expressions.
     """
-    # the pydantic model definition guarantees at least one entry
+    if not ossie_dialect_expressions:
+        # An expression may carry only the portable `sql`, which is not read yet.
+        if ctx.current_phase_name == "load":
+            ctx.error("No dialect expression found; `sql` is not supported")
+        return None
     fallback = ossie_dialect_expressions[0]
     for entry in ossie_dialect_expressions:
         if (
