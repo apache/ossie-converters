@@ -183,20 +183,24 @@ def dialects_of(expression: Any) -> dict[str, str]:
 
     A document this converter did not write arrives unchecked, and the CLI
     catches `ConversionError` alone, so the shape is tested rather than assumed.
+
+    The top-level `sql` is written in `OSSIE_SQL_2026`, and the specification has
+    it win over an `OSSIE_SQL_2026` entry, so it takes that entry's place. It is
+    then a portable body like any other, and `pick_body` renders it.
     """
     if expression is None:
         raise ConversionError("expression is missing, and the specification requires one")
     if not isinstance(expression, dict):
         raise ConversionError(
             f"expression is {type(expression).__name__}, and the specification defines it "
-            f"as a mapping holding a 'dialects' list"
+            f"as a mapping holding 'sql' or a 'dialects' list"
         )
+    sql = expression.get("sql")
     dialects = expression.get("dialects") or []
-    if not dialects:
-        # An expression that carries only `sql` has no dialect entry to read.
-        if expression.get("sql") is not None:
-            return {}
-        raise ConversionError("expression has no dialects")
+    if not dialects and sql is None:
+        raise ConversionError("expression has neither sql nor dialects")
+    if sql is not None and not isinstance(sql, str):
+        raise ConversionError(f"expression.sql is {type(sql).__name__}, and must be a string")
     if not isinstance(dialects, list):
         raise ConversionError(
             f"expression.dialects is {type(dialects).__name__}, and must be a list"
@@ -209,6 +213,8 @@ def dialects_of(expression: Any) -> dict[str, str]:
                 f"mapping holding 'dialect' and 'expression'"
             )
         available[entry.get("dialect", "ANSI_SQL")] = entry.get("expression", "")
+    if sql is not None:
+        available["OSSIE_SQL_2026"] = sql
     return available
 
 
@@ -450,7 +456,7 @@ class _Reverse:
 
     # -- expressions ------------------------------------------------------
 
-    def pick_body(self, expression: Any, scope: str) -> tuple[str, str] | None:
+    def pick_body(self, expression: Any, scope: str) -> tuple[str, str]:
         """The body to write and the dialect it is in, after any rendering.
 
         AQL wins outright. It came out of AML unchanged and goes back unchanged.
@@ -461,20 +467,8 @@ class _Reverse:
         sqlglot, because the alternative is AML that will not run. An expression
         offering neither has no body this connection can execute, and the
         converter says so rather than writing Holistics SQL for the wrong warehouse.
-
-        An expression with no dialect entries has no body to write, and is dropped
-        with an ERROR, so this returns None.
         """
         available = dialects_of(expression)
-        if not available:
-            self.issues.add(
-                code=ISSUE_NO_USABLE_DIALECT,
-                severity=Severity.ERROR,
-                message="the expression has only a portable sql body and no dialect entries, so it is dropped",
-                object_ref=scope,
-                remedy=f"add a {self.sql_dialect} or ANSI_SQL expression",
-            )
-            return None
         if AQL_DIALECT in available:
             return AQL_DIALECT, available[AQL_DIALECT]
         if self.sql_dialect in available:
@@ -522,11 +516,9 @@ class _Reverse:
         )
         return fallback, available[fallback]
 
-    def definition(
-        self, block: Block, picked: tuple[str, str], model: Model, scope: str
-    ) -> None:
-        """Write a `definition` property for a field or a measure, from `pick_body`."""
-        dialect, text = picked
+    def definition(self, block: Block, expression: Any, model: Model, scope: str) -> None:
+        """Write a `definition` property for a field or a measure."""
+        dialect, text = self.pick_body(expression, scope)
         if dialect == AQL_DIALECT:
             block.heredoc("definition", "aql", text)
             return
@@ -697,38 +689,30 @@ class _Reverse:
         block.text("description", payload.get("description"))
         block.flag("hidden", bool(data.get("hidden")))
 
-    def dimension(
-        self, model: Model, payload: dict[str, Any], primary_key: set[str]
-    ) -> Block | None:
+    def dimension(self, model: Model, payload: dict[str, Any], primary_key: set[str]) -> Block:
         name = payload["name"]
         scope = f"{model.ossie_name}.{name}"
         data = stash.read(payload)
-        picked = self.pick_body(payload.get("expression"), scope)
-        if picked is None:
-            return None
         block = Block(f"dimension {self.name_in_aml(name, scope)}")
         self.common_properties(block, payload, data, scope, model)
-        self.definition(block, picked, model, scope)
+        self.definition(block, payload.get("expression"), model, scope)
         block.text("format", data.get("format"))
         block.flag("primary_key", name in primary_key)
         return block
 
-    def dataset_dimension(self, model: Model, payload: dict[str, Any]) -> Block | None:
+    def dataset_dimension(self, model: Model, payload: dict[str, Any]) -> Block:
         """A field the forward path took from a dataset-level AML dimension."""
         name = payload["name"]
         scope = f"{model.ossie_name}.{name}"
         data = stash.read(payload)
-        picked = self.pick_body(payload.get("expression"), scope)
-        if picked is None:
-            return None
         block = Block(f"dimension {self.name_in_aml(name, scope)}")
         block.property("model", model.reference)
         self.common_properties(block, payload, data, scope, model)
-        self.definition(block, picked, model, scope)
+        self.definition(block, payload.get("expression"), model, scope)
         block.text("format", data.get("format"))
         return block
 
-    def measure(self, model: Model, payload: dict[str, Any]) -> Block | None:
+    def measure(self, model: Model, payload: dict[str, Any]) -> Block:
         """One Ossie metric as a `measure` on its owning model.
 
         `aggregation_type` and the body compose into one Ossie expression on the
@@ -741,16 +725,13 @@ class _Reverse:
         aml_name = self.metric_aml_name[metric_name]
         scope = f"{model.ossie_name}.{aml_name}"
         data = stash.read(payload)
-        picked = self.pick_body(payload.get("expression"), scope)
-        if picked is None:
-            return None
         block = Block(f"measure {self.name_in_aml(aml_name, scope)}")
         block.text("label", data.get("label") or titleize(aml_name))
         block.property("type", quote(self.aml_type(payload, data, scope)))
         block.text("description", payload.get("description"))
         block.flag("hidden", bool(data.get("hidden")))
 
-        dialect, text = picked
+        dialect, text = self.pick_body(payload.get("expression"), scope)
         aggregation = data.get("aggregation_type") or CUSTOM_AGGREGATION
         if dialect == AQL_DIALECT:
             block.heredoc("definition", "aql", text)
@@ -880,10 +861,7 @@ class _Reverse:
         name = payload["name"]
         scope = name
         data = stash.read(payload)
-        picked = self.pick_body(payload.get("expression"), scope)
-        if picked is None:
-            return None
-        dialect, text = picked
+        dialect, text = self.pick_body(payload.get("expression"), scope)
         if dialect != AQL_DIALECT:
             rendered = self.as_aql(text, dialect, scope)
             if rendered is None:
@@ -940,16 +918,12 @@ class _Reverse:
         for field in payload.get("fields") or []:
             if stash.read(field).get("scope") == "dataset":
                 continue
-            written = self.dimension(model, field, primary_key)
-            if written is not None:
-                block.blank()
-                block.lines.append(written)
+            block.blank()
+            block.lines.append(self.dimension(model, field, primary_key))
 
         for metric in model.measures:
-            written = self.measure(model, metric)
-            if written is not None:
-                block.blank()
-                block.lines.append(written)
+            block.blank()
+            block.lines.append(self.measure(model, metric))
 
         for column in model.borrowed:
             block.blank()
@@ -1174,10 +1148,8 @@ class _Reverse:
         for model in self.models:
             for field in model.payload.get("fields") or []:
                 if stash.read(field).get("scope") == "dataset":
-                    written = self.dataset_dimension(model, field)
-                    if written is not None:
-                        block.blank()
-                        block.lines.append(written)
+                    block.blank()
+                    block.lines.append(self.dataset_dimension(model, field))
 
         for metric in self.dataset_metrics:
             written = self.dataset_metric(metric)
