@@ -380,7 +380,7 @@ def test_synthesized_spec_carries_a_schema_version():
     assert OssieToSigmaConverter().convert(document).output["schemaVersion"] == 1
 
 
-def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
+def test_only_numeric_datatypes_get_a_coarse_format_and_dates_never_get_kind_date():
     document = OssieDocument(
         name="m",
         datasets=[
@@ -421,13 +421,19 @@ def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
         "integer": "number",
         "decimal": "number",
         "float": "number",
-        "date": "date",
-        "datetime": "date",
-        "datetimetz": "date",
     }
-    # String/Boolean/Time have no Sigma display format; emitting an invented `kind`
-    # would be rejected by the data model API for the whole document.
-    assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {"string", "boolean", "time"}
+    # Only number columns get a format. Date columns get none, so Sigma uses its own
+    # default. We must never write the format "date": Sigma does not know that name and
+    # would reject the whole model.
+    assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {
+        "date",
+        "datetime",
+        "datetimetz",
+        "string",
+        "boolean",
+        "time",
+    }
+    assert all(c["format"]["kind"] != "date" for c in columns if "format" in c)
 
 
 def _relationship_model(

@@ -46,19 +46,23 @@ _ID_NAMESPACE = uuid5(NAMESPACE_URL, "ossie.apache.org/converters/sigma")
 # The only value the data model spec endpoints currently accept.
 _SCHEMA_VERSION = 1
 
-# A Sigma column `format` is a *display* format, and the spec defines exactly two
-# variants: `{"kind": "number", ...}` and `{"kind": "date", ...}`. Emitting any other
-# `kind` produces a spec the data model API rejects, so the datatypes with no display
-# format of their own (String, Boolean, Time, Opaque) deliberately map to nothing and
-# the column is written without a `format` key at all — which is also what Sigma's own
-# specs look like for those columns.
+# A column's `format` tells Sigma how to SHOW a value (for example, how many decimals).
+#
+# What was broken: for date columns we used to write the format `"date"`. Sigma does not
+# know a format called `"date"` (it only knows `"number"` and `"datetime"`). When Sigma
+# sees a name it does not know, it rejects the WHOLE model, not just that column.
+#
+# This is a small, safe fix. Only number columns get a format from us. Date, DateTime and
+# DateTimeTz columns now get no format, so Sigma shows them its own default way. That
+# always works. Whether we should pick a date format ourselves (for example "2026-11-10")
+# is a separate decision for later; see apache/ossie-converters#147.
+#
+# If the model already carries a format of its own (kept in custom_extensions), that one
+# is still used.
 _DATATYPE_TO_FORMAT = {
     "Integer": "number",
     "Decimal": "number",
     "Float": "number",
-    "Date": "date",
-    "DateTime": "date",
-    "DateTimeTz": "date",
 }
 
 
