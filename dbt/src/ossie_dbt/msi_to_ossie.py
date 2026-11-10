@@ -333,7 +333,9 @@ class MSIToOssieConverter:
     ) -> Optional[List[OssieCustomExtension]]:
         """Carry a non-empty MSI `config.meta` dict across as one Ossie `custom_extensions` entry.
 
-        `config.meta` is otherwise silently dropped at this boundary (#42).
+        `config.meta` is otherwise silently dropped at this boundary (#42). It goes under a
+        `meta` key, mirroring dbt's own `config`, so Ossie -> dbt can tell it apart from
+        `DBT` entries that hold other dbt config, such as `materialized` or `tags`.
         """
         if config is None or not config.meta:
             return None
@@ -342,7 +344,7 @@ class MSIToOssieConverter:
         return [
             OssieCustomExtension(
                 vendor_name=OssieVendor.DBT.value,
-                data=json.dumps(config.meta, default=str),
+                data=json.dumps({"meta": config.meta}, default=str),
             )
         ]
 

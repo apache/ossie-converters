@@ -16,10 +16,12 @@
 # under the License.
 
 from collections.abc import Mapping
+from typing import cast
 
 from ossie import OssieDialect
 
 from ..hex import HexDialect, HexDialectName
+from ..ossie import PORTABLE_OSSIE_DIALECT
 from .context import ExportContext
 
 _DIALECT_NAME_MAP: Mapping[OssieDialect, HexDialectName | None] = {
@@ -41,10 +43,18 @@ _DIALECT_NAME_MAP: Mapping[OssieDialect, HexDialectName | None] = {
 
 
 def convert_ossie_dialect(
-    ossie_dialect: OssieDialect,
+    ossie_dialect: OssieDialect | None,
     *,
     ctx: ExportContext,
 ) -> HexDialect:
+    """Convert an Ossie dialect to a Hex dialect."""
+    if ossie_dialect is None:
+        # assume the portable dialect
+        # cast is safe because we know the portable dialect is in the map
+        hex_dialect_name = cast(
+            HexDialectName, _DIALECT_NAME_MAP.get(PORTABLE_OSSIE_DIALECT)
+        )
+        return HexDialect(hex_dialect_name)
     hex_dialect_name = _DIALECT_NAME_MAP.get(ossie_dialect)
     if hex_dialect_name is None:
         ctx.info(
