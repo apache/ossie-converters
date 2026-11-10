@@ -36,9 +36,9 @@ Scope: metrics in the top-level ``metrics`` list over a single dataset, tagged
 ANSI_SQL or OSSIE_SQL_2026. See interop/README.md for how the test data is built.
 
 DuckDB runs with ``ieee_floating_point_ops = false``, so ``x / 0`` is NULL rather
-than ``inf``; ``/`` stays floating-point division. A step that drives converters
-calls ``check()`` once per round trip, passing the grader's report when it already
-has one. ``duckdb`` and ``sqlglot`` are optional: without them every check is
+than ``inf``; ``/`` stays floating-point division. The runner's portability step
+(``Runner.portability_case``) calls ``check()`` once per graded round trip, passing
+the grader's report, and stores the result next to the grading. ``duckdb`` and ``sqlglot`` are optional: without them every check is
 NOT_RUN.
 """
 
@@ -49,7 +49,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import cache
-import importlib.util
 import itertools
 import json
 import math
@@ -58,8 +57,9 @@ import sys
 
 import yaml
 
+from .portability import GRADER, load_grader
+
 ROOT = Path(__file__).resolve().parent.parent
-GRADER = Path("ossie/compliance/portability/grader/grade.py")
 
 
 @cache
@@ -68,16 +68,8 @@ def grader(root=ROOT):
     path = Path(root) / GRADER
     if not path.is_file():
         raise FileNotFoundError(f"{GRADER} is missing; run git submodule update --init")
-    spec = importlib.util.spec_from_file_location("interop_portability_grader", path)
-    module = importlib.util.module_from_spec(spec)
-    # Its dataclasses look their module up in sys.modules while it executes.
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        del sys.modules[spec.name]
-        raise
-    return module
+    # Shared with the runner's portability step, so both use one grader module.
+    return load_grader(path)
 
 
 SAME_ON_TEST_DATA = "SAME_ON_TEST_DATA"
@@ -732,7 +724,8 @@ def _json_value(value):
     return value
 
 
-def _as_json(report):
+def as_dict(report):
+    """An execution report as JSON-ready data, as stored next to a case's grading."""
     findings = []
     for finding in report.findings:
         entry = vars(finding).copy()
@@ -740,12 +733,16 @@ def _as_json(report):
         entry["authored_result"] = _json_value(finding.authored_result)
         entry["returned_result"] = _json_value(finding.returned_result)
         findings.append(entry)
-    summary = {
+    return {
         "converter": report.converter,
         "rejected": report.rejected,
         "findings": findings,
+        "summary": report.counts(),
     }
-    return json.dumps({**summary, "summary": report.counts()}, indent=2)
+
+
+def _as_json(report):
+    return json.dumps(as_dict(report), indent=2)
 
 
 def main(argv=None):
