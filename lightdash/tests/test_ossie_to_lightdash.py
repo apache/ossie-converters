@@ -212,6 +212,38 @@ def test_export_prefers_portable_sql_over_an_unrelated_vendor_dialect():
     assert not any(issue.issue_type is ConverterIssueType.DIALECT_UNAVAILABLE for issue in result.issues)
 
 
+def test_export_reads_a_sql_only_expression_as_its_portable_form():
+    """An expression may carry only `sql`, which is written in OSSIE_SQL_2026."""
+    expected = OssieToLightdashConverter().convert_models(_document()).output
+    document = _document()
+    for dataset in document.datasets:
+        for index, field in enumerate(dataset.fields):
+            dataset.fields[index] = field.model_copy(
+                update={"expression": OssieExpression(sql=field.expression.dialects[0].expression)}
+            )
+    for index, metric in enumerate(document.metrics):
+        document.metrics[index] = metric.model_copy(
+            update={"expression": OssieExpression(sql=metric.expression.dialects[0].expression)}
+        )
+    result = OssieToLightdashConverter().convert_models(document)
+    assert result.output == expected
+    assert not any(issue.issue_type is ConverterIssueType.DIALECT_UNAVAILABLE for issue in result.issues)
+
+
+def test_export_prefers_sql_over_an_ossie_sql_2026_entry():
+    document = _document()
+    document.datasets[0].fields[0] = document.datasets[0].fields[0].model_copy(update={
+        "expression": OssieExpression(
+            sql="order_date",
+            dialects=[
+                OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression="wrong_date"),
+            ],
+        )
+    })
+    result = OssieToLightdashConverter(OssieDialect.BIGQUERY).convert_models(document)
+    assert result.output[0]["dimensions"][0]["sql"] == "${TABLE}.order_date"
+
+
 class TestOssieToLightdash:
     def test_time_dimension_exports_date_type(self):
         result = OssieToLightdashConverter().convert(_document())
