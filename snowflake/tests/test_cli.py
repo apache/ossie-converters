@@ -28,7 +28,7 @@ import yaml
 from ossie_snowflake import cli
 
 OSSIE_MODEL = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "retail",
     "datasets": [
         {
@@ -77,7 +77,7 @@ class TestConversion:
 class TestErrors:
     def test_a_conversion_error_exits_non_zero_without_a_traceback(self, tmp_path, capsys):
         bad = tmp_path / "bad.yaml"
-        bad.write_text(yaml.dump({"version": "0.2.0.dev0"}))
+        bad.write_text(yaml.dump({"version": "0.3.0.dev0"}))
         with pytest.raises(SystemExit) as excinfo:
             cli.main(["-i", str(bad), "-o", str(tmp_path / "out.yaml")])
         assert excinfo.value.code == 1
@@ -85,7 +85,7 @@ class TestErrors:
 
     def test_a_failed_conversion_writes_no_output_file(self, tmp_path):
         bad = tmp_path / "bad.yaml"
-        bad.write_text(yaml.dump({"version": "0.2.0.dev0"}))
+        bad.write_text(yaml.dump({"version": "0.3.0.dev0"}))
         out = tmp_path / "out.yaml"
         with pytest.raises(SystemExit):
             cli.main(["-i", str(bad), "-o", str(out)])

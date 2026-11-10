@@ -142,7 +142,7 @@ def _relationship(name, from_, to, from_columns, to_columns, *, rel_stash=None):
 
 def _ossie_document(semantic_model):
     # One model per document, at the root, no wrapper (apache/ossie#383).
-    return {"version": "0.2.0.dev0", **semantic_model}
+    return {"version": "0.3.0.dev0", **semantic_model}
 
 
 def _table_doc(name, columns, connection="My Snowflake"):
@@ -218,11 +218,11 @@ class TestConvertEntryPoint:
 
     def test_no_datasets_at_all_is_a_hard_failure(self):
         with pytest.raises(ConversionError):
-            convert({"version": "0.2.0.dev0", "name": "empty", "datasets": []})
+            convert({"version": "0.3.0.dev0", "name": "empty", "datasets": []})
 
     def test_a_document_with_nothing_but_a_version_is_a_hard_failure(self):
         with pytest.raises(ConversionError):
-            convert({"version": "0.2.0.dev0"})
+            convert({"version": "0.3.0.dev0"})
 
     @pytest.mark.parametrize("wrapped", [
         pytest.param([_semantic_model(name="only")], id="one-entry"),
@@ -234,7 +234,7 @@ class TestConvertEntryPoint:
         # wrapper holds -- including the one-entry case that would otherwise
         # convert perfectly well. The message has to name the wrapper, since
         # that is the one thing the reader has to change.
-        legacy = {"version": "0.2.0.dev0", "semantic_model": wrapped}
+        legacy = {"version": "0.3.0.dev0", "semantic_model": wrapped}
         with pytest.raises(ConversionError, match="semantic_model"):
             convert(legacy)
 
@@ -852,7 +852,7 @@ class TestAliasedSelfJoinEmitsOneTableDocument:
         }
 
     def _convert(self, *datasets):
-        return convert({"version": "0.2.0.dev0", "name": "M", "datasets": list(datasets)})
+        return convert({"version": "0.3.0.dev0", "name": "M", "datasets": list(datasets)})
 
     def test_one_table_document_is_emitted_not_one_per_dataset(self):
         result = self._convert(
@@ -934,7 +934,7 @@ class TestMergingTwoDatasetsThatShareOneSqlView:
         }
 
     def _convert(self):
-        return convert({"version": "0.2.0.dev0", "name": "M", "datasets": [
+        return convert({"version": "0.3.0.dev0", "name": "M", "datasets": [
             self._sql_view_dataset("A", "c_a"),
             self._sql_view_dataset("B", "c_b"),
         ]})
@@ -986,7 +986,7 @@ class TestDeduplicationRefusesUnsafeMerges:
         }
 
     def _convert(self, *datasets):
-        return convert({"version": "0.2.0.dev0", "name": "M", "datasets": list(datasets)})
+        return convert({"version": "0.3.0.dev0", "name": "M", "datasets": list(datasets)})
 
     def test_a_table_and_a_sql_view_are_never_merged(self):
         # Merging them wrote `sql_view_columns` into a `table:` document, which
@@ -1075,7 +1075,7 @@ class TestARenamedDatasetDoesNotDangleItsReferences:
 
     def _convert_with_a_renamed_dataset(self):
         # "mgr" was renamed to "manager"; the stash still says "mgr".
-        return convert({"version": "0.2.0.dev0", "name": "M", "datasets": [
+        return convert({"version": "0.3.0.dev0", "name": "M", "datasets": [
             self._dataset("emp", "emp", "employee_id"),
             self._dataset("manager", "mgr", "employee_name"),
         ]})
@@ -1094,7 +1094,7 @@ class TestARenamedDatasetDoesNotDangleItsReferences:
         assert "TS-DATASET-ALIAS-STALE" in codes
 
     def test_an_unrenamed_dataset_keeps_its_alias_and_says_nothing(self):
-        result = convert({"version": "0.2.0.dev0", "name": "M", "datasets": [
+        result = convert({"version": "0.3.0.dev0", "name": "M", "datasets": [
             self._dataset("emp", "emp", "employee_id"),
         ]})
         assert result.documents.model.body["model_tables"][0]["alias"] == "emp"
@@ -1121,7 +1121,7 @@ class TestFormulaIdsAreUniqueAcrossBothSources:
     @staticmethod
     def _document(*metrics):
         return {
-            "version": "0.2.0.dev0", "name": "M",
+            "version": "0.3.0.dev0", "name": "M",
             "datasets": [{"name": "t", "source": "D.S.T", "fields": [
                 {"name": "a", "expression": {"dialects": [
                     {"dialect": "THOUGHTSPOT", "expression": "[t::a]"}]}}]}],
@@ -1252,7 +1252,7 @@ class TestAnUnsurfacedFormulaIdIsReservedAgainstMinting:
     @staticmethod
     def _document():
         return {
-            "version": "0.2.0.dev0", "name": "M",
+            "version": "0.3.0.dev0", "name": "M",
             "custom_extensions": _stash_ext(
                 tml_name="M",
                 unsurfaced_formulas=[

@@ -16,7 +16,7 @@
 # under the License.
 
 name: RETAIL_REFACTORED
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 description: Retail ontology with employees, stores, products, transactions, orders, payments, and weekly sales facts.
 
 ontology requires:

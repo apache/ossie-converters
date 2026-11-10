@@ -118,7 +118,7 @@ def test_basic_conversion(gooddata_tpcds_model: GdDeclarativeModel):
     """Verify basic structure of GoodData → Ossie conversion."""
     result = gooddata_to_ossie(gooddata_tpcds_model, model_name="tpcds_test")
 
-    assert result["version"] == "0.2.0.dev0"
+    assert result["version"] == "0.3.0.dev0"
     assert "semantic_model" not in result
 
     sm = result

@@ -22,7 +22,7 @@
 # (unique_keys, a foreign vendor's extensions, structured ai_context), which
 # export parks under meta.ossie.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: ecommerce
 description: Orders and customers
 ai_context:

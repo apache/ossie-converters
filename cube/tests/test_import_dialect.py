@@ -168,7 +168,7 @@ def test_omitting_dialect_retains_legacy_behavior_but_explicit_ansi_validates():
 
 def test_restored_ossie_expression_keeps_its_original_dialects():
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [
             {
@@ -500,7 +500,7 @@ def _cross_dataset_composite_count(dialect):
         "CAST(users.id AS STRING), CAST(users.tenant AS STRING)))"
     )
     return {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [
             {

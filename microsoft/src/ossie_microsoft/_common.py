@@ -49,7 +49,7 @@ _WARNING_REGISTRY = {}
 # NOTE: this is an exact-match check on import/export. This spoke intentionally has no
 # `apache-ossie` package dependency, so nothing updates this automatically -- it MUST be
 # bumped in lockstep with the `version` in `core-spec/` whenever the spec version moves.
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
 # Vendor id used for the `custom_extensions` stash.
 VENDOR = "POWER_BI"

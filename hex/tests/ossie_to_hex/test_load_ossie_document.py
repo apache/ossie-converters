@@ -131,7 +131,7 @@ foo
 def test_invalid_members(ctx: ExportContext, tmp_path: Path) -> None:
     path = tmp_path / "sales.yaml"
     data = dedent("""\
-        version: 0.2.0.dev0
+        version: 0.3.0.dev0
         name: sales
         datasets:
           - name: orders
@@ -175,7 +175,7 @@ def test_invalid_members(ctx: ExportContext, tmp_path: Path) -> None:
 
     assert document is not None
     assert document.to_ossie_yaml() == snapshot("""\
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: sales
 datasets:
 - name: orders

@@ -53,7 +53,7 @@ SPEC_SERIES = "0.2"
 #: fails schema validation outright. Bump in lockstep with core-spec/'s own
 #: `version` if it ever moves -- the same discipline databricks'
 #: `OSSIE_VERSION` constant documents.
-DOCUMENT_VERSION = "0.2.0.dev0"
+DOCUMENT_VERSION = "0.3.0.dev0"
 
 #: ThoughtSpot's grouped-aggregation calls, mapped to the plain aggregate each
 #: is shorthand for. `group_aggregate` is the general form and has no single

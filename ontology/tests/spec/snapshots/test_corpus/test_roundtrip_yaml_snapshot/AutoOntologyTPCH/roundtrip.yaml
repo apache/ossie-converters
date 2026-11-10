@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: tpch_ontology
 description: Business concepts of the tpch semantic model
 ontology:
@@ -518,7 +518,7 @@ ontology_mappings:
 - name: tpch_mapping
   description: Maps the tpch_ontology onto the tpch semantic model
   semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: tpch
     datasets:
     - name: customer

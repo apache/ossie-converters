@@ -135,7 +135,7 @@ def _document() -> OssieDocument:
         )
     ]
     return OssieDocument(
-        version="0.2.0.dev0",
+        version="0.3.0.dev0",
         name="sales",
         datasets=[orders, customers],
         metrics=metrics,
@@ -858,7 +858,7 @@ class TestReviewFindings:
             ],
         )
         document = OssieDocument(
-            version="0.2.0.dev0",
+            version="0.3.0.dev0",
             name="sales",
             datasets=[store_sales, customer],
             metrics=[
@@ -902,7 +902,7 @@ class TestReviewFindings:
             ],
         )
         document = OssieDocument(
-            version="0.2.0.dev0",
+            version="0.3.0.dev0",
             name="hr",
             datasets=[employees],
             relationships=[
@@ -1192,7 +1192,7 @@ class TestSecondReviewFindings:
 
 
 class TestDatasetScopedMetrics:
-    """`datasets[].metrics` (core-spec 0.2.0.dev0) export like model-scoped
+    """`datasets[].metrics` (core-spec 0.3.0.dev0) export like model-scoped
     metrics, always on their own dataset's model."""
 
     def _document(self, *metrics):

@@ -416,7 +416,7 @@ class LightdashToOssieConverter:
             )
 
         document = OssieDocument(
-            version="0.2.0.dev0",
+            version="0.3.0.dev0",
             name=semantic_model_name,
             datasets=datasets,
             metrics=metrics or None,

@@ -39,7 +39,7 @@ from .datatypes import AGGREGATIONS, AML_TO_OSSIE_DATATYPE, CUSTOM_AGGREGATION, 
 from .errors import ConversionError
 from .issues import IssueLog, Severity
 
-SPEC_VERSION = "0.2.0.dev0"
+SPEC_VERSION = "0.3.0.dev0"
 
 AQL_DIALECT = "HOLISTICS_AQL"
 
