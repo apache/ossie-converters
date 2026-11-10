@@ -24,10 +24,7 @@ from .convert_ossie_dialect_expression import (
     OssieRefResolver,
     convert_ossie_dialect_expression,
 )
-from .pick_ossie_dialect_expression import (
-    dialect_expressions_of,
-    pick_ossie_dialect_expression,
-)
+from .pick_ossie_dialect_expression import pick_ossie_dialect_expression
 
 
 def convert_ossie_expression(
@@ -42,9 +39,7 @@ def convert_ossie_expression(
     If a resolver is provided, it is used to resolve Ossie expression syntax
     to Hex semantic reference syntax.
     """
-    ossie_dialect_expression = pick_ossie_dialect_expression(
-        dialect_expressions_of(ossie_expression), ctx=ctx
-    )
+    ossie_dialect_expression = pick_ossie_dialect_expression(ossie_expression, ctx=ctx)
     hex_sql = convert_ossie_dialect_expression(
         ossie_dialect_expression,
         resolve=resolve,
