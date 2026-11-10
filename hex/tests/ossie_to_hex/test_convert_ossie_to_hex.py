@@ -641,6 +641,9 @@ def test_sql_only_expressions_are_converted(tmp_path: Path) -> None:
     assert project is not None
     resource = project.resources[0]
     assert isinstance(resource, HexModel)
-    assert [dimension.expr_sql for dimension in resource.dimensions] == ["foo", "foo * 2"]
+    assert [dimension.expr_sql for dimension in resource.dimensions] == [
+        "foo",
+        "foo * 2",
+    ]
     assert [measure.name for measure in resource.measures] == ["Total"]
     assert problems_snapshot(problems, include_causes=True) == snapshot("")
