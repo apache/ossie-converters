@@ -278,6 +278,10 @@ class OssieToLightdashConverter:
             dialect_expression.dialect: dialect_expression.expression
             for dialect_expression in expression.dialects or []
         }
+        # The top-level `sql` is the OSSIE_SQL_2026 form, and the specification
+        # has it win over an OSSIE_SQL_2026 entry.
+        if expression.sql is not None:
+            by_dialect[OssieDialect.OSSIE_SQL_2026] = expression.sql
         for dialect in (self._dialect, OssieDialect.OSSIE_SQL_2026, OssieDialect.ANSI_SQL):
             if dialect in by_dialect:
                 return by_dialect[dialect]
