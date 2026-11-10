@@ -245,17 +245,17 @@ document_regressions:
   dialect-databricks-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-databricks-only/input.yaml
-    targets: [cube, databricks, dbt, omni, sigma]
+    targets: &dialect_targets [cube, databricks, dbt, omni, sigma]
     expectations: interop/fixtures/contracts/dialect-databricks-only/expectations.yaml
   dialect-snowflake-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-snowflake-only/input.yaml
-    targets: [cube, databricks, dbt, omni, sigma]
+    targets: *dialect_targets
     expectations: interop/fixtures/contracts/dialect-snowflake-only/expectations.yaml
   dialect-ossie-sql-2026-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-ossie-sql-2026-only/input.yaml
-    targets: [cube, databricks, dbt, omni, sigma]
+    targets: *dialect_targets
     expectations: interop/fixtures/contracts/dialect-ossie-sql-2026-only/expectations.yaml
   keys-single:
     category: keys

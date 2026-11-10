@@ -117,7 +117,8 @@ def test_the_forward_direction_reports_the_losses_it_declares():
     }
 
 
-def test_cli_reports_unresolved_ecommerce_query_as_an_error(tmp_path, capsys):
+def test_cli_reports_unresolved_ecommerce_query_as_an_error(tmp_path):
+    issues_path = tmp_path / "issues.yaml"
     status = main(
         [
             "to-ossie",
@@ -126,10 +127,13 @@ def test_cli_reports_unresolved_ecommerce_query_as_an_error(tmp_path, capsys):
             str(tmp_path / "model.yaml"),
             "--sql-dialect",
             snapshots.SQL_DIALECT,
+            "--issues",
+            str(issues_path),
         ]
     )
     assert status == 1
-    issues = _yaml.load(capsys.readouterr().err)
+    issues = _yaml.load(issues_path.read_text(encoding="utf-8"))
+    assert isinstance(issues, list) and all(isinstance(issue, dict) for issue in issues)
     assert any(
         issue["code"] == aml_to_ossie.ISSUE_UNRESOLVED_QUERY
         and issue["severity"] == "ERROR"
