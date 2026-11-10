@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+from typing import assert_type
+
 from ossie import OssieDialect
 
 from .context import ExportContext
@@ -24,11 +26,7 @@ def load_ossie_dialect(
     ossie_dialect: OssieDialect | str | None,
     *,
     ctx: ExportContext,
-) -> OssieDialect:
-    # Even though OssieDocument specifies `dialects` as a top-level field, this isn't
-    # technically part of the core spec. So we don't use it. Otherwise we would validate
-    # against it and pick the first as a fallback.
-
+) -> OssieDialect | None:
     if isinstance(ossie_dialect, OssieDialect):
         return ossie_dialect
     elif isinstance(ossie_dialect, str):
@@ -37,12 +35,9 @@ def load_ossie_dialect(
             return OssieDialect(value)
         except ValueError:
             ctx.warn(
-                message=f"Invalid Ossie dialect: {ossie_dialect}. Using ANSI_SQL instead.",
+                message=f"Invalid Ossie dialect: {ossie_dialect}.",
             )
-            return OssieDialect.ANSI_SQL
+            return None
     else:
-        ctx.info(
-            "No Ossie dialect specified; using ANSI_SQL",
-            code="missing-dialect",
-        )
-        return OssieDialect.ANSI_SQL
+        assert_type(ossie_dialect, None)
+        return None

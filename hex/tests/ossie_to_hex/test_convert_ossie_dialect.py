@@ -69,3 +69,9 @@ def test_falls_back_to_duckdb_for_expression_language(
     assert problems_snapshot(ctx.problems) == snapshot(
         "[INFO] Ossie dialect is an expression language; using DuckDB as SQL dialect for Hex semantic project"
     )
+
+
+def test_falls_back_to_snowflake_for_none(ctx: ExportContext) -> None:
+    result = convert_ossie_dialect(None, ctx=ctx)
+    assert result == HexDialect("snowflake")
+    assert not ctx.problems

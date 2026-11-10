@@ -17,6 +17,8 @@
 
 from typing import Literal
 
+from ossie import OssieDialect
+
 OssieDialectName = Literal[
     "ANSI_SQL",
     "SNOWFLAKE",
@@ -29,4 +31,23 @@ OssieDialectName = Literal[
     "SIGMA",
     "DAX",
     "OSSIE_SQL_2026",
+]
+
+
+PORTABLE_OSSIE_DIALECT = OssieDialect.OSSIE_SQL_2026
+"""The canonical portable dialect of Ossie."""
+
+LEGACY_PORTABLE_OSSIE_DIALECT = OssieDialect.ANSI_SQL
+"""The legacy portable dialect of Ossie.
+
+A significant subset of converters still output ANSI_SQL as if it were the
+portable, default dialect of Ossie.
+"""
+
+OSSIE_SQL_DIALECTS = [
+    OssieDialect.OSSIE_SQL_2026,
+    OssieDialect.ANSI_SQL,
+    OssieDialect.BIGQUERY,
+    OssieDialect.DATABRICKS,
+    OssieDialect.SNOWFLAKE,
 ]
