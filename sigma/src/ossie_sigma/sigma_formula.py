@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import sqlglot
-from sqlglot import expressions as exp
+from sqlglot import Dialect, expressions as exp
 
 
 class FormulaParseError(Exception):
@@ -639,7 +639,7 @@ _REVERSE_EXTRACT_PARTS = {v: k.capitalize() for k, v in _EXTRACT_PARTS.items()}
 
 
 def sql_to_sigma_formula(
-    sql: str, dataset_alias: Optional[str] = None, *, dialect: Optional[str] = None
+    sql: str, dataset_alias: Optional[str] = None, *, dialect: str | type[Dialect] | None = Dialect
 ) -> Optional[str]:
     """Best-effort translation from the given SQL dialect into Sigma formula syntax.
 

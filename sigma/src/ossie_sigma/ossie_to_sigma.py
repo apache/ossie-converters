@@ -126,9 +126,9 @@ def _resolve_formula(
         )
         if translated is not None:
             return translated
-        detail = f"{sql.dialect.value} expression {sql.expression!r} has no Sigma formula equivalent"
+        detail = f"{sql.dialect} expression {sql.expression!r} has no Sigma formula equivalent"
     else:
-        dialects = ", ".join(d.dialect.value for d in expression.dialects) or "none"
+        dialects = ", ".join(d.dialect for d in expression.dialects or []) or "none"
         detail = f"no supported SQL dialect expression to translate from (have: {dialects})"
 
     issues.append(

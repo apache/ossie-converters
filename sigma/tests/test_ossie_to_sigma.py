@@ -239,6 +239,8 @@ def test_model_level_metadata_round_trips_through_ossie_and_back():
         (OssieDialect.DATABRICKS, "`amount`", "SUM(`orders`.`amount`)"),
         (OssieDialect.SNOWFLAKE, '"amount"', 'SUM("orders"."amount")'),
         (OssieDialect.BIGQUERY, "`amount`", "SUM(`orders`.`amount`)"),
+        (OssieDialect.SNOWFLAKE, '"amount"', 'SUM("customers"."public"."orders"."amount")'),
+        (OssieDialect.BIGQUERY, "`amount`", "SUM(`customers.public.orders`.amount)"),
     ],
 )
 def test_sql_only_dialect_exports_fields_and_places_metrics(dialect, amount, metric_sql):
@@ -387,6 +389,29 @@ def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
 
     assert [m["formula"] for m in element.get("metrics", [])] == [expected_formula]
     assert not any(i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE for i in result.issues)
+
+
+def test_a_sql_only_expression_is_reported_not_translatable_instead_of_crashing():
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="orders",
+                source="db.sch.orders",
+                fields=[OssieField(name="amount", expression=OssieExpression(sql="orders.amount"))],
+            )
+        ],
+        metrics=[OssieMetric(name="revenue", expression=OssieExpression(sql="SUM(orders.amount)"))],
+    )
+
+    result = OssieToSigmaConverter().convert(document)
+    element = result.output["pages"][0]["elements"][0]
+
+    assert not element["columns"]
+    assert not element.get("metrics")
+    assert [
+        i.element_name for i in result.issues if i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE
+    ] == ["orders.amount"]
 
 
 def test_synthesized_spec_carries_a_schema_version():

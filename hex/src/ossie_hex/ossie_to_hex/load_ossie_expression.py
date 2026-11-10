@@ -31,12 +31,13 @@ def load_ossie_field_expression(
     ossie_expression: OssieExpression,
     *,
     ctx: ExportContext,
-) -> OssieExpression:
+) -> OssieExpression | None:
     """Load an Ossie expression declared on an Ossie field.
 
     Attempts to find the preferred dialect and validates the expression.
 
-    Returns the original expression regardless of validation problems.
+    Returns the original expression regardless of validation problems, or None if
+    it has no dialect expressions.
     """
     # ASSUMPTION: Ossie field expressions are only allowed to reference underlying
     # physical columns (on database table/view/query) and do not contain logical
@@ -44,6 +45,8 @@ def load_ossie_field_expression(
     # the parsed output of the dialect expression(s).
     with ctx.problem_scope("dialects"):
         choice = pick_ossie_dialect_expression(ossie_expression.dialects, ctx=ctx)
+        if choice is None:
+            return None
         # The pinned SDK returns enums; newer SDKs preserve string tokens.
         dialect_name: OssieDialectName = (
             choice.dialect.value
