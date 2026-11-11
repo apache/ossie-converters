@@ -242,6 +242,32 @@ class MetricExpressionTranslatorTest {
     }
 
     @Test
+    void topLevelSqlCompilesWhenItIsTheOnlyExpression() {
+        Map<String, Object> metric = metric("OSSIE_SQL_2026", "SUM(orders.amount)");
+        metric.put("expression", Map.of("sql", "SUM(orders.amount)"));
+        assertEquals("SUM([orders].[amount])",
+                MetricExpressionTranslator.translate(metric, source(), target()).expression());
+    }
+
+    @Test
+    void topLevelSqlWinsOverAnOssieSqlEntry() {
+        Map<String, Object> metric = metric("OSSIE_SQL_2026", "SUM(orders.amount)");
+        metric.put("expression", Map.of("sql", "SUM(orders.profit)", "dialects", List.of(
+                Map.of("dialect", "OSSIE_SQL_2026", "expression", "SUM(orders.amount)"))));
+        assertEquals("SUM([orders].[profit])",
+                MetricExpressionTranslator.translate(metric, source(), target()).expression());
+    }
+
+    @Test
+    void vendorDialectsArePreferredOverTopLevelSql() {
+        Map<String, Object> metric = metric("OSSIE_SQL_2026", "SUM(orders.amount)");
+        metric.put("expression", Map.of("sql", "SUM(orders.amount)", "dialects", List.of(
+                Map.of("dialect", "TABLEAU", "expression", "SUM([orders].[profit])"))));
+        assertEquals("SUM([orders].[profit])",
+                MetricExpressionTranslator.translate(metric, source(), target()).expression());
+    }
+
+    @Test
     void portableOssieSqlQuotesIdentifiersTheAnsiWay() {
         assertEquals("SUM([orders].[amount])", translate("OSSIE_SQL_2026", "SUM(\"ORDERS\".\"AMOUNT\")"));
         assertTrue(assertThrows(ConversionException.class,

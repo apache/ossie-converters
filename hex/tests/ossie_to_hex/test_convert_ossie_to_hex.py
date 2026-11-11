@@ -599,7 +599,7 @@ def test_mixed_dialects_warn_only_for_nonportable_fallbacks(tmp_path: Path) -> N
     )
 
 
-def test_sql_only_expressions_are_dropped_with_an_error(tmp_path: Path) -> None:
+def test_sql_only_expressions_are_converted(tmp_path: Path) -> None:
     model = {
         "version": "0.2.0.dev0",
         "name": "sql_only",
@@ -639,12 +639,9 @@ def test_sql_only_expressions_are_dropped_with_an_error(tmp_path: Path) -> None:
     assert project is not None
     resource = project.resources[0]
     assert isinstance(resource, HexModel)
-    assert [dimension.expr_sql for dimension in resource.dimensions] == ["foo"]
-    assert not resource.measures
-    assert problems_snapshot(problems, include_causes=True) == snapshot("""\
-[ERROR] No dialect expression found; `sql` is not supported
-Cause: ['datasets', 'things', 'fields', 'bar', 'expression', 'dialects']
-
-[ERROR] No dialect expression found; `sql` is not supported
-Cause: ['metrics', 'total', 'expression', 'dialects']\
-""")
+    assert [dimension.expr_sql for dimension in resource.dimensions] == [
+        "foo",
+        "foo * 2",
+    ]
+    assert [measure.id for measure in resource.measures] == ["total"]
+    assert problems_snapshot(problems, include_causes=True) == snapshot("")

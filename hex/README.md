@@ -110,8 +110,10 @@ result in warnings. In the case it is not found, a best attempt will be made to
 maintain the member. The preference order is (1) a portable dialect
 (`OSSIE_SQL_2026` or `ANSI_SQL`), (2) the first dialect in the list.
 
-An expression that has only the portable `sql` and no dialect expressions is
-not supported yet. The field or metric is omitted with an error.
+The top-level `sql` of an expression is its `OSSIE_SQL_2026` form, so it counts
+as an `OSSIE_SQL_2026` dialect expression and comes first in the list. When an
+expression also has an `OSSIE_SQL_2026` dialect expression, `sql` wins, as the
+specification requires.
 
 Providing a dialect that can be normalized (by uppercasing) to a well-known
 value results in no problems. Otherwise, the dialect is considered unknown and

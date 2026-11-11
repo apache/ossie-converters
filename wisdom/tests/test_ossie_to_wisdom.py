@@ -363,7 +363,8 @@ def test_metric_only_ossie_sql_2026_is_exported_without_missing_issue():
     assert _issues_of(result, ConverterIssueType.MISSING_DIALECT_EXPRESSION) == []
 
 
-def test_sql_only_field_and_metric_are_dropped_with_missing_issues():
+def test_sql_only_field_and_metric_are_exported_from_their_sql():
+    """The top-level `sql` is the OSSIE_SQL_2026 form, so it is exported like one."""
     from ossie import OssieMetric
 
     document = OssieDocument(
@@ -372,21 +373,69 @@ def test_sql_only_field_and_metric_are_dropped_with_missing_issues():
             OssieDataset(
                 name="orders",
                 source="analytics.sales.orders",
-                fields=[OssieField(name="region", expression=OssieExpression(sql="orders.region"))],
+                fields=[OssieField(name="region", expression=OssieExpression(sql="UPPER(o_region)"))],
             )
         ],
         metrics=[OssieMetric(name="total_amount", expression=OssieExpression(sql="SUM(orders.amount)"))],
     )
     result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
     table = _table(result.output, "orders")
-    assert table["columns"] == []
-    assert "formulas" not in table
-    assert "measures" not in table
-    assert sorted(issue.element_name for issue in _issues_of(result, ConverterIssueType.MISSING_DIALECT_EXPRESSION)) == [
-        "orders.region",
-        "total_amount",
-    ]
+    formulas = {formula["name"]: formula["expression"] for formula in table.get("formulas", [])}
+    measures = {measure["name"]: measure["expression"] for measure in table.get("measures", [])}
+    assert formulas == {"region": "UPPER(o_region)"}
+    assert measures == {"total_amount": "SUM(orders.amount)"}
+    assert _issues_of(result, ConverterIssueType.MISSING_DIALECT_EXPRESSION) == []
     assert _issues_of(result, ConverterIssueType.METRIC_TABLE_UNRESOLVED) == []
+
+
+def test_sql_preferred_over_ossie_sql_2026():
+    """The spec makes `sql` authoritative over an OSSIE_SQL_2026 entry."""
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="orders",
+                source="analytics.sales.orders",
+                fields=[
+                    OssieField(
+                        name="region",
+                        expression=OssieExpression(
+                            sql="sql_region",
+                            dialects=_expr((OssieDialect.OSSIE_SQL_2026, "portable_region")).dialects,
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+    result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
+    formulas = {formula["name"]: formula["expression"] for formula in _table(result.output, "orders").get("formulas", [])}
+    assert formulas == {"region": "sql_region"}
+
+
+def test_sql_preferred_over_a_non_sql_dialect():
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="orders",
+                source="analytics.sales.orders",
+                fields=[
+                    OssieField(
+                        name="region",
+                        expression=OssieExpression(
+                            sql="sql_region",
+                            dialects=_expr((OssieDialect.TABLEAU, "[Region]")).dialects,
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+    result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
+    formulas = {formula["name"]: formula["expression"] for formula in _table(result.output, "orders").get("formulas", [])}
+    assert formulas == {"region": "sql_region"}
+    assert _issues_of(result, ConverterIssueType.MISSING_DIALECT_EXPRESSION) == []
 
 
 def test_ansi_sql_preferred_over_ossie_sql_2026():

@@ -978,6 +978,22 @@ class TestOssieToMSIDialectSelection:
 
         assert result.output.metrics[0].type_params.expr == "amount"
 
+    def test_the_top_level_sql_wins_over_an_ossie_sql_2026_entry_in_that_dialect(self) -> None:
+        doc = _doc_with_metric_expression(
+            OssieExpression(
+                sql="SUM(orders.amount)",
+                dialects=[
+                    OssieDialectExpression(
+                        dialect=OssieDialect.OSSIE_SQL_2026, expression="SUM(orders.amount_other)"
+                    )
+                ],
+            )
+        )
+
+        result = OssieToMSIConverter(dialect=OssieDialect.OSSIE_SQL_2026).convert(doc)
+
+        assert result.output.metrics[0].type_params.expr == "amount"
+
     def test_the_first_ossie_sql_2026_entry_wins_when_the_dialect_is_repeated(self) -> None:
         # `dialects` has no `uniqueItems` constraint, so the same dialect may be listed twice.
         doc = _doc_with_metric_expression(
