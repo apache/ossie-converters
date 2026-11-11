@@ -117,6 +117,9 @@ converters:
     output: directory
     fixtures:
       orders: interop/fixtures/lightdash/orders
+  linkml:
+    cwd: linkml
+    skip: Converts between LinkML schemas and Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
   microsoft:
     cwd: microsoft
     toolchain: uv

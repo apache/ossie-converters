@@ -40,10 +40,13 @@ class LinkmlToOssieConverter:
     """Converts a LinkML schema to OssieOntology (runtime model).
 
     Takes the same *formula_factory* / *mapping_formula_factory* as
-    SpecToOssieConverter, because it hands the spec -> model step to it.
+    SpecToOssieConverter, because it hands the spec -> model step to it. Left
+    unset, SpecToOssieConverter's defaults apply and every `requires` and
+    `derived_by` is parsed, so a formula the parser cannot read raises. Pass
+    `FormulaFactory()` to keep formulas as raw text instead.
 
         model = LinkmlToOssieConverter().convert_file("model.yaml")
-        model = LinkmlToOssieConverter(formula_factory=my_parser).convert(schema)
+        model = LinkmlToOssieConverter(formula_factory=FormulaFactory()).convert(schema)
 
     `convert` takes an already-loaded `ohi_linkml.Schema`; use it when you
     want to run other generators over the same schema, since loading is the
@@ -53,8 +56,10 @@ class LinkmlToOssieConverter:
 
     def __init__(self, formula_factory: FormulaFactory | None = None,
                  mapping_formula_factory: MappingFormulaFactory | None = None):
-        self._formula_factory = formula_factory or FormulaFactory()
-        self._mapping_formula_factory = mapping_formula_factory or MappingFormulaFactory()
+        # Left as given so SpecToOssieConverter applies its own default (the
+        # parsing factories); downstream converters skip unparsed formulas.
+        self._formula_factory = formula_factory
+        self._mapping_formula_factory = mapping_formula_factory
 
     def convert(
         self,
@@ -66,7 +71,7 @@ class LinkmlToOssieConverter:
         """Convert a loaded schema.
 
         *pruning_mode* selects which elements become concepts, and *tree_root*
-        names the class to prune from (only with `pruning_mode="treeRoot"`).
+        names the class to prune from (only with `pruning_mode="tree_root"`).
         *metadata_language* picks the language of `description` fields in
         schemas that carry translations.
         """

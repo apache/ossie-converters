@@ -75,6 +75,8 @@ print(OssieToSpecConverter.convert(ontology).dump_yaml())
 print(OssieToLinkmlConverter.convert(ontology, schema_id="https://example.org/my-schema"))
 ```
 
+`LinkmlToOssieConverter` parses every `requires` and `derived_by` formula, like the rest of `apache-ossie-ontology`, so a formula the parser cannot read raises an error. The parser does not support `IN` yet, so a LinkML enum on a string type, which comes back as `X IN ('a', 'b')`, cannot be loaded into the runtime model this way. To keep formulas as raw text instead, pass `LinkmlToOssieConverter(formula_factory=FormulaFactory())` (from `ossie_ontology.model`). `convert_to_spec` and `scripts/linkml_to_ossie.py` stop at the Ossie document and are not affected.
+
 ## Scripts
 
 ### `scripts/ossie_to_linkml.py`

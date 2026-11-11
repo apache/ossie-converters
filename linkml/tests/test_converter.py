@@ -35,6 +35,7 @@ import pytest
 import yaml
 
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
+from ossie_ontology.expr.formula.model import Formula as ParsedFormula
 from ossie_ontology.model import OssieOntology
 from ossie_ontology.spec import OssieSpec
 
@@ -44,6 +45,23 @@ from ossie_linkml import LinkmlToOssieConverter, OssieToLinkmlConverter
 @pytest.fixture
 def flights_linkml(flights_model: OssieOntology) -> str:
     return OssieToLinkmlConverter.convert(flights_model)
+
+
+@pytest.fixture
+def flights_linkml_parseable(flights_path) -> str:
+    """The flights schema without the one formula the parser cannot read back.
+
+    `CancelationCode` becomes a LinkML enum, and the enum comes back as
+    `CancelationCode IN ('A', 'B', 'C', 'D')`. The formula parser in
+    `apache-ossie-ontology` does not support `IN` (see
+    `test_enum_comes_back_as_in_which_the_parser_rejects`), so tests that read
+    the flights schema back with parsing on drop that one constraint first.
+    """
+    spec = OssieSpec.load_yaml(flights_path.read_text(encoding="utf-8"))
+    cancelation_code = next(c for c in spec.ontology if c.concept == "CancelationCode")
+    assert cancelation_code.requires, "fixture changed: CancelationCode has no requires to drop"
+    cancelation_code.requires = []
+    return OssieToLinkmlConverter.convert_spec(spec)
 
 
 # ----- Ossie -> LinkML ---------------------------------------------------
@@ -60,9 +78,11 @@ def test_schema_carries_concepts(flights_linkml: str):
     schema = yaml.safe_load(flights_linkml)
     assert schema["name"] == "Flights"
     assert schema["description"] == "Ontology of flights into and out of airports."
-    # Entity types become classes, value types become types.
+    # Entity types become classes, value types become types...
     assert {"Airport", "Flight", "Carrier"} <= set(schema["classes"])
-    assert {"CancelationCode", "DegreesLatitude"} <= set(schema["types"])
+    assert "DegreesLatitude" in schema["types"]
+    # ...except a string value type limited to a fixed list, which becomes an enum.
+    assert set(schema["enums"]["CancelationCode"]["permissible_values"]) == {"A", "B", "C", "D"}
     # Relationships under a concept become that class's attributes.
     assert "code" in schema["classes"]["Airport"]["attributes"]
 
@@ -96,16 +116,16 @@ def test_convert_spec_matches_convert(flights_model: OssieOntology, flights_path
 
 # ----- LinkML -> Ossie ---------------------------------------------------
 
-def test_convert_text_returns_model(flights_linkml: str):
-    model = LinkmlToOssieConverter().convert_text(flights_linkml)
+def test_convert_text_returns_model(flights_linkml_parseable: str):
+    model = LinkmlToOssieConverter().convert_text(flights_linkml_parseable)
     assert model.name == "Flights"
-    assert model.version == "0.2.0.dev0"
+    assert model.version == "0.3.0.dev0"
     assert model.description == "Ontology of flights into and out of airports."
 
 
-def test_convert_file_reads_from_disk(flights_linkml: str, tmp_path):
+def test_convert_file_reads_from_disk(flights_linkml_parseable: str, tmp_path):
     path = tmp_path / "flights.linkml.yaml"
-    path.write_text(flights_linkml, encoding="utf-8")
+    path.write_text(flights_linkml_parseable, encoding="utf-8")
     assert LinkmlToOssieConverter().convert_file(path).name == "Flights"
 
 
@@ -116,16 +136,29 @@ def test_convert_to_spec_stops_at_the_dto(flights_linkml: str):
     assert spec.name == "Flights"
 
 
-def test_converters_do_not_share_formula_factories():
-    a, b = LinkmlToOssieConverter(), LinkmlToOssieConverter()
-    assert a._formula_factory is not b._formula_factory
-    assert a._mapping_formula_factory is not b._mapping_formula_factory
+def test_formulas_are_parsed_by_default(flights_linkml_parseable: str):
+    # Downstream converters (e.g. RelationalAI) skip formulas that were not
+    # parsed, so the default must parse them. `minimum_value` / `maximum_value`
+    # on the LinkML side come back as these two bounds.
+    back = LinkmlToOssieConverter().convert_text(flights_linkml_parseable)
+    requires = back.ontology.lookup_concept("DegreesLatitude").requires
+    assert sorted(f.raw_expr for f in requires) == ["DegreesLatitude <= 90", "DegreesLatitude >= -90"]
+    assert all(isinstance(f, ParsedFormula) for f in requires)
+
+
+def test_enum_comes_back_as_in_which_the_parser_rejects(flights_linkml: str):
+    # Known limitation, not a converter bug: `IN` is in the core expression
+    # language, but the ontology formula parser does not support it yet.
+    # This test fails once the parser learns `IN` -- then drop the
+    # workaround in `flights_linkml_parseable` and this test.
+    with pytest.raises(ValueError, match="Unable to parse"):
+        LinkmlToOssieConverter().convert_text(flights_linkml)
 
 
 # ----- Round-trip --------------------------------------------------------
 
-def test_roundtrip_preserves_concepts_and_relationships(flights_model: OssieOntology, flights_linkml: str):
-    back = LinkmlToOssieConverter().convert_text(flights_linkml)
+def test_roundtrip_preserves_concepts_and_relationships(flights_model: OssieOntology, flights_linkml_parseable: str):
+    back = LinkmlToOssieConverter().convert_text(flights_linkml_parseable)
 
     def names(model: OssieOntology) -> tuple[set[str], set[str]]:
         ontology = model.ontology
@@ -137,8 +170,8 @@ def test_roundtrip_preserves_concepts_and_relationships(flights_model: OssieOnto
     assert names(back) == names(flights_model)
 
 
-def test_roundtrip_preserves_concept_types_and_identifiers(flights_model: OssieOntology, flights_linkml: str):
-    back = LinkmlToOssieConverter().convert_text(flights_linkml)
+def test_roundtrip_preserves_concept_types_and_identifiers(flights_model: OssieOntology, flights_linkml_parseable: str):
+    back = LinkmlToOssieConverter().convert_text(flights_linkml_parseable)
     for concept in flights_model.ontology.concepts(exclude_builtin=True):
         returned = back.ontology.lookup_concept(concept.name)
         assert returned is not None, concept.name
@@ -146,11 +179,11 @@ def test_roundtrip_preserves_concept_types_and_identifiers(flights_model: OssieO
         assert set(returned.identify_by) == set(concept.identify_by), concept.name
 
 
-def test_roundtrip_drops_ontology_mappings(flights_model: OssieOntology, flights_linkml: str):
+def test_roundtrip_drops_ontology_mappings(flights_model: OssieOntology, flights_linkml_parseable: str):
     # Documents a known loss: LinkML describes types and their slots, so there
     # is nowhere to put datasets, join paths or metrics.
     assert flights_model.ontology_mappings != []
-    assert LinkmlToOssieConverter().convert_text(flights_linkml).ontology_mappings == []
+    assert LinkmlToOssieConverter().convert_text(flights_linkml_parseable).ontology_mappings == []
 
 
 # ----- One full example, in both YAML formats ----------------------------
@@ -167,9 +200,12 @@ def test_roundtrip_drops_ontology_mappings(flights_model: OssieOntology, flights
 #   extends: [ Integer ]                typeof: integer
 #   requires: [ NrPages >= 1 ]          minimum_value: 1
 #   iri on a value type                 that type's uri
+#   a string value type that requires   an entry under `enums` instead,
+#   one of a fixed list of values       with those values permitted
 #   concept, type: EntityType           an entry under `classes`
 #   iri on an entity type               class_uri
 #   relationships                       that class's `attributes`
+#   the concept a relationship is in    domain on that attribute
 #   iri on a relationship               slot_uri
 #   roles: [ { concept: Isbn } ]        range: Isbn
 #   verbalizes                          title (the phrase, placeholders cut)
@@ -183,7 +219,7 @@ def test_roundtrip_drops_ontology_mappings(flights_model: OssieOntology, flights
 #   the order relationships are in      rank
 
 EXAMPLE_OSSIE = """\
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: Books
 description: A tiny ontology of books and the people who wrote them.
 prefixes:
@@ -266,6 +302,7 @@ classes:
     attributes:
       isbn:
         slot_uri: ex:isbn
+        domain: Book
         title: is identified by
         identifier: true
         required: true
@@ -273,11 +310,13 @@ classes:
         range: Isbn
       pages:
         slot_uri: ex:pages
+        domain: Book
         title: has pages-
         rank: 2
         range: NrPages
       written_by:
         slot_uri: ex:written_by
+        domain: Book
         title: is written by
         alias: writtenBy
         multivalued: true
@@ -289,6 +328,7 @@ classes:
     attributes:
       name:
         slot_uri: ex:name
+        domain: Author
         title: is identified by
         identifier: true
         required: true

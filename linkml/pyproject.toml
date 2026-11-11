@@ -40,7 +40,7 @@ keywords = [
 ]
 dependencies = [
     "apache-ossie-ontology",
-    "neverblink-linkml~=0.18.1",
+    "neverblink-linkml~=0.18.2",
 ]
 
 [project.urls]
