@@ -1904,6 +1904,33 @@ class TestMetricFilterFlattening:
             "SUM(CASE WHEN order__country = 'US' THEN orders.amount END)"
         )
 
+    def test_jinja_dimension_reference_uses_the_columns_of_its_own_convert_call(self) -> None:
+        """One instance converts two manifests that put order__country on different columns."""
+        metric = PydanticMetric(
+            name="us_revenue",
+            description=None,
+            type=MetricType.SIMPLE,
+            type_params=PydanticMetricTypeParams(measure=PydanticMetricInputMeasure(name="revenue")),
+            filter=_filter("{{ Dimension('order__country') }} = 'US'"),
+            metadata=default_meta(),
+            config=None,
+        )
+        renamed = semantic_model_with_guaranteed_meta(
+            name="orders",
+            entities=[_entity("order", expr="order_id")],
+            dimensions=[_dimension("country", expr="ship_country")],
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        converter = MSIToOssieConverter()
+
+        def convert(sm: PydanticSemanticModel) -> str:
+            result = converter.convert(_manifest(semantic_models=[sm], metrics=[metric])).output
+            return _ossie_metrics(result)[0].expression.dialects[0].expression
+
+        assert convert(self._orders()) == "SUM(CASE WHEN orders.country_code = 'US' THEN orders.amount END)"
+        assert convert(renamed) == "SUM(CASE WHEN orders.ship_country = 'US' THEN orders.amount END)"
+        assert vars(converter) == {"_dialect": converter._dialect}
+
     def test_jinja_dimension_reference_round_trips_without_issues(self) -> None:
         metric = PydanticMetric(
             name="us_revenue",
