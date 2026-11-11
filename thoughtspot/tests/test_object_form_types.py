@@ -42,6 +42,7 @@ from ossie_thoughtspot.constants import (
     DATASET_STASH_SOURCE_PARTS,
     FIELD_STASH_DB_COLUMN_NAME,
     FIELD_STASH_DB_COLUMN_NAME_WITNESS,
+    FIELD_STASH_FORMULA_NAME,
     MODEL_STASH_UNATTRIBUTED_FORMULAS,
     VENDOR_KEY,
 )
@@ -69,6 +70,24 @@ def _bracket_field(display, table, *, field_stash=None):
     if field_stash is not None:
         field["custom_extensions"] = _object_stash(**field_stash)
     return field
+
+
+def _model_with_unattributed_formula(formula):
+    """A model whose only stashed content is one unattributed formula."""
+    return {
+        "name": "sales",
+        "datasets": [{
+            "name": "orders",
+            "source": "SALES.PUBLIC.ORDERS",
+            "fields": [{"name": "amount",
+                        "expression": {"dialects": [
+                            {"dialect": "ANSI_SQL", "expression": "amount"}]}}],
+            "custom_extensions": _object_stash(**{
+                DATASET_STASH_CONNECTION_NAME: "My Snowflake"}),
+        }],
+        "custom_extensions": _object_stash(**{
+            MODEL_STASH_UNATTRIBUTED_FORMULAS: [formula]}),
+    }
 
 
 class TestTheLoaderReallyDoesThis:
@@ -220,6 +239,37 @@ class TestARetypedStringIsReportedNotCrashedOn:
         tables = [build_table(model["datasets"][0], IssueLog())]
         build_model(model, tables, log)
         assert "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED" in _codes(log)
+
+    @pytest.mark.parametrize(
+        ("formula", "before"),
+        [
+            # Measured on christianeu-db's review of PR #137: the per-entry
+            # check covered `name` only, so each of these reached a
+            # string-only operation and died bare.
+            ({"name": "Target", "expr": 2024},
+             "TypeError: 'int' object is not iterable"),
+            ({"name": "Target", "expr": "1 + 1", FIELD_STASH_FORMULA_NAME: 2024},
+             "AttributeError: 'int' object has no attribute 'strip'"),
+        ],
+    )
+    def test_an_unattributed_formula_whose_other_texts_are_not_strings(
+        self, formula, before
+    ):
+        model = _model_with_unattributed_formula(formula)
+        log = IssueLog()
+        tables = [build_table(model["datasets"][0], IssueLog())]
+        build_model(model, tables, log)
+        assert "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED" in _codes(log), before
+
+    def test_an_explicitly_null_expression_is_not_treated_as_malformed(self):
+        # `expr: null` is a present key, so a two-argument `.get` default never
+        # fires; the reader reads it as absent rather than reporting it. The
+        # guard above must not over-reach into this case.
+        model = _model_with_unattributed_formula({"name": "Target", "expr": None})
+        log = IssueLog()
+        tables = [build_table(model["datasets"][0], IssueLog())]
+        build_model(model, tables, log)
+        assert "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED" not in _codes(log)
 
 
 def test_the_string_form_is_unaffected_by_any_of_this():

@@ -2225,19 +2225,32 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         formulas.append(unsurfaced_entry)
 
     for entry in model_payload.get(MODEL_STASH_UNATTRIBUTED_FORMULAS) or []:
-        if not isinstance(entry, dict) or not isinstance(entry.get("name", ""), str):
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("name", ""), str)
+            or not isinstance(entry.get("expr") or "", str)
+            or not isinstance(entry.get(FIELD_STASH_FORMULA_NAME) or "", str)
+        ):
             # `_formula_id_from` normalises the display name and raises a bare
             # TypeError on anything that is not a string. A hand-written
             # object-form payload gets its scalars typed by the YAML loader,
             # so an unquoted name like `2024` arrives as an int. Report and
             # skip rather than abort the whole model for one entry.
+            #
+            # All three texts, not just the name: each reaches a string-only
+            # operation further down this loop, and each was measured doing it
+            # bare (christianeu-db's review on PR #137). `expr` ends in
+            # `TypeError: 'int' object is not iterable` and the stashed
+            # formula name in `AttributeError: 'int' object has no attribute
+            # 'strip'` -- both escape the CLI's handler and print a traceback,
+            # which is the one thing this reader promises not to do.
             log.add(
                 code="TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED",
                 severity=Severity.WARNING,
                 message=(
-                    "a stashed unattributed formula is not a mapping with a "
-                    "string name, so it is skipped; the formula it described "
-                    "is not restored"
+                    "a stashed unattributed formula is not a mapping whose "
+                    "name, expression and stashed formula name are all text, "
+                    "so it is skipped; the formula it described is not restored"
                 ),
                 object_ref=object_ref,
             )
@@ -2294,7 +2307,10 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
             formula_name = allocator.allocate(
                 formula_name_raw, log, object_ref=f"formula:{formula_name_raw}"
             )
-        expr = entry.get("expr", "")
+        # `or ""`, not `.get("expr", "")`: an explicit `expr: null` is a
+        # present key, so the two-argument default never fires and None would
+        # reach the same non-iterable failure an int does.
+        expr = entry.get("expr") or ""
         formula_id = _formula_id_from(formula_name)
         # Raw, unwrapped `expr` -- see the matching comment in _build_field.
         unattributed_entry = {"id": formula_id, "name": formula_name, "expr": expr}
