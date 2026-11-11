@@ -859,7 +859,7 @@ class TestMetricConversion:
 
         arpu_ossie = next(m for m in _ossie_metrics(result) if m.name == "arpu")
         assert arpu_ossie.expression.dialects[0].expression == (
-            "(SUM(orders.amount)) / (SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END))"
+            "(SUM(orders.amount)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END), 0)"
         )
         assert result.to_ossie_yaml() == snapshot
 
@@ -1864,7 +1864,7 @@ class TestMetricFilterFlattening:
         assert paid_arpu.expression.dialects[0].expression == (
             "(SUM(CASE WHEN status = 'paid' THEN orders.amount END))"
             " / "
-            "(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END))"
+            "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
         )
 
     def test_derived_metric_filter_propagated_to_sub_expressions(self) -> None:

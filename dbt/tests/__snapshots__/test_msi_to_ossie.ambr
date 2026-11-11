@@ -100,8 +100,8 @@
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: (SUM(orders.amount)) / (SUM(CASE WHEN orders.order_id IS NOT NULL
-          THEN 1 ELSE 0 END))
+        expression: (SUM(orders.amount)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT
+          NULL THEN 1 ELSE 0 END), 0)
   
   '''
 # ---

@@ -473,7 +473,11 @@ class MSIToOssieConverter:
         cache: Dict[Tuple[str, Optional[str]], str],
         filter_sql: Optional[str] = None,
     ) -> str:
-        """Resolve a RATIO metric as (numerator) / (denominator), both fully inlined."""
+        """Resolve a RATIO metric as (numerator) / NULLIF(denominator, 0), both fully inlined.
+
+        MetricFlow divides by NULLIF(denominator, 0), so a group whose denominator is 0 gets NULL;
+        a plain division would make the whole query fail on engines that raise on division by zero.
+        """
         if metric.type_params.numerator is None or metric.type_params.denominator is None:
             raise ValueError(
                 f"RATIO metric is missing numerator or denominator: metric_name={metric.name!r}"
@@ -494,7 +498,7 @@ class MSIToOssieConverter:
             cache,
             den_filter,
         )
-        return f"({num_expr}) / ({den_expr})"
+        return f"({num_expr}) / NULLIF({den_expr}, 0)"
 
     def _resolve_derived(
         self,
