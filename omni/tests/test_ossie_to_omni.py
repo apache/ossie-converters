@@ -307,6 +307,36 @@ def test_fallback_translates_databricks_identifier_quoting(target):
     )
 
 
+def test_warehouse_fallback_without_target_warns_for_fields_and_metrics():
+    source = minimal(
+        datasets=[{"name": "orders", "source": "db.sch.orders", "fields": [
+            _field("currency", "UPPER(`Currency Code`)", "DATABRICKS")
+        ]}],
+        metrics=[_field("total", "SUM(orders.amount)", "DATABRICKS")],
+    )
+    with pytest.warns(UserWarning, match="without a target warehouse") as recorded:
+        convert_ossie_to_omni(source)
+    assert {str(w.message).split("]")[0] for w in recorded} == {
+        "[dataset 'orders': field 'currency'", "[metric 'total'"
+    }
+    files = convert_ossie_to_omni(source, dialect="DATABRICKS")
+    assert parse(files["views/orders.view.yaml"])["dimensions"]["currency"]["sql"] == (
+        "UPPER(`Currency Code`)"
+    )
+
+
+@pytest.mark.parametrize("with_sibling", [False, True])
+def test_export_uses_authoritative_top_level_sql(with_sibling):
+    expression = {"sql": "amount * 0.9"}
+    if with_sibling:
+        expression["dialects"] = [{"dialect": "OSSIE_SQL_2026", "expression": "amount"}]
+    files = export(minimal(datasets=[{"name": "orders", "source": "db.sch.orders",
+                                    "fields": [{"name": "discount", "expression": expression}]}]))
+    assert parse(files["views/orders.view.yaml"])["dimensions"]["discount"]["sql"] == (
+        "amount * 0.9"
+    )
+
+
 @pytest.mark.parametrize("sql", ["vendor_only(amount)", "amount; SELECT 1"])
 def test_untranslatable_warehouse_expression_is_omitted(sql):
     source = minimal(datasets=[{"name": "orders", "source": "db.sch.orders",

@@ -141,7 +141,10 @@ Import emits `ANSI_SQL`. Export first uses an exact `--dialect` match, then
 `ANSI_SQL`, preserving either verbatim. It can also translate
 `OSSIE_SQL_2026`, `DATABRICKS`, `SNOWFLAKE`, and `BIGQUERY` expressions into
 the selected warehouse dialect or SQLGlot's generic SQL when no dialect is
-selected. SQLGlot's generic dialect also parses `OSSIE_SQL_2026` fallbacks.
+selected. The top-level `expression.sql` takes precedence over a sibling
+`OSSIE_SQL_2026` entry. Export warns whenever it translates warehouse SQL to
+generic SQL without an explicit target. Pass `--dialect` for the Omni
+connection to get SQL for that warehouse.
 A field or metric with no usable expression is dropped with a warning.
 
 ## Requirements

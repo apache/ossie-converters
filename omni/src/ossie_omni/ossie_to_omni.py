@@ -302,7 +302,7 @@ def _convert_dataset(ds, vname, view_names, dialect):
         fscope = f"field '{fname}'"
         dname = sanitize_name(fname, f"{scope}: field", taken)
         taken.add(dname.lower())
-        expr = pick_expression(field.get("expression"), dialect)
+        expr = pick_expression(field.get("expression"), dialect, scope=f"{scope}: {fscope}")
         if expr is None:
             _warn(fscope, "no usable SQL expression; dropping field")
             continue
@@ -551,7 +551,7 @@ def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect):
         _apply_metric_metadata(metric, measure)
         return stash.get("view") or resolve_base(), mname, measure
 
-    expr = pick_expression(metric.get("expression"), dialect)
+    expr = pick_expression(metric.get("expression"), dialect, scope=scope)
     if expr is None:
         _warn(scope, "no usable SQL expression; dropping metric")
         return None

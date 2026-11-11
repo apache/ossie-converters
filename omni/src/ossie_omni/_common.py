@@ -28,6 +28,7 @@ import datetime
 import json
 import os
 import re
+import warnings
 
 import sqlglot
 from sqlglot import Dialect, exp
@@ -338,20 +339,22 @@ def foreign_vendor_extensions(obj):
     ]
 
 
-def pick_expression(ossie_expression, preferred=None):
+def pick_expression(ossie_expression, preferred=None, *, scope="expression"):
     """Choose the SQL string for an Ossie expression.
 
     Preserve a matching preferred or ANSI_SQL expression verbatim. Otherwise
     translate a supported SQL alternative into the requested warehouse dialect
     or generic SQL.
     """
+    ossie_expression = ossie_expression or {}
     dialects = {
         d.get("dialect"): d.get("expression")
-        for d in (ossie_expression or {}).get("dialects") or []
+        for d in ossie_expression.get("dialects") or []
     }
-    expr = None
-    if preferred:
-        expr = dialects.get(preferred)
+    primary = ossie_expression.get("sql")
+    if primary is not None:
+        dialects["OSSIE_SQL_2026"] = primary
+    expr = dialects.get(preferred) if preferred else primary
     if expr is None:
         expr = dialects.get(DIALECT_ANSI)
     if expr is not None:
@@ -380,7 +383,15 @@ def pick_expression(ossie_expression, preferred=None):
             # passes them through without detecting a translation failure.
             if tree.find(exp.Anonymous, exp.Query, exp.Command, exp.DDL, exp.DML):
                 continue
-            return tree.sql(dialect=writer, unsupported_level=ErrorLevel.RAISE)
+            rendered = tree.sql(dialect=writer, unsupported_level=ErrorLevel.RAISE)
+            if not preferred and dialect in _WAREHOUSE_SQL_DIALECTS:
+                warnings.warn(
+                    f"[{scope}] translated {dialect} to generic SQL without a target "
+                    "warehouse. Pass --dialect for the Omni connection before using "
+                    "this expression.",
+                    stacklevel=2,
+                )
+            return rendered
         except SqlglotError:
             continue
     return None
