@@ -61,6 +61,15 @@ and, each by a rule that makes it exact:
   DAX raises an error for too few values (one value for ``STDEV.S``), SQL returns NULL:
   neither side produces a number.
 
+and the X-iterators over a table named directly: ``SUMX(T, e)`` -> ``SUM(e)``, likewise
+``AVERAGEX`` (``AVG``), ``MINX`` / ``MAXX``, ``COUNTX`` (``COUNT``, not over TRUE/FALSE),
+``MEDIANX``, ``PERCENTILEX.INC`` (``PERCENTILE_CONT ... WITHIN GROUP``), ``STDEVX.S`` / ``.P``
+and ``VARX.S`` / ``.P``. The row expression ``e`` is translated in the row context of ``T``:
+``T[col]`` is the column's value on the row, and the BLANK rules above apply per row. DAX
+skips BLANK results as SQL skips NULL. ``e`` may read only columns of ``T`` (another table
+needs ``RELATED``) and no measure (context transition) or aggregate (nested aggregation),
+and must read at least one column, so the aggregate reads exactly one dataset.
+
 and composition over them:
 
 * ``DIVIDE(a, b)`` -> ``a / NULLIF(b, 0)``. DAX returns BLANK when ``b`` is zero or
@@ -224,6 +233,7 @@ from ._dax_parser import (
     Number,
     Row,
     String,
+    Table,
     TableConstructor,
     Unary,
     Var,
@@ -296,7 +306,9 @@ TRANSLATED_FUNCTIONS = frozenset(_AGGREGATES) | frozenset(
     "YEAR", "QUARTER", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "DATE", "EDATE",
     "EOMONTH",
 } | frozenset(("COUNT", "DISTINCTCOUNT", "MEDIAN", "PERCENTILE.INC", "STDEV.S", "STDEV.P",
-               "VAR.S", "VAR.P"))
+               "VAR.S", "VAR.P")) | frozenset(("SUMX", "AVERAGEX", "MINX", "MAXX", "COUNTX",
+                                              "MEDIANX", "PERCENTILEX.INC", "STDEVX.S",
+                                              "STDEVX.P", "VARX.S", "VARX.P"))
 
 # A simple identifier: a letter or underscore, then letters, digits, underscores.
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -434,8 +446,12 @@ def translate_column(expression, table, columns):
 
 
 class _Translator:
-    def __init__(self, resolve, measures, row_table=None, row_columns=None):
+    def __init__(self, resolve, measures, row_table=None, row_columns=None, iter_table=None):
         self.resolve = resolve
+        # Iterator row context: set while translating the row expression of SUMX and the
+        # other X-iterators over ``iter_table``; ``reads`` counts the columns it reads.
+        self.iter_table = iter_table
+        self.reads = 0
         self.measures = {name.upper(): dax for name, dax in (measures or {}).items()}
         self.expanding = []
         # Row context: set when translating a calculated column of ``row_table``.
@@ -454,6 +470,11 @@ class _Translator:
         if isinstance(node, Unary):
             return self.unary(node, variables)
         if isinstance(node, Bracket):
+            if self.iter_table is not None:
+                raise _RefusedError(
+                    f"[{node.name}] inside an iterator's row expression: a measure there is "
+                    "evaluated with context transition, and a column must name its table"
+                )
             if self.row_table is not None:
                 return self.row_column(node.name)
             return self.measure_reference(node.name)
@@ -463,6 +484,8 @@ class _Translator:
             return self.variable(node.name, variables)
         if isinstance(node, Var):
             return self.var_block(node, variables)
+        if isinstance(node, Column) and self.iter_table is not None:
+            return self.iter_column(node)
         if isinstance(node, Column) and self.row_table is not None:
             if node.table.upper() != self.row_table.upper():
                 raise _RefusedError(
@@ -484,6 +507,21 @@ class _Translator:
     # --- functions --------------------------------------------------------------
 
     def call(self, node, variables):
+        if self.iter_table is not None and (
+            node.name in _AGGREGATES or node.name in _COLUMN_AGGREGATES
+            or node.name in _ITERATORS or node.name == "PERCENTILE.INC"
+        ):
+            raise _RefusedError(
+                f"{node.name} inside an iterator's row expression is a nested aggregation, "
+                "a later tier"
+            )
+        if node.name in _ITERATORS:
+            if self.row_table is not None:
+                raise _RefusedError(
+                    f"{node.name} in a calculated column ranges over a whole table, "
+                    "which a field expression cannot express"
+                )
+            return self.iterator(node, variables)
         if node.name in _AGGREGATES:
             if self.row_table is not None:
                 raise _RefusedError(
@@ -589,6 +627,73 @@ class _Translator:
                 "raises an error outside that range)"
             )
         return _Sql(f"PERCENTILE_CONT({k.text}) WITHIN GROUP (ORDER BY {field})", _ATOM, True)
+
+    def iterator(self, node, variables):
+        """SUMX(Table, expression) and the other X-iterators -> the aggregate of the row
+        expression, translated in the row context of ``Table``.
+
+        DAX evaluates the expression once per row of the table (in the current filter
+        context) and aggregates the results, skipping BLANK; SQL evaluates it per row of the
+        dataset and skips NULL. Within the row, the same BLANK rules as everywhere else
+        apply (``BLANK * x`` is BLANK, ``BLANK + x`` is ``x``). The expression may read
+        only columns of the iterated table, so the aggregate reads exactly one dataset.
+        """
+        template, accepted = _ITERATORS[node.name]
+        expected = 3 if node.name == "PERCENTILEX.INC" else 2
+        if len(node.args) != expected:
+            raise _RefusedError(f"{node.name} takes {expected} arguments")
+        table = node.args[0]
+        if isinstance(table, (Table, Name)) and not (
+            isinstance(table, Name) and table.name.upper() in variables
+        ):
+            table_name = table.name
+        else:
+            raise _RefusedError(
+                f"{node.name} is translated only over a table named directly; a table "
+                "expression (FILTER, VALUES, ...) is a later tier"
+            )
+        inner = _Translator(self.resolve, None, iter_table=table_name)
+        value = inner.translate(node.args[1], {})
+        if inner.reads == 0:
+            raise _RefusedError(
+                f"the row expression of {node.name} reads no column of '{table_name}', so "
+                "the aggregate reads no dataset and has no defined grain"
+            )
+        if value.kind not in accepted:
+            raise _RefusedError(
+                f"{node.name} of a {value.kind} row expression is not translated"
+            )
+        if node.name == "PERCENTILEX.INC":
+            k = node.args[2]
+            if not isinstance(k, Number) or not 0 <= float(k.text) <= 1:
+                raise _RefusedError(
+                    "PERCENTILEX.INC is translated only with a literal k between 0 and 1 "
+                    "(DAX raises an error outside that range)"
+                )
+            text = f"PERCENTILE_CONT({k.text}) WITHIN GROUP (ORDER BY {value.text})"
+        else:
+            text = template.format(value.text)
+        result = value.kind if node.name in ("MINX", "MAXX") else _NUM
+        return _Sql(text, _ATOM, nullable=True, kind=result)
+
+    def iter_column(self, node):
+        """A column read in an iterator's row expression: the value on the current row."""
+        if node.table.upper() != self.iter_table.upper():
+            raise _RefusedError(
+                f"'{node.table}'[{node.column}] is a column of another table than the "
+                f"iterated '{self.iter_table}'; reading it needs RELATED, a later tier"
+            )
+        resolved = self.resolve(node.table, node.column)
+        if resolved is None:
+            raise _RefusedError(
+                f"column '{node.table}'[{node.column}] does not resolve to exactly one "
+                "dataset field"
+            )
+        dataset, field, datatype = resolved
+        if not _is_simple_identifier(dataset) or not _is_simple_identifier(field):
+            raise _RefusedError("a dataset or field name needing SQL quoting is a later tier")
+        self.reads += 1
+        return _Sql(f"{dataset}.{field}", _ATOM, nullable=True, kind=_column_kind(datatype))
 
     def divide(self, node, variables):
         if len(node.args) == 3:
@@ -1182,6 +1287,23 @@ _DATE_REFUSED = {
     "DATEDIFF": "DAX DATEDIFF counts the interval boundaries crossed; whether the spec's "
     "DATEDIFF counts boundaries or whole elapsed units is not specified, and engines "
     "differ (31 December to 1 January is 1 month or 0)",
+}
+
+
+#: X-iterators: name -> (SQL aggregate template, kinds of row expression it accepts).
+_ITERATORS = {
+    "SUMX": ("SUM({})", frozenset({_NUM})),
+    "AVERAGEX": ("AVG({})", frozenset({_NUM})),
+    "MINX": ("MIN({})", frozenset({_NUM, _DATE, _DATETIME})),
+    "MAXX": ("MAX({})", frozenset({_NUM, _DATE, _DATETIME})),
+    # DAX COUNTX counts the non-blank results that are not TRUE/FALSE, as COUNT does.
+    "COUNTX": ("COUNT({})", frozenset({_NUM, _TEXT, _DATE, _DATETIME})),
+    "MEDIANX": ("MEDIAN({})", frozenset({_NUM})),
+    "PERCENTILEX.INC": (None, frozenset({_NUM})),
+    "STDEVX.S": ("STDDEV_SAMP({})", frozenset({_NUM})),
+    "STDEVX.P": ("STDDEV_POP({})", frozenset({_NUM})),
+    "VARX.S": ("VAR_SAMP({})", frozenset({_NUM})),
+    "VARX.P": ("VAR_POP({})", frozenset({_NUM})),
 }
 
 

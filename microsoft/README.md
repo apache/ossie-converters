@@ -438,7 +438,10 @@ Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` 
 `Table[Column]`; `COUNT` over a typed, non-boolean column; `DISTINCTCOUNT` (BLANK counts as
 one more distinct value, so 1 is added when the column holds a NULL); `MEDIAN`,
 `PERCENTILE.INC` with a literal k, `STDEV.S` / `STDEV.P` and `VAR.S` / `VAR.P` over a
-numeric column; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
+numeric column; the X-iterators `SUMX`, `AVERAGEX`, `MINX`, `MAXX`, `COUNTX`, `MEDIANX`,
+`PERCENTILEX.INC`, `STDEVX.*` and `VARX.*` over a table named directly, whose row
+expression reads only that table's columns (`SUMX('Sales', 'Sales'[Qty] * 'Sales'[Price])`
+-> `SUM(Sales.Qty * Sales.Price)`); `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
 `BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
 other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
 `BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
