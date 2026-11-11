@@ -559,7 +559,8 @@ def test_a_date_comparison_measure_stays_dax_on_import(bim):
         "Same Country": "MIN('Customer'[Country]) = MAX('Customer'[Country])",
         "Big Order": "IF(MAX('Sales'[Amount]) > 1000, 1, 0)",
     })
-    with pytest.warns(UserWarning, match="date value"):
+    # ShipDate is a date-and-time column in the fixture, so it reads "datetime value".
+    with pytest.warns(UserWarning, match="date(time)? value"):
         document = build_ossie_document(model, translate_dax=True)
     assert list(_dialects(_metric(document, "Shipped Late"))) == ["DAX"]
     assert list(_dialects(_metric(document, "Same Country"))) == ["DAX"]
