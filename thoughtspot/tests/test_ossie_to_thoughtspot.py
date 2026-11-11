@@ -1448,6 +1448,90 @@ class TestTheTwoLegsAgreeAboutAnEmptySource:
             convert(self._forward().model)
 
 
+class TestASqlQueryThatIsNotText:
+    """The same two-legs defect, reached by a different route.
+
+    Raised by @christianeu-db reviewing apache/ossie-converters#102: TML is
+    YAML, so an unquoted `sql_query: 12345` arrives as an int. On main that
+    wrote `source: 12345` and exited 0 -- a document this converter's own
+    to-tml leg now refuses. With the no-query guard in place but no type
+    check, it stopped the whole conversion with a bare
+    `AttributeError: 'int' object has no attribute 'strip'` instead.
+    """
+
+    _MODEL = """model:
+  name: M
+  model_tables: [{name: FX}]
+  columns:
+  - {name: Currency, column_id: 'FX::Currency', properties: {column_type: ATTRIBUTE}}
+"""
+
+    def _forward(self, sql_query_line):
+        sql_view = f"""sql_view:
+  name: FX
+  connection: {{name: C}}
+{sql_query_line}  sql_view_columns:
+  - name: Currency
+    sql_output_column: CURRENCY
+    db_column_properties: {{data_type: VARCHAR}}
+"""
+        return tml_to_ossie_convert(tml.load_document_set([
+            ("fx.sql_view.tml", sql_view),
+            ("m.model.tml", self._MODEL),
+        ]))
+
+    @pytest.mark.parametrize("line", [
+        "  sql_query: 12345\n",          # int, the measured case
+        "  sql_query: [a, b]\n",         # list
+        "  sql_query: {a: b}\n",         # mapping
+        "  sql_query: 2024-01-01\n",     # datetime.date, via the YAML 1.1 resolver
+    ])
+    def test_it_is_reported_rather_than_crashing(self, line):
+        codes = [i["code"] for i in self._forward(line).issues.as_dicts()]
+        assert "TS-SQL-VIEW-QUERY-MALFORMED" in codes, codes
+
+    def test_the_source_is_left_empty_rather_than_carrying_the_value(self):
+        # Writing `12345` through would only move the failure to the return
+        # leg, which is the defect this is fixing, not a milder version of it.
+        result = self._forward("  sql_query: 12345\n")
+        assert result.model["datasets"][0]["source"] == ""
+
+    def test_it_is_an_error_so_the_cli_exit_code_says_so(self):
+        assert self._forward("  sql_query: 12345\n").issues.has_errors()
+
+    def test_the_message_names_the_type_that_arrived(self):
+        issues = self._forward("  sql_query: 12345\n").issues.as_dicts()
+        message = next(i["message"] for i in issues
+                       if i["code"] == "TS-SQL-VIEW-QUERY-MALFORMED")
+        assert "int" in message
+
+    def test_the_return_leg_refuses_the_same_document(self):
+        with pytest.raises(ConversionError, match="empty `source`"):
+            convert(self._forward("  sql_query: 12345\n").model)
+
+    def test_exactly_one_code_fires_not_both(self):
+        # A non-string is not also "no query": two codes for one defect
+        # would read as two problems to fix.
+        codes = [i["code"] for i in self._forward("  sql_query: 12345\n").issues.as_dicts()]
+        assert "TS-SQL-VIEW-NO-QUERY" not in codes, codes
+
+    @pytest.mark.parametrize(("line", "expected"), [
+        ("", "TS-SQL-VIEW-NO-QUERY"),                 # absent
+        ("  sql_query: null\n", "TS-SQL-VIEW-NO-QUERY"),
+        ("  sql_query: '   '\n", "TS-SQL-VIEW-NO-QUERY"),
+    ])
+    def test_the_no_query_cases_still_report_as_before(self, line, expected):
+        # The type check must not swallow the case the other code is FOR.
+        codes = [i["code"] for i in self._forward(line).issues.as_dicts()]
+        assert expected in codes, codes
+        assert "TS-SQL-VIEW-QUERY-MALFORMED" not in codes, codes
+
+    def test_a_real_query_is_untouched(self):
+        result = self._forward("  sql_query: SELECT 1\n")
+        assert result.model["datasets"][0]["source"] == "SELECT 1"
+        assert [i["code"] for i in result.issues.as_dicts()] == []
+
+
 class TestBuildTableIsGuardedToo:
     """`build_table` is public and the table tests import it directly, so
     the guard cannot live only in `convert()`.
