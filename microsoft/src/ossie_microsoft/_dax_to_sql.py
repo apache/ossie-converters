@@ -45,6 +45,22 @@ Single-column aggregates, the exact reverses of what ``_sql_to_dax`` emits::
     COUNTA('Sales'[Customer])            ->  COUNT(Sales.Customer)
     DISTINCTCOUNTNOBLANK('Sales'[Cust])  ->  COUNT(DISTINCT Sales.Cust)
 
+and, each by a rule that makes it exact:
+
+* ``COUNT(col)`` -> ``COUNT(col)`` for a typed column that is not boolean: DAX ``COUNT``
+  documents ``TRUE``/``FALSE`` values as unsupported, and counts the non-blank values of
+  any other type, as SQL ``COUNT`` counts the non-NULL ones.
+* ``DISTINCTCOUNT(col)`` -> ``COUNT(DISTINCT col) + MAX(CASE WHEN col IS NULL THEN 1 ELSE
+  0 END)``: DAX counts BLANK as one more distinct value, SQL ``COUNT(DISTINCT)`` skips NULL,
+  so 1 is added when the column holds a NULL. Over no rows the ``MAX`` is NULL, so the
+  result is NULL, as DAX's BLANK.
+* ``MEDIAN``, ``STDEV.S`` / ``STDEV.P`` (-> ``STDDEV_SAMP`` / ``STDDEV_POP``) and ``VAR.S``
+  / ``VAR.P`` (-> ``VAR_SAMP`` / ``VAR_POP``) over a numeric column, and
+  ``PERCENTILE.INC(col, k)`` -> ``PERCENTILE_CONT(k) WITHIN GROUP (ORDER BY col)`` for a
+  literal ``k`` between 0 and 1 (both interpolate at position ``k * (n - 1) + 1``). Where
+  DAX raises an error for too few values (one value for ``STDEV.S``), SQL returns NULL:
+  neither side produces a number.
+
 and composition over them:
 
 * ``DIVIDE(a, b)`` -> ``a / NULLIF(b, 0)``. DAX returns BLANK when ``b`` is zero or
@@ -141,14 +157,14 @@ of its own table (row context). The same rules apply, plus:
 
 What is refused (and why, so the refusal is defensible)
 -------------------------------------------------------
-* ``COUNT`` and ``DISTINCTCOUNT``. DAX ``COUNT`` documents ``TRUE``/``FALSE``
-  values as unsupported, so it is not the equivalent of SQL ``COUNT(x)`` for an
-  arbitrary column, and ``DISTINCTCOUNT`` counts BLANK as a distinct value where
-  SQL ``COUNT(DISTINCT x)`` excludes NULL. These are refused rather than guessed.
-  Their counterparts ``COUNTA`` and ``DISTINCTCOUNTNOBLANK`` are what
-  ``_sql_to_dax`` emits for SQL ``COUNT`` and ``COUNT(DISTINCT)``, and are translated.
-  As ``_sql_to_dax`` notes, a DAX count over an empty set is BLANK where SQL gives 0;
-  that convention is accepted in both directions.
+* ``COUNT`` over a boolean column or a column the model gives no type for, and the
+  statistics over a column that is not numeric. As ``_sql_to_dax`` notes, a DAX count
+  over an empty set is BLANK where SQL gives 0; that convention is accepted in both
+  directions (``COUNTA``, ``COUNT``).
+* ``COUNTROWS`` and ``COUNTBLANK``: both need ``COUNT(*)``, which reads no dataset, and a
+  model-scoped metric whose aggregate reads no dataset has no defined grain in the spec.
+  ``PERCENTILE.EXC`` (it interpolates at ``k * (n + 1)``; the spec has no exclusive
+  form), and ``AVERAGEA`` / ``MINA`` / ``MAXA`` (text counts as 0, ``TRUE`` as 1).
 * The ``/`` operator over anything but a non-zero literal: DAX returns Infinity or
   NaN when dividing by zero or BLANK, which has no portable form (``DIVIDE`` does).
 * ``DIVIDE`` with an alternate result, ``^``, and ``-`` applied to an expression: later
@@ -229,13 +245,43 @@ _AGGREGATES = {
 #: Aggregates that return a count, a number whatever the column's type.
 _COUNTS = frozenset({"COUNTA", "DISTINCTCOUNTNOBLANK"})
 
+#: Column aggregates beyond the six reverses of _sql_to_dax, each with the rule that makes
+#: it exact: name -> (SQL template, kinds of column it accepts, result kind or None for
+#: the column's own kind).
+_NUMERIC_KINDS = frozenset({"number"})
+_COLUMN_AGGREGATES = {
+    # DAX COUNT counts the non-blank values of a column of any type except boolean
+    # (TRUE/FALSE are documented as unsupported), so a typed, non-boolean column is SQL COUNT.
+    "COUNT": ("COUNT({c})", frozenset({"number", "text", "date", "datetime"}), "number"),
+    # DAX DISTINCTCOUNT counts BLANK as one more distinct value; SQL COUNT(DISTINCT) skips
+    # NULL. Adding 1 when the column holds a NULL is exact, and over no rows the MAX is NULL,
+    # so the whole is NULL, as DAX's BLANK.
+    "DISTINCTCOUNT": (
+        "COUNT(DISTINCT {c}) + MAX(CASE WHEN {c} IS NULL THEN 1 ELSE 0 END)",
+        frozenset({"number", "text", "date", "datetime", "boolean"}),
+        "number",
+    ),
+    # Statistics over the non-blank numbers, as in SQL over the non-NULL ones.
+    "MEDIAN": ("MEDIAN({c})", _NUMERIC_KINDS, "number"),
+    "STDEV.S": ("STDDEV_SAMP({c})", _NUMERIC_KINDS, "number"),
+    "STDEV.P": ("STDDEV_POP({c})", _NUMERIC_KINDS, "number"),
+    "VAR.S": ("VAR_SAMP({c})", _NUMERIC_KINDS, "number"),
+    "VAR.P": ("VAR_POP({c})", _NUMERIC_KINDS, "number"),
+}
+
 #: Functions whose DAX semantics differ from the SQL function of the same name, so a
 #: generic catalog reason would understate why they are refused.
 _SEMANTIC_MISMATCH = {
-    "COUNT": "DAX COUNT does not support TRUE/FALSE values, so it is not the equivalent "
-    "of SQL COUNT(x) for an arbitrary column (COUNTA is)",
-    "DISTINCTCOUNT": "DAX DISTINCTCOUNT counts BLANK as a distinct value; SQL "
-    "COUNT(DISTINCT x) excludes NULL, so the two differ by one on a nullable column",
+    "COUNTROWS": "COUNTROWS becomes COUNT(*), which reads no dataset: a model-scoped metric "
+    "whose aggregate reads no dataset has no defined grain in the spec (COUNTA over a key "
+    "column is the portable form)",
+    "COUNTBLANK": "COUNTBLANK needs COUNT(*) minus COUNT(x), and COUNT(*) reads no dataset, "
+    "so the metric has no defined grain in the spec",
+    "PERCENTILE.EXC": "DAX PERCENTILE.EXC interpolates at position k * (n + 1); the spec's "
+    "PERCENTILE_CONT interpolates at k * (n - 1) + 1, and has no exclusive form",
+    "AVERAGEA": "DAX AVERAGEA counts text as 0 and TRUE as 1, which SQL AVG does not",
+    "MINA": "DAX MINA counts text as 0 and TRUE as 1, which SQL MIN does not",
+    "MAXA": "DAX MAXA counts text as 0 and TRUE as 1, which SQL MAX does not",
 }
 
 #: Every DAX function this module emits a translation for.
@@ -249,7 +295,8 @@ TRANSLATED_FUNCTIONS = frozenset(_AGGREGATES) | frozenset(
     "LEFT", "RIGHT", "MID", "LEN", "UPPER", "LOWER", "SUBSTITUTE", "CONCATENATE",
     "YEAR", "QUARTER", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "DATE", "EDATE",
     "EOMONTH",
-}
+} | frozenset(("COUNT", "DISTINCTCOUNT", "MEDIAN", "PERCENTILE.INC", "STDEV.S", "STDEV.P",
+               "VAR.S", "VAR.P"))
 
 # A simple identifier: a letter or underscore, then letters, digits, underscores.
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -444,6 +491,15 @@ class _Translator:
                     "which a field expression cannot express"
                 )
             return self.aggregate(node)
+        if node.name in _COLUMN_AGGREGATES or node.name == "PERCENTILE.INC":
+            if self.row_table is not None:
+                raise _RefusedError(
+                    f"{node.name} in a calculated column ranges over the whole table, "
+                    "which a field expression cannot express"
+                )
+            if node.name == "PERCENTILE.INC":
+                return self.percentile(node, variables)
+            return self.column_aggregate(node)
         if node.name == "DIVIDE":
             return self.divide(node, variables)
         if node.name in _LOGIC_FUNCTIONS:
@@ -484,6 +540,55 @@ class _Translator:
         return _Sql(
             _AGGREGATES[node.name].format(f"{dataset}.{field}"), _ATOM, nullable=True, kind=kind
         )
+
+    def column_field(self, node, function):
+        """Resolve the one ``Table[Column]`` argument of an aggregate to (sql, kind)."""
+        column = node.args[0] if node.args else None
+        if not isinstance(column, Column):
+            raise _RefusedError(
+                f"{function} is translated only over one fully qualified column (Table[Column])"
+            )
+        resolved = self.resolve(column.table, column.column)
+        if resolved is None:
+            raise _RefusedError(
+                f"column '{column.table}'[{column.column}] does not resolve to exactly one "
+                "dataset field"
+            )
+        dataset, field, datatype = resolved
+        if not _is_simple_identifier(dataset) or not _is_simple_identifier(field):
+            raise _RefusedError("a dataset or field name needing SQL quoting is a later tier")
+        return f"{dataset}.{field}", _column_kind(datatype)
+
+    def column_aggregate(self, node):
+        template, accepted, result = _COLUMN_AGGREGATES[node.name]
+        if len(node.args) != 1:
+            raise _RefusedError(
+                f"{node.name} is translated only over one fully qualified column (Table[Column])"
+            )
+        field, kind = self.column_field(node, node.name)
+        if kind not in accepted:
+            raise _RefusedError(_aggregate_kind_reason(node.name, kind))
+        return _Sql(template.format(c=field), _ATOM, nullable=True, kind=result)
+
+    def percentile(self, node, variables):
+        """PERCENTILE.INC(column, k) -> PERCENTILE_CONT(k) WITHIN GROUP (ORDER BY column).
+
+        Both interpolate linearly between the values at position k * (n - 1) + 1 (the
+        inclusive definition). ``k`` must be a literal between 0 and 1: DAX raises an error
+        outside that range.
+        """
+        if len(node.args) != 2:
+            raise _RefusedError("PERCENTILE.INC takes 2 arguments")
+        field, kind = self.column_field(node, "PERCENTILE.INC")
+        if kind != _NUM:
+            raise _RefusedError(_aggregate_kind_reason("PERCENTILE.INC", kind))
+        k = node.args[1]
+        if not isinstance(k, Number) or not 0 <= float(k.text) <= 1:
+            raise _RefusedError(
+                "PERCENTILE.INC is translated only with a literal k between 0 and 1 (DAX "
+                "raises an error outside that range)"
+            )
+        return _Sql(f"PERCENTILE_CONT({k.text}) WITHIN GROUP (ORDER BY {field})", _ATOM, True)
 
     def divide(self, node, variables):
         if len(node.args) == 3:
@@ -1078,6 +1183,16 @@ _DATE_REFUSED = {
     "DATEDIFF counts boundaries or whole elapsed units is not specified, and engines "
     "differ (31 December to 1 January is 1 month or 0)",
 }
+
+
+def _aggregate_kind_reason(function, kind):
+    if kind == _UNTYPED:
+        return (f"{function} over a column whose type the model does not give is not "
+                "translated (whether DAX accepts its values cannot be checked)")
+    if function == "COUNT" and kind == _BOOL:
+        return ("DAX COUNT does not support TRUE/FALSE values, so it is not SQL COUNT over "
+                "a boolean column (COUNTA is)")
+    return f"{function} over a {kind} column is not translated"
 
 
 def _integer_literal(node, function):

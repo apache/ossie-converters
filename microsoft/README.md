@@ -435,7 +435,10 @@ the DAX. A measure that cannot be translated exactly stays DAX only, with a warn
 names the reason.
 
 Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
-`Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
+`Table[Column]`; `COUNT` over a typed, non-boolean column; `DISTINCTCOUNT` (BLANK counts as
+one more distinct value, so 1 is added when the column holds a NULL); `MEDIAN`,
+`PERCENTILE.INC` with a literal k, `STDEV.S` / `STDEV.P` and `VAR.S` / `VAR.P` over a
+numeric column; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
 `BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
 other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
 `BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
