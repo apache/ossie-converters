@@ -201,10 +201,11 @@ def _convert_dataset(dataset):
 
     # unique_keys: [[...], ...] -> unique_keys: [{columns: [...]}, ...]
     # Snowflake semantic views do not take UNIQUE on the primary key columns,
-    # so a unique key that restates the primary key is not emitted.
+    # so a unique key that restates the primary key is not emitted. Keys are
+    # column sets: a unique key over the same columns in another order restates it too.
     uks = dataset.get("unique_keys")
     if uks and pk:
-        uks = [uk for uk in uks if list(uk) != list(pk)]
+        uks = [uk for uk in uks if set(uk) != set(pk)]
     if uks:
         result["unique_keys"] = [{"columns": uk} for uk in uks]
 
