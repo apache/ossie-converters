@@ -77,3 +77,16 @@ def test_filter_context_reason_fits_functions_that_only_inspect_it(name):
     reason = refusal_reason(name)
     assert "depends on the filter context" in reason
     assert "changes" not in reason
+
+
+@pytest.mark.parametrize(
+    ("name", "context"),
+    [("EARLIER", "an outer row context"), ("EARLIEST", "the outermost row context")],
+)
+def test_row_context_functions_say_they_need_an_outer_row_context(name, context):
+    # EARLIER and EARLIEST read a row context outside the current one; a measure has none.
+    reason = refusal_reason(name)
+    assert context in reason
+    assert "measure does not have" in reason
+    assert "filter context" not in reason
+    assert "operates on tables" not in reason
