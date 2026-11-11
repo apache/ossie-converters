@@ -26,21 +26,29 @@ from .context import ExportContext
 
 
 def pick_ossie_dialect_expression(
-    ossie_dialect_expressions: list[OssieDialectExpression],
+    ossie_dialect_expressions: list[OssieDialectExpression] | None,
     *,
     ctx: ExportContext,
-) -> OssieDialectExpression:
+) -> OssieDialectExpression | None:
     """Pick an Ossie dialect expression from a list of Ossie dialect expressions.
 
     Prefers to pick the current dialect, then falls back to a portable dialect,
     then the first in the list.
 
-    Returns a dialect expression.
+    Returns a dialect expression, or None if there are no dialect expressions.
     """
-    # the pydantic model definition guarantees at least one entry
+    if not ossie_dialect_expressions:
+        # An expression may carry only the portable `sql`, which is not read yet.
+        if ctx.current_phase_name == "load":
+            ctx.error("No dialect expression found; `sql` is not supported")
+        return None
     fallback = ossie_dialect_expressions[0]
     for entry in ossie_dialect_expressions:
-        if ctx.ossie_dialect is not None and entry.dialect == ctx.ossie_dialect:
+        if (
+            ctx.ossie_dialect is not None
+            # case-insensitive for well-known dialects
+            and entry.dialect.upper() == ctx.ossie_dialect.upper()
+        ):
             return entry
         # fallback preference: (1) portable dialect, (2) first in the list
         elif entry.dialect == PORTABLE_OSSIE_DIALECT or (
@@ -49,11 +57,16 @@ def pick_ossie_dialect_expression(
         ):
             fallback = entry
     if ctx.current_phase_name == "load":
-        if ctx.ossie_dialect is not None and fallback.dialect not in (
-            PORTABLE_OSSIE_DIALECT,
-            LEGACY_PORTABLE_OSSIE_DIALECT,
+        if ctx.ossie_dialect is not None and (
+            fallback.dialect
+            not in (PORTABLE_OSSIE_DIALECT, LEGACY_PORTABLE_OSSIE_DIALECT)
+            # the portable dialects map to different Hex dialects
+            or (
+                fallback.dialect == PORTABLE_OSSIE_DIALECT
+                and ctx.ossie_dialect.upper() == LEGACY_PORTABLE_OSSIE_DIALECT
+            )
         ):
-            # explicit preference is missing and fallback is non-portable
+            # explicit preference is missing and fallback is incompatible
             ctx.warn(
                 f"Preferred dialect {ctx.ossie_dialect} not found for expression; using fallback dialect {fallback.dialect}"
             )

@@ -153,8 +153,9 @@ dates, are written as strings.
   must identify one dataset; ambiguous unqualified or cross-dataset references
   are refused. A sole unknown qualifier is accepted as an alias only in a
   single-dataset document; multiple unknown qualifiers are never collapsed.
-- Metric dialect selection skips non-SQL entries, then prefers the configured
-  dialect, `OSSIE_SQL_2026`, and the first available SQLGlot-readable SQL entry.
+- Field and metric dialect selection skips non-SQL entries, then prefers the configured
+  dialect, the top-level `sql` (portable `OSSIE_SQL_2026`, which wins over an
+  `OSSIE_SQL_2026` entry), and the first available SQLGlot-readable SQL entry.
   Parsing and rendering retain that dialect through ratio decomposition.
   The ANSI/portable core uses SQLGlot's Snowflake reader for its unit-first
   `DATEADD`/`DATEDIFF` syntax; this is syntax handling, not Snowflake execution.
@@ -171,6 +172,17 @@ dates, are written as strings.
 - `DBT` entries without a `meta` key (dbt config such as `materialized`), entries with an empty `meta`, other vendors' entries, and model- and relationship-level `custom_extensions` are not carried into the manifest
 - A `DBT` entry whose `data` is not a JSON object, or whose `meta` is not an object, is skipped with `INVALID_DBT_CUSTOM_EXTENSION`; the rest of the element still converts
 - When more than one `DBT` entry on the same element carries `meta`, the first is kept and the others are ignored with `DUPLICATE_DBT_CUSTOM_EXTENSION`
+
+### Generated ratio helper provenance
+
+New helper families use provenance version 2. Signatures reuse MetricFlow's
+COUNT-to-SUM, boolean-SUM, and MEDIAN-to-percentile rules on a private copy,
+so the raw converter API and the CLI's dbt manifest parser agree, including
+later round trips that re-express a COUNT as a boolean aggregation. This does
+not make the helpers private or rewrite their emitted definitions. All other
+semantic fields and external-consumer checks remain part of the conservative
+retention contract. Version 1 markers are accepted only when their exact original
+definitions still match; otherwise helpers are retained rather than guessed.
 
 ## Development
 

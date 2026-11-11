@@ -487,6 +487,37 @@ Error: Source 'public.orders' must be a fully qualified db.schema.table or a sub
 Import reports this as `SOURCE_NOT_FULLY_QUALIFIED` rather than guessing a catalog
 name, so it surfaces where the Ossie document is produced instead of three hops later.
 
+If the model relies on a warehouse's default namespace, provide it at import:
+
+```bash
+ossie-cube import -i model/ -o model.yaml --default-catalog main --default-schema sales
+```
+
+This converts `orders` to `main.sales.orders` and `reporting.orders` to
+`main.reporting.orders`. Each default must be a single identifier. For
+Snowflake, pass the database as `--default-catalog`. In Bash or Zsh, wrap a
+double-quoted database identifier in shell single quotes so the double quotes
+reach the converter as part of the identifier.
+
+```sh
+ossie-cube import -i model/ -o model.yaml --default-catalog '"Analytics.DB"' --default-schema sales
+```
+
+The Databricks exporter currently rejects identifiers with embedded dots or
+whitespace, even when quoted. Use names without those characters for that route.
+For BigQuery, set `--source-dialect BIGQUERY` so a path quoted as
+`` `project.dataset.table` `` is recognized as already qualified.
+
+The options also work with `--view ... --project` and as `default_catalog` /
+`default_schema` on the Python import functions.
+
+Defaults apply to the tables in the imported model or projected view. They
+preserve explicit qualifiers and quoting and leave SQL queries untouched. A
+catalog alone can complete a two-part name; a one-part name needs both defaults
+or stays unchanged with the warning. Without either option, table names stay as
+written. If you export the resulting Ossie document back to Cube, it uses the
+qualified table name.
+
 ### Measuring it
 
 Both claims above are measurements, so they are reproducible:
