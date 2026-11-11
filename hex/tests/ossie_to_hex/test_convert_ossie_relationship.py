@@ -36,7 +36,7 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("bar", "bar")
     ctx.hex_ids.set_for_dataset("baz", "baz")
     ctx.hex_ids.set_for_relationship("foo", "foo")
@@ -102,7 +102,7 @@ def test_analysis(ctx: ExportContext) -> None:
 
 def test_converts_unused_relationship_once() -> None:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("bar", "bar")
     ctx.hex_ids.set_for_dataset("baz", "baz")
     ctx.hex_ids.set_for_relationship("foo", "foo")
@@ -165,7 +165,7 @@ def test_reports_missing_source_model() -> None:
     foo = Quick.relationship("foo", "bar", "baz", ["qux"], ["qoz"])
 
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("bar", "bar")
     ctx.hex_ids.set_for_relationship("foo", "foo")
     assignment = RelationshipAssignment("foo", "to_from", "baz", "bar")
@@ -183,7 +183,7 @@ def test_reports_missing_target_model() -> None:
     foo = Quick.relationship("foo", "bar", "baz", ["qux"], ["qoz"])
 
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("bar", "bar")
     ctx.hex_ids.set_for_relationship("foo", "foo")
     assignment = RelationshipAssignment("foo", "from_to", "bar", "baz")

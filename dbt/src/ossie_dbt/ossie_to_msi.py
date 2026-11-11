@@ -17,7 +17,7 @@
 
 import json
 from dataclasses import dataclass
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import sqlglot
 from sqlglot import exp
@@ -25,6 +25,7 @@ from sqlglot import exp
 from ossie import (
     OssieCustomExtension,
     OssieDataset,
+    OssieDataType,
     OssieDialect,
     OssieDialectExpression,
     OssieDocument,
@@ -94,6 +95,18 @@ def _unique_metric_name(base: str, taken_names: Set[str]) -> str:
         name, suffix = f"{base}_{suffix}", suffix + 1
     taken_names.add(name)
     return name
+
+
+def _with_ossie_datatype(meta: Dict[str, Any], datatype: Optional[OssieDataType]) -> Dict[str, Any]:
+    """Return `meta` with `ossie.datatype` replaced by the element's Ossie datatype, when both are set.
+
+    dbt -> Ossie reads `meta.ossie.datatype` when MetricFlow has no native datatype. A stale copy
+    left in `meta` would replace an edited or conflicting Ossie datatype on the next pass.
+    """
+    ossie_meta = meta.get("ossie")
+    if datatype is None or not isinstance(ossie_meta, dict) or "datatype" not in ossie_meta:
+        return meta
+    return {**meta, "ossie": {**ossie_meta, "datatype": datatype.value}}
 
 
 class _UnresolvedRowCountDataset(Exception):
@@ -203,49 +216,48 @@ class OssieToMSIConverter:
     def _config_from_custom_extensions(
         custom_extensions: Optional[List[OssieCustomExtension]],
         element_name: str,
+        datatype: Optional[OssieDataType] = None,
     ) -> Tuple[Optional[PydanticSemanticLayerElementConfig], List[ConverterIssue]]:
-        """Reconstruct MSI `config.meta` from the `custom_extensions` entry this converter wrote (#42).
+        """Reconstruct MSI `config.meta` from the `DBT` entry that dbt -> Ossie writes (#42).
 
-        Only the DBT-vendor entry round-trips; extensions written by another vendor did not
-        originate from config.meta and have no meaning as one.
+        That entry's `data` is a JSON object with `config.meta` under its `meta` key. A `DBT`
+        entry without a `meta` key holds other dbt config, such as `materialized` or `tags`,
+        and is left alone, like the extensions of other vendors. An empty `meta` is treated
+        as absent, as it is in the other direction.
 
         Ossie documents are external input, so a `DBT` vendor name does not guarantee this
-        converter wrote the entry. Invalid JSON, or JSON that is not an object, is skipped
-        and recorded as `INVALID_DBT_CUSTOM_EXTENSION` rather than failing the conversion.
+        converter wrote the entry. Data that is not a JSON object, or whose `meta` is not an
+        object, is skipped and recorded as `INVALID_DBT_CUSTOM_EXTENSION` rather than
+        failing the conversion.
+
+        `datatype` is the element's Ossie datatype; it replaces a `meta.ossie.datatype`
+        carried in the entry (see `_with_ossie_datatype`).
         """
         issues: List[ConverterIssue] = []
-        config: Optional[PydanticSemanticLayerElementConfig] = None
+        restored: Optional[Dict[str, Any]] = None
         for ext in custom_extensions or []:
             if ext.vendor_name != OssieVendor.DBT.value:
                 continue
             try:
-                meta = json.loads(ext.data)
-            except json.JSONDecodeError:
-                issues.append(
-                    ConverterIssue(
-                        issue_type=ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION,
-                        element_name=element_name,
-                    )
-                )
+                payload = json.loads(ext.data)
+            except (ValueError, RecursionError):
+                # RecursionError: nesting too deep to decode.
+                payload = None
+            if isinstance(payload, dict) and "meta" not in payload:
                 continue
+            meta = payload.get("meta") if isinstance(payload, dict) else None
             if not isinstance(meta, dict):
-                issues.append(
-                    ConverterIssue(
-                        issue_type=ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION,
-                        element_name=element_name,
-                    )
-                )
+                issues.append(ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, element_name))
                 continue
-            if config is None:
-                config = PydanticSemanticLayerElementConfig(meta=meta)
+            if not meta:
+                continue
+            if restored is None:
+                restored = meta
             else:
-                issues.append(
-                    ConverterIssue(
-                        issue_type=ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION,
-                        element_name=element_name,
-                    )
-                )
-        return config, issues
+                issues.append(ConverterIssue(ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION, element_name))
+        if restored is None:
+            return None, issues
+        return PydanticSemanticLayerElementConfig(meta=_with_ossie_datatype(restored, datatype)), issues
 
     @staticmethod
     def _build_key_sets(dataset: OssieDataset, ossie_sm: OssieSemanticModel) -> _KeySets:
@@ -295,7 +307,7 @@ class OssieToMSIConverter:
         Aggregation info lives on metrics (`metric_aggregation_params`), not on
         semantic model measures, so there is no measure classification step.
         """
-        config, issues = self._config_from_custom_extensions(field.custom_extensions, field.name)
+        config, issues = self._config_from_custom_extensions(field.custom_extensions, field.name, field.datatype)
         if field.name in primary_key_cols:
             entities.append(
                 PydanticEntity(
@@ -379,7 +391,9 @@ class OssieToMSIConverter:
                     ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
                 )
                 continue
-            config, config_issues = self._config_from_custom_extensions(metric.custom_extensions, metric.name)
+            config, config_issues = self._config_from_custom_extensions(
+                metric.custom_extensions, metric.name, metric.datatype
+            )
             # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
             reserved_names = set(taken_names)
             try:
@@ -606,7 +620,8 @@ class OssieToMSIConverter:
     ) -> Optional[OssieDialectExpression]:
         """Return the expression for the preferred dialect.
 
-        Preference order: the converter's dialect, then OSSIE_SQL_2026, then the
+        Preference order: the converter's dialect, then the top-level ``sql``
+        (which wins over an OSSIE_SQL_2026 entry), then OSSIE_SQL_2026, then the
         first entry available. OSSIE_SQL_2026 is Ossie's portable expression
         language, based on ANSI SQL:2003 Core, so it is treated as an ANSI_SQL
         equivalent rather than left to the positional fallback.
@@ -618,17 +633,22 @@ class OssieToMSIConverter:
         OSSIE_SQL_2026 match because the converter's dialect outranks it and
         may still appear further down the list.
         """
-        ossie_sql_expr: Optional[OssieDialectExpression] = None
-        first_expr: Optional[OssieDialectExpression] = None
+        # The top-level `sql` is written in OSSIE_SQL_2026 and wins over an OSSIE_SQL_2026 entry.
+        ossie_sql_expr: Optional[OssieDialectExpression] = (
+            OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression=ossie_expr.sql)
+            if ossie_expr.sql is not None
+            else None
+        )
+        first_expr: Optional[OssieDialectExpression] = ossie_sql_expr
 
-        for dialect_expr in ossie_expr.dialects:
+        for dialect_expr in ossie_expr.dialects or []:
             if sql_only and self._sql_dialect(dialect_expr.dialect) is None:
                 continue
             if first_expr is None:
                 first_expr = dialect_expr
-            if dialect_expr.dialect is self._dialect:
+            if dialect_expr.dialect == self._dialect:
                 return dialect_expr
-            if dialect_expr.dialect is OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
+            if dialect_expr.dialect == OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
                 ossie_sql_expr = dialect_expr
 
         if ossie_sql_expr is not None:
@@ -636,7 +656,7 @@ class OssieToMSIConverter:
         return first_expr
 
     @staticmethod
-    def _sql_dialect(dialect: OssieDialect) -> Optional[str]:
+    def _sql_dialect(dialect: str) -> Optional[str]:
         # SQLGlot also registers non-SQL expression languages; those are not SQL fallbacks.
         if dialect in {
             OssieDialect.DAX,
@@ -650,7 +670,7 @@ class OssieToMSIConverter:
         # The portable core's DATEADD/DATEDIFF unit-first syntax matches this reader.
         if dialect in {OssieDialect.ANSI_SQL, OssieDialect.OSSIE_SQL_2026}:
             return "snowflake"
-        reader = dialect.value.lower()
+        reader = dialect.lower()
         try:
             sqlglot.Dialect.get_or_raise(reader)
         except ValueError:

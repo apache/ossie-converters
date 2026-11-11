@@ -86,3 +86,9 @@ def test_referenced_datasets_ignores_literals_and_longer_paths(expression, expec
 
 def test_referenced_datasets_with_no_datasets():
     assert referenced_datasets("orders.amount", set()) == set()
+
+
+def test_percentile_fraction_is_free_of_float_noise():
+    parsed = parse_aggregation("PERCENTILE_CONT(0.07) WITHIN GROUP (ORDER BY x)")
+    assert parsed.percentile == 7
+    assert isinstance(parsed.percentile, int)

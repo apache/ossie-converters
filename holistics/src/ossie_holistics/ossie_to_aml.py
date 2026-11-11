@@ -183,17 +183,24 @@ def dialects_of(expression: Any) -> dict[str, str]:
 
     A document this converter did not write arrives unchecked, and the CLI
     catches `ConversionError` alone, so the shape is tested rather than assumed.
+
+    The top-level `sql` is written in `OSSIE_SQL_2026`, and the specification has
+    it win over an `OSSIE_SQL_2026` entry, so it takes that entry's place. It is
+    then a portable body like any other, and `pick_body` renders it.
     """
     if expression is None:
         raise ConversionError("expression is missing, and the specification requires one")
     if not isinstance(expression, dict):
         raise ConversionError(
             f"expression is {type(expression).__name__}, and the specification defines it "
-            f"as a mapping holding a 'dialects' list"
+            f"as a mapping holding 'sql' or a 'dialects' list"
         )
+    sql = expression.get("sql")
     dialects = expression.get("dialects") or []
-    if not dialects:
-        raise ConversionError("expression has no dialects")
+    if not dialects and sql is None:
+        raise ConversionError("expression has neither sql nor dialects")
+    if sql is not None and not isinstance(sql, str):
+        raise ConversionError(f"expression.sql is {type(sql).__name__}, and must be a string")
     if not isinstance(dialects, list):
         raise ConversionError(
             f"expression.dialects is {type(dialects).__name__}, and must be a list"
@@ -206,6 +213,8 @@ def dialects_of(expression: Any) -> dict[str, str]:
                 f"mapping holding 'dialect' and 'expression'"
             )
         available[entry.get("dialect", "ANSI_SQL")] = entry.get("expression", "")
+    if sql is not None:
+        available["OSSIE_SQL_2026"] = sql
     return available
 
 

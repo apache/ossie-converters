@@ -83,6 +83,8 @@ def strip_normalized(ossie):
     - relationship `ai_context`: no Omni home (dropped with a warning).
     - model `ai_context` synonyms/examples: no Omni home; only the
       instructions text maps (onto the topic).
+    - `expression.sql` (the portable form): not read by the converter, so the
+      round trip keeps only the ANSI_SQL entry.
     - `dimension: {is_time: false}`: equivalent to an absent `dimension`
       (only `is_time: true` has an Omni form -- `timeframes`).
     - a primary-key column no field covers materializes as a hidden
@@ -110,6 +112,7 @@ def strip_normalized(ossie):
         fields = ds.get("fields", []) or []
         for field in fields:
             field.pop("custom_extensions", None)
+            (field.get("expression") or {}).pop("sql", None)
             dimension = field.get("dimension")
             is_time = False
             if dimension is not None:

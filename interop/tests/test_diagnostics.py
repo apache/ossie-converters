@@ -149,3 +149,13 @@ def test_invalid_json_still_preserves_text_warning(tmp_path):
         tmp_path, "thoughtspot", "[broken\n[WARNING] conversion dropped a field\n"
     )
     assert len(issues) == 1 and has_degradation(issues)
+
+
+def test_benign_stderr_summaries_are_not_diagnostics(tmp_path):
+    issues = decode(
+        tmp_path,
+        "dbt",
+        "Conversion completed with 0 warnings\n"
+        "warning: Failed to hardlink files; falling back to full copy\n",
+    )
+    assert issues == []
