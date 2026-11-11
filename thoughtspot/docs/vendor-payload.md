@@ -33,6 +33,8 @@ TML carries properties Ossie's core specification has no field for. `TML -> Ossi
 
 Every `custom_extensions` entry this converter writes uses `vendor_name` `THOUGHTSPOT`. `data` is a single JSON-encoded string (never a nested object) whose own top-level `_v` field is the shape version (`1` today) — bumped only when the payload's shape changes, never for a value change; an unrecognised version is a hard failure rather than a silent misread.
 
+The reader is wider than the writer, deliberately. It takes the entry list from either `custom_extensions` or `nonportable_extensions` — the name apache/ossie#522 renames the field to, without accepting the old one — and takes `data` as either the JSON string above or a mapping (the object form of the same change). A document may use either name with either shape. What this converter *writes* stays the name and shape described above, except that a document already using the new name is kept on it rather than moved; a document carrying both names is refused.
+
 ## Payload keys
 
 | Key | Scope | Classification | Treatment on the return trip |

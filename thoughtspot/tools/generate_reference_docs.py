@@ -461,6 +461,17 @@ def generate_vendor_payload_doc() -> str:
         "bumped only when the payload's shape changes, never for a value change; an "
         "unrecognised version is a hard failure rather than a silent misread.\n"
     )
+    out.append(
+        f"The reader is wider than the writer, deliberately. It takes the entry list "
+        f"from either {_code_cell(constants.EXTENSIONS_FIELD)} or "
+        f"{_code_cell(constants.EXTENSIONS_FIELD_RENAMED)} — the name apache/ossie#522 "
+        f"renames the field to, without accepting the old one — and takes `data` as "
+        f"either the JSON string above or a mapping (the object form of the same "
+        f"change). A document may use either name with either shape. What this "
+        f"converter *writes* stays the name and shape described above, except that a "
+        f"document already using the new name is kept on it rather than moved; a "
+        f"document carrying both names is refused.\n"
+    )
 
     all_names = _stash_key_constant_names()
     value_to_name = {getattr(constants, n): n for n in all_names}
