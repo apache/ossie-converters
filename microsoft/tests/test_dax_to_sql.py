@@ -42,12 +42,17 @@ def _metric(document, name):
 def resolve(table, column):
     """A resolver over a small two-dataset model, mirroring the real converter:
     the DAX table name is the dataset name and the DAX column name is the field
-    name. Unknown table/column pairs do not resolve."""
+    name, and the field's datatype comes along. Unknown table/column pairs do not
+    resolve."""
     model = {
-        ("Sales", "Amount"): ("Sales", "Amount"),
-        ("Sales", "Customer"): ("Sales", "Customer"),
-        ("Sales", "Status"): ("Sales", "Status"),
-        ("Order Lines", "Qty"): ("Order Lines", "Qty"),  # table name needs quoting
+        ("Sales", "Amount"): ("Sales", "Amount", "Decimal"),
+        ("Sales", "Customer"): ("Sales", "Customer", "String"),
+        ("Sales", "Status"): ("Sales", "Status", "String"),
+        ("Sales", "ShipDate"): ("Sales", "ShipDate", "Date"),
+        ("Sales", "OrderDate"): ("Sales", "OrderDate", "Date"),
+        ("Sales", "Note"): ("Sales", "Note", None),  # the model gives no datatype
+        ("Customer", "Country"): ("Customer", "Country", "String"),
+        ("Order Lines", "Qty"): ("Order Lines", "Qty", "Integer"),  # table name needs quoting
     }
     return model.get((table, column))
 
@@ -497,6 +502,69 @@ def test_logic_sql_parses(dax):
     sql, reason = translate_measure(dax, resolve, LOGIC)
     assert reason is None, reason
     sqlglot.parse_one(sql)
+
+
+# --- An aggregate is a number only when its column is ---------------------------
+
+
+@pytest.mark.parametrize(
+    "dax, fragment",
+    [
+        # MAX and MIN of a date or text column are dates or text, not numbers: a BLANK
+        # among them is not 0, so COALESCE(x, 0) would be wrong (and invalid SQL).
+        ("IF(MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate]), 1, 0)", "date value"),
+        ("MIN('Customer'[Country]) = MAX('Customer'[Country])", "text value"),
+        ("MAX('Sales'[ShipDate]) - MIN('Sales'[OrderDate])", "date value"),
+        ("DIVIDE(SUM('Sales'[Status]), 2)", "text value"),
+        ("ABS(COALESCE(MAX('Sales'[ShipDate]), 0))", "different types"),
+        ("COALESCE(MAX('Sales'[ShipDate]), 0)", "different types"),
+        ("IF(MAX('Sales'[ShipDate]), 1, 0)", "not a condition"),
+        ("MAX('Sales'[ShipDate]) == MAX('Sales'[OrderDate])", "date value"),
+        # A column the model gives no datatype for is not known to be numeric.
+        ("MAX('Sales'[Note]) > 0", "no numeric datatype"),
+    ],
+)
+def test_an_aggregate_over_a_non_numeric_column_is_not_used_as_a_number(dax, fragment):
+    sql, reason = translate_measure(dax, resolve)
+    assert sql is None
+    assert fragment in reason, reason
+
+
+@pytest.mark.parametrize(
+    "dax, expected",
+    [
+        # A numeric column compares as before.
+        ("IF(MAX('Sales'[Amount]) > MIN('Sales'[Amount]), 1, 0)",
+         "CASE WHEN COALESCE(MAX(Sales.Amount), 0) > COALESCE(MIN(Sales.Amount), 0) "
+         "THEN 1 ELSE 0 END"),
+        # A count is a number whatever the column's type.
+        ("COUNTA('Sales'[ShipDate]) > 0", "COALESCE(COUNT(Sales.ShipDate), 0) > 0"),
+        # On their own, or as a result, a date or text aggregate is still translated.
+        ("MAX('Sales'[ShipDate])", "MAX(Sales.ShipDate)"),
+        ("IF(SUM('Sales'[Amount]) > 0, MAX('Sales'[ShipDate]))",
+         "CASE WHEN COALESCE(SUM(Sales.Amount), 0) > 0 THEN MAX(Sales.ShipDate) END"),
+        ("ISBLANK(MAX('Sales'[Note]))", "MAX(Sales.Note) IS NULL"),
+    ],
+)
+def test_aggregates_keep_their_column_type(dax, expected):
+    sql, reason = translate_measure(dax, resolve)
+    assert reason is None, reason
+    assert sql == expected
+
+
+def test_a_date_comparison_measure_stays_dax_on_import(bim):
+    model = _bim_with_measures(bim, {
+        "Shipped Late": "IF(MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate]), 1, 0)",
+        "Same Country": "MIN('Customer'[Country]) = MAX('Customer'[Country])",
+        "Big Order": "IF(MAX('Sales'[Amount]) > 1000, 1, 0)",
+    })
+    with pytest.warns(UserWarning, match="date value"):
+        document = build_ossie_document(model, translate_dax=True)
+    assert list(_dialects(_metric(document, "Shipped Late"))) == ["DAX"]
+    assert list(_dialects(_metric(document, "Same Country"))) == ["DAX"]
+    assert _dialects(_metric(document, "Big Order"))["OSSIE_SQL_2026"] == (
+        "CASE WHEN COALESCE(MAX(Sales.Amount), 0) > 1000 THEN 1 ELSE 0 END"
+    )
 
 
 # --- Math (PR3b): translated only for never-BLANK arguments ------------------

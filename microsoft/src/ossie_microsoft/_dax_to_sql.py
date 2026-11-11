@@ -82,6 +82,12 @@ and logic and conditionals, again matching DAX's documented BLANK rules:
 * ``COALESCE``, ``BLANK()``, ``ISBLANK(x)`` (``x IS NULL``), ``TRUE`` / ``FALSE``,
   ``AND`` / ``OR`` / ``NOT`` and ``&&`` / ``||``, and text literals as results.
 
+An aggregate is a number for arithmetic, comparisons and conditions only when it is known
+to be one: ``COUNTA`` and ``DISTINCTCOUNTNOBLANK`` always are, while ``SUM``, ``AVERAGE``,
+``MIN`` and ``MAX`` take the type of their column, which the ``resolve`` callback reports
+from the model. ``MAX`` over a date or text column is a date or text value, so it is never
+wrapped in ``COALESCE(x, 0)``.
+
 and math functions, but only for arguments that can never be BLANK (a literal,
 ``COALESCE(x, 0)``, a variable holding one), because Microsoft does not document what
 they return for BLANK: ``ABS``, ``SIGN``, ``SQRT``, ``POWER``, ``EXP``, ``LN``, ``LOG10``,
@@ -111,7 +117,10 @@ What is refused (and why, so the refusal is defensible)
 * Logical operators over a boolean that may be BLANK: DAX's logic with BLANK
   (``TRUE AND BLANK`` is FALSE, ``BLANK OR BLANK`` is BLANK) is not SQL's NULL logic.
 * Comparisons of text, and results that mix types (text in one branch, a number in
-  another): later tiers.
+  another): later tiers. This includes ``SUM``, ``AVERAGE``, ``MIN`` and ``MAX`` over a
+  column that is not numeric (``MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate])``,
+  ``MIN('Customer'[Country]) = MAX('Customer'[Country])``) or whose type the model does not
+  give: comparing a BLANK date or text needs other rules than ``COALESCE(x, 0)``.
 * ``ROUND``: DAX breaks ties half away from zero, and the spec's ``ROUND`` does not say how
   ties are broken. ``CEILING`` / ``FLOOR`` (rounding to a multiple of a significance) and
   ``ROUNDUP``: later tiers. A math function over a value that may be BLANK.
@@ -126,8 +135,8 @@ One reading is shared with ``_sql_to_dax`` rather than settled by the specificat
 ``OSSIE_SQL_2026`` division is taken to be true division, as DAX division is.
 
 This module performs no I/O and holds no model state. The caller supplies a
-``resolve`` callback mapping a DAX (table, column) to the Ossie (dataset, field)
-names, and optionally the model's measures for measure references.
+``resolve`` callback mapping a DAX (table, column) to the Ossie (dataset, field,
+datatype), and optionally the model's measures for measure references.
 """
 
 from __future__ import annotations
@@ -162,6 +171,9 @@ _AGGREGATES = {
     "DISTINCTCOUNTNOBLANK": "COUNT(DISTINCT {})",
 }
 
+#: Aggregates that return a count, a number whatever the column's type.
+_COUNTS = frozenset({"COUNTA", "DISTINCTCOUNTNOBLANK"})
+
 #: Functions whose DAX semantics differ from the SQL function of the same name, so a
 #: generic catalog reason would understate why they are refused.
 _SEMANTIC_MISMATCH = {
@@ -188,7 +200,24 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _OR, _AND, _NOT, _CMP, _ADD, _MUL, _ATOM = 0, 1, 2, 3, 4, 5, 6
 
 #: Fragment kinds. BLANK() is its own kind so it can stand in for a missing value of any type.
-_NUM, _BOOL, _TEXT, _BLANK = "number", "boolean", "text", "blank"
+#: An aggregate over a column the model gives no type for is "untyped": not known to be a
+#: number, so it is never used where a number is required.
+_NUM, _BOOL, _TEXT, _DATE, _UNTYPED, _BLANK = (
+    "number", "boolean", "text", "date", "untyped", "blank"
+)
+
+#: Ossie datatypes and the fragment kind of an aggregate over a column of that type.
+_KIND_OF_DATATYPE = {
+    "Integer": _NUM,
+    "Decimal": _NUM,
+    "Float": _NUM,
+    "String": _TEXT,
+    "Boolean": _BOOL,
+    "Date": _DATE,
+    "Time": _DATE,
+    "DateTime": _DATE,
+    "DateTimeTz": _DATE,
+}
 
 _COMPARISONS = {"=": "=", "<>": "<>", "<": "<", ">": ">", "<=": "<=", ">=": ">="}
 
@@ -224,8 +253,9 @@ class _Sql:
 def translate_measure(expression, resolve, measures=None):
     """Translate a DAX measure to an OSSIE_SQL expression.
 
-    ``resolve`` maps a DAX ``(table, column)`` to the Ossie ``(dataset, field)``
-    names, or returns None when the column does not resolve to exactly one field.
+    ``resolve`` maps a DAX ``(table, column)`` to the Ossie ``(dataset, field,
+    datatype)``, or returns None when the column does not resolve to exactly one field.
+    ``datatype`` is the field's Ossie datatype, or None when the model gives none.
     ``measures`` maps measure names to their DAX, for expanding measure references;
     without it a measure reference is refused.
 
@@ -313,10 +343,14 @@ class _Translator:
                 f"column '{column.table}'[{column.column}] does not resolve to exactly one "
                 "dataset field"
             )
-        dataset, field = resolved
+        dataset, field, datatype = resolved
         if not _is_simple_identifier(dataset) or not _is_simple_identifier(field):
             raise _RefusedError("a dataset or field name needing SQL quoting is a later tier")
-        return _Sql(_AGGREGATES[node.name].format(f"{dataset}.{field}"), _ATOM, nullable=True)
+        # A count is a number; the other aggregates take the type of their column.
+        kind = _NUM if node.name in _COUNTS else _column_kind(datatype)
+        return _Sql(
+            _AGGREGATES[node.name].format(f"{dataset}.{field}"), _ATOM, nullable=True, kind=kind
+        )
 
     def divide(self, node, variables):
         if len(node.args) == 3:
@@ -385,6 +419,11 @@ class _Translator:
     def number(self, node, variables):
         """Translate an operand of arithmetic or a comparison, which must be numeric."""
         fragment = self.translate(node, variables)
+        if fragment.kind == _UNTYPED:
+            raise _RefusedError(
+                "arithmetic or comparison on an aggregate whose column has no numeric "
+                "datatype in the model is not translated"
+            )
         if fragment.kind not in (_NUM, _BLANK):
             raise _RefusedError(
                 f"arithmetic or comparison on a {fragment.kind} value is a later tier"
@@ -680,6 +719,11 @@ def _common_kind(fragments):
         mixed = ", ".join(sorted(kinds))
         raise _RefusedError(f"results of different types ({mixed}) are a later tier")
     return kinds.pop() if kinds else _BLANK
+
+
+def _column_kind(datatype):
+    """The kind of SUM / AVERAGE / MIN / MAX over a column of the given Ossie datatype."""
+    return _KIND_OF_DATATYPE.get(datatype, _UNTYPED)
 
 
 def _is_simple_identifier(name):

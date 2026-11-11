@@ -435,7 +435,10 @@ other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESC
 compares a BLANK number as 0, so `BLANK = 0` is TRUE; strict `==` does not); and math
 functions (`ABS`, `SQRT`, `POWER`, `LOG`, `INT`, `TRUNC`, `MOD`, `QUOTIENT`, trigonometry,
 ...) when their argument can never be BLANK, for example `ABS(COALESCE([Sales], 0))`,
-since what they return for BLANK is not documented. `ROUND` is not translated: DAX
+since what they return for BLANK is not documented. Arithmetic, comparisons and conditions
+take only numbers: `SUM`, `AVERAGE`, `MIN` and `MAX` count as numbers when their column's
+`datatype` is numeric, so `MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate])` (dates) or a
+column without a datatype stays DAX. `ROUND` is not translated: DAX
 rounds ties half away from zero, which the spec's `ROUND` does not guarantee. Every other
 DAX function is refused with a reason from a per-function registry, for example:
 
