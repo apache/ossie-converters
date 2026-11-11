@@ -624,3 +624,36 @@ def test_object_mappings_differing_only_in_nested_referents_both_create(tmp_path
     assert len(created) == 2, f"expected a Desk creation rule per column, got: {created}"
     assert any("PRIMARYNR" in rule for rule in created), created
     assert any("BACKUPNR" in rule for rule in created), created
+
+
+def test_parsed_requires_become_scoped_requirements(tmp_path):
+    import ast
+    import json
+
+    specification = {
+        "version": "0.3.0.dev0",
+        "name": "Requirements",
+        "requires": ["COUNT[Code] <= 2"],
+        "ontology": [
+            {
+                "concept": "Code", "type": "ValueType", "extends": ["Integer"],
+                "requires": ["Code == 1 OR Code == 2"],
+                "relationships": [{
+                    "name": "links", "roles": [{"concept": "Code", "name": "target"}],
+                    "verbalizes": ["{Code} links {Code:target}"],
+                    "requires": ["Code != target"],
+                }],
+            },
+        ],
+    }
+    path = tmp_path / "requirements.json"
+    path.write_text(json.dumps(specification))
+    pyrel.Model.all_models.clear()
+    model = OssieToRelationalAIConverter.convert(OssieParser().parse(path), table_provider=declared_table)
+    source = to_pyrel(model.base_model().to_metamodel())
+    requirements = [
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "require"
+    ]
+    assert len(requirements) == 3, source
+    assert any("links" in ast.unparse(node.func.value) for node in requirements)

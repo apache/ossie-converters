@@ -32,7 +32,7 @@ from ossie_relationalai.fields import render_field, table_schema
 from ossie_relationalai.mappings import ConditionValue, EntityMapping
 from ossie_relationalai.ontology import OntologyModel
 from ossie_ontology.expr.formula.model import Formula
-from ossie_relationalai.formula import FormulaConverter, MappingFormulaConverter
+from ossie_relationalai.formula import FormulaConverter, MappingFormulaConverter, RequirementConverter
 from ossie_ontology.reasoner import OntologyReasoner
 from ossie_ontology.model import (
     Concept,
@@ -558,16 +558,19 @@ class OssieToRelationalAIConverter:
         # already did, rather than aborting the whole conversion. IATA alone
         # reaches here with 81 such formulas, all OWL code-list enumerations.
         var_name_cache = NameCache()
-        for concept in oc.concepts(exclude_builtin=True):
-            if concept.derived_by:
-                for formula in concept.derived_by:
-                    if isinstance(formula, Formula):
-                        FormulaConverter(oc, ontology, reasoner, var_name_cache, formula)
-        for rel in oc.relationships:
-            if rel.derived_by:
-                for formula in rel.derived_by:
-                    if isinstance(formula, Formula):
-                        FormulaConverter(oc, ontology, reasoner, var_name_cache, formula)
+        for owner in (*oc.concepts(exclude_builtin=True), *oc.relationships):
+            for formula in owner.derived_by:
+                if isinstance(formula, Formula):
+                    FormulaConverter(oc, ontology, reasoner, var_name_cache, formula)
+
+        for owner in (oc, *oc.concepts(exclude_builtin=True), *oc.relationships):
+            for formula in owner.requires:
+                if not isinstance(formula, Formula):
+                    continue
+                try:
+                    RequirementConverter(oc, ontology, reasoner, var_name_cache, formula)
+                except NotImplementedError as error:
+                    warnings.warn(f"Unsupported requires {formula.raw_expr!r}: {error}", stacklevel=2)
 
     # ------------------------------------------------------------------
     # Reading string generation

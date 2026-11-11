@@ -89,7 +89,7 @@ class FormulaConverter(GenericFormulaConverter):
         self._ontology = ontology
         self._reasoner = reasoner
         self._formula = formula
-        self._target_var = formula.formula_target()
+        self._target_var = self._formula_target()
         self._var_name_cache = var_name_cache
         self._var_refs: dict = {}
         self._body_statements: list = []
@@ -110,6 +110,12 @@ class FormulaConverter(GenericFormulaConverter):
             # `_var_name` is NameCache-backed, so these stay unique across formulas.
             var_name = self._var_name(var)
             self._var_refs[var_name] = pyrel_c.ref(var_name)
+        self._emit()
+
+    def _formula_target(self):
+        return self._formula.formula_target()
+
+    def _emit(self):
         self._ontology.base_model().define(self._head()).where(*self._body())
 
     def _head(self):
@@ -293,6 +299,92 @@ class FormulaConverter(GenericFormulaConverter):
             return rel
         else:
             return concept.__getattr__(relationship.name)
+
+class RequirementConverter(FormulaConverter):
+    """Render the supported boolean subset as a requirement over its scope."""
+
+    def _formula_target(self):
+        # A comparison in a requirement tests its operands without assigning
+        # the last primitive role as an output of a derivation.
+        return None
+
+    def _ref(self, name, concept):
+        key = self._var_name(name)
+        if key not in self._var_refs:
+            player = self._ontology.lookup_concept(concept.name)
+            assert player is not None
+            self._var_refs[key] = player.ref(key)
+        return self._var_refs[key]
+
+    def _emit(self):
+        scope = self._formula.parent
+        if isinstance(scope, Concept):
+            concept = self._ontology.lookup_concept(scope.name)
+            assert concept is not None
+            domain = [concept(self._ref(scope.name, scope))]
+        elif isinstance(scope, Relationship):
+            roles = [self._ref(role.name, role.player) for role in scope.roles]
+            domain = [self._pyrel_relationship(scope)(*roles)]
+        elif scope is None:
+            domain = []
+        else:
+            raise NotImplementedError("requires scope is not supported")
+        condition = self._body()
+        if not condition:
+            raise NotImplementedError("requires did not yield a condition")
+        self._ontology.base_model().where(*domain).require(*condition)
+
+    def visit_expression(self, node: Expression, parent: Optional[Node]):
+        if node._op not in {BinOp.EQ, BinOp.NE, BinOp.LT, BinOp.LE, BinOp.GT, BinOp.GE}:
+            raise NotImplementedError("arithmetic in requires is not supported")
+        return super().visit_expression(node, parent)
+
+    def visit_relationshiprefhandle(self, node: RelationshipRefHandle, parent: Optional[Node]):
+        if not isinstance(parent, FactRef):
+            raise NotImplementedError("relationship value lookup in requires is not supported")
+        return super().visit_relationshiprefhandle(node, parent)
+
+    def visit_dotjoinhandle(self, node: DotJoinHandle, parent: Optional[Node]):
+        if not isinstance(parent, FactRef):
+            raise NotImplementedError("path value lookup in requires is not supported")
+        return super().visit_dotjoinhandle(node, parent)
+
+    def visit_datasetrefhandle(self, node: DatasetRefHandle, parent: Optional[Node]):
+        raise NotImplementedError("dataset access in requires is not supported")
+
+    def visit_datasetfieldhandle(self, node: DatasetFieldHandle, parent: Optional[Node]):
+        raise NotImplementedError("dataset access in requires is not supported")
+
+    def visit_disjunction(self, node: Disjunction, parent: Optional[Node]):
+        # A disjunction of equalities on one variable is an enum. A general
+        # disjunction can introduce new bindings and is outside this lowering.
+        pending = [node]
+        variable = None
+        values = []
+        while pending:
+            term = pending.pop()
+            if isinstance(term, Disjunction):
+                pending.extend((term.right(), term.left()))
+                continue
+            if not isinstance(term, Expression) or term._op != BinOp.EQ:
+                raise NotImplementedError("requires OR must enumerate one variable")
+            left, right = term._args
+            if not isinstance(left, VarHandle) or not isinstance(right, LiteralHandle):
+                raise NotImplementedError("requires OR must enumerate one variable")
+            if variable is not None and variable.name() != left.name():
+                raise NotImplementedError("requires OR must enumerate one variable")
+            variable = left
+            values.append(right._val)
+        return variable.accept(self, node).in_(values)
+
+    def visit_aggexpr(self, node: AggExpr, parent: Optional[Node]):
+        if (
+            self._formula.parent is not None or node._formula is not None or node._group_by
+            or len(node._var_seq) != 1 or ModelAggMethod(node._method._val) != ModelAggMethod.COUNT
+        ):
+            raise NotImplementedError("requires aggregates are limited to a global concept count")
+        return super().visit_aggexpr(node, parent)
+
 
 class MappingFormulaConverter(GenericFormulaConverter):
     """Converts a mapping formula AST to a PyRel expression.
