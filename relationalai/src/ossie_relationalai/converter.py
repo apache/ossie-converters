@@ -32,6 +32,7 @@ from ossie_relationalai.fields import render_field, table_schema
 from ossie_relationalai.mappings import ConditionValue, EntityMapping
 from ossie_relationalai.ontology import OntologyModel
 from ossie_ontology.expr.formula.model import Formula
+from relationalai.util.error import RAIException
 from ossie_relationalai.formula import FormulaConverter, MappingFormulaConverter, RequirementConverter
 from ossie_ontology.reasoner import OntologyReasoner
 from ossie_ontology.model import (
@@ -569,8 +570,17 @@ class OssieToRelationalAIConverter:
                     continue
                 try:
                     RequirementConverter(oc, ontology, reasoner, var_name_cache, formula)
-                except NotImplementedError as error:
-                    warnings.warn(f"Unsupported requires {formula.raw_expr!r}: {error}", stacklevel=2)
+                except (NotImplementedError, RAIException) as error:
+                    if owner is oc:
+                        scope = "ontology"
+                    elif isinstance(owner, Relationship):
+                        scope = owner.full_name
+                    else:
+                        scope = owner.name
+                    warnings.warn(
+                        f"Unsupported requires {formula.raw_expr!r} on {scope}: {error}",
+                        stacklevel=3,
+                    )
 
     # ------------------------------------------------------------------
     # Reading string generation
