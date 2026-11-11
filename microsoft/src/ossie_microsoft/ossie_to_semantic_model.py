@@ -124,6 +124,26 @@ _DELIMITED_RE = re.compile(r'^\[([^\]]+)\]$|^"([^"]+)"$|^`([^`]+)`$')
 _QUERY_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
 
+def _unwrap_ossie_0_1_1(document):
+    """Normalize the single-model wrapper emitted by Snowflake Semantic Views."""
+    if document.get("version") != "0.1.1":
+        raise ValueError(
+            "Legacy 'semantic_model' wrappers are only supported for Ossie 0.1.1; "
+            "place model properties at the document root for other versions"
+        )
+    models = document["semantic_model"]
+    if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+        raise ValueError("Ossie 0.1.1 'semantic_model' must contain exactly one model object")
+    document_keys = {"version", "semantic_model", "dialects", "vendors"}
+    if document.keys() - document_keys:
+        raise ValueError("Ossie 0.1.1 requires model properties inside 'semantic_model'")
+    model = models[0]
+    if document_keys.intersection(model):
+        raise ValueError("Ossie 0.1.1 requires document properties outside its model")
+    # The root dialect and vendor declarations are redundant with per-object metadata.
+    return {"version": OSSIE_VERSION, **model}
+
+
 def convert_ossie_to_semantic_model(
     ossie_yaml_str,
     source: dict = None,
@@ -133,7 +153,7 @@ def convert_ossie_to_semantic_model(
 
     Args:
         ossie_yaml_str: The Apache Ossie document as YAML text. A parsed mapping is
-            also accepted for compatibility with existing library callers.
+            also accepted. Supports a flat document or a 0.1.1 wrapper with one model.
         source: Optional OneLake location for generated Direct Lake partitions, as
             ``{"workspaceId": ..., "itemId": ...}``.
         output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
@@ -160,10 +180,7 @@ def convert_ossie_to_semantic_model(
         raise TypeError("input must be Apache Ossie YAML text or a parsed document")
 
     if "semantic_model" in document:
-        raise ValueError(
-            "Legacy 'semantic_model' wrappers are not supported; "
-            "place model properties at the document root"
-        )
+        document = _unwrap_ossie_0_1_1(document)
     if "dialects" in document or "vendors" in document:
         raise ValueError("Root dialects and vendors are not supported by the Ossie spec")
     if not document.get("name"):
@@ -973,9 +990,10 @@ def _tmsl_text(value):
 
 def _warn_foreign_extensions(scope, obj):
     for ext in foreign_vendor_extensions(obj):
+        vendor = ext.get("vendor_name", ext.get("vendor"))
         warn(
             scope,
-            f"custom_extensions for vendor '{ext.get('vendor_name')}' have no Power BI "
+            f"custom_extensions for vendor '{vendor}' have no Power BI "
             "equivalent and are dropped",
         )
 

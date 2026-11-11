@@ -24,12 +24,13 @@ semantic model. Power BI output is available as either a TMSL `model.bim` mappin
 TMDL document. The conversion is offline and requires no Power BI or Fabric
 connection.
 
-Each Ossie JSON/YAML document contains one model, with `name`, `datasets`,
-`relationships`, and `metrics` at the root alongside `version`. Legacy
-`semantic_model` wrappers must be unwrapped before conversion; split documents
-containing multiple models into separate files. Because the Ossie schema requires at
-least one dataset, importing a Power BI model fails explicitly when every table is
-malformed or excluded from the vendor-neutral model.
+Power BI imports write one flat Ossie model with `name`, `datasets`, `relationships`,
+and `metrics` at the root alongside `version`. Power BI exports also accept an Ossie
+`0.1.1` document with one model in a `semantic_model` array, as returned by
+[Snowflake Semantic Views](https://docs.snowflake.com/en/sql-reference/functions/system_read_ossie_yaml_from_semantic_view).
+Split documents containing multiple models into separate files. Because the Ossie
+schema requires at least one dataset, importing a Power BI model fails explicitly
+when every table is malformed or excluded from the vendor-neutral model.
 
 ## Installation
 
