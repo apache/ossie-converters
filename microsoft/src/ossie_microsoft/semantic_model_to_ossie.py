@@ -548,6 +548,14 @@ _ROW_KINDS = {
 }
 
 
+def _row_kind(column):
+    """The fragment kind of a column for calculated columns: a ``dateTime`` with a
+    date-only format string is a date, as on import (``_map_datatype``)."""
+    if column.get("dataType") == "dateTime":
+        return "date" if is_date_only_format(column.get("formatString")) else "datetime"
+    return _ROW_KINDS.get(column.get("dataType"))
+
+
 def _row_columns(table):
     """Describe ``table``'s columns for translating its calculated columns."""
     columns = {}
@@ -560,7 +568,7 @@ def _row_columns(table):
         columns[column["name"]] = RowColumn(
             source=None if calculated else (column.get("sourceColumn") or column["name"]),
             dax=text(column.get("expression", "")) if calculated else None,
-            kind=_ROW_KINDS.get(column.get("dataType")),
+            kind=_row_kind(column),
             # TOM's default is nullable; only an explicit false rules BLANK out.
             nullable=column.get("isNullable") is not False,
         )

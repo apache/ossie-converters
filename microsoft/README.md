@@ -462,12 +462,24 @@ literal, `COALESCE(x, "")`, or a column the model declares `isNullable: false`. 
 reference becomes the referenced column's *source column*, because the spec's field
 expressions refer to source columns, not to other fields; a referenced calculated column
 is expanded inline. An aggregate (which in a calculated column ranges over the whole
-table), a measure, a column of another table (`RELATED`), a date column, and `TRIM`,
-`EXACT`, `VALUE`, `FIND`, `SEARCH` and `CONTAINSSTRING` are refused with a reason:
+table), a measure, a column of another table (`RELATED`), and `TRIM`, `EXACT`, `VALUE`,
+`FIND`, `SEARCH` and `CONTAINSSTRING` are refused with a reason.
+
+Date functions, in measures and calculated columns, again only for a date that can never
+be BLANK (DAX reads BLANK as 30 December 1899, SQL gives NULL): `YEAR`, `QUARTER`,
+`MONTH` and `DAY` of a date or datetime, `HOUR`, `MINUTE` and `SECOND` of a datetime
+(a `dateTime` column with a date-only format string is a date, as on import),
+`DATE(y, m, d)` with literals for a valid date from 1900 on (-> `DATE 'YYYY-MM-DD'`),
+`EDATE(date, n)` -> `DATEADD(month, n, date)` for a date, and `EOMONTH(date, n)` -> the
+day before the first of the month `n + 1` months on. `DATEDIFF` is refused: DAX counts
+the interval boundaries crossed, and the spec does not say whether its `DATEDIFF` does.
 
 ```
+
 LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
 [First] & " " & [Last]      ->  refused: & of a value that may be BLANK
+YEAR([Booked])              ->  YEAR(booked_on)        (Booked: a date, isNullable false)
+YEAR(MAX('Sales'[Date]))    ->  refused: a date that may be BLANK
 ```
 
 `_dax_to_sql.py` documents each rule and each refusal.
