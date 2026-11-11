@@ -15,7 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import List, Optional, Sequence
+from functools import partial
+from typing import List, Mapping, Optional, Sequence
 
 import jinja2
 from jinja2.sandbox import SandboxedEnvironment
@@ -26,13 +27,15 @@ from metricflow_semantic_interfaces.protocols.where_filter import WhereFilterInt
 class _DimensionStub:
     """Jinja sandbox stub for `{{ Dimension('entity__dim') }}`.
 
-    Renders to the qualified column name, e.g. `order__status`.
+    Renders to the column the reference names in ``columns``, e.g. `orders.status`, else to
+    the MetricFlow name, e.g. `order__status`.
     Method chaining (`grain`, `date_part`) appends a `__<suffix>` part.
     """
 
-    def __init__(self, name: str, entity_path: Sequence[str] = ()) -> None:
+    def __init__(self, name: str, entity_path: Sequence[str] = (), *, columns: Mapping[str, str] = {}) -> None:
         self._col = "__".join(list(entity_path) + [name])
         self._suffix = ""
+        self._columns = columns
 
     def grain(self, time_granularity: str) -> "_DimensionStub":
         self._suffix = f"__{time_granularity.lower()}"
@@ -46,7 +49,8 @@ class _DimensionStub:
         return self
 
     def __str__(self) -> str:
-        return f"{self._col}{self._suffix}"
+        name = f"{self._col}{self._suffix}"
+        return self._columns.get(name, name)
 
 
 class _TimeDimensionStub:
@@ -108,14 +112,15 @@ class _MetricStub:
         return self._name
 
 
-def _render_filter_template(template: str) -> str:
+def _render_filter_template(template: str, columns: Mapping[str, str] = {}) -> str:
     """Render an MSI where-filter Jinja template to a plain SQL fragment.
 
     Jinja references such as `{{ Dimension('order__status') }}`,
     `{{ TimeDimension('order__ds', 'day') }}`, `{{ Entity('user') }}`,
     and `{{ Metric('revenue') }}` are resolved to their column-name
-    equivalents using lightweight stubs. The output is a best-effort SQL
-    string suitable for embedding in an Ossie expression.
+    equivalents using lightweight stubs. A `Dimension` reference found in
+    ``columns`` renders as its `<dataset>.<column>`. The output is a best-effort
+    SQL string suitable for embedding in an Ossie expression.
     
     Sandboxing is necessary to prevent SSTI-to-RCE style exploits
     """
@@ -123,7 +128,7 @@ def _render_filter_template(template: str) -> str:
         SandboxedEnvironment(undefined=jinja2.StrictUndefined)
         .from_string(template)
         .render(
-            Dimension=_DimensionStub,
+            Dimension=partial(_DimensionStub, columns=columns),
             TimeDimension=_TimeDimensionStub,
             Entity=_EntityStub,
             Metric=_MetricStub,
@@ -131,23 +136,25 @@ def _render_filter_template(template: str) -> str:
     )
 
 
-def _collect_filter_sql(*filters: Optional[WhereFilterIntersection]) -> Optional[str]:
+def _collect_filter_sql(
+    *filters: Optional[WhereFilterIntersection], columns: Mapping[str, str] = {}
+) -> Optional[str]:
     """Render and merge MSI WhereFilterIntersection objects into a single SQL fragment.
 
-    Jinja references (e.g. `{{ Dimension('order__status') }}`) are resolved
-    using lightweight stubs that produce MetricFlow-qualified column names such
-    as `order__status`. These are *not* fully resolved SQL column aliases —
-    resolving to actual table column names would require `WhereFilterSpecFactory`
-    and `ColumnAssociationResolver` from `metricflow_semantics`, which is out
-    of scope here. Ossie consumers are expected to perform their own column
-    resolution against the source data.
+    A `{{ Dimension('order__status') }}` reference found in ``columns`` renders as
+    the column it names, e.g. `orders.status`, so the expression only names fields
+    of the Ossie document. Any other reference renders as its MetricFlow name, e.g.
+    `order__status` or `customer__order__status`: resolving a join path, a time
+    grain or a SQL dimension would require `WhereFilterSpecFactory` and
+    `ColumnAssociationResolver` from `metricflow_semantics`, which is out of scope
+    here, and consumers resolve those names themselves.
     """
     parts: List[str] = []
     for f in filters:
         if f is None:
             continue
         for wf in f.where_filters:
-            rendered = _render_filter_template(wf.where_sql_template).strip()
+            rendered = _render_filter_template(wf.where_sql_template, columns).strip()
             if rendered:
                 parts.append(rendered)
     return _merge_filter_sqls(*parts)

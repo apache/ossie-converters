@@ -27,8 +27,10 @@ from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType
 from ossie_dbt.filter_utils import _render_filter_template
 from ossie import OssieDataType, OssieDialect, OssieDocument
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
+from ossie_dbt.ossie_to_msi import OssieToMSIConverter
 from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
 from metricflow_semantic_interfaces.implementations.element_config import PydanticSemanticLayerElementConfig
+from metricflow_semantic_interfaces.implementations.elements.dimension import PydanticDimension
 from metricflow_semantic_interfaces.implementations.metric import (
     PydanticConversionTypeParams,
     PydanticCumulativeTypeParams,
@@ -1721,6 +1723,13 @@ class TestFilterRendering:
     def test_dimension_reference(self) -> None:
         assert _render_filter_template("{{ Dimension('order__status') }} = 'paid'") == "order__status = 'paid'"
 
+    def test_dimension_reference_with_a_column(self) -> None:
+        columns = {"order__status": "orders.status"}
+        assert _render_filter_template("{{ Dimension('order__status') }} = 'paid'", columns) == "orders.status = 'paid'"
+        assert _render_filter_template("{{ Dimension('order__status').grain('day') }} = 'paid'", columns) == (
+            "order__status__day = 'paid'"
+        )
+
     def test_dimension_with_grain(self) -> None:
         result = _render_filter_template("{{ Dimension('order__ds').grain('day') }} >= '2023-01-01'")
         assert result == "order__ds__day >= '2023-01-01'"
@@ -1831,6 +1840,89 @@ class TestMetricFilterFlattening:
             _ossie_metrics(result)[0].expression.dialects[0].expression
             == "SUM(CASE WHEN order__country = 'US' THEN orders.amount END)"
         )
+
+    @staticmethod
+    def _orders(*dimensions: PydanticDimension) -> PydanticSemanticModel:
+        return semantic_model_with_guaranteed_meta(
+            name="orders",
+            entities=[_entity("order", expr="order_id"), _entity("customer", EntityType.FOREIGN, expr="customer_id")],
+            dimensions=[_dimension("country", expr="country_code"), *dimensions],
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+
+    def _filtered_revenue(self, where: str, *semantic_models: PydanticSemanticModel) -> str:
+        metric = PydanticMetric(
+            name="filtered_revenue",
+            description=None,
+            type=MetricType.SIMPLE,
+            type_params=PydanticMetricTypeParams(measure=PydanticMetricInputMeasure(name="revenue")),
+            filter=_filter(where),
+            metadata=default_meta(),
+            config=None,
+        )
+        models = list(semantic_models) or [self._orders()]
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=models, metrics=[metric])).output
+        return _ossie_metrics(result)[0].expression.dialects[0].expression
+
+    def test_jinja_dimension_reference_rendered_as_its_dataset_column(self) -> None:
+        """A filter names the column of the Ossie document, as the measure does, not the MetricFlow name."""
+        assert self._filtered_revenue("{{ Dimension('order__country') }} = 'US'") == (
+            "SUM(CASE WHEN orders.country_code = 'US' THEN orders.amount END)"
+        )
+
+    def test_jinja_dimension_reference_without_expr_uses_its_name(self) -> None:
+        orders = self._orders(_dimension("status"))
+        assert self._filtered_revenue("{{ Dimension('order__status') }} = 'paid'", orders) == (
+            "SUM(CASE WHEN orders.status = 'paid' THEN orders.amount END)"
+        )
+
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            pytest.param("customer__order__country", id="join path"),
+            pytest.param("customer__segment", id="entity with no semantic model of its own"),
+            pytest.param("order__is_big", id="SQL dimension"),
+            pytest.param("order__ordered_at", id="time dimension"),
+        ],
+    )
+    def test_jinja_dimension_reference_without_one_column_keeps_its_metricflow_name(self, reference: str) -> None:
+        orders = self._orders(
+            _dimension("is_big", expr="CASE WHEN amount > 100 THEN 1 ELSE 0 END"),
+            _dimension("ordered_at", DimensionType.TIME, granularity=TimeGranularity.DAY),
+        )
+        assert self._filtered_revenue(f"{{{{ Dimension('{reference}') }}}} = 1", orders) == (
+            f"SUM(CASE WHEN {reference} = 1 THEN orders.amount END)"
+        )
+
+    def test_jinja_dimension_reference_two_semantic_models_declare_keeps_its_metricflow_name(self) -> None:
+        archive = semantic_model_with_guaranteed_meta(
+            name="archived_orders",
+            entities=[_entity("order", expr="order_id")],
+            dimensions=[_dimension("country", expr="country")],
+        )
+        assert self._filtered_revenue("{{ Dimension('order__country') }} = 'US'", self._orders(), archive) == (
+            "SUM(CASE WHEN order__country = 'US' THEN orders.amount END)"
+        )
+
+    def test_jinja_dimension_reference_round_trips_without_issues(self) -> None:
+        metric = PydanticMetric(
+            name="us_revenue",
+            description=None,
+            type=MetricType.SIMPLE,
+            type_params=PydanticMetricTypeParams(measure=PydanticMetricInputMeasure(name="revenue")),
+            filter=_filter("{{ Dimension('order__country') }} = 'US'"),
+            metadata=default_meta(),
+            config=None,
+        )
+        ossie_doc = MSIToOssieConverter().convert(_manifest(semantic_models=[self._orders()], metrics=[metric])).output
+
+        back = OssieToMSIConverter().convert(ossie_doc)
+
+        assert back.issues == []
+        params = back.output.metrics[0].type_params
+        assert params.metric_aggregation_params is not None
+        assert params.metric_aggregation_params.semantic_model == "orders"
+        assert params.expr == "CASE WHEN country_code = 'US' THEN amount END"
 
     def test_ratio_metric_filter_propagated_to_both_sides(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
