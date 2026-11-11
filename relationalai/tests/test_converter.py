@@ -630,11 +630,21 @@ def test_parsed_requires_become_scoped_requirements(tmp_path):
     import ast
     import json
 
+    from relationalai.semantics.metamodel.metamodel import Require
+
     specification = {
         "version": "0.3.0.dev0",
         "name": "Requirements",
         "requires": ["COUNT[Code] <= 2"],
         "ontology": [
+            {
+                "concept": "Account", "type": "EntityType",
+                "relationships": [{
+                    "name": "holds", "roles": [{"concept": "Code", "name": "balance"}],
+                    "verbalizes": ["{Account} holds {Code:balance}"],
+                    "requires": ["balance <= 100"],
+                }],
+            },
             {
                 "concept": "Code", "type": "ValueType", "extends": ["Integer"],
                 "requires": ["Code == 1 OR Code == 2"],
@@ -649,11 +659,28 @@ def test_parsed_requires_become_scoped_requirements(tmp_path):
     path = tmp_path / "requirements.json"
     path.write_text(json.dumps(specification))
     pyrel.Model.all_models.clear()
-    model = OssieToRelationalAIConverter.convert(OssieParser().parse(path), table_provider=declared_table)
-    source = to_pyrel(model.base_model().to_metamodel())
-    requirements = [
+    with pytest.warns(UserWarning, match="Unsupported requires") as warnings:
+        model = OssieToRelationalAIConverter.convert(
+            OssieParser().parse(path), table_provider=declared_table,
+        )
+    assert len(warnings) == 2
+    metamodel = model.base_model().to_metamodel()
+    Typer().infer_model(metamodel)
+    requirements = [node for node in metamodel.root.body if isinstance(node, Require)]
+    assert len(requirements) == 2
+    for requirement in requirements:
+        assert requirement.domain.body
+        assert requirement.check.body
+
+    source = to_pyrel(metamodel)
+    emitted = [
         node for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "require"
     ]
-    assert len(requirements) == 3, source
-    assert any("links" in ast.unparse(node.func.value) for node in requirements)
+    assert len(emitted) == 1, source
+    assert "holds" in ast.unparse(emitted[0].func.value)
+    assert "100" in ast.unparse(emitted[0].args[0])
+    namespace = {}
+    pyrel.Model.all_models.clear()
+    exec(compile(source, "generated_requires.py", "exec"), namespace)
+    Typer().infer_model(namespace["m"].to_metamodel())

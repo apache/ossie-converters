@@ -26,6 +26,7 @@ SDK. This module is the half that needs it.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Optional
 
 from relationalai.util.naming import NameCache
@@ -318,36 +319,81 @@ class RequirementConverter(FormulaConverter):
 
     def _emit(self):
         scope = self._formula.parent
+        self._scope_refs = {}
+        self._concept_refs = {}
         if isinstance(scope, Concept):
+            if scope.is_primitive:
+                raise NotImplementedError("requires on a value concept needs a finite instance relation")
             concept = self._ontology.lookup_concept(scope.name)
             assert concept is not None
-            domain = [concept(self._ref(scope.name, scope))]
+            ref = self._ref(scope.name, scope)
+            self._scope_refs[scope.name] = ref
+            self._concept_refs[scope.name] = ref
+            domain = [concept(ref)]
         elif isinstance(scope, Relationship):
-            roles = [self._ref(role.name, role.player) for role in scope.roles]
-            domain = [self._pyrel_relationship(scope)(*roles)]
-        elif scope is None:
-            domain = []
+            refs = []
+            players = Counter(role.player.name for role in scope.roles)
+            for i, role in enumerate(scope.roles):
+                ref = self._ref(role.name, role.player)
+                refs.append(ref)
+                self._scope_refs[role.name] = ref
+                if i == 0 or players[role.player.name] == 1:
+                    self._concept_refs[role.player.name] = ref
+            domain = [self._pyrel_relationship(scope)(*refs)]
         else:
-            raise NotImplementedError("requires scope is not supported")
+            raise NotImplementedError("ontology-level requires are not supported")
         condition = self._body()
         if not condition:
             raise NotImplementedError("requires did not yield a condition")
         self._ontology.base_model().where(*domain).require(*condition)
 
+    def visit_varhandle(self, node: VarHandle, parent: Optional[Node]):
+        if node.name() not in self._scope_refs:
+            raise NotImplementedError("requires variable is outside the current scope")
+        return self._scope_refs[node.name()]
+
+    def visit_conceptrefhandle(self, node: ConceptRefHandle, parent: Optional[Node]):
+        name = node._concept.name
+        if name not in self._concept_refs:
+            raise NotImplementedError("requires concept is outside the current scope")
+        return self._concept_refs[name]
+
     def visit_expression(self, node: Expression, parent: Optional[Node]):
-        if node._op not in {BinOp.EQ, BinOp.NE, BinOp.LT, BinOp.LE, BinOp.GT, BinOp.GE}:
-            raise NotImplementedError("arithmetic in requires is not supported")
+        comparison = {BinOp.EQ, BinOp.NE, BinOp.LT, BinOp.LE, BinOp.GT, BinOp.GE}
+        if node._op not in comparison:
+            if parent is None or not all(isinstance(arg, LiteralHandle) for arg in node._args):
+                raise NotImplementedError("requires arithmetic must be over literals")
         return super().visit_expression(node, parent)
 
-    def visit_relationshiprefhandle(self, node: RelationshipRefHandle, parent: Optional[Node]):
-        if not isinstance(parent, FactRef):
-            raise NotImplementedError("relationship value lookup in requires is not supported")
-        return super().visit_relationshiprefhandle(node, parent)
+    def _predicate(self, node: DotJoinHandle, arguments=()):
+        owner, target = node._handle1, node._handle2
+        if not isinstance(owner, (ConceptRefHandle, VarHandle)) or not isinstance(target, RelationshipRefHandle):
+            raise NotImplementedError("requires paths must use one relationship")
+        relationship = target._relationship
+        if len(relationship.roles) != len(arguments) + 1:
+            raise NotImplementedError("requires predicate must bind every role")
+        bound = owner.accept(self, node)
+        return self._pyrel_relationship(relationship)(bound, *arguments)
+
+    def visit_factref(self, node: FactRef, parent: Optional[Node]):
+        if not isinstance(node._handle, DotJoinHandle) or not all(
+            isinstance(arg, (ConceptRefHandle, VarHandle, LiteralHandle)) for arg in node._args
+        ):
+            raise NotImplementedError("requires fact arguments must be scoped references or literals")
+        return self._predicate(node._handle, [arg.accept(self, node) for arg in node._args])
 
     def visit_dotjoinhandle(self, node: DotJoinHandle, parent: Optional[Node]):
-        if not isinstance(parent, FactRef):
+        if isinstance(parent, Expression):
             raise NotImplementedError("path value lookup in requires is not supported")
-        return super().visit_dotjoinhandle(node, parent)
+        return self._predicate(node)
+
+    def visit_exists(self, node: Exists, parent: Optional[Node]):
+        if not isinstance(node._body, DotJoinHandle):
+            raise NotImplementedError("requires EXISTS must use a scoped unary relationship")
+        return self._predicate(node._body)
+
+    def visit_relationshiprefhandle(self, node: RelationshipRefHandle, parent: Optional[Node]):
+        raise NotImplementedError("requires relationship must bind every role")
 
     def visit_datasetrefhandle(self, node: DatasetRefHandle, parent: Optional[Node]):
         raise NotImplementedError("dataset access in requires is not supported")
@@ -369,21 +415,16 @@ class RequirementConverter(FormulaConverter):
             if not isinstance(term, Expression) or term._op != BinOp.EQ:
                 raise NotImplementedError("requires OR must enumerate one variable")
             left, right = term._args
-            if not isinstance(left, VarHandle) or not isinstance(right, LiteralHandle):
+            if not isinstance(left, (ConceptRefHandle, VarHandle)) or not isinstance(right, LiteralHandle):
                 raise NotImplementedError("requires OR must enumerate one variable")
-            if variable is not None and variable.name() != left.name():
+            if variable is not None and variable != left:
                 raise NotImplementedError("requires OR must enumerate one variable")
             variable = left
             values.append(right._val)
         return variable.accept(self, node).in_(values)
 
     def visit_aggexpr(self, node: AggExpr, parent: Optional[Node]):
-        if (
-            self._formula.parent is not None or node._formula is not None or node._group_by
-            or len(node._var_seq) != 1 or ModelAggMethod(node._method._val) != ModelAggMethod.COUNT
-        ):
-            raise NotImplementedError("requires aggregates are limited to a global concept count")
-        return super().visit_aggexpr(node, parent)
+        raise NotImplementedError("requires aggregates are not supported")
 
 
 class MappingFormulaConverter(GenericFormulaConverter):
