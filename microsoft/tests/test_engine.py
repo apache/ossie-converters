@@ -647,6 +647,28 @@ def test_evaluate_returns_the_engine_error(monkeypatch):
     assert error == "bad dax"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"message": "query failed"}},
+        {"results": [{"error": {"message": "query failed"}}]},
+        {"results": [{"tables": [{"error": {"message": "query failed"}, "rows": [{"[v]": 1}]}]}]},
+    ],
+)
+def test_evaluate_rejects_errors_inside_successful_http_responses(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (None, "query failed")
+
+
+@pytest.mark.parametrize("body", [None, {"results": []}, {"results": [{"tables": [{}, {}]}]},
+                                  {"results": [{"tables": [{"rows": {}}]}]}])
+def test_evaluate_rejects_malformed_results(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (
+        None, "unexpected executeQueries response; expected one result table",
+    )
+
+
 # --- orchestration ---------------------------------------------------------
 
 

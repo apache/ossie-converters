@@ -69,6 +69,37 @@ uv run --project interop --locked python -m interop --strict
 `--timeout SECONDS` applies to each subprocess, including dependency preparation.
 Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 
+## Live Snowflake and Power BI query parity
+
+The opt-in pytest check loads the same [sales rows](fixtures/query-parity/sales.yaml)
+into a Snowflake table and a Power BI Import model. It verifies both copies of the
+input data, then queries a native Snowflake Semantic View and the measures emitted by
+the Ossie-to-Power BI converter. The cases cover grand totals, month and region
+grains, filtered totals and groups, repeated customers, and null values.
+Results must match each other and the fixture's expected values. Revenue and customer
+counts are exact, and revenue per customer has an absolute tolerance of `0.000001`.
+
+Configure these environment variables before running the live check.
+
+| Variable | Value |
+| --- | --- |
+| `OSSIE_PARITY_SNOWFLAKE_CONNECTION` | A [named Snowflake connection](https://docs.snowflake.com/en/developer-guide/python-connector/python-connector-connect#connecting-using-the-connections-toml-file) with a warehouse, database, and scratch schema. Its role needs to create and query tables and [Semantic Views](https://docs.snowflake.com/en/sql-reference/sql/create-semantic-view). |
+| `OSSIE_PARITY_FABRIC_WORKSPACE` | A test Fabric workspace ID with capacity for semantic model refresh. |
+| `OSSIE_PARITY_FABRIC_TOKEN` | An access token for `https://api.fabric.microsoft.com` that can create and delete semantic models in the workspace. |
+| `OSSIE_PARITY_POWERBI_TOKEN` | An access token for `https://analysis.windows.net/powerbi/api` that can refresh and [execute DAX queries](https://learn.microsoft.com/en-us/rest/api/power-bi/datasets/execute-queries-in-group) in the workspace. |
+
+```sh
+OSSIE_RUN_LIVE_QUERY_PARITY=1 uv run --project interop --locked --python 3.12 \
+  --with ./microsoft --with snowflake-connector-python \
+  pytest interop/tests/test_query_parity.py -m live_query_parity -q
+```
+
+The live test uses compute in both services. It creates uniquely named test objects
+and attempts to remove them at teardown, including after assertion failures.
+The Power BI partition reads the inline fixture, so the model needs no Snowflake
+credentials or gateway. The default interop suite skips the live cases and
+verifies the fixture expectations and comparison logic offline.
+
 ## Registered adapters and capabilities
 
 | Converter(s) | Native path / limits |
