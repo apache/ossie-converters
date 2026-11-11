@@ -630,6 +630,7 @@ def test_parsed_requires_become_scoped_requirements(tmp_path):
     import ast
     import json
 
+    from relationalai.semantics.metamodel.comparison import metamodels_diff
     from relationalai.semantics.metamodel.metamodel import Require
 
     specification = {
@@ -642,7 +643,7 @@ def test_parsed_requires_become_scoped_requirements(tmp_path):
                 "relationships": [{
                     "name": "holds", "roles": [{"concept": "Code", "name": "balance"}],
                     "verbalizes": ["{Account} holds {Code:balance}"],
-                    "requires": ["balance <= 100"],
+                    "requires": ["balance <= 100", "balance == 1 OR balance == 2"],
                 }],
             },
             {
@@ -667,21 +668,26 @@ def test_parsed_requires_become_scoped_requirements(tmp_path):
     assert any("comparison must reference a scoped value" in str(w.message) for w in warnings)
     metamodel = model.base_model().to_metamodel()
     Typer().infer_model(metamodel)
-    requirements = [node for node in metamodel.root.body if isinstance(node, Require)]
-    assert len(requirements) == 2
-    for requirement in requirements:
-        assert requirement.domain.body
-        assert requirement.check.body
+    requirements = [
+        node for node in metamodel.root.body if isinstance(node, Require) and node.domain.body
+    ]
+    assert len(requirements) == 3
+    assert all(requirement.check.body for requirement in requirements)
 
     source = to_pyrel(metamodel)
     emitted = [
         node for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "require"
     ]
-    assert len(emitted) == 1, source
-    assert "holds" in ast.unparse(emitted[0].func.value)
-    assert "100" in ast.unparse(emitted[0].args[0])
+    assert len(emitted) == 2, source
+    assert all("holds" in ast.unparse(call.func.value) for call in emitted)
+    assert any("100" in ast.unparse(call.args[0]) for call in emitted)
     namespace = {}
     pyrel.Model.all_models.clear()
     exec(compile(source, "generated_requires.py", "exec"), namespace)
-    Typer().infer_model(namespace["m"].to_metamodel())
+    rebuilt = namespace["m"].to_metamodel()
+    Typer().infer_model(rebuilt)
+    # The source generator drops the value-only links requirement.
+    # The SDK comparator also omits it, so assert both task counts explicitly.
+    assert sum(isinstance(node, Require) and bool(node.domain.body) for node in rebuilt.root.body) == 2
+    assert metamodels_diff(metamodel, rebuilt) == []
