@@ -651,7 +651,7 @@ def test_parsed_requires_become_scoped_requirements(tmp_path):
                 "relationships": [{
                     "name": "links", "roles": [{"concept": "Code", "name": "target"}],
                     "verbalizes": ["{Code} links {Code:target}"],
-                    "requires": ["Code != target"],
+                    "requires": ["Code != target", "1 == 2"],
                 }],
             },
         ],
@@ -663,7 +663,8 @@ def test_parsed_requires_become_scoped_requirements(tmp_path):
         model = OssieToRelationalAIConverter.convert(
             OssieParser().parse(path), table_provider=declared_table,
         )
-    assert len(warnings) == 2
+    assert len(warnings) == 3
+    assert any("comparison must reference a scoped value" in str(w.message) for w in warnings)
     metamodel = model.base_model().to_metamodel()
     Typer().infer_model(metamodel)
     requirements = [node for node in metamodel.root.body if isinstance(node, Require)]

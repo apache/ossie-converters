@@ -360,10 +360,28 @@ class RequirementConverter(FormulaConverter):
 
     def visit_expression(self, node: Expression, parent: Optional[Node]):
         comparison = {BinOp.EQ, BinOp.NE, BinOp.LT, BinOp.LE, BinOp.GT, BinOp.GE}
-        if node._op not in comparison:
-            if parent is None or not all(isinstance(arg, LiteralHandle) for arg in node._args):
-                raise NotImplementedError("requires arithmetic must be over literals")
+        if node._op in comparison:
+            if not any(isinstance(arg, (ConceptRefHandle, VarHandle)) for arg in node._args):
+                raise NotImplementedError("requires comparison must reference a scoped value")
+        else:
+            left, right = node._args
+            if (
+                not isinstance(parent, Expression) or node._op != BinOp.MINUS
+                or not isinstance(left, LiteralHandle) or left._val != 0
+                or not isinstance(right, LiteralHandle) or type(right._val) not in (int, float)
+            ):
+                raise NotImplementedError("requires arithmetic is limited to negative numeric literals")
         return super().visit_expression(node, parent)
+
+    def visit_literalhandle(self, node: LiteralHandle, parent: Optional[Node]):
+        if not isinstance(parent, (Expression, FactRef)):
+            raise NotImplementedError("requires literal must be an operand or a fact argument")
+        return super().visit_literalhandle(node, parent)
+
+    def visit_conjunction(self, node: Conjunction, parent: Optional[Node]):
+        if parent is not None and not isinstance(parent, Conjunction):
+            raise NotImplementedError("requires conjunction must be at the top level")
+        return super().visit_conjunction(node, parent)
 
     def _predicate(self, node: DotJoinHandle, arguments=()):
         owner, target = node._handle1, node._handle2
