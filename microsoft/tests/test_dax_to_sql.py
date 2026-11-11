@@ -95,7 +95,7 @@ def test_leading_equals_and_whitespace_are_tolerated():
         "DISTINCTCOUNT('Sales'[Note])",      # column type unknown
         "COUNTROWS('Sales')",                # COUNT(*) reads no dataset
         "MEDIAN('Sales'[Customer])",         # statistics over text
-        "SUMX('Sales', 'Sales'[Amount])",    # iterator, two args
+        "SUMX('Sales', 'Product'[Cost])",    # iterator reading another table
         "CALCULATE(SUM('Sales'[Amount]), 'Sales'[Status] = \"done\")",  # filter context
         "DIVIDE(SUM('Sales'[Amount]), COUNTA('Sales'[Customer]), 0)",   # alternate result
         "SUM('Sales'[Amount]) / COUNTA('Sales'[Customer])",             # / operator
