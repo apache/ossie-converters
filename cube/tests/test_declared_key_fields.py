@@ -162,6 +162,27 @@ def test_undeclared_legacy_columns_are_accepted_and_reported(where):
     assert_declared(yaml.safe_load(returned))
 
 
+def test_legacy_primary_key_keeps_the_model_metric_name_available():
+    model = {
+        "version": OSSIE_VERSION,
+        "name": "shop",
+        "datasets": [{
+            "name": "orders", "source": "sales.public.orders",
+            "primary_key": ["id"], "fields": [field("amount", "amount")],
+        }],
+        "metrics": [{"name": "id", "expression": expression("SUM(orders.amount)")}],
+    }
+    files = export(model)
+    order = cubes(files)["orders"]
+    assert [measure["name"] for measure in order["measures"]] == ["id"]
+    key, = [dimension for dimension in order["dimensions"] if dimension.get("primary_key")]
+    assert key["name"] != "id"
+    assert key["sql"] == "id"
+    assert key["public"] is False
+    returned, _ = convert_cube_to_ossie(files)
+    assert_declared(yaml.safe_load(returned))
+
+
 @pytest.mark.parametrize("relationship", ["many_to_one", "one_to_many", "one_to_one"])
 @pytest.mark.parametrize("raw", [False, True])
 def test_native_joins_choose_declared_aliases_and_preserve_orientation(
@@ -345,6 +366,37 @@ def test_projection_keeps_published_key_aliases_and_declares_hidden_join_fields(
     support = by_name(ds["orders"]["fields"])["__orders_customer_key"]
     assert stash_of(support)["public"] is False
     assert expr_of(support) == "COALESCE(customer_id, 0)"
+
+
+def test_projection_reuses_hidden_native_key_for_a_raw_join_column():
+    native = {
+        "cubes": [
+            {
+                "name": "orders", "sql_table": "sales.public.orders",
+                "dimensions": [{"name": "order_id", "type": "number", "primary_key": True}],
+                "joins": [{"name": "users", "relationship": "many_to_one",
+                           "sql": "{CUBE}.user_id = {users}.id"}],
+            },
+            {
+                "name": "users", "sql_table": "sales.public.users",
+                "dimensions": [
+                    {"name": "uid", "sql": "id", "type": "number", "primary_key": True},
+                    {"name": "city", "type": "string"},
+                ],
+            },
+        ],
+        "views": [{"name": "shop", "cubes": [
+            {"join_path": "orders", "includes": ["order_id"]},
+            {"join_path": "orders.users", "includes": ["city"]},
+        ]}],
+    }
+    returned, _, _ = convert_cube_view_to_ossie({"model.yml": yaml.safe_dump(native)}, "shop")
+    model = yaml.safe_load(returned)
+    users = by_name(model["datasets"])["users"]
+    assert model["relationships"][0]["to_columns"] == users["primary_key"] == ["__users_uid"]
+    assert set(by_name(users["fields"])) == {"city", "__users_uid"}
+    assert expr_of(by_name(users["fields"])["__users_uid"]) == "id"
+    assert_ossie_is_valid(returned)
 
 
 def test_composite_keys_and_relationships_keep_the_declared_field_order():

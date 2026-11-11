@@ -804,15 +804,25 @@ def resolve_identifier(mapping, written):
     return None
 
 
-def source_part_count(source):
+# A query keyword is not the start of an identifier such as Snowflake's
+# `with$prod` or a part of a dotted table path.
+_SOURCE_QUERY_HEAD_RE = re.compile(r"^(?:select|with)(?![\w$.])", re.IGNORECASE)
+
+
+def source_part_count(source, source_dialect=None):
     """How many identifier parts a dotted dataset `source` has, or None for a query.
 
     Dots inside single quotes, double quotes or backticks belong to a quoted identifier,
-    not to the path -- `"My.Catalog".public.t` is three parts, not four.
+    not to the path -- `"My.Catalog".public.t` is three parts, not four. BigQuery
+    also allows backticks around an entire path, where those dots are separators.
     """
     s = str(source).strip()
-    if re.match(r"(?i)(select|with)\b", s):
+    if _SOURCE_QUERY_HEAD_RE.match(s):
         return None
+    if source_dialect == "BIGQUERY":
+        parsed = _static_source_path(s, source_dialect)
+        if parsed is not None:
+            return parsed[1]
     mask = quoted_char_mask(s)
     return 1 + sum(ch == "." and not mask[i] for i, ch in enumerate(s))
 
@@ -1127,6 +1137,69 @@ def uncollided_view_name(vname, cube_names):
 
 _LEADING_NOISE_RE = re.compile(r"^(?:\s+|--[^\n]*|/\*.*?\*/|\()*", re.S)
 
+# Match identifiers rather than splitting on dots: quoted warehouse names can
+# contain dots and escaped quote delimiters. A SQL fragment, alias or dynamic
+# Cube reference must never be treated as a table name to prefix.
+# Snowflake permits dollars after a letter or underscore. Databricks permits
+# digit-leading identifiers containing a letter or underscore, with no dollars.
+_SOURCE_UNQUOTED = r"(?:[A-Za-z_][A-Za-z0-9_$]*|[0-9]+[A-Za-z_][A-Za-z0-9_]*)"
+_SOURCE_ANSI_QUOTED = r'"(?:[^"{}\r\n]|"")+"'
+_SOURCE_BACKTICK_QUOTED = r"`(?:[^`{}\r\n]|``)+`"
+_SOURCE_IDENTIFIER = rf"(?:{_SOURCE_UNQUOTED}|{_SOURCE_ANSI_QUOTED}|{_SOURCE_BACKTICK_QUOTED})"
+_BIGQUERY_IDENTIFIER = rf"(?:{_SOURCE_UNQUOTED}|{_SOURCE_BACKTICK_QUOTED})"
+_BIGQUERY_FIRST_IDENTIFIER = (
+    rf"(?:[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+|{_BIGQUERY_IDENTIFIER})")
+_SOURCE_IDENTIFIER_RE = re.compile(_SOURCE_IDENTIFIER)
+_BIGQUERY_IDENTIFIER_RE = re.compile(_BIGQUERY_IDENTIFIER)
+_BIGQUERY_FIRST_IDENTIFIER_RE = re.compile(_BIGQUERY_FIRST_IDENTIFIER)
+
+
+def _table_path_pattern(first, rest):
+    return re.compile(rf"({first})(?:\s*\.\s*({rest}))?(?:\s*\.\s*({rest}))?")
+
+
+_SOURCE_TABLE_RE = _table_path_pattern(_SOURCE_IDENTIFIER, _SOURCE_IDENTIFIER)
+_BIGQUERY_SOURCE_TABLE_RE = _table_path_pattern(_BIGQUERY_FIRST_IDENTIFIER, _BIGQUERY_IDENTIFIER)
+
+
+def _static_source_path(source, source_dialect):
+    """Return the original identifier tokens and number of logical path parts."""
+    bigquery = source_dialect == "BIGQUERY"
+    match = (_BIGQUERY_SOURCE_TABLE_RE if bigquery else _SOURCE_TABLE_RE).fullmatch(source)
+    if match is None:
+        return None
+    tokens = [part for part in match.groups() if part is not None]
+    # GoogleSQL permits one pair of backticks around a whole table path.
+    count = len(tokens)
+    if bigquery:
+        for part in tokens:
+            if part.startswith("`"):
+                names = part[1:-1].split(".")
+                if not all(names):
+                    return None
+                count += len(names) - 1
+    return tokens, count
+
+
+def validate_source_defaults(catalog, schema, source_dialect=None):
+    """Validate and trim explicit defaults, each exactly one identifier."""
+    def identifier(value, option, pattern):
+        if value is None:
+            return None
+        if (not isinstance(value, str) or not pattern.fullmatch(value.strip())
+                or (source_dialect == "BIGQUERY" and "." in value)):
+            raise ConversionError(f"{option} must be a single quoted or unquoted identifier")
+        return value.strip()
+
+    bigquery = source_dialect == "BIGQUERY"
+    catalog = identifier(catalog, "default catalog",
+                         _BIGQUERY_FIRST_IDENTIFIER_RE if bigquery else _SOURCE_IDENTIFIER_RE)
+    schema = identifier(schema, "default schema",
+                        _BIGQUERY_IDENTIFIER_RE if bigquery else _SOURCE_IDENTIFIER_RE)
+    if schema is not None and catalog is None:
+        raise ConversionError("default schema requires a default catalog")
+    return catalog, schema
+
 
 def parse_source(source, dataset_name):
     """Classify an Ossie dataset `source` for placement on a Cube cube.
@@ -1143,16 +1216,18 @@ def parse_source(source, dataset_name):
     # Leading comments and parentheses are not part of the query's first keyword:
     # `/* note */ SELECT ...` and `(SELECT ...)` are subqueries too, and would break
     # Cube's compile if emitted as a table reference. The source itself is kept as is.
-    if re.match(r"(?i)(select|with)\b", _LEADING_NOISE_RE.sub("", s)):
+    if _SOURCE_QUERY_HEAD_RE.match(_LEADING_NOISE_RE.sub("", s)):
         return ("sql", s)
     return ("sql_table", s)
 
 
-def join_source(cube, cube_name):
+def join_source(cube, cube_name, *, default_catalog=None, default_schema=None,
+                source_dialect=None):
     """Rebuild an Ossie dataset `source` string from a Cube cube dict.
 
     Cube's schema requires exactly one of `sql` / `sql_table` (an `xor` in
     CubeValidator), so anything else is rejected rather than guessed at.
+    Defaults fill missing parts only when they can complete a static table path.
     """
     sql = cube.get("sql")
     table = cube.get("sql_table")
@@ -1161,7 +1236,20 @@ def join_source(cube, cube_name):
             f"Cube '{cube_name}': has both 'sql' and 'sql_table'; Cube allows "
             f"exactly one")
     if table is not None:
-        return str(table).strip()
+        source = str(table).strip()
+        if default_catalog is not None:
+            parsed = _static_source_path(source, source_dialect)
+            if parsed is not None:
+                tokens, count = parsed
+                if count == 2:
+                    return ".".join([default_catalog, *tokens])
+                if count == 1 and default_schema is not None:
+                    # A bare GoogleSQL table may have a dash; once it is the
+                    # last component of a qualified path it needs backticks.
+                    if source_dialect == "BIGQUERY" and "-" in source and not source.startswith("`"):
+                        source = f"`{source}`"
+                    return f"{default_catalog}.{default_schema}.{source}"
+        return source
     if sql is not None:
         return str(sql).strip()
     raise ConversionError(

@@ -17,6 +17,7 @@
 
 import pytest
 from inline_snapshot import snapshot
+from ossie import OssieDialectExpression
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.load_ossie_dialect_expression import (
@@ -24,6 +25,7 @@ from ossie_hex.ossie_to_hex.load_ossie_dialect_expression import (
     validate_ossie_field_dialect_expression,
     validate_ossie_metric_dialect_expression,
 )
+from ossie_hex.util.parse_sql import SQLGlotDialect
 from tests.ossie_to_hex.utils import Quick
 from tests.utils import problems_snapshot
 
@@ -34,14 +36,14 @@ def ctx() -> ExportContext:
 
 
 def test_valid_field_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "id")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "id")
     result = validate_ossie_field_dialect_expression(expression, ctx=ctx)
     assert result is True
     assert not ctx.problems
 
 
 def test_invalid_field_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "SELECT FROM")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "SELECT FROM")
     result = validate_ossie_field_dialect_expression(expression, ctx=ctx)
     assert result is False
     assert problems_snapshot(ctx.problems) == snapshot(
@@ -53,7 +55,7 @@ def test_invalid_field_expression(ctx: ExportContext) -> None:
 
 
 def test_parses_valid_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "id")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "id")
     result = parse_ossie_dialect_expression(expression, ctx=ctx)
     assert result is not None
     assert not ctx.problems
@@ -61,7 +63,7 @@ def test_parses_valid_expression(ctx: ExportContext) -> None:
 
 def test_valid_metric_expression(ctx: ExportContext) -> None:
     field_names = [("foo", "bar")]
-    expression = Quick.dialect_expression("ANSI_SQL", "SUM(foo.bar)")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "SUM(foo.bar)")
     result = validate_ossie_metric_dialect_expression(
         expression, field_names=field_names, ctx=ctx
     )
@@ -71,7 +73,7 @@ def test_valid_metric_expression(ctx: ExportContext) -> None:
 
 def test_warns_about_unknown_field_reference(ctx: ExportContext) -> None:
     field_names = [("other", "bar")]
-    expression = Quick.dialect_expression("ANSI_SQL", "foo.bar")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "foo.bar")
     result = validate_ossie_metric_dialect_expression(
         expression, field_names=field_names, ctx=ctx
     )
@@ -82,7 +84,7 @@ def test_warns_about_unknown_field_reference(ctx: ExportContext) -> None:
 
 
 def test_invalid_metric_expression(ctx: ExportContext) -> None:
-    expression = Quick.dialect_expression("ANSI_SQL", "SELECT FROM")
+    expression = Quick.dialect_expression("OSSIE_SQL_2026", "SELECT FROM")
     result = validate_ossie_metric_dialect_expression(
         expression, field_names=[], ctx=ctx
     )
@@ -93,3 +95,41 @@ def test_invalid_metric_expression(ctx: ExportContext) -> None:
   SELECT \x1b[4mFROM\x1b[0m\
 """
     )
+
+
+def test_uses_tsql_reader_for_mssql(ctx: ExportContext) -> None:
+    expression = OssieDialectExpression.model_construct(
+        dialect="MSSQL", expression="[amount]"
+    )
+
+    result = parse_ossie_dialect_expression(expression, ctx=ctx)
+
+    assert result is not None
+    assert result.dialect == SQLGlotDialect.TSQL
+    assert result.expr.sql(dialect=result.dialect) == "[amount]"
+    assert not ctx.problems
+
+
+def test_uses_duckdb_reader_for_motherduck(ctx: ExportContext) -> None:
+    expression = OssieDialectExpression.model_construct(
+        dialect="MOTHERDUCK", expression="amount::INTEGER"
+    )
+
+    result = parse_ossie_dialect_expression(expression, ctx=ctx)
+
+    assert result is not None
+    assert result.dialect == SQLGlotDialect.DUCKDB
+    assert not ctx.problems
+
+
+def test_uses_generic_reader_for_unmapped_dialect(ctx: ExportContext) -> None:
+    expression = OssieDialectExpression.model_construct(
+        dialect="CUSTOM_DIALECT", expression="amount + 1"
+    )
+
+    result = parse_ossie_dialect_expression(expression, ctx=ctx)
+
+    assert result is not None
+    assert result.dialect is None
+    assert expression.dialect == "CUSTOM_DIALECT"
+    assert not ctx.problems

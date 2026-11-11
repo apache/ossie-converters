@@ -565,7 +565,7 @@ class TestLightdashToOssie:
         metric = _metric(result.output, "total_amount")
         assert [d.dialect for d in metric.expression.dialects] == [OssieDialect.BIGQUERY]
         field = result.output.datasets[0].fields[0]
-        assert field.expression.dialects[0].dialect is OssieDialect.BIGQUERY
+        assert field.expression.dialects[0].dialect == OssieDialect.BIGQUERY
 
     def test_primary_key_and_ai_hint_become_dataset_attributes(self):
         result = LightdashToOssieConverter().convert(SCHEMA_YML, schema="marts")

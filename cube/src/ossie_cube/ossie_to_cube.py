@@ -142,7 +142,7 @@ def _convert_model(model, dialect, base_cube, issues):
         taken.add(cube_names[ds_name].lower())
     datasets = {ds["name"]: ds for ds in dataset_list}
     relationships = model.get("relationships") or []
-    _declare_legacy_columns(datasets, relationships, issues)
+    _declare_legacy_columns(datasets, relationships, model.get("metrics") or [], issues)
     local_fields = {}
     for ds_name, metric, scope in _dataset_metrics(datasets):
         fields = datasets[ds_name].get("fields") or []
@@ -246,13 +246,16 @@ def _convert_model(model, dialect, base_cube, issues):
     return files, issues
 
 
-def _declare_legacy_columns(datasets, relationships, issues):
+def _declare_legacy_columns(datasets, relationships, model_metrics, issues):
     """Keep accepting older warehouse documents whose keys name source columns.
 
     Declared fields always win. Only an undeclared bare identifier receives the
     old source-column interpretation; no datatype or calculation is inferred.
     """
     legacy_fields = {}
+    # Model metric placement depends on the declared fields. Reserve its possible
+    # measure names before creating any legacy fields.
+    model_metric_names = _model_metric_measure_names(model_metrics)
 
     def declare(ds_name, names, scope):
         ds = datasets.get(ds_name)
@@ -262,8 +265,9 @@ def _declare_legacy_columns(datasets, relationships, issues):
         aliases = legacy_fields.setdefault(ds_name, {})
         metrics = ds.get("metrics")
         metrics = metrics if isinstance(metrics, list) else []
-        metric_names = {normalize_identifier(m["name"]) for m in metrics
-                        if isinstance(m, dict) and isinstance(m.get("name"), str)}
+        metric_names = model_metric_names | {
+            sanitize_name(m["name"], "metric", set()).lower() for m in metrics
+            if isinstance(m, dict) and isinstance(m.get("name"), str)}
         for index, name in enumerate(names):
             if not is_simple_identifier(name) or resolve_identifier(lookup, name) is not None:
                 continue
@@ -272,10 +276,10 @@ def _declare_legacy_columns(datasets, relationships, issues):
                 names[index] = aliases[key]
                 continue
             field_name = name
-            if key in metric_names:
+            if sanitize_name(name, scope, set()).lower() in metric_names:
                 base, suffix = f"source__{name}", 2
                 field_name = base
-                while (normalize_identifier(field_name) in metric_names
+                while (sanitize_name(field_name, scope, set()).lower() in metric_names
                        or resolve_identifier(lookup, field_name) is not None):
                     field_name, suffix = f"{base}_{suffix}", suffix + 1
                 aliases[key] = names[index] = field_name
@@ -1250,6 +1254,19 @@ def _build_joins(relationships, cube_names, issues, datasets, plan):
 
 # --- measures -------------------------------------------------------------------
 
+def _model_metric_measure_names(metrics):
+    names = set()
+    for metric in metrics:
+        if not isinstance(metric, dict) or not isinstance(metric.get("name"), str):
+            continue
+        stash = read_stash(metric)
+        names.add((stash.get("name") or sanitize_name(metric["name"], "metric", set())).lower())
+        measure = stash.get("measure")
+        if isinstance(measure, dict) and measure.get("name"):
+            names.add(str(measure["name"]).lower())
+    return names
+
+
 def _build_measures(model, cube_names, plan, tables, datasets, relationships,
                     base_cube, dialect, issues, *, base_relationships=None):
     """Group Ossie metrics into per-cube `measures` lists."""
@@ -1266,18 +1283,7 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
     # names against only the measures built *so far* made the conversion order-
     # dependent: a composite `ratio` ahead of a metric named `ratio_part_1` took that
     # name first and the later metric then collided, while the reverse order worked.
-    reserved = set()
-    for metric in (model.get("metrics") or []):
-        mstash = read_stash(metric)
-        raw = metric.get("name")
-        if not isinstance(raw, str):
-            continue
-        reserved.add((mstash.get("name")
-                      or sanitize_name(raw, "metric", set())).lower())
-        if isinstance(mstash.get("measure"), dict):
-            stashed_name = mstash["measure"].get("name")
-            if stashed_name:
-                reserved.add(str(stashed_name).lower())
+    reserved = _model_metric_measure_names(model.get("metrics") or [])
     for _, metric, scope in _dataset_metrics(datasets):
         reserved.add(sanitize_name(metric["name"], scope, set()).lower())
 

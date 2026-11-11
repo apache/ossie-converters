@@ -73,6 +73,21 @@ def test_a_model_directory_converts(tmp_path, capsys):
     assert doc["name"] == "sales"
 
 
+@pytest.mark.parametrize("project", [False, True])
+def test_import_applies_source_defaults_in_both_modes(tmp_path, capsys, project):
+    model = _write(tmp_path / "model", **{
+        "cubes|orders.yml": _ORDERS.replace("public.orders", "orders"),
+        "views|sales.yml": _VIEW})
+    args = ["import", "-i", str(model), "--default-catalog", "main",
+            "--default-schema", "sales"]
+    if project:
+        args.extend(["--view", "sales", "--project"])
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    assert parse(captured.out)["datasets"][0]["source"] == "main.sales.orders"
+    assert "SOURCE_NOT_FULLY_QUALIFIED" not in captured.err
+
+
 def test_a_single_file_converts(tmp_path, capsys):
     """Pointing at one `.yml` is a natural thing to try and there is nothing
     ambiguous about it, so it is accepted rather than refused on a technicality."""

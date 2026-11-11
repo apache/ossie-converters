@@ -149,7 +149,7 @@ class _JoinTree:
 
 
 def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
-                              *, source_dialect=None):
+                              *, source_dialect=None, default_catalog=None, default_schema=None):
     """Convert one Cube view's public surface to Ossie YAML.
 
     `files` is a Cube model as {relative filename: YAML str}, the same input
@@ -168,6 +168,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
 
     `source_dialect` selects the warehouse SQL grammar and generated expression
     labels, and validates emitted SQL; None retains the legacy ANSI_SQL behavior.
+    `default_catalog` and `default_schema` qualify short table names as in
+    `convert_cube_to_ossie`.
     """
     if not isinstance(files, dict) or not files:
         raise ConversionError("expected a non-empty mapping of {filename: YAML}")
@@ -225,7 +227,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     # and checks each join alone rather than the whole tree.
     imported = IssueLog()
     model = _build_model(reduced, {}, {view: reduced_view}, {}, {}, None, view, imported,
-                         source_dialect, restore_dataset_metrics=False)
+                         source_dialect, restore_dataset_metrics=False,
+                         default_catalog=default_catalog, default_schema=default_schema)
     _refuse_unjoined(view, model, imported)
     for issue in imported:
         if issue.issue_type is not IssueType.FANOUT_UNSAFE_METRIC:
@@ -845,16 +848,15 @@ def _reduced_cubes(tree, cubes, dimensions, measures, inliner, issues):
     """The cube set the import runs over: each tree cube's source and labels, the joins
     the tree uses (SQL inlined, so a key member reads its column), the published
     dimensions and the measures they need -- nothing else to convert."""
-    # Recorded keys must resolve during import, before the published surface is
-    # rebuilt. Include their fields even for a cube with no joins or dimensions
-    # published by the view.
+    # Keep keys available during import so raw joins can reuse their fields,
+    # even when those dimensions are hidden by the view.
     for cname in tree.order:
         cube = cubes[cname]
         parked = parked_of(cube.get("meta"))
-        if not parked.get("key_fields"):
-            continue
-        keys = set(parked.get("primary_key") or [])
-        keys.update(n for k in parked.get("unique_keys") or [] for n in k)
+        keys = set(_primary_key_of(cube, cname, native=True))
+        if parked.get("key_fields"):
+            keys.update(parked.get("primary_key") or [])
+            keys.update(n for k in parked.get("unique_keys") or [] for n in k)
         for native in _as_named_list(cube.get("dimensions"), f"cube '{cname}' dimensions"):
             dname = native["name"]
             if snake(native.get("type") or "") == "geo":
@@ -869,6 +871,8 @@ def _reduced_cubes(tree, cubes, dimensions, measures, inliner, issues):
                 dim = {**_labels_of(native), "sql": inliner.dimension(cname, dname)}
                 if native.get("primary_key"):
                     dim["primary_key"] = True
+                if _is_private(native):
+                    dim["public"] = False
             else:
                 continue
             dimensions.setdefault((cname, dname), dim)

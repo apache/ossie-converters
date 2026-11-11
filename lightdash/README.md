@@ -303,6 +303,8 @@ dataset is unrestricted).
   string.
 - A single-column `primary_key` exports as a string, a composite one as a
   list.
+- Quoted identifiers in a qualified reference (`orders."Order Id"`) are not
+  rewritten to `${TABLE}."Order Id"`. Quote-free references are.
 
 ### Not carried
 

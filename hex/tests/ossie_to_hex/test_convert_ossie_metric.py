@@ -37,7 +37,7 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("bar", "bar")
     ctx.hex_ids.set_for_field("bar", "baz", "baz")
     ctx.hex_ids.set_for_metric("foo", "foo")
@@ -50,7 +50,7 @@ def ctx() -> ExportContext:
 
 def test_preserve_name(ctx: ExportContext) -> None:
     name = "foo"
-    foo = Quick.metric(name, "Integer", [("ANSI_SQL", "bar.baz")])
+    foo = Quick.metric(name, "Integer", [("OSSIE_SQL_2026", "bar.baz")])
 
     result = convert_ossie_metric(foo, ctx=ctx)
 
@@ -63,7 +63,7 @@ def test_preserve_name(ctx: ExportContext) -> None:
 def test_preserve_description(ctx: ExportContext) -> None:
     description = "Foo bar baz"
     foo = Quick.metric(
-        "foo", "Integer", [("ANSI_SQL", "bar.baz")], description=description
+        "foo", "Integer", [("OSSIE_SQL_2026", "bar.baz")], description=description
     )
 
     result = convert_ossie_metric(foo, ctx=ctx)
@@ -76,7 +76,7 @@ def test_preserve_description(ctx: ExportContext) -> None:
 
 def test_defaults_to_number_datatype(ctx: ExportContext) -> None:
     datatype = None
-    foo = Quick.metric("foo", datatype, [("ANSI_SQL", "bar.baz")])
+    foo = Quick.metric("foo", datatype, [("OSSIE_SQL_2026", "bar.baz")])
 
     result = convert_ossie_metric(foo, ctx=ctx)
 
@@ -89,7 +89,7 @@ def test_defaults_to_number_datatype(ctx: ExportContext) -> None:
 def test_warns_about_ai_context(ctx: ExportContext) -> None:
     ai_context = OssieAIContextObject(synonyms=("bar", "baz"))
     foo = Quick.metric(
-        "foo", "Integer", [("ANSI_SQL", "bar.baz")], ai_context=ai_context
+        "foo", "Integer", [("OSSIE_SQL_2026", "bar.baz")], ai_context=ai_context
     )
 
     result = convert_ossie_metric(foo, ctx=ctx)
@@ -103,7 +103,7 @@ def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
     foo = Quick.metric(
         "foo",
         "Integer",
-        [("ANSI_SQL", "bar.baz")],
+        [("OSSIE_SQL_2026", "bar.baz")],
         custom_extensions=[custom_extension],
     )
 
@@ -114,13 +114,13 @@ def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
 
 
 def test_analyzes_expression_with_no_references(ctx: ExportContext) -> None:
-    foo = Quick.metric("foo", "Integer", [("ANSI_SQL", "COUNT(1)")])
+    foo = Quick.metric("foo", "Integer", [("OSSIE_SQL_2026", "COUNT(1)")])
 
     analysis = analyze_ossie_metric(foo, ctx=ctx)
 
     assert analysis is not None
     assert analysis.expr.sql() == snapshot("COUNT(1)")
-    assert analysis.dialect is None
+    assert analysis.dialect == SQLGlotDialect.SNOWFLAKE
     assert analysis.dataset_names == ()
     assert problems_snapshot(ctx.problems) == snapshot(
         "[ERROR] Referencing no datasets is not supported."
@@ -128,19 +128,19 @@ def test_analyzes_expression_with_no_references(ctx: ExportContext) -> None:
 
 
 def test_analyzes_expression_with_one_reference(ctx: ExportContext) -> None:
-    foo = Quick.metric("foo", "Integer", [("ANSI_SQL", "bar.baz")])
+    foo = Quick.metric("foo", "Integer", [("OSSIE_SQL_2026", "bar.baz")])
 
     analysis = analyze_ossie_metric(foo, ctx=ctx)
 
     assert analysis is not None
     assert analysis.expr.sql() == snapshot("bar.baz")
-    assert analysis.dialect is None
+    assert analysis.dialect == SQLGlotDialect.SNOWFLAKE
     assert analysis.dataset_names == ("bar",)
     assert not ctx.problems
 
 
 def test_analyzes_expression_with_two_references(ctx: ExportContext) -> None:
-    foo = Quick.metric("foo", "Integer", [("ANSI_SQL", "bar.baz + baz.qux")])
+    foo = Quick.metric("foo", "Integer", [("OSSIE_SQL_2026", "bar.baz + baz.qux")])
 
     ctx.hex_ids.set_for_dataset("baz", "baz")
     ctx.hex_ids.set_for_field("baz", "qux", "qux")
@@ -149,14 +149,14 @@ def test_analyzes_expression_with_two_references(ctx: ExportContext) -> None:
 
     assert analysis is not None
     assert analysis.expr.sql() == snapshot("bar.baz + baz.qux")
-    assert analysis.dialect is None
+    assert analysis.dialect == SQLGlotDialect.SNOWFLAKE
     assert analysis.dataset_names == ("bar", "baz")
     assert not ctx.problems
 
 
 def test_analyzes_expression_with_many_references(ctx: ExportContext) -> None:
     foo = Quick.metric(
-        "foo", "Integer", [("ANSI_SQL", "bar.baz + baz.qux + qux.corge")]
+        "foo", "Integer", [("OSSIE_SQL_2026", "bar.baz + baz.qux + qux.corge")]
     )
 
     ctx.hex_ids.set_for_dataset("baz", "baz")
@@ -168,7 +168,7 @@ def test_analyzes_expression_with_many_references(ctx: ExportContext) -> None:
 
     assert analysis is not None
     assert analysis.expr.sql() == snapshot("bar.baz + baz.qux + qux.corge")
-    assert analysis.dialect is None
+    assert analysis.dialect == SQLGlotDialect.SNOWFLAKE
     assert analysis.dataset_names == ("bar", "baz", "qux")
     assert problems_snapshot(ctx.problems) == snapshot(
         "[ERROR] Referencing more than two datasets is not supported. Found 3: bar, baz, qux."
@@ -179,7 +179,7 @@ def test_compiles_local_field_reference(ctx: ExportContext) -> None:
     foo = Quick.metric(
         "foo",
         "Integer",
-        [("ANSI_SQL", "bar.baz")],
+        [("OSSIE_SQL_2026", "bar.baz")],
     )
 
     result = convert_ossie_metric(foo, ctx=ctx)
@@ -214,10 +214,10 @@ def test_preserves_expression_dialect(ctx: ExportContext) -> None:
 
 
 def test_reports_missing_source_model() -> None:
-    foo = Quick.metric("foo", "Integer", [("ANSI_SQL", "bar.baz")])
+    foo = Quick.metric("foo", "Integer", [("OSSIE_SQL_2026", "bar.baz")])
 
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_metric("foo", "foo")
     analysis = MetricAnalysis("foo", parse_one("bar.baz"), None, ("bar",))
     ctx.analysis.set_for_metric(analysis.name, analysis)
@@ -233,7 +233,9 @@ def test_reports_missing_source_model() -> None:
 
 
 def test_analysis_failure_reports_problem(ctx: ExportContext) -> None:
-    metric = Quick.metric("invalid", "Integer", [("ANSI_SQL", "SUM(bar.missing)")])
+    metric = Quick.metric(
+        "invalid", "Integer", [("OSSIE_SQL_2026", "SUM(bar.missing)")]
+    )
 
     analysis = analyze_ossie_metric(metric, ctx=ctx)
 
@@ -244,7 +246,9 @@ Cause: ['invalid', 'expression']""")
 
 
 def test_analysis_failure_does_not_add_duplicate_problem(ctx: ExportContext) -> None:
-    metric = Quick.metric("invalid", "Integer", [("ANSI_SQL", "SUM(bar.missing)")])
+    metric = Quick.metric(
+        "invalid", "Integer", [("OSSIE_SQL_2026", "SUM(bar.missing)")]
+    )
 
     analysis = analyze_ossie_metric(metric, ctx=ctx)
     initial_problems = ctx.problems
