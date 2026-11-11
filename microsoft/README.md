@@ -159,6 +159,40 @@ Missing input files and invalid TMDL still fail the command. When a conversion p
 warnings, the output file is still written so the result can be inspected. Both flags
 are accepted before or after the subcommand.
 
+### Bind datasets to Snowflake Import
+
+Pass `--source-bindings` on export to generate Power Query Import partitions with the
+[Snowflake connector](https://learn.microsoft.com/en-us/power-query/connectors/snowflake).
+Key the YAML file by the Ossie dataset name and give each entry an explicit Snowflake target.
+
+```yaml
+orders:
+  server: my-org-my-account.snowflakecomputing.com
+  warehouse: BI_WH
+  database: RETAIL
+  schema: REPORTING
+  table: SALES_ORDERS
+  kind: table
+  role: BI_READER
+```
+
+```bash
+ossie-microsoft export --strict -i model.yaml --source-bindings bindings.yaml -o model.bim
+```
+
+`role` and `kind` are optional. Use `kind: view` for a view and put its name in `table`.
+Use the identifier spelling returned by the Snowflake Navigator, typically uppercase for
+unquoted names. Each target table or view must expose the source columns expected by the
+model. If a dataset is defined by a query, point the binding at a table or view that
+provides the equivalent result. Configure credentials in Power BI or Fabric.
+
+An explicit binding replaces the dataset's partitions and removes any incremental
+refresh policy. Datasets with preserved Power BI partitions can omit a binding.
+With a bindings file, every other dataset
+requires an entry in strict mode. A missing entry aborts before writing the model.
+Without strict mode, an unbound dataset uses the converter's default partition and
+emits a warning.
+
 ### Library
 
 ```python
