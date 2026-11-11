@@ -94,6 +94,8 @@ SQL_DIALECT_READERS = {
 
 def preferred_sql_expression(expression: OssieExpression) -> Optional[OssieDialectExpression]:
     """Select SQL for both metric ownership and formula translation."""
+    if expression.sql is not None:
+        return OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression=expression.sql)
     for dialect in SQL_DIALECT_READERS:
         for candidate in expression.dialects or []:
             if candidate.dialect == dialect:

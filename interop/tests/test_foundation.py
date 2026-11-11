@@ -29,9 +29,15 @@ import yaml
 from interop.checks import ContentError, Validator, compare_inventory, native_content
 from interop.execution import diagnostics, run_command
 from interop.manifest import Converter, Manifest, ManifestError, expand, load_manifest
-from interop.report import write_report
+from interop.report import _link, write_report
 from interop.runner import Runner, exit_code
 from interop.__main__ import main
+
+
+def test_evidence_link_escapes_table_cell_and_markdown_delimiters(tmp_path):
+    assert _link(tmp_path / "case evidence.json", tmp_path, "[a|b]\nnext") == (
+        r"[\[a\|b\] next](case%20evidence.json)"
+    )
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -355,7 +361,18 @@ def test_all_six_ordered_pairs_prepare_and_import_sources_once(matrix):
     assert saved["cases"][0]["commands"][0]["stdout"].startswith("cases/")
     assert saved["cases"][0]["commands"][0]["argv"][-1].startswith(str(runner.output))
     assert (runner.output / "cases" / pairs[0]["acceptance"] / "tier-B.json").is_file()
-    assert "Tier B ordered matrix" in (runner.output / "report.md").read_text()
+    report_text = (runner.output / "report.md").read_text()
+    _, heading, remainder = report_text.partition("## Tier B ordered matrix")
+    assert heading, "Missing Tier B ordered matrix heading"
+    matrix, heading, _ = remainder.partition("## Case details")
+    assert heading, "Missing Case details heading after Tier B ordered matrix"
+    assert "| alpha--orders | — | [OK]" in matrix
+    for pair in pairs:
+        path = Path(pair["output"]).with_name("tier-B.json")
+        assert (
+            f"[{pair['grade']}]({path.relative_to(runner.output).as_posix()})" in matrix
+        )
+        assert path.is_file()
 
 
 def test_source_failure_is_attributed_without_aborting_other_sources(matrix):

@@ -78,6 +78,10 @@ def _build_parser():
                      help="warehouse SQL dialect for parsing, labelling and validating "
                           "imported expressions (also with --project); without it, "
                           "retain the legacy ANSI_SQL import")
+    imp.add_argument("--default-catalog", metavar="NAME",
+                     help="catalog (Snowflake database) to add to short table sources")
+    imp.add_argument("--default-schema", metavar="NAME",
+                     help="schema to add to one-part table sources; requires --default-catalog")
     imp.add_argument("--strict-fanout", dest="strict_fanout",
                      action=argparse.BooleanOptionalAction, default=None,
                      help="refuse the conversion when a metric is fan-out-unsafe, "
@@ -202,14 +206,16 @@ def main(argv=None):
             out, source, issues = convert_cube_view_to_ossie(
                 files, args.view, source=args.source,
                 strict_fanout=args.strict_fanout is not False,
-                source_dialect=args.source_dialect)
+                source_dialect=args.source_dialect, default_catalog=args.default_catalog,
+                default_schema=args.default_schema)
             print(f"Projected view '{args.view}', rooted at dataset '{source}'",
                   file=sys.stderr)
         else:
             out, issues = convert_cube_to_ossie(
                 files, model_name=args.name, view=args.view,
                 strict_fanout=bool(args.strict_fanout),
-                source_dialect=args.source_dialect)
+                source_dialect=args.source_dialect, default_catalog=args.default_catalog,
+                default_schema=args.default_schema)
         if args.output:
             with open(args.output, "w", encoding="utf-8") as fh:
                 fh.write(out)

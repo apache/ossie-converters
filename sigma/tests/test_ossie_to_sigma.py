@@ -391,27 +391,55 @@ def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
     assert not any(i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE for i in result.issues)
 
 
-def test_a_sql_only_expression_is_reported_not_translatable_instead_of_crashing():
+@pytest.mark.parametrize("with_sibling", [False, True])
+def test_authoritative_sql_exports_fields_and_places_metrics(with_sibling):
+    def expression(sql):
+        dialects = [OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026,
+                                           expression="0")] if with_sibling else None
+        return OssieExpression(sql=sql, dialects=dialects)
+
     document = OssieDocument(
         name="m",
         datasets=[
             OssieDataset(
                 name="orders",
                 source="db.sch.orders",
-                fields=[OssieField(name="amount", expression=OssieExpression(sql="orders.amount"))],
+                fields=[OssieField(name="amount", expression=expression("amount * 2"))],
             )
         ],
-        metrics=[OssieMetric(name="revenue", expression=OssieExpression(sql="SUM(orders.amount)"))],
+        metrics=[OssieMetric(name="revenue", expression=expression("SUM(orders.amount)"))],
     )
 
     result = OssieToSigmaConverter().convert(document)
     element = result.output["pages"][0]["elements"][0]
 
-    assert not element["columns"]
-    assert not element.get("metrics")
-    assert [
-        i.element_name for i in result.issues if i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE
-    ] == ["orders.amount"]
+    assert [column["formula"] for column in element["columns"]] == ["([amount] * 2)"]
+    assert [metric["formula"] for metric in element["metrics"]] == ["Sum([amount])"]
+    assert not result.issues
+
+
+@pytest.mark.parametrize("dialect", [OssieDialect.ANSI_SQL, OssieDialect.DATABRICKS])
+def test_export_reports_functions_with_untranslated_options(dialect):
+    def field(name, sql):
+        return OssieField(name=name, expression=OssieExpression(
+            dialects=[OssieDialectExpression(dialect=dialect, expression=sql)]
+        ))
+
+    document = OssieDocument(name="m", datasets=[
+        OssieDataset(name="orders", source="db.sch.orders", fields=[
+            field("rounded", "ROUND(amount, 2)"),
+            field("left_trimmed", "LTRIM(name)"),
+            field("whole_amount", "ROUND(amount)"),
+            field("trimmed", "TRIM(name)"),
+        ]),
+    ])
+    result = OssieToSigmaConverter().convert(document)
+    columns = result.output["pages"][0]["elements"][0]["columns"]
+    assert [column["formula"] for column in columns] == ["Round([amount])", "Trim([name])"]
+    assert {issue.element_name for issue in result.issues
+            if issue.issue_type == ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE} == {
+        "orders.rounded", "orders.left_trimmed",
+    }
 
 
 def test_synthesized_spec_carries_a_schema_version():

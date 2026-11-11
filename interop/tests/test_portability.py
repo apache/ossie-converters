@@ -18,14 +18,21 @@
 from dataclasses import replace
 import json
 from pathlib import Path
+import shutil
 import sys
 
 import pytest
 import yaml
 
 from interop.ci_summary import render
-from interop.manifest import Manifest, ManifestError, load_manifest
-from interop.portability import tally
+from interop.manifest import Manifest, ManifestError, _portability, load_manifest
+from interop.portability import (
+    GRADER,
+    PORTABLE_DIALECTS,
+    diagnostics_text,
+    load_grader,
+    tally,
+)
 from interop.report import write_report
 from interop.runner import Runner, exit_code
 
@@ -50,14 +57,24 @@ if mode == 'refuse-import': sys.exit(1)
 if mode == 'garbage':
     pathlib.Path(out).write_text('fields: [unclosed')
     sys.exit(0)
+if mode == 'broken-shape':
+    pathlib.Path(out).write_text(json.dumps({'metrics': 5}))
+    sys.exit(0)
 if mode == 'drop-silent': data['metrics'] = []
 if mode == 'drop-diagnosed':
     data['metrics'] = []
     print('warning: metric total_amount skipped', file=sys.stderr)
+if mode == 'drop-chatter':
+    data['metrics'] = []
+    print(f'Converted total_amount and the rest into {out}')
 if mode == 'cosmetic': metric['expression'] = 'sum(sales.amount)'
 if mode == 'review': metric['expression'] = 'SUM(sales.amount) + 1'
 if mode == 'vendor': metric.update(dialect='DATABRICKS', expression='SUM(`amount`)')
+if mode == 'relabel-vendor': metric['dialect'] = 'DATABRICKS'
+if mode == 'relabel-portable': metric['dialect'] = 'OSSIE_SQL_2026'
+if mode == 'rename': data['metrics'][0]['name'] = 'total_amount_renamed'
 pathlib.Path(out).write_text(json.dumps(data))
+if mode == 'write-then-fail': sys.exit(1)
 """
 
 
@@ -97,6 +114,13 @@ def run_case(tmp_path, mode, **kwargs):
     return runner, runner.portability_case(VARIANT, path, target)
 
 
+def with_import(target, mode):
+    """The fake converter with its re-import switched to another helper mode."""
+    command = list(target.import_command)
+    command[command.index("import") + 1] = mode
+    return replace(target, import_command=command)
+
+
 def metric_outcome(result):
     (finding,) = [f for f in result["grading"]["findings"] if f["kind"] == "metric"]
     return finding["outcome"], finding["detail"]
@@ -125,18 +149,32 @@ def test_the_registered_fixtures_are_the_core_ladder():
         ("cosmetic", ("REWRITTEN", "portable")),
         ("review", ("REWRITTEN", "review")),
         ("vendor", ("SURVIVED_VENDOR_ONLY", "vendor")),
+        ("relabel-portable", ("RELABELED", "portable")),
+        ("relabel-vendor", ("RELABELED", "vendor")),
+        ("rename", ("REWRITTEN", "review")),
         ("drop-silent", ("DROPPED_SILENT", "dropped")),
         ("drop-diagnosed", ("DROPPED_DIAGNOSED", "dropped")),
     ],
 )
 def test_a_round_trip_is_graded_by_the_core_grader(tmp_path, mode, expected):
+    # Real documents through the pinned grader: a rewording of the details the
+    # columns read (RELABELED's tag, REWRITTEN's reason) fails here, not silently.
     _, result = run_case(tmp_path, mode)
     outcome, column = expected
     assert metric_outcome(result)[0] == outcome
     assert result["grading"]["metrics"][column] == 1
     assert result["grading"]["metrics"]["authored"] == 1
+    assert result["grading"]["metrics"]["other"] == 0
     assert result["grading"]["rejected"] is False
     assert len(result["commands"]) == 2
+
+
+def test_fields_are_totalled_on_their_own(tmp_path):
+    _, result = run_case(tmp_path, "vendor")
+    assert result["grading"]["metrics"]["vendor"] == 1
+    # The field (sales.amount) came back unchanged.
+    assert result["grading"]["fields"]["portable"] == 1
+    assert result["grading"]["fields"]["authored"] == 1
 
 
 def test_a_dropped_metric_is_diagnosed_only_by_the_converter_output(tmp_path):
@@ -147,9 +185,36 @@ def test_a_dropped_metric_is_diagnosed_only_by_the_converter_output(tmp_path):
     assert metric_outcome(diagnosed)[0] == "DROPPED_DIAGNOSED"
 
 
+def test_success_output_naming_a_dropped_metric_is_not_a_diagnostic(tmp_path):
+    _, result = run_case(tmp_path, "drop-chatter")
+    assert metric_outcome(result)[0] == "DROPPED_SILENT"
+
+
+def test_the_diagnostics_are_the_converter_keys_of_each_issue():
+    text = diagnostics_text(
+        [
+            {
+                "message": "metric expression is not re-rendered",
+                "object_ref": "metric:total_amount",
+                "remedy": None,
+                "converter": "thoughtspot",
+                "stage": "portability/M0.amount--to--thoughtspot/conversion/export",
+                "foreign_extension": False,
+            }
+        ]
+    )
+    assert "metric:total_amount" in text
+    assert "M0.amount" not in text and "thoughtspot" not in text
+
+
 @pytest.mark.parametrize(
     "mode, grade, commands",
-    [("refuse-export", "FAIL", 1), ("refuse-import", "FAIL", 2)],
+    [
+        ("refuse-export", "FAIL", 1),
+        ("refuse-import", "FAIL", 2),
+        # Writes a complete document, then exits non-zero (as thoughtspot does).
+        ("write-then-fail", "FAIL", 2),
+    ],
 )
 def test_a_refused_document_is_graded_rejected(tmp_path, mode, grade, commands):
     _, result = run_case(tmp_path, mode)
@@ -182,6 +247,41 @@ def test_portability_never_changes_the_exit_status(tmp_path):
     assert exit_code(runner.report, strict=True) == 0
 
 
+@pytest.mark.parametrize("cause", ["broken-shape", "missing-grader"])
+def test_a_grader_error_stays_on_the_case(tmp_path, monkeypatch, cause):
+    if cause == "missing-grader":
+        monkeypatch.setattr("interop.runner.GRADER", Path("ossie/missing/grade.py"))
+    runner, result = run_case(tmp_path, "copy" if cause == "missing-grader" else cause)
+    assert result["grading"] is None
+    assert result["grading_error"]
+    runner.report["portability"] = [result]
+    assert exit_code(runner.report) == 0
+    assert runner.report["harness_errors"] == []
+    write_report(runner.report, runner.output)
+    text = (runner.output / "report.md").read_text()
+    assert "1 round trip(s) could not be graded" in text
+    assert "grader error: " in text
+
+
+def test_a_mode_re_imports_its_converter_export(tmp_path):
+    runner, target = fake_runner(tmp_path, "copy")
+    path = runner.manifest.portability.variants[VARIANT]
+    exports = {}
+    base = runner.portability_case(VARIANT, path, target, exports=exports)
+    mode = runner.portability_case(
+        VARIANT, path, with_import(target, "cosmetic"), "fake-cosmetic", exports=exports
+    )
+    # One export, re-imported twice into each case's own directory.
+    assert mode["commands"][0] == base["commands"][0]
+    assert not (
+        runner.output / "portability" / mode["id"] / "conversion" / "export"
+    ).exists()
+    assert Path(mode["output"]).is_file()
+    assert Path(mode["output"]) != Path(base["output"])
+    assert metric_outcome(base)[0] == "PORTABLE"
+    assert metric_outcome(mode)[0] == "REWRITTEN"
+
+
 def test_the_report_carries_the_scores_and_the_evidence(tmp_path):
     runner, result = run_case(tmp_path, "review")
     runner.report["portability"] = [result]
@@ -190,7 +290,10 @@ def test_the_report_carries_the_scores_and_the_evidence(tmp_path):
     assert "## Portability (report-only)" in text
     # The field came back unchanged, the metric rewritten.
     assert f"| {VARIANT} | fake | OK | PORTABLE=1, REWRITTEN=1 |" in text
-    assert "| fake | OK 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |" in text
+    metrics, fields = text.split("### Metrics")[1].split("### Fields")
+    assert "| fake | OK 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |" in metrics
+    assert "| fake | OK 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |" in fields
+    assert "could not be graded" not in text
     saved = json.loads((runner.output / "results.json").read_text())["portability"][0]
     assert saved["grading"]["metrics"]["review"] == 1
     assert not Path(saved["input"]).is_absolute()
@@ -312,35 +415,35 @@ def test_portability_configuration_is_validated(tmp_path, portability, message):
         ),
         ({"id": "M0.sum.bare", "file": "m0/m0_sum_bare.ossie.yaml"}, "duplicate"),
         ({"id": "M9.x", "file": "m9/none.ossie.yaml"}, "must be a file under"),
-        # Inside the repository, but outside the fixtures directory.
-        (
-            {"id": "M9.y", "file": "../../../interop/manifest.yaml"},
-            "must be a file under",
-        ),
+        # An existing file, but outside the fixtures directory.
+        ({"id": "M9.y", "file": "../outside.yaml"}, "must be a file under"),
     ],
 )
-def test_core_fixture_entries_are_validated(tmp_path, monkeypatch, variant, message):
-    core = yaml.safe_load(
-        (ROOT / "ossie/compliance/portability/manifest.yaml").read_text()
-    )
+def test_core_fixture_entries_are_validated(tmp_path, variant, message):
+    # A copy of the core fixtures, so the test never writes into the submodule.
+    shutil.copytree(ROOT / "ossie/compliance/portability", tmp_path / "portability")
+    (tmp_path / "outside.yaml").write_text("rungs: []\n")
+    core_path = tmp_path / "portability/manifest.yaml"
+    core = yaml.safe_load(core_path.read_text())
     core["rungs"][0]["variants"].append(variant)
-    copy = ROOT / "ossie/compliance/portability/.interop-test-manifest.yaml"
-    copy.write_text(yaml.safe_dump(core))
-    try:
-        path = _manifest_with(
-            tmp_path,
-            {"fixtures": "ossie/compliance/portability/.interop-test-manifest.yaml"},
-        )
-        with pytest.raises(ManifestError, match=message):
-            load_manifest(path, ROOT)
-    finally:
-        copy.unlink()
+    core_path.write_text(yaml.safe_dump(core))
+    with pytest.raises(ManifestError, match=message):
+        _portability({"fixtures": "portability/manifest.yaml"}, tmp_path, {})
 
 
-def test_the_metric_columns():
+def test_the_columns():
     findings = [
         {"kind": "metric", "outcome": "PORTABLE"},
-        {"kind": "metric", "outcome": "RELABELED"},
+        {
+            "kind": "metric",
+            "outcome": "RELABELED",
+            "detail": "authored ANSI_SQL, returned OSSIE_SQL_2026",
+        },
+        {
+            "kind": "metric",
+            "outcome": "RELABELED",
+            "detail": "authored ANSI_SQL, returned DATABRICKS",
+        },
         {
             "kind": "metric",
             "outcome": "REWRITTEN",
@@ -351,6 +454,13 @@ def test_the_metric_columns():
             "outcome": "REWRITTEN",
             "detail": "review: could not compare trees",
         },
+        {
+            "kind": "metric",
+            "outcome": "REWRITTEN",
+            "detail": "identity not preserved: returned under a different name",
+        },
+        {"kind": "metric", "outcome": "REWRITTEN", "detail": "benign (reworded)"},
+        {"kind": "metric", "outcome": "RELABELED", "detail": ""},
         {"kind": "metric", "outcome": "PLACEHOLDER"},
         {"kind": "metric", "outcome": "ADDED"},
         {"kind": "metric", "outcome": "SOMETHING_NEW"},
@@ -358,9 +468,18 @@ def test_the_metric_columns():
     ]
     counts = tally(findings)
     assert counts["portable"] == 3
-    assert counts["review"] == 1
+    assert counts["vendor"] == 1  # relabeled to a vendor tag
+    assert counts["review"] == 2
     assert counts["placeholder"] == 1
     assert counts["added"] == 1
-    assert counts["other"] == 1  # a newer grader's outcome stays visible
+    # A newer grader's outcome or an unreadable detail stays visible.
+    assert counts["other"] == 3
     assert counts["dropped"] == 0  # fields are not metrics
-    assert counts["authored"] == 6
+    assert counts["authored"] == 10
+    fields = tally(findings, "field")
+    assert fields["dropped"] == 1 and fields["authored"] == 1
+
+
+def test_the_portable_tags_are_the_grader_ones():
+    grader = load_grader(ROOT / GRADER)
+    assert PORTABLE_DIALECTS == grader.PORTABLE_DIALECTS

@@ -75,6 +75,7 @@ from ._common import (
     source_part_count,
     sql_is_reversible,
     unescape_braces_from_cube,
+    validate_source_defaults,
     view_file,
     read_stash,
     write_stash,
@@ -125,7 +126,7 @@ _RELATIONSHIP_ALIASES = {
 }
 
 def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False,
-                         *, source_dialect=None):
+                         *, source_dialect=None, default_catalog=None, default_schema=None):
     """Convert Cube model files ({relative filename: YAML str}) to Ossie YAML.
 
     Returns (ossie_yaml_str, IssueLog). `model_name` overrides the Ossie model
@@ -137,6 +138,10 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
     parsing and generated expression labels, and validates emitted SQL before
     returning. None preserves the legacy permissive ANSI_SQL import. Original
     Ossie expressions restored from meta.ossie keep their own dialect declarations.
+
+    `default_catalog` qualifies two-part table sources. Supply `default_schema`
+    as well to qualify one-part sources. Fully qualified tables and SQL queries
+    are unaffected; without defaults, table sources keep their original names.
 
     A metric whose value a static Ossie expression cannot keep correct under row
     multiplication is converted with a FANOUT_UNSAFE_METRIC issue; `strict_fanout`
@@ -153,20 +158,24 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
     if not cubes:
         raise ConversionError(_no_cubes_message(views))
     model = _build_model(cubes, cube_paths, views, view_paths, extra_files,
-                         model_name, view, issues, source_dialect)
+                         model_name, view, issues, source_dialect,
+                         default_catalog=default_catalog, default_schema=default_schema)
     if source_dialect is not None:
         validate_imported_expressions(model)
     return dump_yaml({"version": OSSIE_VERSION, **model}), issues
 
 
 def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
-                 view, issues, source_dialect=None, *, restore_dataset_metrics=True):
+                 view, issues, source_dialect=None, *, restore_dataset_metrics=True,
+                 default_catalog=None, default_schema=None):
     """The Ossie model (a dict, without `version`) for the collected Cube model.
 
     Split from `convert_cube_to_ossie` so view projection can run the same import over
     the reduced cube set it builds, rather than serializing that set to YAML only to
     parse it straight back.
     """
+    default_catalog, default_schema = validate_source_defaults(
+        default_catalog, default_schema, source_dialect)
     # The mapped view supplies the Ossie model's identity. Cube users are
     # view-first, and Cube's own agent reads `meta.ai_context` only from views and
     # individual members -- so the view, not any cube, is the model boundary.
@@ -218,7 +227,8 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
 
     model["datasets"] = [
         _convert_cube(cname, cube, plain_by_cube[cname], extra_joins.get(cname),
-                      extra_measures.get(cname), issues, source_dialect)
+                      extra_measures.get(cname), issues, source_dialect,
+                      default_catalog=default_catalog, default_schema=default_schema)
         for cname, cube in cubes.items()
     ]
     for ds in model["datasets"]:
@@ -701,14 +711,16 @@ def _yields_a_same_named_field(dim):
 
 
 def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
-                  source_dialect=None):
+                  source_dialect=None, *, default_catalog=None, default_schema=None):
     """Build one Ossie dataset from a Cube cube."""
     scope = f"cube '{cname}'"
     ds = {"name": cname}
     stash = {}
 
-    ds["source"] = join_source(cube, cname)
-    parts = source_part_count(ds["source"])
+    ds["source"] = join_source(cube, cname, default_catalog=default_catalog,
+                               default_schema=default_schema, source_dialect=source_dialect)
+    parts = (source_part_count(ds["source"], source_dialect)
+             if cube.get("sql_table") is not None else None)
     if parts is not None and parts < 3:
         # Cube accepts a one- or two-part `sql_table`, but the Ossie spec describes
         # `source` as `database.schema.table` and the Databricks, Snowflake and
@@ -718,8 +730,9 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
         issues.add(IssueType.SOURCE_NOT_FULLY_QUALIFIED, scope,
                    f"source '{ds['source']}' has {parts} part(s); several Ossie "
                    f"converters (Databricks, Snowflake, NVIDIA Auto Ontology) "
-                   f"require a 3-part catalog.schema.table, so qualify the cube's "
-                   f"`sql_table` if the model needs to convert onward")
+                   "require a 3-part catalog.schema.table. Qualify the cube's "
+                   "`sql_table` or pass --default-catalog and, for a one-part name, "
+                   "--default-schema")
     if cube.get("description"):
         ds["description"] = unescape_braces_from_cube(cube["description"])
 

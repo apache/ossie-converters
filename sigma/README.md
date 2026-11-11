@@ -133,9 +133,10 @@ Every `OssieExpression` produced by `sigma-to-ossie` always carries **both**:
    lossless round-tripping regardless of how much the ANSI SQL translator understands.
 2. An `ANSI_SQL`-dialect entry, present only when the formula translated successfully.
 
-`ossie-to-sigma` prefers the original `SIGMA` formula. It otherwise translates SQL
-from the first available dialect in this order: `ANSI_SQL`, `OSSIE_SQL_2026`,
-`DATABRICKS`, `SNOWFLAKE`, then `BIGQUERY`. The same SQL expression determines
+`ossie-to-sigma` prefers the original `SIGMA` formula. Otherwise it translates
+the top-level `expression.sql` when present. If absent, it uses the first
+available entry among `ANSI_SQL`, `OSSIE_SQL_2026`, `DATABRICKS`,
+`SNOWFLAKE`, and `BIGQUERY`. The same SQL expression determines
 the owning dataset for metrics without a preserved Sigma element ID. When
 translation fails, the column or metric is **omitted** and flagged in `ConverterResult.issues`
 (`ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE`). `formula` is a required property and the data
