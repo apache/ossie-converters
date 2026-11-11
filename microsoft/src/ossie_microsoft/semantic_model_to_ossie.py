@@ -60,6 +60,7 @@ from ._common import (
     write_stash,
 )
 from ._dax_to_sql import translate_measure
+from ._report import record, record_items
 
 # What happens to a TMSL construct Apache Ossie cannot express: it survives a round trip
 # back to Power BI, but it is invisible to any other consumer of the document.
@@ -161,15 +162,31 @@ def build_ossie_document(bim_file, translate_dax=False):
         raise ValueError("model.bim is missing the required 'model' object")
 
     all_tables = [
-        t for t in model.get("tables") or [] if isinstance(t, dict) and t.get("name")
+        (index, table) for index, table in enumerate(model.get("tables") or [])
+        if isinstance(table, dict) and table.get("name")
     ]
-    tables = [t for t in all_tables if _is_exported_table(t)]
+    tables = [(index, table) for index, table in all_tables if _is_exported_table(table)]
     if not tables:
         raise ValueError(
             "model.bim has no tables that can be exported as Apache Ossie datasets"
         )
-    excluded_tables = [t for t in all_tables if not _is_exported_table(t)]
-    exported_names = {t["name"] for t in tables}
+    excluded_tables = []
+    metric_tables = []
+    for index, table in all_tables:
+        if not _is_exported_table(table):
+            excluded_tables.append(table)
+            record_items(
+                "field", f"/model/tables/{index}/columns", table.get("columns"),
+                "vendor_metadata", vendor="POWER_BI", reason="excluded_table",
+            )
+        if _is_measure_table(table):
+            metric_tables.append((index, table))
+        else:
+            record_items(
+                "metric", f"/model/tables/{index}/measures", table.get("measures"),
+                "vendor_metadata", vendor="POWER_BI", reason="excluded_table",
+            )
+    exported_names = {table["name"] for _, table in tables}
 
     semantic_model = {"name": bim_file.get("name") or "semantic_model"}
     warn_unsupported("model", model, TMSL_UNSUPPORTED_MODEL, "Apache Ossie", _PRESERVED)
@@ -179,7 +196,9 @@ def build_ossie_document(bim_file, translate_dax=False):
     model_ai_context, model_stash = _split_ai_context(model, _MODEL_CONSUMED)
     if model_ai_context is not None:
         semantic_model["ai_context"] = model_ai_context
-    semantic_model["datasets"] = [_convert_table(t) for t in tables]
+    semantic_model["datasets"] = [
+        _convert_table(table, f"/model/tables/{index}") for index, table in tables
+    ]
 
     relationships, excluded_relationships = _convert_relationships(
         model.get("relationships") or [], exported_names
@@ -187,7 +206,6 @@ def build_ossie_document(bim_file, translate_dax=False):
     if relationships:
         semantic_model["relationships"] = relationships
 
-    metric_tables = [table for table in all_tables if _is_measure_table(table)]
     resolve_field = _build_field_resolver(semantic_model["datasets"]) if translate_dax else None
     metrics, excluded_measures = _convert_metrics(
         metric_tables, translate_dax=translate_dax, resolve_field=resolve_field
@@ -276,7 +294,7 @@ def _is_measure_table(table):
     )
 
 
-def _convert_table(table):
+def _convert_table(table, source_path):
     dataset = {"name": table["name"], "source": _table_source(table)}
     scope = f"table '{table['name']}'"
 
@@ -286,15 +304,27 @@ def _convert_table(table):
     fields = []
     field_stashes = []
     excluded_columns = []
-    for column in table.get("columns") or []:
+    for index, column in enumerate(table.get("columns") or []):
+        column_path = f"{source_path}/columns/{index}"
         if not isinstance(column, dict) or not column.get("name"):
+            record("field", column_path, column, "dropped", reason="invalid_column")
             continue
         # A rowNumber column is a storage-engine artifact with no user-visible data. It
         # is kept in the stash so an export can put it back.
         if column.get("type") == "rowNumber":
             excluded_columns.append(column)
+            record(
+                "field", column_path, column, "vendor_metadata",
+                vendor="POWER_BI", reason="row_number_column",
+            )
             continue
         field, column_stash = _convert_column(column, scope)
+        record(
+            "field", column_path, column, "translated",
+            target_name=field["name"], target_dataset=dataset["name"],
+            vendor="POWER_BI" if column_stash else None,
+            metadata_properties=sorted(column_stash) or None,
+        )
         fields.append(field)
         field_stashes.append((field, column_stash))
         if column.get("isKey"):
@@ -572,10 +602,12 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
     metrics = []
     excluded = []
     seen = set()
-    measures = _measure_bodies(tables) if translate_dax else None
-    for table in tables:
+    measures = _measure_bodies(table for _, table in tables) if translate_dax else None
+    for table_index, table in tables:
         for index, measure in enumerate(table.get("measures") or []):
+            source_path = f"/model/tables/{table_index}/measures/{index}"
             if not isinstance(measure, dict) or not measure.get("name"):
+                record("metric", source_path, measure, "dropped", reason="invalid_measure")
                 continue
             scope = f"table '{table['name']}' measure '{measure.get('name')}'"
             warn_unsupported(scope, measure, TMSL_UNSUPPORTED_MEASURE, "Apache Ossie", _PRESERVED)
@@ -593,6 +625,10 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 )
                 excluded.append(
                     {"table": table["name"], "measure": measure, "index": index}
+                )
+                record(
+                    "metric", source_path, measure, "vendor_metadata",
+                    vendor="POWER_BI", reason="missing_expression",
                 )
                 continue
 
@@ -631,6 +667,10 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 stash["name"] = measure["name"]
             write_stash(metric, stash)
             metrics.append(metric)
+            record(
+                "metric", source_path, measure, "translated", target_name=name,
+                vendor="POWER_BI", metadata_properties=sorted(stash),
+            )
     return metrics, excluded
 
 
@@ -681,8 +721,12 @@ def _convert_relationships(relationships, exported_names):
     converted = []
     excluded = []
     seen = set()
-    for relationship in relationships:
+    for index, relationship in enumerate(relationships):
+        source_path = f"/model/relationships/{index}"
         if not isinstance(relationship, dict):
+            record(
+                "relationship", source_path, relationship, "dropped", reason="invalid_relationship",
+            )
             continue
         scope = f"relationship '{relationship.get('name', '<unnamed>')}'"
 
@@ -693,6 +737,10 @@ def _convert_relationships(relationships, exported_names):
         if not all((from_table, from_column, to_table, to_column)):
             warn(scope, "relationship is missing an endpoint; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="missing_endpoint",
+            )
             continue
 
         # Apache Ossie has no notion of an inactive relationship; keeping one would make
@@ -700,11 +748,19 @@ def _convert_relationships(relationships, exported_names):
         if relationship.get("isActive") is False:
             warn(scope, "inactive relationships have no Apache Ossie counterpart; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="inactive_relationship",
+            )
             continue
 
         if from_table not in exported_names or to_table not in exported_names:
             warn(scope, "relationship references a table that is not exported; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="excluded_table",
+            )
             continue
 
         # TMSL spells these lowercase, but the property is case-insensitive to the
@@ -715,6 +771,10 @@ def _convert_relationships(relationships, exported_names):
             # Apache Ossie relationships are many-to-one or one-to-one only.
             warn(scope, "many-to-many relationships have no Apache Ossie counterpart; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="unsupported_cardinality",
+            )
             continue
 
         flipped = from_cardinality == "one" and to_cardinality == "many"
@@ -726,6 +786,10 @@ def _convert_relationships(relationships, exported_names):
         if name in seen:
             warn(scope, f"duplicate relationship '{name}'; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="duplicate_relationship",
+            )
             continue
         seen.add(name)
 
@@ -767,6 +831,10 @@ def _convert_relationships(relationships, exported_names):
             ]
         write_stash(converted_relationship, stash)
         converted.append(converted_relationship)
+        record(
+            "relationship", source_path, relationship, "translated", target_name=name,
+            vendor="POWER_BI" if stash else None, metadata_properties=sorted(stash) or None,
+        )
     return converted, excluded
 
 

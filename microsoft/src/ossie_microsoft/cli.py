@@ -39,6 +39,7 @@ from pathlib import Path
 import yaml
 
 from ._common import LOGGER, ConversionError
+from ._report import collect_entries
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
 from .pbip import import_powerbi_project, reraise_tom_load_failure
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
@@ -47,15 +48,21 @@ from .semantic_model_to_ossie import convert_semantic_model_to_ossie
 class _CountingHandler(logging.Handler):
     """Counts reported conversion issues so the CLI can summarize and exit on them."""
 
-    def __init__(self, quiet):
+    def __init__(self, quiet, report):
         super().__init__()
         self.count = 0
         self.quiet = quiet
+        self.report = report
 
     def emit(self, record):
+        if record.levelno < logging.WARNING:
+            return
         self.count += 1
+        message = record.getMessage()
+        if self.report is not None:
+            self.report["warnings"].append(message)
         if not self.quiet:
-            print(record.getMessage(), file=sys.stderr)
+            print(message, file=sys.stderr)
 
 
 def _add_common_flags(parser, suppress):
@@ -78,6 +85,10 @@ def _add_common_flags(parser, suppress):
         action="store_true",
         default=default,
         help="suppress the report of constructs that could not be converted",
+    )
+    parser.add_argument(
+        "--report", type=Path, default=argparse.SUPPRESS if suppress else None,
+        help="write a JSON conversion report to this file",
     )
 
 
@@ -154,22 +165,44 @@ def _run_export(args):
 def main(argv=None):
     args = _build_parser().parse_args(argv)
     handler = _run_import if args.command == "import" else _run_export
+    report = None
+    if args.report is not None:
+        try:
+            _check_report_path(args.report, args.input, args.output)
+        except (OSError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        report = {"version": 1, "direction": args.command, "entries": [], "warnings": []}
 
     # Each lossy step is reported through both `warnings` and the logger. For a command
     # line the log is the better channel -- it is ordered with respect to the rest of the
     # output and carries no file/line noise -- so the warning channel is silenced here to
     # stop every message being printed twice.
-    counter = _CountingHandler(args.quiet)
+    counter = _CountingHandler(args.quiet, report)
     LOGGER.addHandler(counter)
+    error = None
+    entries = report["entries"] if report is not None else None
     try:
-        with warnings.catch_warnings():
+        with collect_entries(entries), warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             out = handler(args)
     except (ConversionError, TypeError, ValueError, OSError, yaml.YAMLError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        error = str(e)
     finally:
         LOGGER.removeHandler(counter)
+
+    if report is not None:
+        report["completed"] = error is None
+        if error is not None:
+            report["error"] = error
+        try:
+            args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except OSError as e:
+            print(f"Error writing conversion report: {e}", file=sys.stderr)
+            return 1
+    if error is not None:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:
@@ -184,6 +217,17 @@ def main(argv=None):
             file=sys.stderr,
         )
     return 1 if args.strict and counter.count else 0
+
+
+def _check_report_path(report, input_path, output_path):
+    for path in (input_path, output_path):
+        if path is None:
+            continue
+        other = Path(path)
+        if report.resolve() == other.resolve() or (
+            report.exists() and other.exists() and report.samefile(other)
+        ):
+            raise ValueError("--report must be separate from the model input and output")
 
 
 if __name__ == "__main__":

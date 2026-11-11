@@ -150,14 +150,15 @@ in the Power BI stash for round trip, but not represented in the Apache Ossie do
 | Flag | Effect |
 | --- | --- |
 | `--strict` | exit non-zero if anything could not be converted faithfully |
-| `-q`, `--quiet` | suppress the report |
+| `-q`, `--quiet` | suppress conversion warnings on stderr |
+| `--report FILE` | write a JSON conversion report |
 | `--translate-dax` | `import` only: also translate DAX measures to `OSSIE_SQL_2026` where the translation is exact (off by default) |
 
 `--strict` exits non-zero when the converter reports a construct it could not represent.
 It does not check that every TMDL `ref` has a definition, or validate DAX expressions.
 Missing input files and invalid TMDL still fail the command. When a conversion produces
-warnings, the output file is still written so the result can be inspected. Both flags
-are accepted before or after the subcommand.
+warnings, the output file is still written so the result can be inspected. `--strict`, `--quiet`, and
+`--report` are accepted before or after the subcommand.
 
 ### Library
 
@@ -197,7 +198,7 @@ ossie_yaml = import_powerbi_project("Report.pbip", translate_dax=True)
 JSON text, or a single TMDL document as text. TMDL input and output require the
 optional TOM setup described above.
 
-Each report is emitted twice, because the two channels answer different questions:
+Conversion warnings are available through two channels:
 
 - a `UserWarning`, so `warnings.simplefilter("error")` gives a hard, programmatic
   guarantee that a conversion was lossless;
@@ -209,6 +210,34 @@ import logging
 
 logging.getLogger("ossie_microsoft").addHandler(logging.StreamHandler())
 ```
+
+## JSON conversion report
+
+```bash
+ossie-microsoft export -i model.yaml -o model.bim --report report.json
+ossie-microsoft import -i model.bim -o model.yaml --report report.json
+```
+
+The report has a schema `version` of `1`, a `direction` of `import` or `export`,
+an `entries` array, and the text of conversion `warnings`. Each entry names the
+source object when available and includes its `kind`, `source_path`, and `status`.
+The path is a JSON Pointer into the Ossie model on export or the parsed TMSL
+document on import. For TMDL and PBIP input, the pointers refer to the TMSL
+representation used by the converter.
+
+| Status | Meaning |
+| --- | --- |
+| `translated` | The converter emitted a field, metric, or relationship in the target model. |
+| `vendor_metadata` | The complete source object is only available in the Power BI extension. |
+| `placeholder` | The converter emitted a calculated column or measure with `BLANK()` and annotated it with the source expression. |
+| `dropped` | The converter omitted the source object or vendor extension. |
+
+Entries may also contain target names, a reason code, metadata property names, or
+dropped property names. For a metric inside a Snowflake extension, `source_path`
+points to the extension and `payload_path` points into its decoded JSON payload.
+A completed conversion sets `completed: true`. The report is written in quiet mode and when strict mode returns nonzero. If
+conversion aborts, it includes `completed: false`, the `error`, and any entries
+recorded before the error.
 
 ## Mapping
 

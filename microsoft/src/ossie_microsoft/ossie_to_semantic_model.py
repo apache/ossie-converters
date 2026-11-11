@@ -66,6 +66,7 @@ from ._common import (
     warn,
     warn_unsupported,
 )
+from ._report import record, record_dropped_extensions, record_items
 
 # What happens to an Apache Ossie construct Power BI has nowhere to put: unlike the
 # import direction, there is no stash on a TMSL document, so it is genuinely dropped.
@@ -259,10 +260,10 @@ def _convert_datasets(datasets):
     generated_partitions = []
     # Maps a table name to the set of its column names, used to validate relationships.
     table_columns = {}
-    for dataset in datasets:
+    for index, dataset in enumerate(datasets):
         if not isinstance(dataset, dict) or not dataset.get("name"):
             continue
-        table, generated_partition = _convert_dataset(dataset)
+        table, generated_partition = _convert_dataset(dataset, f"/datasets/{index}")
         if generated_partition is not None:
             generated_partitions.append(generated_partition)
         tables.append(table)
@@ -270,22 +271,28 @@ def _convert_datasets(datasets):
     return tables, table_columns, generated_partitions
 
 
-def _convert_dataset(dataset):
+def _convert_dataset(dataset, source_path):
     name = dataset["name"]
     scope = f"dataset '{name}'"
     stash = read_stash(dataset)
-    _warn_foreign_extensions(scope, dataset)
+    _warn_foreign_extensions(scope, dataset, source_path)
     warn_unsupported(scope, dataset, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    record_items(
+        "metric", f"{source_path}/metrics", dataset.get("metrics"), "dropped",
+        reason="unsupported_dataset_metric",
+    )
 
     key_columns = _key_columns(dataset, scope)
     unique_columns = _unique_columns(dataset, scope)
     column_index = _dataset_column_index(dataset)
 
     columns = []
-    for field in dataset.get("fields") or []:
+    for index, field in enumerate(dataset.get("fields") or []):
+        field_path = f"{source_path}/fields/{index}"
         if not isinstance(field, dict) or not field.get("name"):
+            record("field", field_path, field, "dropped", reason="invalid_field")
             continue
-        column = _convert_field(field, scope, column_index.get)
+        column = _convert_field(field, scope, column_index.get, field_path, name)
         if column is None:
             continue
         if column["name"] in key_columns:
@@ -542,15 +549,17 @@ def _unique_columns(dataset, scope):
 # ---------------------------------------------------------------------------
 
 
-def _convert_field(field, dataset_scope, resolve_column):
+def _convert_field(field, dataset_scope, resolve_column, source_path, dataset_name):
     name = field["name"]
     scope = f"{dataset_scope} field '{name}'"
     stash = read_stash(field)
-    _warn_foreign_extensions(scope, field)
-    warn_unsupported(scope, field, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    _warn_foreign_extensions(scope, field, source_path)
+    dropped_properties = warn_unsupported(scope, field, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
     column = {"name": name}
     expressions = dialect_expressions(field.get("expression"))
+    placeholder = False
+    metadata_properties = None
 
     source_column = _source_column(expressions, name, stash)
     if source_column is not None:
@@ -567,9 +576,11 @@ def _convert_field(field, dataset_scope, resolve_column):
             if dax is None:
                 _untranslatable(scope, "calculated column", dialect, reason)
                 column["expression"] = "BLANK()"
+                placeholder = True
             else:
                 column["expression"] = dax
             _apply_expression_annotations(column, dialect, expression)
+            metadata_properties = [EXPRESSION_DIALECT_ANNOTATION, EXPRESSION_ANNOTATION]
         else:
             column["type"] = "calculated"
             column["expression"] = _tmsl_text(expression)
@@ -577,6 +588,8 @@ def _convert_field(field, dataset_scope, resolve_column):
     datatype = _column_datatype(field, stash, scope)
     if datatype:
         column["dataType"] = datatype
+    elif field.get("datatype"):
+        dropped_properties.append("datatype")
     if field.get("description"):
         column["description"] = field["description"]
     if field.get("datatype") == "Date" and "formatString" not in stash:
@@ -591,6 +604,13 @@ def _convert_field(field, dataset_scope, resolve_column):
         if key not in _COLUMN_CONTROL_KEYS:
             column.setdefault(key, value)
     _apply_ai_context(column, field.get("ai_context"))
+    record(
+        "field", source_path, field, "placeholder" if placeholder else "translated",
+        target_name=column["name"], target_dataset=dataset_name,
+        reason="unsupported_expression" if placeholder else None,
+        vendor="POWER_BI" if metadata_properties else None,
+        metadata_properties=metadata_properties, dropped_properties=dropped_properties or None,
+    )
     return column
 
 
@@ -734,25 +754,32 @@ def _translate_metric_expression(expression, dialect, tables, scope):
 def _apply_measures(tables, metrics):
     """Attach Apache Ossie metrics to their home Power BI table as measures."""
     by_name = {table["name"]: table for table in tables}
-    for metric in metrics:
+    for index, metric in enumerate(metrics):
+        source_path = f"/metrics/{index}"
         if not isinstance(metric, dict) or not metric.get("name"):
+            record("metric", source_path, metric, "dropped", reason="invalid_metric")
             continue
         scope = f"metric '{metric['name']}'"
         stash = read_stash(metric)
-        _warn_foreign_extensions(scope, metric)
-        warn_unsupported(scope, metric, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+        _warn_foreign_extensions(scope, metric, source_path)
+        dropped_properties = warn_unsupported(
+            scope, metric, OSSIE_UNSUPPORTED, "Power BI", _DROPPED
+        )
 
         expressions = dialect_expressions(metric.get("expression"))
         if not expressions:
             warn(scope, "metric has no expression; skipped")
+            record("metric", source_path, metric, "dropped", reason="missing_expression")
             continue
         dialect, expression = _preferred_expression(expressions)
+        placeholder = False
         if dialect == DIALECT_DAX:
             dax = _tmsl_text(expression)
         else:
             dax = _translate_metric_expression(expression, dialect, tables, scope)
             if dax is None:
                 dax = "BLANK()"
+                placeholder = True
 
         table = by_name.get(stash.get("table"))
         if table is None:
@@ -776,13 +803,23 @@ def _apply_measures(tables, metrics):
                 f"Power BI infers a measure's data type from its DAX expression, so "
                 f"datatype '{metric['datatype']}' is not applied",
             )
+            dropped_properties.append("datatype")
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
                 measure.setdefault(key, value)
+        metadata_properties = None
         if dialect != DIALECT_DAX:
             _apply_expression_annotations(measure, dialect, expression)
+            metadata_properties = [EXPRESSION_DIALECT_ANNOTATION, EXPRESSION_ANNOTATION]
         _apply_ai_context(measure, metric.get("ai_context"))
         table.setdefault("measures", []).append(measure)
+        record(
+            "metric", source_path, metric, "placeholder" if placeholder else "translated",
+            target_name=measure["name"], target_dataset=table["name"],
+            reason="unsupported_expression" if placeholder else None,
+            vendor="POWER_BI" if metadata_properties else None,
+            metadata_properties=metadata_properties, dropped_properties=dropped_properties or None,
+        )
 
 
 def _restore_excluded_measures(tables, excluded_measures):
@@ -837,13 +874,19 @@ def _restore_excluded_measures(tables, excluded_measures):
 
 def _convert_relationships(relationships, table_columns):
     converted = []
-    for relationship in relationships:
+    for index, relationship in enumerate(relationships):
+        source_path = f"/relationships/{index}"
         if not isinstance(relationship, dict):
+            record(
+                "relationship", source_path, relationship, "dropped", reason="invalid_relationship",
+            )
             continue
         scope = f"relationship '{relationship.get('name', '<unnamed>')}'"
         stash = read_stash(relationship)
-        _warn_foreign_extensions(scope, relationship)
-        warn_unsupported(scope, relationship, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+        _warn_foreign_extensions(scope, relationship, source_path)
+        dropped_properties = warn_unsupported(
+            scope, relationship, OSSIE_UNSUPPORTED, "Power BI", _DROPPED
+        )
 
         from_columns = relationship.get("from_columns") or []
         to_columns = relationship.get("to_columns") or []
@@ -854,6 +897,10 @@ def _convert_relationships(relationships, table_columns):
                 "Power BI relationships join a single column pair; composite "
                 "relationships have no equivalent and are skipped",
             )
+            record(
+                "relationship", source_path, relationship, "dropped",
+                reason="unsupported_column_pairs",
+            )
             continue
 
         from_table = relationship.get("from")
@@ -861,6 +908,7 @@ def _convert_relationships(relationships, table_columns):
         from_column, to_column = from_columns[0], to_columns[0]
         if not _endpoints_exist(scope, table_columns, from_table, from_column,
                                 to_table, to_column):
+            record("relationship", source_path, relationship, "dropped", reason="missing_endpoint")
             continue
 
         endpoints = [from_table, from_column, to_table, to_column]
@@ -891,6 +939,10 @@ def _convert_relationships(relationships, table_columns):
                 tmsl.setdefault(key, value)
         _apply_ai_context(tmsl, relationship.get("ai_context"))
         converted.append(prune(tmsl))
+        record(
+            "relationship", source_path, relationship, "translated",
+            target_name=tmsl["name"], dropped_properties=dropped_properties or None,
+        )
     return converted
 
 
@@ -971,7 +1023,8 @@ def _tmsl_text(value):
     return value.replace("\r\n", "\n").split("\n")
 
 
-def _warn_foreign_extensions(scope, obj):
+def _warn_foreign_extensions(scope, obj, source_path=""):
+    record_dropped_extensions(obj, source_path)
     for ext in foreign_vendor_extensions(obj):
         warn(
             scope,
