@@ -87,6 +87,11 @@ def test_schema_carries_concepts(flights_linkml: str):
     assert "code" in schema["classes"]["Airport"]["attributes"]
 
 
+def test_what_linkml_cannot_hold_is_warned_about(flights_model: OssieOntology):
+    with pytest.warns(UserWarning, match="Ontology mapping, which is not read"):
+        OssieToLinkmlConverter.convert(flights_model)
+
+
 def test_schema_id_defaults_and_can_be_overridden(flights_model: OssieOntology):
     # An Ossie ontology has no id of its own, so one is made up from its name.
     assert yaml.safe_load(OssieToLinkmlConverter.convert(flights_model))["id"] == "https://example.org/flights"

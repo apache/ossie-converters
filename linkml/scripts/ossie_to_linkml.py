@@ -36,6 +36,8 @@
 # Outputs:
 #
 #   - stdout: The LinkML schema, as YAML
+#   - stderr: One warning per kind of thing LinkML has no place for, such as
+#     `derived_by` rules or ontology mappings
 #
 import sys
 from pathlib import Path
