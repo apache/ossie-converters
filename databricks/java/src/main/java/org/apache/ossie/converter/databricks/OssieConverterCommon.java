@@ -232,8 +232,8 @@ final class OssieConverterCommon {
 
   /**
    * As {@link #replaceOutsideLiterals(String, Pattern, String)}, but each match is replaced with
-   * {@code replacer.apply(match)} -- for a rewrite whose result depends on what matched. The
-   * returned text is inserted literally, not as a regex replacement template.
+   * {@code replacer.apply(match)} -- for a rewrite whose result depends on what matched. Match
+   * offsets refer to the full SQL string. Replacement text is inserted literally.
    */
   static String replaceOutsideLiterals(
       String sql, Pattern pattern, Function<MatchResult, String> replacer) {
@@ -241,11 +241,11 @@ final class OssieConverterCommon {
     int codeStart = 0;
     for (int[] span : literalSpans(sql)) {
       // Rewrite the code span that precedes this literal/comment, then copy the span verbatim.
-      out.append(rewriteLiterally(sql.substring(codeStart, span[0]), pattern, replacer));
+      rewriteLiterally(sql, codeStart, span[0], pattern, replacer, out);
       out.append(sql, span[0], span[1]);
       codeStart = span[1];
     }
-    out.append(rewriteLiterally(sql.substring(codeStart), pattern, replacer));
+    rewriteLiterally(sql, codeStart, sql.length(), pattern, replacer, out);
     return out.toString();
   }
 
@@ -327,10 +327,14 @@ final class OssieConverterCommon {
     return sql.length();
   }
 
-  private static String rewriteLiterally(
-      String code, Pattern pattern, Function<MatchResult, String> replacer) {
-    return pattern.matcher(code)
-        .replaceAll(m -> Matcher.quoteReplacement(replacer.apply(m)));
+  private static void rewriteLiterally(String sql, int start, int end, Pattern pattern,
+      Function<MatchResult, String> replacer, StringBuilder out) {
+    Matcher matcher = pattern.matcher(sql).region(start, end);
+    while (matcher.find()) {
+      out.append(sql, start, matcher.start()).append(replacer.apply(matcher.toMatchResult()));
+      start = matcher.end();
+    }
+    out.append(sql, start, end);
   }
 
   /**
@@ -601,9 +605,12 @@ final class OssieConverterCommon {
           && get(extension, "data") instanceof String data) {
         try {
           Map<String, Object> parsed = asMap(JSON_READER.readValue(data, Object.class));
-          return strList(get(parsed, "integer_sum_grain"));
+          List<String> grain = strList(get(parsed, "integer_sum_grain"));
+          if (!grain.isEmpty()) {
+            return grain;
+          }
         } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
-          return List.of();
+          // Foreign metadata is opaque. A malformed entry does not hide later hints.
         }
       }
     }

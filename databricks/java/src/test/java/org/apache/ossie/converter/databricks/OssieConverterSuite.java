@@ -424,6 +424,20 @@ public class OssieConverterSuite {
   }
 
   @Test
+  public void joinedIntegerSumHandlesFormattingAndOnlySkipsModifiedOperands() {
+    String filtered = "SUM(store.employees) /* note */ FILTER (WHERE active)";
+    String windowed = "SUM(store.employees) OVER (PARTITION BY region)";
+    String sum = "SUM(store.employees)";
+    String expression = filtered + " + " + windowed + " + " + sum;
+    String encoded = JoinedIntegerSum.encode(expression, Map.of("store.employees", "store.id"),
+        java.util.Set.of("store"));
+    assertTrue(encoded.startsWith(filtered + " + " + windowed + " + AGGREGATE("));
+    String formatted = encoded.replace("AGGREGATE(COLLECT_SET", "aggregate ( \n  collect_set")
+        .replace(" AS ossie_key, ", " AS ossie_key ,\n  ");
+    assertEquals(expression, JoinedIntegerSum.decode(formatted).expression());
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   public void joinedIntegerSumDeduplicatesByPrimaryKeyAndRoundTrips() {
     String osi = """
@@ -453,6 +467,8 @@ public class OssieConverterSuite {
             - dialect: ANSI_SQL
               expression: SUM(sales.amount) / NULLIF(SUM(store.employees), 0)
           custom_extensions:
+          - vendor_name: CUBE
+            data: '{invalid'
           - vendor_name: CUBE
             data: '{"integer_sum_grain": ["store"]}'
         - name: different_counts

@@ -17,7 +17,6 @@
 
 package org.apache.ossie.converter.databricks;
 
-import static org.apache.ossie.converter.databricks.OssieConverterCommon.findOutsideLiterals;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.replaceOutsideLiterals;
 
 import java.util.HashSet;
@@ -32,7 +31,8 @@ final class JoinedIntegerSum {
   private static final String COLUMN = ID + "(?:\\." + ID + ")+";
   private static final Pattern SUM = Pattern.compile(
       "(?i)(?<![\\w.])SUM\\s*\\(\\s*(" + COLUMN + ")\\s*\\)");
-  private static final Pattern AGGREGATE_MODIFIER = Pattern.compile("(?i)\\b(?:FILTER|OVER)\\s*\\(");
+  private static final Pattern AGGREGATE_MODIFIER = Pattern.compile(
+      "(?is)\\s*(?:(?:/\\*.*?\\*/|--[^\\r\\n]*)\\s*)*(?:FILTER|OVER)\\b");
   private static final String PREFIX = "AGGREGATE(COLLECT_SET(STRUCT(";
   private static final String SEPARATOR = " AS ossie_key, ";
   private static final String FILTER = " AS ossie_value)) FILTER (WHERE ";
@@ -40,20 +40,27 @@ final class JoinedIntegerSum {
   private static final String SUFFIX = "), CAST(NULL AS BIGINT), "
       + "(ossie_acc, ossie_row) -> COALESCE(ossie_acc, 0L) + CAST(ossie_row.ossie_value AS BIGINT))";
   private static final Pattern ENCODED = Pattern.compile(
-      Pattern.quote(PREFIX) + "(" + COLUMN + ")" + Pattern.quote(SEPARATOR)
-          + "(" + COLUMN + ")" + Pattern.quote(FILTER) + "\\1"
-          + Pattern.quote(NOT_NULL + " AND ") + "\\2" + Pattern.quote(NOT_NULL + SUFFIX));
+      "(?i)\\bAGGREGATE\\s*\\(\\s*COLLECT_SET\\s*\\(\\s*STRUCT\\s*\\(\\s*("
+          + COLUMN + ")\\s+AS\\s+ossie_key\\s*,\\s*(" + COLUMN + ")"
+          + "\\s+AS\\s+ossie_value\\s*\\)\\s*\\)\\s*FILTER\\s*\\(\\s*WHERE\\s+"
+          + "\\1\\s+IS\\s+NOT\\s+NULL\\s+AND\\s+\\2\\s+IS\\s+NOT\\s+NULL\\s*\\)\\s*,\\s*"
+          + "CAST\\s*\\(\\s*NULL\\s+AS\\s+BIGINT\\s*\\)\\s*,\\s*"
+          + "\\(\\s*ossie_acc\\s*,\\s*ossie_row\\s*\\)\\s*->\\s*"
+          + "COALESCE\\s*\\(\\s*ossie_acc\\s*,\\s*0L\\s*\\)\\s*\\+\\s*"
+          + "CAST\\s*\\(\\s*ossie_row\\.ossie_value\\s+AS\\s+BIGINT\\s*\\)\\s*\\)");
 
   private JoinedIntegerSum() {}
 
   static String encode(String expression, Map<String, String> keys, Set<String> grainPaths) {
-    if (grainPaths.isEmpty() || findOutsideLiterals(expression, AGGREGATE_MODIFIER)) {
+    if (grainPaths.isEmpty()) {
       return expression;
     }
     return replaceOutsideLiterals(expression, SUM, match -> {
       String value = match.group(1);
       String key = keys.get(value);
-      if (key == null || !grainPaths.contains(value.substring(0, value.lastIndexOf('.')))) {
+      if (key == null || !grainPaths.contains(value.substring(0, value.lastIndexOf('.')))
+          || AGGREGATE_MODIFIER.matcher(expression).region(match.end(), expression.length())
+              .lookingAt()) {
         return match.group();
       }
       // The struct deduplicates rows by key, including stores with identical values. Removing
