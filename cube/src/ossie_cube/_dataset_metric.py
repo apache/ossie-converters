@@ -82,9 +82,12 @@ def local_columns(expr, dialect, fields, scope):
 
 def expression_fields(expression, fields, scope):
     """Resolve fields used by every SQL alternative; other languages are opaque."""
+    entries = expression.get("dialects") or []
+    if expression.get("sql") is not None:
+        entries = [{"dialect": DIALECT_OSSIE_SQL, "expression": expression["sql"]}, *entries]
     return {
         field
-        for entry in expression["dialects"]
+        for entry in entries
         if entry["dialect"] in {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL}
         for _, field in local_columns(
             entry["expression"].strip(), entry["dialect"], fields, scope

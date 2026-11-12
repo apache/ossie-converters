@@ -611,7 +611,7 @@ def _park_expression(parked, expression, used):
       back, so a multi-dialect expression is parked entire.
     """
     dialects = (expression or {}).get("dialects") or []
-    if len(dialects) > 1:
+    if (expression or {}).get("sql") is not None or len(dialects) > 1:
         parked["expression"] = expression
         return
     if used is None and len(dialects) == 1:
@@ -1365,7 +1365,15 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
         restored_expression = metric["expression"]
         aliases = {field: member for field, member in restored_fields[target].items()
                    if field != member}
-        if aliases:
+        if aliases and restored_expression.get("sql") is not None:
+            try:
+                sql = _qualify_dataset_metric(restored_expression["sql"], DIALECT_OSSIE_SQL,
+                                              None, fields, scope, aliases)
+            except ConversionError as exc:
+                issues.add(IssueType.DROPPED_NO_CUBE_EQUIVALENT, scope, f"{exc}; metric dropped")
+                continue
+            restored_expression = {**restored_expression, "sql": sql}
+        if aliases and restored_expression.get("dialects"):
             # Fields re-import under their sanitized Cube identifiers. A local
             # expression must name those fields too, rather than restore dangling
             # references such as "Net Amount" when its field is now net_amount.

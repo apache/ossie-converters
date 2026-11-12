@@ -1896,8 +1896,12 @@ def _valid_dataset_metric_expression(expression):
     Non-SQL alternatives remain opaque, but every alternative must have the
     Ossie expression shape before it can replace the native definition.
     """
-    if not isinstance(expression, dict) or set(expression) != {"dialects"}:
+    if not isinstance(expression, dict) or not expression or expression.keys() - {"sql", "dialects"}:
         return False
+    if "sql" in expression and (not isinstance(expression["sql"], str) or not expression["sql"].strip()):
+        return False
+    if "dialects" not in expression:
+        return True
     entries = expression["dialects"]
     dialects = {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL, "MDX", "TABLEAU", "MAQL",
                 "SIGMA", "THOUGHTSPOT", "DAX", "HOLISTICS_AQL"}
