@@ -541,14 +541,17 @@ def _build_topic(model, base_vname, view_names, relationships):
 def _dataset_metric_expression(expr, dims, scope):
     """Bind unqualified declared fields to Omni dimensions, not source columns.
 
-    Preserve SQL strings/comments and leave function names alone. Quoted field
-    names are resolved before sanitization just like their unquoted counterparts.
+    Preserve SQL strings, comments and temporal syntax. Quoted field names are
+    resolved before sanitization just like their unquoted counterparts.
     """
     identifier = r'(?:"(?:""|[^"])*"|[A-Za-z_]\w*)'
+    string = r"'(?:''|[^'])*'"
     trivia = r"(?:\s|--[^\n]*|/\*.*?\*/)*"
+    typed_literal = rf"(?i:DATE|TIME|TIMESTAMP)\b{trivia}{string}"
+    extract_prefix = rf"(?i:EXTRACT)\b{trivia}\({trivia}(?:{identifier}|{string}){trivia}(?i:FROM)\b"
     tokens = re.compile(
-        r"'(?:''|[^'])*'|--[^\n]*|/\*.*?\*/|(?<![\w.$])(?P<name>"
-        + identifier + r"(?:" + trivia + r"\." + trivia + identifier + r")*)",
+        rf"{string}|--[^\n]*|/\*.*?\*/|(?<![\w.$])"
+        rf"(?:{typed_literal}|{extract_prefix}|(?P<name>{identifier}(?:{trivia}\.{trivia}{identifier})*))",
         re.DOTALL)
     keywords = {"ALL", "AND", "AS", "BETWEEN", "CASE", "DISTINCT", "ELSE", "END",
                 "FALSE", "IN", "IS", "LIKE", "NOT", "NULL", "OR", "THEN", "TRUE", "WHEN"}

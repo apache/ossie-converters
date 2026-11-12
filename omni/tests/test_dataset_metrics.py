@@ -161,10 +161,20 @@ def test_dataset_metric_cannot_reach_into_another_dataset(reference):
     ("order_id::date", "${order_id}::date"),
     ("CASE WHEN order_id IS NULL THEN 0 ELSE order_id END",
      "CASE WHEN ${order_id} IS NULL THEN 0 ELSE ${order_id} END"),
+    ("SUM(CASE WHEN date >= DATE '2024-01-01' THEN 1 ELSE 0 END)",
+     "CASE WHEN ${date} >= DATE '2024-01-01' THEN 1 ELSE 0 END"),
+    ("COUNT(DISTINCT EXTRACT(YEAR FROM sold_at))", "EXTRACT(YEAR FROM ${sold_at})"),
+    ("EXTRACT /* part */ (YeAr /* separator */ FROM sold_at) + year",
+     "EXTRACT /* part */ (YeAr /* separator */ FROM ${sold_at}) + ${year}"),
+    ("CASE WHEN sold_at > TiMeStAmP /* literal */ '2024-01-01 00:00:00' "
+     "THEN timestamp ELSE 0 END",
+     "CASE WHEN ${sold_at} > TiMeStAmP /* literal */ '2024-01-01 00:00:00' "
+     "THEN ${timestamp} ELSE 0 END"),
 ])
 def test_sql_types_and_keywords_are_not_rewritten_as_declared_fields(expression, expected):
     ds = dataset("orders", [metric("total", expression)])
-    for name in ("date", "CASE", "WHEN", "IS", "NULL", "THEN", "ELSE", "END"):
+    for name in ("date", "year", "sold_at", "from", "timestamp", "CASE", "WHEN", "IS",
+                 "NULL", "THEN", "ELSE", "END"):
         ds["fields"].append({"name": name, "expression": {"dialects": [
             {"dialect": "ANSI_SQL", "expression": "source_column"}]}})
     files = export(ds)
