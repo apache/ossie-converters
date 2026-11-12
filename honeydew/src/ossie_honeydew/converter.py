@@ -419,7 +419,10 @@ def _ossie_relation_to_honeydew(rel: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _pick_expression(expression: Any, element_name: str) -> str | None:
-    """Prefer primary SQL, ANSI_SQL, and tagged portable SQL, in that order."""
+    """Pick primary SQL, ANSI_SQL, or tagged portable SQL, in that order.
+
+    Warn when falling back to the first usable expression from another dialect.
+    """
     if expression is None:
         return None
     if not isinstance(expression, dict):
@@ -433,9 +436,14 @@ def _pick_expression(expression: Any, element_name: str) -> str | None:
     portable_expr = None
     first_expr = None
     for entry in expression.get("dialects") or []:
-        dialect = (entry.get("dialect") or "").upper()
+        if not isinstance(entry, dict):
+            continue
         expr = entry.get("expression")
-        if dialect == "ANSI_SQL" and expr is not None:
+        if not isinstance(expr, str) or not expr.strip():
+            continue
+        dialect = entry.get("dialect")
+        dialect = dialect.upper() if isinstance(dialect, str) else ""
+        if dialect == "ANSI_SQL":
             return expr
         if dialect == "OSSIE_SQL_2026" and portable_expr is None:
             portable_expr = expr
@@ -447,7 +455,8 @@ def _pick_expression(expression: Any, element_name: str) -> str | None:
 
     if first_expr is not None:
         warnings.warn(
-            f"'{element_name}': no ANSI_SQL or OSSIE_SQL_2026 dialect found; using first available"
+            f"'{element_name}': no usable ANSI_SQL or OSSIE_SQL_2026 expression; "
+            "using first available"
         )
     return first_expr
 

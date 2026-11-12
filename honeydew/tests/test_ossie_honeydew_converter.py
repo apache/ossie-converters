@@ -242,6 +242,20 @@ def test_pick_expression_ansi_preferred():
     assert _pick_expression(expr, "f") == "col"
 
 
+@pytest.mark.parametrize("value", [None, 42, {"sql": "bad"}, "", "  "])
+def test_pick_expression_skips_unusable_sql(value):
+    unusable = [
+        {"dialect": dialect, "expression": value}
+        for dialect in ("SNOWFLAKE", "OSSIE_SQL_2026", "ANSI_SQL")
+    ]
+    assert _pick_expression({"dialects": unusable}, "f") is None
+    portable = {"dialect": "OSSIE_SQL_2026", "expression": "portable_col"}
+    assert _pick_expression({"dialects": [*unusable, portable]}, "f") == "portable_col"
+    warehouse = {"dialect": "SNOWFLAKE", "expression": "warehouse_col"}
+    with pytest.warns(UserWarning, match="using first available"):
+        assert _pick_expression({"dialects": [*unusable, warehouse]}, "f") == "warehouse_col"
+
+
 def test_pick_expression_fallback_warns():
     expr = {"dialects": [{"dialect": "SNOWFLAKE", "expression": "col::VARCHAR"}]}
     with warnings.catch_warnings(record=True) as w:
