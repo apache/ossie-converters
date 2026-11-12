@@ -1064,9 +1064,15 @@ def agent_context(m: dict) -> dict:
 
 
 def expression_text(holder: dict) -> str:
-    """The SQL of a field or metric: OSSIE_SQL_2026, else ANSI_SQL, else the first dialect
-    (files from other converters may list a vendor dialect first)."""
-    dl = holder["expression"]["dialects"]
+    """The SQL of a field or metric: the top-level sql (authoritative over an OSSIE_SQL_2026
+    dialect entry), else OSSIE_SQL_2026, else ANSI_SQL, else the first dialect (files from other
+    converters may list a vendor dialect first)."""
+    expr = holder["expression"]
+    if expr.get("sql") is not None:
+        return expr["sql"]
+    dl = expr.get("dialects") or []
+    if not dl:
+        raise NotConvertible("expression has neither sql nor dialects")
     for want in (OSSIE_DIALECT, "ANSI_SQL"):
         for x in dl:
             if x.get("dialect") == want:
@@ -1098,7 +1104,8 @@ def _metric(doc: dict, name: str) -> dict:
         # the dataset's own field wins; another bare metric name stays bare and is refused later
         if not c.table and (c.name in own or c.name not in others):
             c.set("table", exp.to_identifier(ds["name"]))
-    dialect = next(x["dialect"] for x in m["expression"]["dialects"] if x["expression"] == text)
+    dialect = next((x["dialect"] for x in m["expression"].get("dialects") or [] if x["expression"] == text),
+                   OSSIE_DIALECT)
     return {**m, "expression": {"dialects": [{"dialect": dialect, "expression": tree.sql()}]}}
 
 
@@ -1215,18 +1222,29 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None,
                                   f"{field_sql(r['to'], b).sql(dialect=DIALECT)}"
                                   for a, b in zip(r["from_columns"], r["to_columns"])),
               "cardinality": "many_to_one", "origin": "ossie relationship"} for r in rels]
+    def ctx_field(ref):
+        # agent_context names fields as dataset.field; one removed or renamed in the Ossie file
+        # without editing agent_context has nothing to rebuild from
+        dname, dot, fname = ref.partition(".")
+        if not dot:
+            raise NotConvertible(f"agent_context names {ref!r}, which is not a dataset.field reference")
+        f = next((x for x in (ds.get(dname) or {}).get("fields", []) if x["name"] == fname), None)
+        if f is None:
+            raise NotConvertible(f"agent_context names {ref!r}, but no dataset {dname!r} declares a field "
+                                 f"{fname!r}; restore the field or remove it from agent_context")
+        return dname, f
+
     dims = []
     for ref in ctx.get("dimensions") or []:
-        dname, fname = ref.split(".", 1)
-        f = next(x for x in ds[dname].get("fields", []) if x["name"] == fname)
+        dname, f = ctx_field(ref)
         dims.append({"name": f["name"], "sql": field_sql(dname, f["name"]).sql(dialect=DIALECT),
                      "kind": "time" if (f.get("dimension") or {}).get("is_time") else "categorical",
                      "datatype": DTYPE_BACK.get(f.get("datatype"), "unknown"),
                      **({"description": f["description"]} if f.get("description") else {})})
     tf = None
     if ctx.get("timeframe_field"):
-        dname, fname = ctx["timeframe_field"].split(".", 1)
-        tf = field_sql(dname, fname).sql(dialect=DIALECT)
+        dname, f = ctx_field(ctx["timeframe_field"])
+        tf = field_sql(dname, f["name"]).sql(dialect=DIALECT)
     window = []
     for w in ctx.get("window") or []:                 # parked predicates, back in the record's aliases
         wt = sqlglot.parse_one(w, read=DIALECT)

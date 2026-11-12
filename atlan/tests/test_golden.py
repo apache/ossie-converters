@@ -288,3 +288,58 @@ def test_dataset_scoped_metric_reads_its_own_field_over_a_metric_of_that_name():
     assert not issues
     assert {r["name"]: r["metadata"]["definition"]["formula"] for r in recs["artifacts"]}["total_quantity"] == \
         "SUM(m.SS_QUANTITY)"
+
+
+def test_expression_given_as_top_level_sql():
+    """apache/ossie#617: an expression may carry only `sql` (OSSIE_SQL_2026), and `sql` wins over
+    an OSSIE_SQL_2026 entry in `dialects`."""
+    doc = _with_dataset_metric("SUM(ss_quantity)")
+    doc["datasets"][0]["fields"][0]["expression"] = {"sql": "SS_QUANTITY"}
+    doc["datasets"][0]["metrics"][0]["expression"] = {"sql": "SUM(ss_quantity)"}
+    assert convert_ossie_to_registry(doc, "total_quantity")["definition"]["formula"] == "SUM(m.SS_QUANTITY)"
+    doc["datasets"][0]["metrics"][0]["expression"]["dialects"] = [{"dialect": A.OSSIE_DIALECT, "expression": "COUNT(*)"}]
+    assert convert_ossie_to_registry(doc, "total_quantity")["definition"]["formula"] == "SUM(m.SS_QUANTITY)"
+    doc = _ossie_yaml("bound_placeholder_param")
+    want = convert_ossie_to_registry(doc, "csat")["definition"]
+    m = doc["metrics"][0]
+    text = A.expression_text(m)
+    m["expression"] = {"sql": text}
+    assert convert_ossie_to_registry(doc, "csat")["definition"] == want
+    m["expression"] = {"sql": text, "dialects": [{"dialect": A.OSSIE_DIALECT, "expression": "COUNT(*)"}]}
+    assert convert_ossie_to_registry(doc, "csat")["definition"] == want
+    m["expression"] = {}
+    _, issues = convert_ossie_to_records(doc)
+    assert [(i.element_name, i.detail) for i in issues] == [("csat", "expression has neither sql nor dialects")]
+
+
+def test_agent_context_naming_a_removed_field_is_refused_not_a_crash(tmp_path, capsys):
+    """A field renamed in the Ossie file while agent_context still names it has nothing to
+    rebuild the dimension or time field from."""
+    for case, old in [("bound_placeholder_param", "answer_date"), ("mandatory_filter_time_dim", "sr_returned_date")]:
+        doc = _ossie_yaml(case)
+        f = next(f for d in doc["datasets"] for f in d.get("fields", []) if f["name"] == old)
+        f["name"] = "renamed"
+        _, issues = convert_ossie_to_records(doc)
+        details = [i.detail for i in issues]
+        assert len(details) == 1 and f"declares a field {old!r}" in details[0], (case, details)
+    src, out = tmp_path / "model.yaml", tmp_path / "records.json"
+    src.write_text(yaml.safe_dump(doc))
+    assert cli.main(["export", "-i", str(src), "-o", str(out)]) == 1
+    assert "declares a field 'sr_returned_date'" in capsys.readouterr().err
+
+
+def test_agent_context_time_field_must_name_a_declared_field():
+    """A renamed time field is refused, where it was read as a raw column of the old name."""
+    doc = _ossie_yaml("mandatory_filter_time_dim")
+    ext = doc["metrics"][0]["custom_extensions"][0]
+    data = json.loads(ext["data"])
+    data["agent_context"].pop("dimensions", None)
+    ext["data"] = json.dumps(data)
+    f = next(f for d in doc["datasets"] for f in d.get("fields", []) if f["name"] == "sr_returned_date")
+    f["name"] = "renamed"
+    _, issues = convert_ossie_to_records(doc)
+    assert ["declares a field 'sr_returned_date'" in i.detail for i in issues] == [True]
+    data["agent_context"]["timeframe_field"] = "sr_returned_date"
+    ext["data"] = json.dumps(data)
+    _, issues = convert_ossie_to_records(doc)
+    assert ["not a dataset.field reference" in i.detail for i in issues] == [True]
