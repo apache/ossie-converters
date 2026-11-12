@@ -170,7 +170,7 @@ final class ExpressionDialect {
     if (tokens == null || tokens.isEmpty()) {
       return DIALECT_DATABRICKS;
     }
-    Scan scan = new Scan(tokens, datasets, opaqueNames, measure, null);
+    Scan scan = new Scan(tokens, datasets, opaqueNames, measure, null, null);
     if (!scan.run()) {
       return DIALECT_DATABRICKS;
     }
@@ -179,7 +179,7 @@ final class ExpressionDialect {
 
   /**
    * Qualifies source columns in a scalar field expression. Returns null if the scanner cannot
-   * identify all column positions, including when the expression already contains a dotted path.
+   * identify all column positions. Columns already qualified with this join path are preserved.
    */
   static String qualifyFieldColumns(String expr, String joinPath) {
     List<Token> tokens = tokenize(expr);
@@ -187,7 +187,7 @@ final class ExpressionDialect {
       return null;
     }
     List<Integer> columns = new ArrayList<>();
-    Scan scan = new Scan(tokens, Set.of(), Set.of(), false, columns);
+    Scan scan = new Scan(tokens, Set.of(), Set.of(), false, columns, joinPath);
     if (!scan.run()) {
       return null;
     }
@@ -301,6 +301,7 @@ final class ExpressionDialect {
     private final Set<String> opaqueNames;
     private final boolean measure;
     private final List<Integer> columnStarts;
+    private final String fieldJoinPath;
     private final Deque<Frame> frames = new ArrayDeque<>();
     private String pendingOpener = "";
     boolean ossie = true;
@@ -321,12 +322,13 @@ final class ExpressionDialect {
     }
 
     Scan(List<Token> tokens, Set<String> datasets, Set<String> opaqueNames, boolean measure,
-        List<Integer> columnStarts) {
+        List<Integer> columnStarts, String fieldJoinPath) {
       this.tokens = tokens;
       this.datasets = datasets;
       this.opaqueNames = opaqueNames;
       this.measure = measure;
       this.columnStarts = columnStarts;
+      this.fieldJoinPath = fieldJoinPath;
     }
 
     boolean run() {
@@ -431,7 +433,7 @@ final class ExpressionDialect {
       }
       String u = t.upper();
       if (next != null && next.is(".")) {
-        return qualifiedName(i, t);
+        return fieldJoinPath == null ? qualifiedName(i, t) : belongsToJoinPath(i);
       }
       if (top != null && isCast(top) && prev != null && prev.isWord("AS")) {
         return castType(u, next);
@@ -443,6 +445,18 @@ final class ExpressionDialect {
         return typedLiteral(u);
       }
       return word(t, u, prev, next, top);
+    }
+
+    private boolean belongsToJoinPath(int i) {
+      int part = i;
+      StringBuilder path = new StringBuilder();
+      while (part + 2 < tokens.size() && tokens.get(part + 1).is(".")
+          && tokens.get(part + 2).kind == Kind.IDENT) {
+        path.append(tokens.get(part).text).append('.');
+        part += 2;
+      }
+      boolean call = part + 1 < tokens.size() && tokens.get(part + 1).is("(");
+      return !call && (fieldJoinPath + ".").equalsIgnoreCase(path.toString());
     }
 
     /** {@code dataset.field} is portable; any other head, deeper paths, or calls are not. */
