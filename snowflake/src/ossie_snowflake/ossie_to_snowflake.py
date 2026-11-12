@@ -25,6 +25,7 @@ Usage:
 """
 
 import re
+import reprlib
 import warnings
 
 import yaml
@@ -427,7 +428,9 @@ def _extract_expression(expression, field_name):
         except (SqlglotError, ValueError) as error:
             warnings.warn(
                 f"Skipping field/metric '{field_name}': "
-                f"could not translate BIGQUERY SQL to Snowflake: {error}"
+                f"could not translate BIGQUERY SQL to Snowflake "
+                f"({reprlib.repr(bigquery_expr)}): {error}",
+                stacklevel=2,
             )
             return None
 
@@ -435,7 +438,8 @@ def _extract_expression(expression, field_name):
     warnings.warn(
         f"Skipping field/metric '{field_name}': no Snowflake-compatible expression "
         f"(has dialects: {', '.join(dialect_names)}; requires SNOWFLAKE, ANSI_SQL, "
-        f"OSSIE_SQL_2026, or translatable BIGQUERY SQL)"
+        f"OSSIE_SQL_2026, or translatable BIGQUERY SQL)",
+        stacklevel=2,
     )
     return None
 

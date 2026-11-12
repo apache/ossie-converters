@@ -20,6 +20,7 @@
 import warnings
 
 import pytest
+import sqlglot
 import yaml
 
 from ossie_snowflake.ossie_to_snowflake import (
@@ -451,7 +452,7 @@ class TestExtractExpression:
 
     def test_unsupported_dialect_returns_none_with_warning(self):
         expr = {
-            "dialects": [{"dialect": "DAX", "expression": "bq_expr"}]
+            "dialects": [{"dialect": "DAX", "expression": "dax_expr"}]
         }
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -940,11 +941,12 @@ class TestConvertOssieToSnowflake:
         result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
         table = result["tables"][0]
         assert table["base_table"] == {"database": "ANALYTICS", "schema": "SALES", "table": "ORDERS"}
-        assert {field["name"]: field["expr"] for field in table["facts"]} == {
-            "order_id": "order_id",
-            "amount": "amount",
-            "float_amount": "CAST(amount AS DOUBLE)",
-        }
+        facts = {field["name"]: field["expr"] for field in table["facts"]}
+        cast = sqlglot.parse_one(facts.pop("float_amount"), read="snowflake")
+        assert isinstance(cast, sqlglot.exp.Cast)
+        assert cast.this.name == "amount"
+        assert cast.to.this == sqlglot.exp.DataType.Type.DOUBLE
+        assert facts == {"order_id": "order_id", "amount": "amount"}
         assert result["metrics"] == [{"name": "orders__total_amount", "expr": "SUM(amount)"}]
 
     def test_field_in_ossie_sql_2026_only_is_exported(self):
