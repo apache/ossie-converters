@@ -232,6 +232,48 @@ def test_model_level_metadata_round_trips_through_ossie_and_back():
         assert reconstructed[key] == spec[key]
 
 
+@pytest.mark.parametrize(
+    ("dialect", "amount", "metric_sql"),
+    [
+        (OssieDialect.OSSIE_SQL_2026, "amount", "SUM(orders.amount)"),
+        (OssieDialect.DATABRICKS, "`amount`", "SUM(`orders`.`amount`)"),
+        (OssieDialect.SNOWFLAKE, '"amount"', 'SUM("orders"."amount")'),
+        (OssieDialect.BIGQUERY, "`amount`", "SUM(`orders`.`amount`)"),
+        (OssieDialect.SNOWFLAKE, '"amount"', 'SUM("customers"."public"."orders"."amount")'),
+        (OssieDialect.BIGQUERY, "`amount`", "SUM(`customers.public.orders`.amount)"),
+    ],
+)
+def test_sql_only_dialect_exports_fields_and_places_metrics(dialect, amount, metric_sql):
+    def expression(sql):
+        return OssieExpression(dialects=[OssieDialectExpression(dialect=dialect, expression=sql)])
+
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="customers",
+                source="db.public.customers",
+                fields=[OssieField(name="customer_id", expression=expression("customer_id"))],
+            ),
+            OssieDataset(
+                name="orders",
+                source="db.public.orders",
+                fields=[
+                    OssieField(name="amount", expression=expression(amount)),
+                    OssieField(name="discount", expression=expression(f"{amount} * 0.9")),
+                ],
+            )
+        ],
+        metrics=[OssieMetric(name="total", expression=expression(metric_sql))],
+    )
+    result = OssieToSigmaConverter().convert(document)
+    customers, element = result.output["pages"][0]["elements"]
+    assert not customers.get("metrics")
+    assert [column["formula"] for column in element["columns"]] == ["[amount]", "([amount] * 0.9)"]
+    assert [metric["formula"] for metric in element["metrics"]] == ["Sum([amount])"]
+    assert not result.issues
+
+
 def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula():
     """`formula` is required on every Sigma column and the data model API validates the
     whole document before applying any of it, so a placeholder would fail the entire
@@ -349,6 +391,57 @@ def test_null_returning_ansi_metrics_are_kept(sql, expected_formula):
     assert not any(i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE for i in result.issues)
 
 
+@pytest.mark.parametrize("with_sibling", [False, True])
+def test_authoritative_sql_exports_fields_and_places_metrics(with_sibling):
+    def expression(sql):
+        dialects = [OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026,
+                                           expression="0")] if with_sibling else None
+        return OssieExpression(sql=sql, dialects=dialects)
+
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="orders",
+                source="db.sch.orders",
+                fields=[OssieField(name="amount", expression=expression("amount * 2"))],
+            )
+        ],
+        metrics=[OssieMetric(name="revenue", expression=expression("SUM(orders.amount)"))],
+    )
+
+    result = OssieToSigmaConverter().convert(document)
+    element = result.output["pages"][0]["elements"][0]
+
+    assert [column["formula"] for column in element["columns"]] == ["([amount] * 2)"]
+    assert [metric["formula"] for metric in element["metrics"]] == ["Sum([amount])"]
+    assert not result.issues
+
+
+@pytest.mark.parametrize("dialect", [OssieDialect.ANSI_SQL, OssieDialect.DATABRICKS])
+def test_export_reports_functions_with_untranslated_options(dialect):
+    def field(name, sql):
+        return OssieField(name=name, expression=OssieExpression(
+            dialects=[OssieDialectExpression(dialect=dialect, expression=sql)]
+        ))
+
+    document = OssieDocument(name="m", datasets=[
+        OssieDataset(name="orders", source="db.sch.orders", fields=[
+            field("rounded", "ROUND(amount, 2)"),
+            field("left_trimmed", "LTRIM(name)"),
+            field("whole_amount", "ROUND(amount)"),
+            field("trimmed", "TRIM(name)"),
+        ]),
+    ])
+    result = OssieToSigmaConverter().convert(document)
+    columns = result.output["pages"][0]["elements"][0]["columns"]
+    assert [column["formula"] for column in columns] == ["Round([amount])", "Trim([name])"]
+    assert {issue.element_name for issue in result.issues
+            if issue.issue_type == ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE} == {
+        "orders.rounded", "orders.left_trimmed",
+    }
+
+
 def test_synthesized_spec_carries_a_schema_version():
     """`schemaVersion` is required by the create/update endpoints."""
     document = OssieDocument.model_validate(
@@ -357,7 +450,7 @@ def test_synthesized_spec_carries_a_schema_version():
     assert OssieToSigmaConverter().convert(document).output["schemaVersion"] == 1
 
 
-def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
+def test_only_numeric_datatypes_get_a_coarse_format_and_dates_never_get_kind_date():
     document = OssieDocument(
         name="m",
         datasets=[
@@ -398,10 +491,111 @@ def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
         "integer": "number",
         "decimal": "number",
         "float": "number",
-        "date": "date",
-        "datetime": "date",
-        "datetimetz": "date",
     }
-    # String/Boolean/Time have no Sigma display format; emitting an invented `kind`
-    # would be rejected by the data model API for the whole document.
-    assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {"string", "boolean", "time"}
+    # Only number columns get a format. Date columns get none, so Sigma uses its own
+    # default. We must never write the format "date": Sigma does not know that name and
+    # would reject the whole model.
+    assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {
+        "date",
+        "datetime",
+        "datetimetz",
+        "string",
+        "boolean",
+        "time",
+    }
+    assert all(c["format"]["kind"] != "date" for c in columns if "format" in c)
+
+
+def _relationship_model(
+    dim_day_key: str = "date_key",
+    reverse: bool = False,
+    dim_day_dialect: OssieDialect = OssieDialect.ANSI_SQL,
+) -> OssieDocument:
+    """One fact joined to two dimensions: one on a differently named column, one on a
+    column that has the same name on both sides."""
+
+    def dataset(name: str, *fields: str, dialect: OssieDialect = OssieDialect.ANSI_SQL) -> OssieDataset:
+        return OssieDataset(
+            name=name,
+            source=f"db.public.{name}",
+            fields=[
+                OssieField(
+                    name=f,
+                    expression=OssieExpression(
+                        dialects=[OssieDialectExpression(dialect=dialect, expression=f)]
+                    ),
+                )
+                for f in fields
+            ],
+        )
+
+    datasets = [
+        dataset("dim_day", "date_key", dialect=dim_day_dialect),
+        dataset("dim_day_alt", "calendar_date"),
+        dataset("fact_day", "calendar_date"),
+    ]
+    return OssieDocument(
+        name="m",
+        datasets=datasets[::-1] if reverse else datasets,
+        relationships=[
+            OssieRelationship(
+                name="fact_day_to_dim_day",
+                **{"from": "fact_day"},
+                to="dim_day",
+                from_columns=["calendar_date"],
+                to_columns=[dim_day_key],
+            ),
+            OssieRelationship(
+                name="fact_day_to_dim_day_alt",
+                **{"from": "fact_day"},
+                to="dim_day_alt",
+                from_columns=["calendar_date"],
+                to_columns=["calendar_date"],
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["targets_first", "targets_last"])
+def test_relationship_keys_use_the_column_id_of_each_side(reverse):
+    """The target key must be a column id of the target element. Looking it up in the
+    source element wrote the bare name when the names differed, and the source column's
+    id when they matched; Sigma rejects both. Relationships are built after every
+    element, so a target that comes later in `datasets` resolves too."""
+    result = OssieToSigmaConverter().convert(_relationship_model(reverse=reverse))
+
+    elements = {e["name"]: e for p in result.output["pages"] for e in p["elements"]}
+    fact = elements["fact_day"]
+    fact_column_id = fact["columns"][0]["id"]
+    for relationship in fact["relationships"]:
+        target = next(e for e in elements.values() if e["id"] == relationship["targetElementId"])
+        [key] = relationship["keys"]
+        assert key["sourceColumnId"] == fact_column_id
+        assert key["targetColumnId"] == target["columns"][0]["id"]
+        assert key["targetColumnId"] in {c["id"] for c in target["columns"]}
+    assert not result.issues
+
+
+def test_relationship_column_missing_from_its_dataset_is_reported():
+    result = OssieToSigmaConverter().convert(_relationship_model(dim_day_key="no_such_column"))
+
+    unresolved = [i for i in result.issues if i.issue_type is ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED]
+    assert len(unresolved) == 1
+    assert "no_such_column" in unresolved[0].detail
+    assert "dim_day" in unresolved[0].detail
+
+
+def test_relationship_to_an_omitted_column_is_dropped_and_reported():
+    """A field with no usable expression gets no Sigma column. A key pointing at it can
+    never resolve, so the relationship is dropped and the converter says why."""
+    result = OssieToSigmaConverter().convert(_relationship_model(dim_day_dialect=OssieDialect.MDX))
+
+    elements = {e["name"]: e for p in result.output["pages"] for e in p["elements"]}
+    dim_day_id = elements["dim_day"]["id"]
+    fact = elements["fact_day"]
+    assert [r["targetElementId"] for r in fact["relationships"]] != []
+    assert all(r["targetElementId"] != dim_day_id for r in fact["relationships"])
+    unresolved = [i for i in result.issues if i.issue_type is ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED]
+    assert len(unresolved) == 1
+    assert "date_key" in unresolved[0].detail
+    assert "omitted" in unresolved[0].detail

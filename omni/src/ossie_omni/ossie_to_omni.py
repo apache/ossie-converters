@@ -48,6 +48,7 @@ from ._common import (
     pick_expression,
     read_stash,
     require_str,
+    safe_relative_path,
     sanitize_name,
     synonyms_of,
     topic_file,
@@ -91,7 +92,8 @@ def convert_ossie_to_omni(ossie_yaml_str, base_view=None, dialect=None):
     `base_view` names the dataset the generated topic is rooted at. When omitted,
     it is the dataset that is never a relationship `to` (the FK sink of a plain
     many-to-one star). `dialect` prepends a warehouse dialect (e.g. SNOWFLAKE) to
-    the expression preference order; ANSI_SQL is always the fallback.
+    the expression preference order. Other supported SQL dialects can supply
+    fields and metrics when both the preferred and ANSI_SQL entries are absent.
     """
     root = load_yaml(ossie_yaml_str, "Ossie model")
     if not isinstance(root, dict):
@@ -155,8 +157,13 @@ def _convert_model(model, explicit_base_view, dialect):
     view_paths = {}
     for ds_name, ds in datasets.items():
         vname = view_names[ds_name]
+        stashed_file = read_stash(ds).get("file")
+        # Only a missing/null entry means "canonical path"; any other value,
+        # including an empty string, must pass validation.
+        view_paths[vname] = (
+            safe_relative_path(stashed_file, f"dataset '{ds_name}' file")
+            if stashed_file is not None else view_file(vname))
         view, dim_names = _convert_dataset(ds, vname, view_names, dialect)
-        view_paths[vname] = read_stash(ds).get("file") or view_file(vname)
         files[view_paths[vname]] = dump_yaml(view)
         dims_by_view[vname] = dim_names
 
@@ -227,7 +234,10 @@ def _convert_model(model, explicit_base_view, dialect):
                 instructions = instructions_of(model.get("ai_context"))
                 if instructions:
                     topic["ai_context"] = instructions
-            files[topic_paths.get(tname) or topic_file(tname)] = dump_yaml(topic)
+            tpath = topic_paths.get(tname)
+            tpath = (safe_relative_path(tpath, f"topic '{tname}' file")
+                     if tpath is not None else topic_file(tname))
+            files[tpath] = dump_yaml(topic)
     else:
         tname = sanitize_name(name, f"Model '{name}'", set())
         files[topic_file(tname)] = dump_yaml(
@@ -236,7 +246,7 @@ def _convert_model(model, explicit_base_view, dialect):
     # Files a prior import could not convert (query views, unrecognized files)
     # restore verbatim.
     for fname, text in (model_stash.get("extra_files") or {}).items():
-        files[fname] = text
+        files[safe_relative_path(fname, "extra_files entry")] = text
 
     _warn_dropped_model(model)
     return files
@@ -292,10 +302,9 @@ def _convert_dataset(ds, vname, view_names, dialect):
         fscope = f"field '{fname}'"
         dname = sanitize_name(fname, f"{scope}: field", taken)
         taken.add(dname.lower())
-        expr = pick_expression(field.get("expression"), dialect)
+        expr = pick_expression(field.get("expression"), dialect, scope=f"{scope}: {fscope}")
         if expr is None:
-            _warn(fscope, "no usable ANSI_SQL (or preferred-dialect) expression; "
-                          "dropping field")
+            _warn(fscope, "no usable SQL expression; dropping field")
             continue
         dim = _convert_field(field, dname, expr, fscope)
         dimensions[dname] = dim
@@ -542,10 +551,9 @@ def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect):
         _apply_metric_metadata(metric, measure)
         return stash.get("view") or resolve_base(), mname, measure
 
-    expr = pick_expression(metric.get("expression"), dialect)
+    expr = pick_expression(metric.get("expression"), dialect, scope=scope)
     if expr is None:
-        _warn(scope, "no usable ANSI_SQL (or preferred-dialect) expression; "
-                     "dropping metric")
+        _warn(scope, "no usable SQL expression; dropping metric")
         return None
 
     sanitized_views = set(view_names.values())

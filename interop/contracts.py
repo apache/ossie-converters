@@ -99,10 +99,10 @@ def _expression(sql, dialect, dataset, metric):
         if len(column.parts) > 2 or not owned:
             raise ValueError(f"unexpected dataset qualifier: {column.sql()}")
         column.set("table", exp.to_identifier(dataset) if metric else None)
-    return tree.sql(dialect="databricks", normalize=True)
+    return tree.sql(dialect="databricks", normalize=True, identify=True)
 
 
-def check_document(data, category, oracle, *, input_stage=False):
+def check_document(data, category, oracle, *, input_stage=False, native_dialect=None):
     checks = []
     if category == "sources":
         try:
@@ -170,6 +170,10 @@ def check_document(data, category, oracle, *, input_stage=False):
             )
         try:
             expected = _expression(expected_sql, oracle["dialect"], dataset, metric)
+            if not input_stage and native_dialect is not None:
+                dialects = [
+                    item for item in dialects if item["dialect"] != native_dialect
+                ]
             if not dialects:
                 _check(
                     checks, path + ".expression", expected, None, "missing expression"

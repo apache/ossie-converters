@@ -46,7 +46,7 @@ Contributions follow the Apache Ossie
 
 ## Document format
 
-Converters use the flat `0.2.0.dev0` core format: one model per JSON/YAML document,
+Converters use the [flat core format](https://github.com/apache/ossie/tree/main/core-spec): one model per JSON/YAML document,
 with `name`, `datasets`, `relationships`, and `metrics` at the root alongside
 `version`. Legacy `semantic_model` arrays or object wrappers must be migrated
 before conversion; see the [migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).

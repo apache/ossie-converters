@@ -85,11 +85,29 @@ class DocumentRegression:
 
 
 @dataclass(frozen=True)
+class PortabilityMode:
+    """A second way to re-import with a registered converter (an opt-in flag)."""
+
+    converter: str
+    import_command: list[str]
+
+
+@dataclass(frozen=True)
+class Portability:
+    """The core portability fixtures, graded per round trip (report-only)."""
+
+    manifest: Path
+    variants: dict[str, Path]
+    modes: dict[str, PortabilityMode] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Manifest:
     converters: dict[str, Converter]
     canonical: dict[str, Path]
     regressions: dict[str, BindingRegression] = field(default_factory=dict)
     document_regressions: dict[str, DocumentRegression] = field(default_factory=dict)
+    portability: Portability | None = None
 
 
 # Format names describe exported artifacts, independently of the converter name.
@@ -259,7 +277,7 @@ def load_manifest(path: Path, root: Path) -> Manifest:
     _keys(
         data,
         {"version", "canonical", "converters"},
-        {"regressions", "document_regressions"},
+        {"regressions", "document_regressions", "portability"},
         "manifest",
     )
     if type(data["version"]) is not int or data["version"] != 1:
@@ -467,7 +485,71 @@ def load_manifest(path: Path, root: Path) -> Manifest:
             expectations,
             _document_assertions(expectations, entry["category"]),
         )
-    return Manifest(converters, canonical, regressions, documents)
+    portability = (
+        _portability(data["portability"], root, converters)
+        if "portability" in data
+        else None
+    )
+    return Manifest(converters, canonical, regressions, documents, portability)
+
+
+# A variant id names a directory under the run's output: no separators.
+_VARIANT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _portability(entry, root, converters):
+    _keys(entry, {"fixtures"}, {"modes"}, "portability")
+    manifest = _path(root, entry["fixtures"])
+    try:
+        core = yaml.load(manifest.read_text(encoding="utf-8"), Loader=UniqueLoader)
+    except (OSError, yaml.YAMLError) as error:
+        raise ManifestError(f"portability fixtures: {error}") from error
+    rungs = core.get("rungs") if isinstance(core, dict) else None
+    if not isinstance(rungs, list) or not rungs:
+        raise ManifestError("portability fixtures: expected a non-empty rungs list")
+    variants = {}
+    for rung in rungs:
+        if not isinstance(rung, dict) or not isinstance(rung.get("variants"), list):
+            raise ManifestError(
+                "portability fixtures: every rung needs a variants list"
+            )
+        for variant in rung["variants"]:
+            if not isinstance(variant, dict):
+                raise ManifestError("portability fixtures: a variant must be a mapping")
+            ident, file = variant.get("id"), variant.get("file")
+            if not isinstance(ident, str) or not _VARIANT.fullmatch(ident):
+                raise ManifestError(
+                    f"portability fixtures: invalid variant id {ident!r}"
+                )
+            if ident in variants:
+                raise ManifestError(f"portability fixtures: duplicate variant {ident}")
+            if not isinstance(file, str):
+                raise ManifestError(f"portability fixtures: {ident} needs a file")
+            path = (manifest.parent / file).resolve()
+            if not path.is_relative_to(manifest.parent) or not path.is_file():
+                raise ManifestError(
+                    f"portability fixtures: {ident} must be a file under {manifest.parent.name}/"
+                )
+            variants[ident] = path
+    modes = {}
+    entries = entry.get("modes", {})
+    if not isinstance(entries, dict):
+        raise ManifestError("portability.modes must be a mapping")
+    for name, mode in entries.items():
+        _name(name)
+        if name in converters:
+            raise ManifestError(f"portability mode {name} shadows a converter name")
+        _keys(mode, {"converter", "import"}, set(), f"portability.modes.{name}")
+        converter = converters.get(mode["converter"])
+        if converter is None or converter.skip or converter.import_command is None:
+            raise ManifestError(
+                f"portability mode {name}: needs a registered converter with import"
+            )
+        modes[name] = PortabilityMode(
+            mode["converter"],
+            _command(mode["import"], {"root", "input", "output"}, {"input", "output"}),
+        )
+    return Portability(manifest, variants, modes)
 
 
 def expand(command, root, input_path=None, output_path=None, files=()):

@@ -156,7 +156,8 @@ to **import** (Cube -> Ossie) or **export** (Ossie -> Cube).
 | — | `type: geo` dimension | An Ossie field holds one expression and a geo dimension has two, so it **splits** into `<name>_latitude` / `<name>_longitude` (`Float`). Reconstruction data rides on the latitude half. See [Geo dimensions](#geo-dimensions). |
 | relationship | `joins[]` on a cube | `many_to_one` on cube A -> `from: A`(many), `to: B`(one). `one_to_many` is flipped so Ossie's `from` is the many side; the declared side and type are stashed so export restores the original. |
 | `from_columns` / `to_columns` | join `sql` | Only an AND-chain of equalities mapping to **physical columns of that dataset** converts. `{CUBE}.user_id` is already one; `{CUBE.user_key}` names a *member*, so it resolves to the column that member reads (`user_id`), following a chain of member references to its end with cycle detection. Everything else preserves the whole join verbatim in the stash rather than describing it wrongly: a member reading an expression (`CONCAT(...)`), a `case`/`switch` dimension (which reads no column at all), an alias belonging to another cube (`{users}.region_id`), or a clause that is not a two-column equality. |
-| metric | `measures[]` on the cube its expression references | Import hoists cube-scoped measures to the model level, qualifying a colliding name as `<cube>__<measure>` and stashing the original name. The owning cube is stashed only when export would not derive it — from the sole cube the expression's dataset references, metric references and attributed fields point at, or (when they span several) from the model's base cube, the FK sink a generated view is rooted at. Collision is judged on the **normalized** identifier, since Ossie's are case-insensitive: `orders.revenue` and `users.Revenue` are one name in the model-level namespace and both get qualified. The emitted name keeps its original spelling. |
+| dataset `metrics[]` | `measures[]` on the declaring dataset's cube | Unqualified names resolve to declared fields, including computed fields. `source.column` reads the physical column even when a field shadows its name, following apache/ossie#633 ahead of the pinned validator. A field named `source` shadows that qualifier. Unresolvable local expressions drop only the affected metric and report why. Local names can repeat across datasets; after import, a local metric keeps its existing Cube member name and a colliding model metric gets a qualified native name. Ordinary import restores dataset scope from `meta.ossie.dataset_metric` only when the native definition and referenced field bindings still match. A changed measure falls back to its current model-level expression when its fields resolve; stale or unverifiable bindings preserve the native measure in the CUBE extension. `--project` continues to publish model-level metrics. |
+| model `metrics[]` | `measures[]` on the cube its expression references | Import hoists ordinary Cube-authored measures to the model level, qualifying a colliding name as `<cube>__<measure>` and stashing the original name. The owning cube is stashed only when export would not derive it — from the sole cube the expression's dataset references, metric references and attributed fields point at, or (when they span several) from the model's base cube, the FK sink a generated view is rooted at. Collision is judged on the **normalized** identifier, since Ossie's are case-insensitive: `orders.revenue` and `users.Revenue` are one name in the model-level namespace and both get qualified. The emitted name keeps its original spelling. |
 | `SUM`/`AVG`/`MIN`/`MAX(x)` | `type: sum`/`avg`/`min`/`max` + `sql` | |
 | `COUNT(DISTINCT x)` | `type: count_distinct` | |
 | `APPROX_COUNT_DISTINCT(x)` | `type: count_distinct_approx` | Cube resolves the warehouse-specific function itself. |
@@ -485,6 +486,37 @@ Error: Source 'public.orders' must be a fully qualified db.schema.table or a sub
 
 Import reports this as `SOURCE_NOT_FULLY_QUALIFIED` rather than guessing a catalog
 name, so it surfaces where the Ossie document is produced instead of three hops later.
+
+If the model relies on a warehouse's default namespace, provide it at import:
+
+```bash
+ossie-cube import -i model/ -o model.yaml --default-catalog main --default-schema sales
+```
+
+This converts `orders` to `main.sales.orders` and `reporting.orders` to
+`main.reporting.orders`. Each default must be a single identifier. For
+Snowflake, pass the database as `--default-catalog`. In Bash or Zsh, wrap a
+double-quoted database identifier in shell single quotes so the double quotes
+reach the converter as part of the identifier.
+
+```sh
+ossie-cube import -i model/ -o model.yaml --default-catalog '"Analytics.DB"' --default-schema sales
+```
+
+The Databricks exporter currently rejects identifiers with embedded dots or
+whitespace, even when quoted. Use names without those characters for that route.
+For BigQuery, set `--source-dialect BIGQUERY` so a path quoted as
+`` `project.dataset.table` `` is recognized as already qualified.
+
+The options also work with `--view ... --project` and as `default_catalog` /
+`default_schema` on the Python import functions.
+
+Defaults apply to the tables in the imported model or projected view. They
+preserve explicit qualifiers and quoting and leave SQL queries untouched. A
+catalog alone can complete a two-part name; a one-part name needs both defaults
+or stays unchanged with the warning. Without either option, table names stay as
+written. If you export the resulting Ossie document back to Cube, it uses the
+qualified table name.
 
 ### Measuring it
 

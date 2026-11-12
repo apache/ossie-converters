@@ -302,3 +302,12 @@ document_regressions:
     input: interop/fixtures/contracts/source-quoted-parts/input.yaml
     targets: [cube, databricks, dbt]
     expectations: interop/fixtures/contracts/source-quoted-parts/expectations.yaml
+# Report-only portability scores (apache/ossie-converters#24): every fixture of the
+# core portability ladder, through every converter that can round-trip, graded by
+# the core grader. `modes` adds a second re-import for an opt-in converter flag.
+portability:
+  fixtures: ossie/compliance/portability/manifest.yaml
+  modes:
+    microsoft-translate-dax:
+      converter: microsoft
+      import: [uv, run, --no-sync, ossie-microsoft, import, --translate-dax, -i, '{input}', -o, '{output}']
