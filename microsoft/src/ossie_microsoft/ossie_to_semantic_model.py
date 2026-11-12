@@ -60,6 +60,7 @@ from ._common import (
     TMSL_TO_OSSIE_DATATYPE,
     ConversionError,
     dialect_expressions,
+    extension_vendor,
     foreign_vendor_extensions,
     prune,
     read_stash,
@@ -1026,9 +1027,10 @@ def _tmsl_text(value):
 def _warn_foreign_extensions(scope, obj, source_path=""):
     record_dropped_extensions(obj, source_path)
     for ext in foreign_vendor_extensions(obj):
+        vendor = extension_vendor(ext) or "<unknown>"
         warn(
             scope,
-            f"custom_extensions for vendor '{ext.get('vendor_name')}' have no Power BI "
+            f"custom_extensions for vendor '{vendor}' have no Power BI "
             "equivalent and are dropped",
         )
 

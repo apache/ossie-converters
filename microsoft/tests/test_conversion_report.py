@@ -129,6 +129,34 @@ def test_export_reports_native_objects_placeholders_and_losses(tmp_path, capsys)
     assert "SUM(amount)" not in report_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("vendor_name", [{}, {"vendor_name": None}, {"vendor_name": ""}])
+def test_export_preserves_legacy_native_extensions(tmp_path, capsys, vendor_name):
+    ossie = {
+        "name": "retail",
+        "version": OSSIE_VERSION,
+        "datasets": [{"name": "orders", "fields": [{"name": "id"}]}],
+        "custom_extensions": [
+            {**vendor_name, "vendor": "POWER_BI", "content": '{"culture": "fr-FR"}'},
+            {**vendor_name, "vendor": "SNOWFLAKE", "content": "{}"},
+        ],
+    }
+    source = tmp_path / "model.yaml"
+    source.write_text(yaml.safe_dump(ossie), encoding="utf-8")
+    report_path = tmp_path / "report.json"
+
+    assert main(["export", "-i", str(source), "--report", str(report_path)]) == 0
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["model"]["culture"] == "fr-FR"
+    assert "vendor 'POWER_BI'" not in captured.err
+    assert "vendor 'SNOWFLAKE'" in captured.err
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    extensions = [entry for entry in report["entries"] if entry["kind"] == "extension"]
+    assert [(entry["source_path"], entry["vendor"]) for entry in extensions] == [
+        ("/custom_extensions/1", "SNOWFLAKE"),
+    ]
+
+
 @pytest.mark.parametrize("project", [False, True])
 def test_import_reports_vendor_metadata_and_original_source_paths(tmp_path, project):
     relationship = {
@@ -238,4 +266,7 @@ def test_report_file_write_error_is_reported(tmp_path, capsys):
     source = tmp_path / "model.yaml"
     report_path = tmp_path / "missing_parent" / "report.json"
     assert main(["export", "-i", str(source), "--report", str(report_path)]) == 1
-    assert "Error writing conversion report:" in capsys.readouterr().err
+    errors = capsys.readouterr().err
+    assert "Error writing conversion report:" in errors
+    assert "Error: [Errno 2]" in errors
+    assert str(source) in errors

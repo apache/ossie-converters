@@ -191,6 +191,8 @@ def main(argv=None):
     finally:
         LOGGER.removeHandler(counter)
 
+    if error is not None:
+        print(f"Error: {error}", file=sys.stderr)
     if report is not None:
         report["completed"] = error is None
         if error is not None:
@@ -201,7 +203,6 @@ def main(argv=None):
             print(f"Error writing conversion report: {e}", file=sys.stderr)
             return 1
     if error is not None:
-        print(f"Error: {error}", file=sys.stderr)
         return 1
 
     if args.output:

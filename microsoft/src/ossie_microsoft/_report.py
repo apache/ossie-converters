@@ -21,7 +21,7 @@ import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from ._common import VENDOR
+from ._common import VENDOR, extension_vendor
 
 _entries: ContextVar[list[dict] | None] = ContextVar("conversion_entries", default=None)
 
@@ -58,9 +58,11 @@ def record_dropped_extensions(source, source_path):
     if _entries.get() is None:
         return
     for index, extension in enumerate(source.get("custom_extensions") or []):
-        if not isinstance(extension, dict) or extension.get("vendor_name") == VENDOR:
+        if not isinstance(extension, dict):
             continue
-        vendor = extension.get("vendor_name", extension.get("vendor"))
+        vendor = extension_vendor(extension)
+        if vendor == VENDOR:
+            continue
         path = f"{source_path}/custom_extensions/{index}"
         payload = extension.get("data", extension.get("content"))
         if isinstance(payload, str):
