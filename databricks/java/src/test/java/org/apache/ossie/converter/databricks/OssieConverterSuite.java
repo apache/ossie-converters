@@ -939,6 +939,41 @@ public class OssieConverterSuite {
     assertEquals(OssieConverter.parseYaml(mv), OssieConverter.parseYaml(back));
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  public void sourceFilterSurvivesViaTheOssieSource() {
+    for (String filter : List.of("net_profit > 0", "source.net_profit > 0")) {
+      String mv = "version: '1.1'\nsource: c.s.orders\nfilter: " + filter + "\n"
+          + "measures:\n- {name: revenue, expr: SUM(amount)}\n";
+      String ossie = OssieConverter.convertMetricViewToOssie(mv, null).yaml;
+      Map<String, Object> model = (Map<String, Object>) OssieConverter.parseYaml(ossie);
+      Map<String, Object> dataset = ((List<Map<String, Object>>) model.get("datasets")).get(0);
+      assertEquals("SELECT * FROM c.s.orders WHERE net_profit > 0", dataset.get("source"));
+      assertEquals(OssieConverter.parseYaml(mv),
+          OssieConverter.parseYaml(OssieConverter.convertOssieToMetricView(ossie, null).yaml));
+
+      String edited = ossie.replace("WHERE net_profit > 0", "WHERE net_profit > 10");
+      Map<String, Object> returned = (Map<String, Object>) OssieConverter.parseYaml(
+          OssieConverter.convertOssieToMetricView(edited, null).yaml);
+      assertEquals("SELECT * FROM c.s.orders WHERE net_profit > 10", returned.get("source"));
+      assertFalse(returned.containsKey("filter"));
+    }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void viewDefinedFilterStaysInDatabricksMetadata() {
+    String mv = "version: '1.1'\nsource: c.s.orders\nfilter: adjusted_amount > 0\n"
+        + "dimensions:\n- {name: adjusted_amount, expr: amount * 2}\n"
+        + "measures:\n- {name: revenue, expr: SUM(amount)}\n";
+    String ossie = OssieConverter.convertMetricViewToOssie(mv, null).yaml;
+    Map<String, Object> model = (Map<String, Object>) OssieConverter.parseYaml(ossie);
+    Map<String, Object> dataset = ((List<Map<String, Object>>) model.get("datasets")).get(0);
+    assertEquals("c.s.orders", dataset.get("source"));
+    assertEquals(OssieConverter.parseYaml(mv),
+        OssieConverter.parseYaml(OssieConverter.convertOssieToMetricView(ossie, null).yaml));
+  }
+
   // -- fixture comparisons ---------------------------------------------------
   // The fixtures under src/test/resources/ossie_*.yaml pin the expected outputs
   // checked into apache/ossie. Asserting the Java output parses equal to them (structure

@@ -24,6 +24,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAPPER;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOIN_NODES;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.OSSIE_VERSION;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SYNONYM_LIMIT;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asList;
@@ -31,6 +32,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.asMap;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.cubeIntegerSumMetadata;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.findOutsideLiterals;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.foreignVendorExtensions;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.filteredSourceQuery;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.get;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.isSimpleIdentifier;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.loadYaml;
@@ -186,14 +188,27 @@ final class OssieToMetricView {
     Map<String, Object> factDs = datasets.get(fact);
     Map<String, Object> view = new LinkedHashMap<>();
     view.put("version", MV_VERSION);
-    view.put("source", validateSource(get(factDs, "source"), fact));
+    String source = validateSource(get(factDs, "source"), fact);
+    Object filter = get(modelStash, "filter");
+    Object filterSource = get(modelStash, STASH_FILTER_SOURCE_KEY);
+    boolean restoreFilter = modelStash.containsKey("filter");
+    if (filterSource != null) {
+      if (source.equals(filteredSourceQuery(filterSource, filter, Set.of(), false))) {
+        source = validateSource(filterSource, fact);
+      } else {
+        restoreFilter = false;
+        notices.warn(modelScope, "source no longer matches the imported filtered query; "
+            + "using the current source without reapplying the original Metric View filter");
+      }
+    }
+    view.put("source", source);
 
     String comment = str(get(model, "description"));
     if (truthy(comment)) {
       view.put("comment", comment);
     }
-    if (modelStash.containsKey("filter")) {
-      view.put("filter", modelStash.get("filter"));
+    if (restoreFilter) {
+      view.put("filter", filter);
     }
 
     List<Object> joins = new ArrayList<>();

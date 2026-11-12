@@ -145,6 +145,18 @@ exported unchanged with a notice. Databricks import retains the native expressio
 and records the decoded grain and key bindings alongside the portable alternative
 so it can be exported again.
 
+### Source filters
+
+On import, a filter that compares one source column to a numeric literal on a
+three-part table becomes a `WHERE` clause in the Ossie dataset source query.
+Cube and other consumers that execute source queries can apply that predicate.
+A comparison through `source.column` identifies the physical column explicitly.
+A bare name must resolve directly to the source column.
+
+An unchanged query exports back to Databricks as the original table and filter.
+If the query is edited, Databricks export uses the edited source and warns about
+the original filter. Other filter forms remain in the Databricks extension.
+
 ### Dialect labels on import
 
 Import labels each expression with the most portable dialect it fits, so a model that went
@@ -154,7 +166,7 @@ recognize stays `DATABRICKS`, which is always correct for an expression read fro
 An expression also stays `DATABRICKS` when:
 
 - it is a measure with a `window` or `partition`, or any measure of a view with a `filter`: those
-  settings change the value and ride only in the `DATABRICKS` stash;
+  settings change the value. Filters retain the native label even when the source query applies them;
 - it is a measure that names anything outside an aggregate call (`cost / row_count`), which the
   Metric View resolves to another measure rather than a column;
 - it names a parameter, or a dimension other than a plain same-named column, bare or as

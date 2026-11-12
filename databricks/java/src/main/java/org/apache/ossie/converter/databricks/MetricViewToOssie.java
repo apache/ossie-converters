@@ -25,9 +25,11 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOI
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.OSSIE_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SELECT_WITH_RE;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asList;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asMap;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.filteredSourceQuery;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.get;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.isSimpleIdentifier;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.loadYaml;
@@ -200,8 +202,9 @@ final class MetricViewToOssie {
     for (Map<String, Object> d : datasets) {
       datasetNames.add(((String) d.get("name")).toLowerCase(Locale.ROOT));
     }
-    DialectScope scope =
-        new DialectScope(datasetNames, viewDefinedNames(view, dims), hasHiddenNames(dims));
+    Set<String> viewNames = viewDefinedNames(view, dims);
+    boolean hiddenNames = hasHiddenNames(dims);
+    DialectScope scope = new DialectScope(datasetNames, viewNames, hiddenNames);
     for (Object dimObj : dims) {
       Map<String, Object> dim = asMap(dimObj);
       if (isWildcard(dim)) {
@@ -222,7 +225,7 @@ final class MetricViewToOssie {
     List<Object> metrics = new ArrayList<>();
     // Fixed once the join tree is walked, so compile it once for all measures.
     Pattern aliasHead = qualifierChainPattern(aliasToDataset.keySet());
-    // A view filter changes every measure's value, and it rides only in the DATABRICKS stash.
+    // A view filter changes every measure's value. Keep the Databricks expression label.
     boolean filtered = view.containsKey("filter");
     for (Object mObj : asList(get(view, "measures"))) {
       Map<String, Object> m = asMap(mObj);
@@ -252,6 +255,11 @@ final class MetricViewToOssie {
       if (view.containsKey(k)) {
         modelStash.put(k, view.get(k));
       }
+    }
+    String filteredSource = filteredSourceQuery(source, get(view, "filter"), viewNames, hiddenNames);
+    if (filteredSource != null) {
+      factDs.put("source", filteredSource);
+      modelStash.put(STASH_FILTER_SOURCE_KEY, source);
     }
     if (hasOtm(asList(get(view, "joins")))) {
       modelStash.put(STASH_SOURCE_KEY, factName);
