@@ -465,11 +465,14 @@ final class OssieConverterCommon {
       dialects.put(str(get(dm, "dialect")), get(dm, "expression"));
       index++;
     }
-    Object primary = get(expression, "sql");
-    Object chosen = truthy(dialects.get(DIALECT_DATABRICKS)) ? dialects.get(DIALECT_DATABRICKS)
-        : truthy(primary) ? primary
-        : truthy(dialects.get(DIALECT_ANSI)) ? dialects.get(DIALECT_ANSI)
-        : dialects.get(DIALECT_OSSIE_SQL);
+    Object chosen = null;
+    for (Object candidate : java.util.Arrays.asList(dialects.get(DIALECT_DATABRICKS),
+        get(expression, "sql"), dialects.get(DIALECT_ANSI), dialects.get(DIALECT_OSSIE_SQL))) {
+      if (truthy(candidate) && !(candidate instanceof String text && text.isBlank())) {
+        chosen = candidate;
+        break;
+      }
+    }
     if (chosen != null && !(chosen instanceof String)) {
       throw new ConversionException(
           "expression must be a string, got " + chosen.getClass().getSimpleName());

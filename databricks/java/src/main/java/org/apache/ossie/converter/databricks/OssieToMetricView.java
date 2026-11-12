@@ -819,7 +819,7 @@ final class OssieToMetricView {
     String scope = "field '" + name0 + "'";
     String expr = pickExpression(get(field, "expression"), scope);
     if (expr == null) {
-      notices.warn(scope, "no usable Databricks or portable SQL expression; dropping field");
+      notices.warn(scope, "no usable expression.sql or DATABRICKS/ANSI_SQL/OSSIE_SQL_2026 entry; dropping field");
       return null;
     }
     if (!isFact) {
@@ -873,7 +873,7 @@ final class OssieToMetricView {
     }
     String expr = pickExpression(get(metric, "expression"), scope);
     if (expr == null) {
-      notices.warn(scope, "no usable Databricks or portable SQL expression; dropping metric");
+      notices.warn(scope, "no usable expression.sql or DATABRICKS/ANSI_SQL/OSSIE_SQL_2026 entry; dropping metric");
       return null;
     }
     String diamond = firstDiamondReference(expr, datasetHead, diamondDatasets);
