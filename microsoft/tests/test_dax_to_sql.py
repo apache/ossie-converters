@@ -26,6 +26,7 @@ a wrong translation is a silent wrong number on another engine.
 import warnings
 
 import pytest
+import sqlglot
 
 from ossie_microsoft._dax_to_sql import translate_measure
 from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
@@ -457,7 +458,7 @@ def test_translates_logic(dax, expected):
         ("ISBLANK()", "ISBLANK takes exactly one argument"),
         ("ISBLANK(TRUE())", "ISBLANK of a boolean"),
         ("SWITCH(TRUE, 1)", "needs at least one condition and result"),
-        ("{1, 2}", "later tier"),
+        ("{1, 2}", "table constructor"),
     ],
 )
 def test_logic_refusals_carry_a_reason(dax, fragment):
@@ -725,3 +726,34 @@ def test_the_size_cap_also_covers_mod_repeating_its_operands():
     sql, reason = translate_measure(expr, resolve)
     assert sql is None
     assert "too large to translate exactly" in reason
+
+
+@pytest.mark.parametrize(
+    ("dax", "sql"),
+    [
+        ("SUM('Sales'[Amount]) * .5", "SUM(Sales.Amount) * 0.5"),
+        ("SUM('Sales'[Amount]) * 2.", "SUM(Sales.Amount) * 2.0"),
+        ("SUM('Sales'[Amount]) * 1e3", "SUM(Sales.Amount) * 1e3"),
+        ("SUM('Sales'[Amount]) * 2.E-1", "SUM(Sales.Amount) * 2.0E-1"),
+        ("SUM('Sales'[Amount]) * -.5", "SUM(Sales.Amount) * -0.5"),
+        ("SUM('Sales'[Amount]) / .5", "SUM(Sales.Amount) / 0.5"),
+        ("SUM('Sales'[Amount]) * 1.25", "SUM(Sales.Amount) * 1.25"),
+    ],
+)
+def test_numeric_literals_are_written_in_a_form_every_sql_engine_reads(dax, sql):
+    translated, reason = translate_measure(dax, resolve, MEASURES)
+    assert (translated, reason) == (sql, None)
+    for dialect in (None, "databricks", "snowflake", "bigquery", "postgres", "duckdb"):
+        sqlglot.parse_one(translated, read=dialect)
+
+
+@pytest.mark.parametrize("dax", ['{(1, "a"), (2, "b")}', "{1, 2}"])
+def test_a_table_constructor_is_refused_by_name(dax):
+    sql, reason = translate_measure(dax, resolve, MEASURES)
+    assert sql is None
+    assert "a table constructor ({...}) is a table" in reason
+
+
+def test_divide_by_a_short_literal_is_normalised_too():
+    sql, reason = translate_measure("DIVIDE(SUM('Sales'[Amount]), .5)", resolve, MEASURES)
+    assert (sql, reason) == ("SUM(Sales.Amount) / NULLIF(0.5, 0)", None)
