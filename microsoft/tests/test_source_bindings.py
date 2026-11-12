@@ -71,13 +71,13 @@ def _export_args(tmp_path, model, bindings_text):
 
 def test_strict_cli_exports_independent_snowflake_partitions(tmp_path, model, orders_binding):
     bindings = {
-        "orders": orders_binding,
+        "orders": {**orders_binding, "kind": "TABLE"},
         "customers": {
             **orders_binding,
             "server": "customer-prod.snowflakecomputing.com",
             "warehouse": "CUSTOMER_WH",
             "table": 'Customers "Current" #(',
-            "kind": "view",
+            "kind": "View",
             "role": "BI_READER",
         },
     }
@@ -174,12 +174,33 @@ def test_rebinding_removes_stale_incremental_refresh_policy(model, orders_bindin
     assert "refreshPolicy" not in bim["model"]["tables"][0]
 
 
+@pytest.mark.parametrize("bindings", [{}, None])
+def test_strict_bindings_enforce_compatibility_level_with_preserved_partitions(model, bindings):
+    for dataset in model["datasets"]:
+        write_stash(dataset, {
+            "partitions": [{
+                "name": "preserved",
+                "mode": "import",
+                "source": {"type": "m", "expression": "#table({}, {})"},
+            }],
+        })
+    write_stash(model, {"document": {"compatibilityLevel": 1200}})
+
+    bim = convert_ossie_to_semantic_model(
+        model, source_bindings=bindings, require_source_bindings=True,
+    )
+
+    assert bim["compatibilityLevel"] == 1400
+
+
 @pytest.mark.parametrize(
     ("bindings_text", "error"),
     [
         ("", "mapping keyed by dataset name"),
         ("[]", "mapping keyed by dataset name"),
         ("orders: {}\norders: {}", "unique mapping keys"),
+        ("orders: {schema: ONE, schema: TWO}", "unique mapping keys"),
+        ("orders: {<<: {schema: RAW}}", "do not support YAML merge keys"),
         ("ordres: {}", "unknown dataset 'ordres'"),
         ("orders: []", "must be a mapping"),
         ("orders: {password: ignored}", "unknown fields: password"),

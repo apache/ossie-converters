@@ -48,6 +48,10 @@ class _SourceBindingsLoader(yaml.SafeLoader):
     """Prevent one connection definition from silently overwriting another."""
 
     def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode) and any(
+            key.tag == "tag:yaml.org,2002:merge" for key, _ in node.value
+        ):
+            raise ConversionError("source bindings do not support YAML merge keys (<<)")
         mapping = super().construct_mapping(node, deep=deep)
         if len(mapping) != len(node.value):
             raise ConversionError("source bindings must use unique mapping keys")

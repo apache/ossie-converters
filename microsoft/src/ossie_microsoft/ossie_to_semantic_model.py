@@ -247,7 +247,7 @@ def convert_ossie_to_semantic_model(
         bim["description"] = description
     bim.update(document_properties)
     bim.setdefault("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL)
-    if generated_partitions or source_bindings:
+    if generated_partitions or source_bindings is not None:
         minimum_level = (
             DIRECT_LAKE_COMPATIBILITY_LEVEL if generated_partitions
             else M_PARTITION_COMPATIBILITY_LEVEL
@@ -296,7 +296,8 @@ def _validate_source_bindings(bindings, datasets):
                 raise ConversionError(
                     f"Snowflake source binding for {name!r} requires non-empty text for '{field}'"
                 )
-        if binding.get("kind", "table") not in ("table", "view"):
+        kind = binding.get("kind", "table")
+        if not isinstance(kind, str) or kind.lower() not in ("table", "view"):
             raise ConversionError(
                 f"Snowflake source binding for {name!r} requires kind 'table' or 'view'"
             )

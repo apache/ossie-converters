@@ -181,6 +181,8 @@ ossie-microsoft export --strict -i model.yaml --source-bindings bindings.yaml -o
 ```
 
 `role` and `kind` are optional. Use `kind: view` for a view and put its name in `table`.
+Kind values are case-insensitive. Write binding keys explicitly. Duplicate mapping
+keys and YAML merge keys (`<<`) are rejected.
 Use the identifier spelling returned by the Snowflake Navigator, typically uppercase for
 unquoted names. Each target table or view must expose the source columns expected by the
 model. If a dataset is defined by a query, point the binding at a table or view that
