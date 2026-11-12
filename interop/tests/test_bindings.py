@@ -25,7 +25,6 @@ from pathlib import Path
 import sys
 
 import pytest
-from sqlglot import exp, parse_one
 import yaml
 
 from interop.bindings import check_bindings
@@ -447,6 +446,8 @@ def test_real_cube_databricks_cube_preserves_native_aggregate_bindings(tmp_path,
     reason="requires prepared Cube and Databricks converters and OSSIE_CUBE_REPO",
 )
 def test_declared_databricks_fact_key_compiles_joined_tpcds_cube(tmp_path):
+    from sqlglot import exp, parse_one
+
     manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
     databricks = manifest.converters["databricks"]
     cube = manifest.converters["cube"]

@@ -166,8 +166,9 @@ final class MetricViewToOssie {
     if (factPrimaryKey != null && !factPrimaryKey.isEmpty()) {
       Set<String> keyNames = new HashSet<>();
       List<String> columns = new ArrayList<>();
-      for (String column : factPrimaryKey) {
-        if (column == null || column.isBlank() || !keyNames.add(column.toLowerCase(Locale.ROOT))) {
+      for (String suppliedColumn : factPrimaryKey) {
+        String column = suppliedColumn == null ? "" : suppliedColumn.strip();
+        if (column.isEmpty() || !keyNames.add(column.toLowerCase(Locale.ROOT))) {
           String message = "Fact primary key must contain distinct, non-blank column names";
           throw ConversionException.invalidInput(message, message);
         }

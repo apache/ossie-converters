@@ -143,14 +143,16 @@ public class OssieDatabricksConverterCliSuite {
         + "- {name: customer, source: cat.sch.customer, "
         + "on: source.customer_id = customer.customer_id}\n";
     String out = stdout("import", write("view.yaml", joined).toString(),
-        "--primary-key", "item_id", "--name", "sales", "--primary-key", "ticket_number");
+        "--primary-key", " item_id ", "--name", "sales", "--primary-key", "ticket_number");
     Map<String, Object> model = OssieConverterCommon.asMap(OssieConverter.parseYaml(out));
     List<Object> datasets = OssieConverterCommon.asList(model.get("datasets"));
-    Map<String, Object> fact = OssieConverterCommon.asMap(datasets.get(0));
-    assertEquals("sales", fact.get("name"));
+    Map<String, Object> fact = datasets.stream().map(OssieConverterCommon::asMap)
+        .filter(dataset -> "sales".equals(dataset.get("name"))).findFirst().orElseThrow();
     assertEquals("cat.sch.orders", fact.get("source"));
     assertEquals(List.of("item_id", "ticket_number"), fact.get("primary_key"));
-    assertFalse(OssieConverterCommon.asMap(datasets.get(1)).containsKey("primary_key"));
+    assertTrue(datasets.size() > 1);
+    assertTrue(datasets.stream().map(OssieConverterCommon::asMap)
+        .filter(dataset -> dataset != fact).noneMatch(dataset -> dataset.containsKey("primary_key")));
   }
 
   @Test
@@ -171,7 +173,7 @@ public class OssieDatabricksConverterCliSuite {
 
   @Test
   public void importApiRejectsBlankAndDuplicatePrimaryKeyColumns() {
-    for (List<String> invalid : List.of(List.of(" "), List.of("order_id", "ORDER_ID"))) {
+    for (List<String> invalid : List.of(List.of(" "), List.of("order_id", " ORDER_ID "))) {
       OssieConverter.ConversionException error = assertThrows(
           OssieConverter.ConversionException.class,
           () -> OssieConverter.convertMetricViewToOssie(METRIC_VIEW, null, invalid));
