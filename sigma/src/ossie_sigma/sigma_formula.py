@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import sqlglot
-from sqlglot import expressions as exp
+from sqlglot import Dialect, expressions as exp
 
 
 class FormulaParseError(Exception):
@@ -643,15 +643,16 @@ _REVERSE_AGG_FUNCTIONS = {
     "CEIL": "Ceiling",
     "FLOOR": "Floor",
     "SQRT": "Sqrt",
-    "COALESCE": "IfNull",
     "POWER": "Power",
 }
 
 _REVERSE_EXTRACT_PARTS = {v: k.capitalize() for k, v in _EXTRACT_PARTS.items()}
 
 
-def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optional[str]:
-    """Best-effort reverse translation of an ANSI SQL expression into Sigma formula syntax.
+def sql_to_sigma_formula(
+    sql: str, dataset_alias: Optional[str] = None, *, dialect: str | type[Dialect] | None = Dialect
+) -> Optional[str]:
+    """Best-effort translation from the given SQL dialect into Sigma formula syntax.
 
     Used only for fields/metrics that did not originate in Sigma (i.e. carry no
     ``SIGMA``-dialect expression to reuse verbatim). Returns ``None`` if *sql* cannot
@@ -659,7 +660,7 @@ def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optio
     callers should treat that as "not translatable", not fail the conversion.
     """
     try:
-        tree = sqlglot.parse_one(sql)
+        tree = sqlglot.parse_one(sql, read=dialect)
     except Exception:  # noqa: BLE001 - sqlglot raises several internal error types
         return None
 
@@ -783,7 +784,7 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Coalesce) and len(node.expressions) == 1:
         return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"
 
-    if isinstance(node, exp.Cast):
+    if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast):
         # Only a cast to an unsized text type has a Sigma equivalent (Text()). A
         # length such as CHAR(1) truncates, which Text() would not; that and other
         # target types fall through to the not-translatable error below.
@@ -808,6 +809,9 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
 
     func_name = node.__class__.__name__.upper()
     if func_name in _REVERSE_AGG_FUNCTIONS and hasattr(node, "this"):
+        if any(value is not None for key, value in node.args.items()
+               if key not in ("this", "expressions")):
+            raise _NotTranslatable(f"Unsupported SQL arguments for {func_name}")
         sigma_name = _REVERSE_AGG_FUNCTIONS[func_name]
         args = [node.this] + list(getattr(node, "expressions", []) or [])
         rendered = [_render_sql_node(a, dataset_alias) for a in args if a is not None]
