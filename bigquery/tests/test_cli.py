@@ -113,3 +113,73 @@ class TestErrors:
             cli.main(["-i", str(bad), "-o", str(tmp_path / "out.lkml")])
         assert excinfo.value.code == 1
         assert "Error: Invalid Ossie YAML" in capsys.readouterr().err
+
+
+LOOKML_VIEW = """
+view: orders {
+  sql_table_name: proj.sales.orders ;;
+  dimension: id { primary_key: yes type: number }
+}
+explore: orders {}
+"""
+
+
+@pytest.fixture
+def lookml_dir(tmp_path):
+    project = tmp_path / "project"
+    (project / "views").mkdir(parents=True)
+    (project / "views" / "orders.view.lkml").write_text(LOOKML_VIEW)
+    (project / ".git").mkdir()
+    (project / ".git" / "ignored.lkml").write_text("not lookml {")
+    return project
+
+
+class TestCommands:
+    def test_export_command(self, ossie_file, tmp_path):
+        out = tmp_path / "out.lkml"
+        cli.main(["export", "-i", str(ossie_file), "-o", str(out)])
+        assert "view: orders {" in out.read_text()
+
+    def test_import_directory_to_stdout(self, lookml_dir, capsys):
+        cli.main(["import", "-i", str(lookml_dir)])
+        model = yaml.safe_load(capsys.readouterr().out)
+        assert model["name"] == "orders"
+        assert model["datasets"][0]["primary_key"] == ["id"]
+
+    def test_import_file_to_output(self, lookml_dir, tmp_path):
+        out = tmp_path / "model.yaml"
+        cli.main(["import", "-i", str(lookml_dir / "views" / "orders.view.lkml"),
+                  "-o", str(out), "--name", "sales"])
+        assert yaml.safe_load(out.read_text())["name"] == "sales"
+
+    def test_import_error_exits_non_zero(self, lookml_dir, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main(["import", "-i", str(lookml_dir), "--explore", "nope"])
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err.startswith("Error: Explore 'nope' not found")
+
+    def test_import_empty_directory(self, tmp_path, capsys):
+        with pytest.raises(SystemExit):
+            cli.main(["import", "-i", str(tmp_path)])
+        assert "no .lkml files" in capsys.readouterr().err
+
+    def test_import_model_flag(self, tmp_path, capsys):
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "one.model.lkml").write_text('include: "*.view" include: "o.explore.lkml"')
+        (project / "two.model.lkml").write_text('include: "*.view" include: "o.explore.lkml"')
+        (project / "o.explore.lkml").write_text("explore: orders {}")
+        (project / "orders.view.lkml").write_text("view: orders {}")
+        cli.main(["import", "-i", str(project), "--explore", "orders", "--model", "one"])
+        assert yaml.safe_load(capsys.readouterr().out)["name"] == "orders"
+
+    def test_import_all_explores(self, tmp_path, capsys):
+        project = tmp_path / "p"
+        project.mkdir()
+        (project / "m.model.lkml").write_text(
+            'include: "*.view" explore: orders {} explore: users {}')
+        (project / "orders.view.lkml").write_text("view: orders {}")
+        (project / "users.view.lkml").write_text("view: users {}")
+        cli.main(["import", "-i", str(project), "--all-explores"])
+        model = yaml.safe_load(capsys.readouterr().out)
+        assert [d["name"] for d in model["datasets"]] == ["orders", "users"]

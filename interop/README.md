@@ -75,11 +75,11 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 |---|---|
 | Cube, Databricks, dbt | Existing CLI runners; focused semantic regressions retained |
 | GoodData | API adapter for declarative LDM JSON, using the converter's serialization helpers |
-| Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
+| BigQuery, Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |
-| BigQuery, Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
+| Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
 | Holistics | Compiled dataset JSON import and AML source export; re-import of generated AML requires a Holistics compiler |
 | Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
 | Ontology, Palantir, RelationalAI | Explicit skip: uses the ontology domain/schema, requiring a separate matrix |
@@ -89,8 +89,10 @@ inspectors count format-specific model members; these checks do not imply vendor
 compilation or platform acceptance. Holistics checks AML member declarations only.
 Its selected import/export dialect is BIGQUERY and exports use the placeholder
 connection `interop_warehouse`; no live connection is created.
-BigQuery (LookML export only) checks `dimension`, `dimension_group` and `measure`
-declarations in the single exported file; LookML validation needs a Looker instance.
+BigQuery checks `dimension`, `dimension_group` and `measure` declarations in the
+single exported LookML file; LookML validation needs a Looker instance. Its import
+reads a LookML project directory with `--all-explores`, since export writes one
+explore per dataset on the many side of a relationship.
 Existing vendor fixtures are reused, plus a small independently authored Honeydew
 workspace. OrionBelt installs its locked `obml-validation` extra so its native
 semantic validation is available during export checks. Missing directions never
