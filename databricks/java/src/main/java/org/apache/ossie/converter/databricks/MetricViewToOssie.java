@@ -45,6 +45,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -542,11 +543,25 @@ final class MetricViewToOssie {
         dialectExpr(expr, portable ? scope.dialectOf(expr, name, true) : DIALECT_DATABRICKS);
     if (portable) {
       JoinedIntegerSum.Decoded keyedSum = JoinedIntegerSum.decode(rawExpr);
-      if (!keyedSum.physicalColumns().isEmpty()) {
+      if (!keyedSum.keys().isEmpty()) {
         String decoded = rewriteQualifiers(keyedSum.expression(), aliasHead, aliasToDataset::get);
         String dialect = scope.dialectOf(decoded, name, true, keyedSum.physicalColumns());
-        if (!DIALECT_DATABRICKS.equals(dialect)) {
+        Map<String, String> keys = new LinkedHashMap<>();
+        Set<String> grain = new LinkedHashSet<>();
+        keyedSum.keys().forEach((value, key) -> {
+          String alias = lastIdentifier(JoinedIntegerSum.qualifier(value));
+          String dataset = aliasToDataset.get(alias);
+          if (dataset != null && !"source".equals(alias)) {
+            grain.add(dataset);
+            keys.put(dataset + "." + lastIdentifier(value), dataset + "." + lastIdentifier(key));
+          }
+        });
+        if (!DIALECT_DATABRICKS.equals(dialect) && keys.size() == keyedSum.keys().size()) {
           asList(get(expression, "dialects")).add(Map.of("dialect", dialect, "expression", decoded));
+          Map<String, Object> grainStash = new LinkedHashMap<>();
+          grainStash.put("integer_sum_grain", new ArrayList<>(grain));
+          grainStash.put("integer_sum_keys", keys);
+          writeStash(metric, grainStash, "CUBE");
         }
       }
     }

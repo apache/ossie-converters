@@ -28,7 +28,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_S
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SYNONYM_LIMIT;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asList;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asMap;
-import static org.apache.ossie.converter.databricks.OssieConverterCommon.cubeIntegerSumGrain;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.cubeIntegerSumMetadata;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.findOutsideLiterals;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.foreignVendorExtensions;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.get;
@@ -921,15 +921,35 @@ final class OssieToMetricView {
     // Only outside string literals / comments: a literal such as 'customer.us' must not be
     // rewritten, or the measure's predicate changes.
     expr = replaceOutsideLiterals(expr, factQualifier, "");
-    if (!integerSumKeys.isEmpty() && !hasDatabricksExpression(metric)) {
-      Set<String> grainPaths = new HashSet<>();
-      for (String dataset : cubeIntegerSumGrain(metric)) {
-        String path = datasetAliasPath.get(dataset);
-        if (path != null) {
-          grainPaths.add(path);
+    if (!hasDatabricksExpression(metric)) {
+      Map<String, Object> grain = cubeIntegerSumMetadata(metric);
+      List<String> grainDatasets = strList(get(grain, "integer_sum_grain"));
+      if (!grainDatasets.isEmpty()) {
+        Set<String> grainPaths = new LinkedHashSet<>();
+        for (String dataset : grainDatasets) {
+          String path = datasetAliasPath.get(dataset);
+          if (path != null) {
+            grainPaths.add(path);
+          }
+        }
+        Map<String, String> keys = new HashMap<>(integerSumKeys);
+        asMap(get(grain, "integer_sum_keys")).forEach((value, key) -> {
+          if (key instanceof String column) {
+            keys.put(qualifyMeasure(value, datasetHead, datasetAliasPath),
+                qualifyMeasure(column, datasetHead, datasetAliasPath));
+          }
+        });
+        String encoded = grainPaths.size() == grainDatasets.size()
+            ? JoinedIntegerSum.encode(expr, keys, grainPaths) : null;
+        if (encoded == null) {
+          notices.warn(scope, "cannot preserve the entire Cube aggregate grain for "
+              + grainDatasets + "; leaving the expression unchanged");
+        } else {
+          expr = encoded;
+          notices.warn(scope, "preserving Cube aggregate grain for " + grainDatasets
+              + " collects every distinct joined key per group; memory grows with the key count");
         }
       }
-      expr = JoinedIntegerSum.encode(expr, integerSumKeys, grainPaths);
     }
     Map<String, Object> measure = new LinkedHashMap<>();
     measure.put("name", name);

@@ -599,22 +599,21 @@ final class OssieConverterCommon {
   }
 
   /** Reads Cube's aggregate grain hint without imposing validation on other foreign metadata. */
-  static List<String> cubeIntegerSumGrain(Map<String, Object> metric) {
+  static Map<String, Object> cubeIntegerSumMetadata(Map<String, Object> metric) {
     for (Map<String, Object> extension : customExtensions(metric)) {
       if ("CUBE".equals(get(extension, "vendor_name"))
           && get(extension, "data") instanceof String data) {
         try {
           Map<String, Object> parsed = asMap(JSON_READER.readValue(data, Object.class));
-          List<String> grain = strList(get(parsed, "integer_sum_grain"));
-          if (!grain.isEmpty()) {
-            return grain;
+          if (!strList(get(parsed, "integer_sum_grain")).isEmpty()) {
+            return parsed;
           }
         } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
           // Foreign metadata is opaque. A malformed entry does not hide later hints.
         }
       }
     }
-    return List.of();
+    return Map.of();
   }
 
   static List<Object> foreignVendorExtensions(Map<String, Object> obj) {
@@ -628,8 +627,12 @@ final class OssieConverterCommon {
   }
 
   /** Attach a DATABRICKS custom_extensions entry holding `data`; no-op when empty. */
-  @SuppressWarnings("unchecked")
   static void writeStash(Map<String, Object> obj, Map<String, Object> data) {
+    writeStash(obj, data, VENDOR);
+  }
+
+  @SuppressWarnings("unchecked")
+  static void writeStash(Map<String, Object> obj, Map<String, Object> data, String vendor) {
     if (data.isEmpty()) {
       return;
     }
@@ -653,13 +656,13 @@ final class OssieConverterCommon {
     List<Object> exts = (List<Object>) obj.computeIfAbsent("custom_extensions", k -> new ArrayList<>());
     for (Object extObj : exts) {
       Map<String, Object> ext = asMap(extObj);
-      if (VENDOR.equals(str(get(ext, "vendor_name")))) {
+      if (vendor.equals(str(get(ext, "vendor_name")))) {
         ext.put("data", blob);
         return;
       }
     }
     Map<String, Object> ext = new LinkedHashMap<>();
-    ext.put("vendor_name", VENDOR);
+    ext.put("vendor_name", vendor);
     ext.put("data", blob);
     exts.add(ext);
   }

@@ -17,18 +17,22 @@
 
 package org.apache.ossie.converter.databricks;
 
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.findOutsideLiterals;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.replaceOutsideLiterals;
 
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /** Preserves the joined dataset grain for sums of declared integer columns. */
 final class JoinedIntegerSum {
   private static final String ID = "[A-Za-z_][A-Za-z0-9_]*";
   private static final String COLUMN = ID + "(?:\\." + ID + ")+";
+  private static final Pattern QUALIFIED_COLUMN = Pattern.compile(COLUMN);
   private static final Pattern SUM = Pattern.compile(
       "(?i)(?<![\\w.])SUM\\s*\\(\\s*(" + COLUMN + ")\\s*\\)");
   private static final Pattern AGGREGATE_MODIFIER = Pattern.compile(
@@ -55,30 +59,68 @@ final class JoinedIntegerSum {
     if (grainPaths.isEmpty()) {
       return expression;
     }
-    return replaceOutsideLiterals(expression, SUM, match -> {
+    // A quoted identifier may name a join path that the unquoted matcher cannot prove.
+    if (expression.indexOf('`') >= 0 || expression.indexOf('"') >= 0) {
+      return null;
+    }
+    StringBuilder remaining = new StringBuilder(expression);
+    Set<String> rewrittenPaths = new HashSet<>();
+    String encoded = replaceOutsideLiterals(expression, SUM, match -> {
       String value = match.group(1);
       String key = keys.get(value);
-      if (key == null || !grainPaths.contains(value.substring(0, value.lastIndexOf('.')))
+      String path = qualifier(value);
+      if (key == null || !QUALIFIED_COLUMN.matcher(key).matches() || !qualifier(key).equals(path)
+          || !grainPaths.contains(path)
           || AGGREGATE_MODIFIER.matcher(expression).region(match.end(), expression.length())
               .lookingAt()) {
         return match.group();
       }
       // The struct deduplicates rows by key, including stores with identical values. Removing
       // null operands and starting with NULL preserve SUM on unmatched and all-null groups.
+      remaining.replace(match.start(), match.end(), " ".repeat(match.end() - match.start()));
+      rewrittenPaths.add(path);
       return PREFIX + key + SEPARATOR + value + FILTER + key + NOT_NULL
           + " AND " + value + NOT_NULL + SUFFIX;
     });
+    // If any operand on a hinted path remains, rewriting only the supported sums
+    // could combine different grains in one measure. Keep the entire measure as-is.
+    String pathPattern = grainPaths.stream().map(path ->
+        java.util.Arrays.stream(path.split("\\.")).map(Pattern::quote)
+            .collect(Collectors.joining("\\s*\\.\\s*"))).collect(Collectors.joining("|"));
+    Pattern reference = Pattern.compile("(?i)(?<![\\w.])(?:" + pathPattern + ")\\s*\\.");
+    return rewrittenPaths.containsAll(grainPaths) && !findOutsideLiterals(remaining.toString(), reference)
+        ? encoded : null;
   }
 
-  record Decoded(String expression, Set<String> physicalColumns) {}
+  static String qualifier(String column) {
+    return column.substring(0, column.lastIndexOf('.'));
+  }
+
+  record Decoded(String expression, Set<String> physicalColumns, Map<String, String> keys) {}
 
   static Decoded decode(String expression) {
     Set<String> columns = new HashSet<>();
+    Map<String, String> keys = new LinkedHashMap<>();
+    Map<String, String> pathKeys = new LinkedHashMap<>();
+    Set<String> conflictingPaths = new HashSet<>();
     String decoded = replaceOutsideLiterals(expression, ENCODED, match -> {
       String value = match.group(2);
+      String key = match.group(1);
+      if (!qualifier(value).equalsIgnoreCase(qualifier(key))) {
+        return match.group();
+      }
+      String path = qualifier(value);
+      String priorKey = pathKeys.putIfAbsent(path, key);
+      if (priorKey != null && !priorKey.equalsIgnoreCase(key)) {
+        conflictingPaths.add(path);
+      }
+      keys.put(value, key);
       columns.add(value.substring(value.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT));
       return "SUM(" + value + ")";
     });
-    return new Decoded(decoded, columns);
+    if (!conflictingPaths.isEmpty() || encode(decoded, keys, pathKeys.keySet()) == null) {
+      return new Decoded(expression, Set.of(), Map.of());
+    }
+    return new Decoded(decoded, columns, keys);
   }
 }
