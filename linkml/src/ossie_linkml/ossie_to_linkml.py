@@ -25,6 +25,8 @@ Pairs with linkml_to_ossie.LinkmlToOssieConverter for the other direction."""
 
 from __future__ import annotations
 
+import warnings
+
 import ohi_linkml
 
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
@@ -37,8 +39,10 @@ class OssieToLinkmlConverter:
 
     Only the ontology crosses over. LinkML describes types and their slots and
     has nowhere to put an `ontology_mappings` block, so datasets, join paths
-    and metrics are dropped. The full mapping is documented at
-    https://linkml.ohi.dev/docs/importers/ossie/
+    and metrics are dropped. Everything that is dropped, including `derived_by`
+    rules and expressions LinkML cannot express, is reported with
+    `warnings.warn` (one `UserWarning` per kind). The full mapping is
+    documented at https://linkml.ohi.dev/docs/importers/ossie/
 
         schema_yaml = OssieToLinkmlConverter.convert(model)
     """
@@ -55,10 +59,8 @@ class OssieToLinkmlConverter:
         of its own, so leaving it unset yields a placeholder built from the
         ontology's name. *output_format* is `yaml` or `json`.
         """
-        return OssieToLinkmlConverter.convert_spec(
-            OssieToSpecConverter.convert(model),
-            schema_id=schema_id,
-            output_format=output_format,
+        return OssieToLinkmlConverter._convert_spec(
+            OssieToSpecConverter.convert(model), schema_id, output_format
         )
 
     @staticmethod
@@ -72,8 +74,18 @@ class OssieToLinkmlConverter:
         The shorter path when a document was read straight off disk and never
         needed to be built out into an OssieOntology.
         """
-        return ohi_linkml.from_ossie(
+        return OssieToLinkmlConverter._convert_spec(spec, schema_id, output_format)
+
+    @staticmethod
+    def _convert_spec(spec: OssieSpec, schema_id: str | None, output_format: str) -> str:
+        # Called straight from both public methods, so stacklevel=3 always points
+        # the warnings at the caller's code rather than at this module.
+        result = ohi_linkml.from_ossie(
             spec.dump_yaml(),
             schema_id=schema_id,
             format=output_format,
-        )["schema"]
+        )
+        # One line per kind of thing LinkML has no place for, e.g. `derived_by`.
+        for warning in result["warnings"]:
+            warnings.warn(warning, UserWarning, stacklevel=3)
+        return result["schema"]
