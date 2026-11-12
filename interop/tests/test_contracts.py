@@ -80,6 +80,27 @@ def test_independent_inputs_pass_core_validation_and_their_oracles(name):
     assert set(contract.targets) == {"cube", "databricks", "dbt"}
 
 
+@pytest.mark.parametrize("name", ["portable-sql-only", "portable-sql-precedence"])
+def test_portable_sql_fixtures_pass_validation_and_their_oracles(name):
+    contract = regression(name)
+    data, validation = Validator(ROOT).validate(contract.input)
+    assert not validation["errors"], validation
+    assert (
+        check_document(data, contract.category, contract.assertions, input_stage=True)[
+            "grade"
+        ]
+        == "OK"
+    )
+    assert set(contract.targets) == {
+        "cube",
+        "databricks",
+        "dbt",
+        "honeydew",
+        "omni",
+        "sigma",
+    }
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -195,6 +216,76 @@ def test_input_with_an_accidental_ansi_fallback_cannot_claim_dialect_only_covera
             "grade"
         ]
         == "FAIL"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "path"),
+    [
+        (lambda data: data["datasets"][1]["fields"].pop(), "datasets.orders.fields"),
+        (lambda data: data["metrics"].clear(), "metrics.names"),
+        (
+            lambda data: data["datasets"][1].update(source="analytics.public.refunds"),
+            "datasets.orders.source",
+        ),
+        (
+            lambda data: data["metrics"][0]["expression"].update(
+                sql="SUM(refunds.refund_amount)"
+            ),
+            "metrics.total_amount.expression",
+        ),
+        (
+            lambda data: data["metrics"][0]["expression"].update(sql="SUM(amount)"),
+            "metrics.total_amount.expression",
+        ),
+        (
+            lambda data: data["datasets"][1]["fields"][-1]["expression"].update(
+                sql="amount * 0.8"
+            ),
+            "datasets.orders.fields.net_amount.expression.sql",
+        ),
+    ],
+)
+def test_portable_sql_contract_rejects_changed_members_and_bindings(mutation, path):
+    name = "portable-sql-precedence"
+    data = document(name)
+    mutation(data)
+    result = check_document(data, "portable-sql", regression(name).assertions)
+    assert any(
+        check["path"] == path and check["grade"] == "FAIL" for check in result["checks"]
+    )
+
+
+@pytest.mark.parametrize("owner", ["orders", "refunds"])
+def test_portable_sql_metric_can_return_with_its_binding_in_dataset_scope(owner):
+    name = "portable-sql-only"
+    data = document(name)
+    metric = data.pop("metrics")[0]
+    metric["expression"] = {
+        "dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(amount)"}]
+    }
+    next(dataset for dataset in data["datasets"] if dataset["name"] == owner)[
+        "metrics"
+    ] = [metric]
+    result = check_document(data, "portable-sql", regression(name).assertions)
+    assert result["grade"] == ("OK" if owner == "orders" else "FAIL")
+    if owner == "refunds":
+        assert any(
+            check["path"] == "metrics.total_amount.dataset" and check["grade"] == "FAIL"
+            for check in result["checks"]
+        )
+
+
+def test_portable_sql_precedence_fixture_requires_a_distinct_legacy_expression():
+    name = "portable-sql-precedence"
+    data = document(name)
+    data["metrics"][0]["expression"]["dialects"][0]["expression"] = "sum(ORDERS.amount)"
+    result = check_document(
+        data, "portable-sql", regression(name).assertions, input_stage=True
+    )
+    assert any(
+        check["path"] == "metrics.total_amount.conflict" and check["grade"] == "FAIL"
+        for check in result["checks"]
     )
 
 
@@ -412,6 +503,11 @@ def test_document_regression_configuration_is_validated_before_execution(
         ("dialect-databricks-only", lambda data: data.update(metrics={})),
         ("source-three-part", lambda data: data.update(sources=[])),
         ("source-three-part", lambda data: data.update(version=True)),
+        ("portable-sql-only", lambda data: data.update(input_form="dialects-only")),
+        (
+            "portable-sql-only",
+            lambda data: data["metrics"]["total_amount"].update(dataset="missing"),
+        ),
     ],
 )
 def test_malformed_document_oracles_are_configuration_errors(tmp_path, name, mutation):

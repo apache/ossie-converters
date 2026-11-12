@@ -201,17 +201,18 @@ def _document_assertions(path, category):
         data = yaml.load(path.read_text(encoding="utf-8"), Loader=UniqueLoader)
     except (OSError, yaml.YAMLError) as error:
         raise ManifestError(str(error)) from error
-    required = (
-        {"version", "dialect", "datasets", "metrics"}
-        if category == "dialect"
-        else {"version", "datasets"}
-        if category == "keys"
-        else {"version", "sources"}
-    )
+    required = {
+        "dialect": {"version", "dialect", "datasets", "metrics"},
+        "keys": {"version", "datasets"},
+        "sources": {"version", "sources"},
+        "portable-sql": {"version", "input_form", "datasets", "metrics"},
+    }[category]
     _keys(data, required, set(), str(path))
     if type(data["version"]) is not int or data["version"] != 1:
         raise ManifestError("unsupported document expectations version")
-    if category == "sources":
+    if category == "portable-sql":
+        _portable_sql_assertions(data)
+    elif category == "sources":
         _strings(data["sources"], "sources")
     else:
         if not isinstance(data["datasets"], dict) or not data["datasets"]:
@@ -266,6 +267,35 @@ def _document_assertions(path, category):
             ):
                 raise ManifestError("metrics must be a non-empty metric-to-SQL mapping")
     return data
+
+
+def _portable_sql_assertions(data):
+    if data["input_form"] not in ("sql-only", "sql-with-conflicts"):
+        raise ManifestError("unsupported portable SQL input form")
+    datasets, metrics = data["datasets"], data["metrics"]
+    if not isinstance(datasets, dict) or len(datasets) < 2:
+        raise ManifestError("portable SQL assertions require at least two datasets")
+    for name, dataset in datasets.items():
+        _name(name)
+        _keys(dataset, {"source", "fields"}, set(), name)
+        if not isinstance(dataset["source"], str) or not dataset["source"].strip():
+            raise ManifestError(f"{name}: expected a physical table reference")
+        fields = dataset["fields"]
+        if not isinstance(fields, dict) or not fields:
+            raise ManifestError(f"{name}: expected a non-empty field-to-SQL mapping")
+        for field_name, sql in fields.items():
+            _name(field_name)
+            if not isinstance(sql, str) or not sql.strip():
+                raise ManifestError(f"{name}.{field_name}: expected SQL text")
+    if not isinstance(metrics, dict) or not metrics:
+        raise ManifestError("portable SQL assertions require at least one metric")
+    for name, metric in metrics.items():
+        _name(name)
+        _keys(metric, {"dataset", "sql"}, set(), name)
+        if not isinstance(metric["dataset"], str) or metric["dataset"] not in datasets:
+            raise ManifestError(f"{name}: metric must bind to a declared dataset")
+        if not isinstance(metric["sql"], str) or not metric["sql"].strip():
+            raise ManifestError(f"{name}: expected SQL text")
 
 
 def load_manifest(path: Path, root: Path) -> Manifest:
@@ -467,7 +497,7 @@ def load_manifest(path: Path, root: Path) -> Manifest:
     for name, entry in entries.items():
         _name(name)
         _keys(entry, {"category", "input", "targets", "expectations"}, set(), name)
-        if entry["category"] not in ("dialect", "keys", "sources"):
+        if entry["category"] not in ("dialect", "keys", "sources", "portable-sql"):
             raise ManifestError(f"{name}: unsupported document regression category")
         _strings(entry["targets"], name)
         if set(entry["targets"]) - converters.keys():
