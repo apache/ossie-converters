@@ -25,6 +25,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOI
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.OSSIE_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SELECT_WITH_RE;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_QUERY_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asList;
@@ -260,6 +261,7 @@ final class MetricViewToOssie {
     if (filteredSource != null) {
       factDs.put("source", filteredSource);
       modelStash.put(STASH_FILTER_SOURCE_KEY, source);
+      modelStash.put(STASH_FILTER_QUERY_KEY, filteredSource);
     }
     if (hasOtm(asList(get(view, "joins")))) {
       modelStash.put(STASH_SOURCE_KEY, factName);

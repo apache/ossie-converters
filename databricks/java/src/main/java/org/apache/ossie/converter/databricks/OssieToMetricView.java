@@ -24,6 +24,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAPPER;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOIN_NODES;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.OSSIE_VERSION;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_QUERY_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SYNONYM_LIMIT;
@@ -193,7 +194,12 @@ final class OssieToMetricView {
     Object filterSource = get(modelStash, STASH_FILTER_SOURCE_KEY);
     boolean restoreFilter = modelStash.containsKey("filter");
     if (filterSource != null) {
-      if (source.equals(filteredSourceQuery(filterSource, filter, Set.of(), false))) {
+      Object importedQuery = get(modelStash, STASH_FILTER_QUERY_KEY);
+      if (!(filter instanceof String predicate) || predicate.isBlank()) {
+        restoreFilter = false;
+        notices.warn(modelScope, "imported source filter is missing or invalid; using the current source");
+      } else if (source.equals(importedQuery != null ? importedQuery
+          : filteredSourceQuery(filterSource, filter, Set.of(), false))) {
         source = validateSource(filterSource, fact);
       } else {
         restoreFilter = false;

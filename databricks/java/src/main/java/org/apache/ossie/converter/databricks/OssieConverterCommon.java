@@ -67,6 +67,7 @@ final class OssieConverterCommon {
   static final int STASH_VERSION = 1;
   static final String STASH_SOURCE_KEY = "source_dataset";
   static final String STASH_FILTER_SOURCE_KEY = "filter_source_table";
+  static final String STASH_FILTER_QUERY_KEY = "filter_source_query";
   static final String CARD_ONE_TO_MANY = "one_to_many";
   static final String CARD_MANY_TO_ONE = "many_to_one";
   static final int MAX_JOIN_NODES = 200;

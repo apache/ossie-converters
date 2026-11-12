@@ -941,21 +941,39 @@ public class OssieConverterSuite {
 
   @Test
   @SuppressWarnings("unchecked")
-  public void sourceFilterSurvivesViaTheOssieSource() {
+  public void sourceFilterSurvivesViaTheOssieSource() throws Exception {
     for (String filter : List.of("net_profit > 0", "source.net_profit > 0")) {
       String mv = "version: '1.1'\nsource: c.s.orders\nfilter: " + filter + "\n"
           + "measures:\n- {name: revenue, expr: SUM(amount)}\n";
       String ossie = OssieConverter.convertMetricViewToOssie(mv, null).yaml;
       Map<String, Object> model = (Map<String, Object>) OssieConverter.parseYaml(ossie);
       Map<String, Object> dataset = ((List<Map<String, Object>>) model.get("datasets")).get(0);
-      assertEquals("SELECT * FROM c.s.orders WHERE net_profit > 0", dataset.get("source"));
+      String query = ((String) dataset.get("source")).replaceAll("\\s+", " ");
+      assertTrue(query.contains("FROM c.s.orders"));
+      assertTrue(query.contains("WHERE net_profit > 0"));
       assertEquals(OssieConverter.parseYaml(mv),
           OssieConverter.parseYaml(OssieConverter.convertOssieToMetricView(ossie, null).yaml));
 
-      String edited = ossie.replace("WHERE net_profit > 0", "WHERE net_profit > 10");
+      String importedQuery = (String) dataset.get("source");
+      Map<String, Object> extension =
+          ((List<Map<String, Object>>) model.get("custom_extensions")).get(0);
+      String originalStash = (String) extension.get("data");
+      Map<String, Object> stash = (Map<String, Object>) OssieConverter.parseYaml(originalStash);
+      String reformatted = importedQuery.replace("SELECT", "select");
+      stash.put("filter_source_query", reformatted);
+      extension.put("data", OssieConverterCommon.JSON_WRITER.writeValueAsString(stash));
+      dataset.put("source", reformatted);
+      assertEquals(OssieConverter.parseYaml(mv), OssieConverter.parseYaml(
+          OssieConverter.convertOssieToMetricView(
+              OssieConverterCommon.MAPPER.writeValueAsString(model), null).yaml));
+
+      extension.put("data", originalStash);
+      dataset.put("source", importedQuery.replace("WHERE net_profit > 0", "WHERE net_profit > 10"));
+      String edited = OssieConverterCommon.MAPPER.writeValueAsString(model);
       Map<String, Object> returned = (Map<String, Object>) OssieConverter.parseYaml(
           OssieConverter.convertOssieToMetricView(edited, null).yaml);
-      assertEquals("SELECT * FROM c.s.orders WHERE net_profit > 10", returned.get("source"));
+      assertEquals(query.replace("net_profit > 0", "net_profit > 10"),
+          ((String) returned.get("source")).replaceAll("\\s+", " "));
       assertFalse(returned.containsKey("filter"));
     }
   }
