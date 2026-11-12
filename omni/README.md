@@ -136,11 +136,16 @@ non-reconstructible measures (filtered, `percentile`/`list`/`*_distinct_on`,
 raw-SQL), and files with no Ossie form (query views, extends-only views,
 unrecognized files).
 
-**Expression dialects**: Omni SQL is the SQL of the model's database
-connection, and the Ossie dialect enum has no `OMNI` entry -- so import emits
-`ANSI_SQL` expressions, and export prefers `ANSI_SQL` with `--dialect`
-prepending a warehouse dialect (e.g. `SNOWFLAKE` for a Snowflake-backed Omni
-model). A field/metric with neither is dropped with a warning.
+**Expression dialects.** Omni runs SQL on the model's database connection.
+Import emits `ANSI_SQL`. Export first uses an exact `--dialect` match, then
+`ANSI_SQL`, preserving either verbatim. It can also translate
+`OSSIE_SQL_2026`, `DATABRICKS`, `SNOWFLAKE`, and `BIGQUERY` expressions into
+the selected warehouse dialect or SQLGlot's generic SQL when no dialect is
+selected. The top-level `expression.sql` takes precedence over a sibling
+`OSSIE_SQL_2026` entry. Export warns whenever it translates warehouse SQL to
+generic SQL without an explicit target. Pass `--dialect` for the Omni
+connection to get SQL for that warehouse.
+A field or metric with no usable expression is dropped with a warning.
 
 ## Requirements
 
