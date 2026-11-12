@@ -410,8 +410,13 @@ def _tmsl_project(root: Path, bim) -> Path:
 
 
 @pytest.mark.parametrize("entry", ["mini.SemanticModel", "mini.pbip"])
-def test_a_tmsl_project_is_imported_from_its_model_bim(tmp_path, bim, entry, monkeypatch):
+@pytest.mark.parametrize("definition_file", [False, True])
+def test_a_tmsl_project_is_imported_from_its_model_bim(
+    tmp_path, bim, entry, definition_file, monkeypatch
+):
     root = _tmsl_project(tmp_path, bim)
+    if definition_file:
+        _write(root / "mini.SemanticModel" / "definition", "not a TMDL directory\n")
 
     def no_tom(documents):
         raise AssertionError("a TMSL project does not need TOM")
@@ -421,12 +426,63 @@ def test_a_tmsl_project_is_imported_from_its_model_bim(tmp_path, bim, entry, mon
     assert any(item["name"] == "Total Sales" for item in document["metrics"])
 
 
-def test_a_folder_with_both_storage_formats_is_refused(tmp_path, bim):
-    root = _project(tmp_path)
-    _write(root / "mini.SemanticModel" / "model.bim", json.dumps(bim))
+def _mixed_storage_project(root: Path, bim, definition_state: str) -> Path:
+    root = _tmsl_project(root, bim)
+    definition = root / "mini.SemanticModel" / "definition"
+    definition.mkdir()
+    if definition_state != "empty":
+        _write(definition / "model.tmdl", "model Model\n")
+    if definition_state == "complete":
+        _write(definition / "database.tmdl", "database mini\n")
+    return root
+
+
+@pytest.mark.parametrize("entry", ["mini.SemanticModel", "mini.pbip"])
+@pytest.mark.parametrize("definition_state", ["empty", "incomplete", "complete"])
+def test_a_folder_with_both_storage_formats_is_refused(
+    tmp_path, bim, entry, definition_state
+):
+    root = _mixed_storage_project(tmp_path, bim, definition_state)
 
     with pytest.raises(ConversionError, match="both model.bim and definition/"):
-        import_powerbi_project(root / "mini.SemanticModel")
+        import_powerbi_project(root / entry)
+
+
+@pytest.mark.parametrize("entry", ["mini.SemanticModel", "mini.pbip"])
+@pytest.mark.parametrize("definition_state", ["empty", "incomplete"])
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_cli_rejects_mixed_storage_without_writing_output(
+    tmp_path, bim, capsys, entry, definition_state, existing_output
+):
+    root = _mixed_storage_project(tmp_path, bim, definition_state)
+    output = tmp_path / "output.yaml"
+    if existing_output:
+        output.write_text("keep this output\n", encoding="utf-8")
+
+    assert main(["import", "-q", "-i", str(root / entry), "-o", str(output)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("Error:")
+    assert "both model.bim and definition/" in captured.err
+    assert "Traceback" not in captured.err
+    if existing_output:
+        assert output.read_text(encoding="utf-8") == "keep this output\n"
+    else:
+        assert not output.exists()
+
+
+@pytest.mark.parametrize("entry", ["model.bim", "definition"])
+def test_cli_can_import_an_explicit_model_from_a_mixed_storage_folder(
+    tmp_path, bim, capsys, monkeypatch, entry
+):
+    root = _mixed_storage_project(tmp_path, bim, "complete")
+    monkeypatch.setattr(
+        "ossie_microsoft.pbip.deserialize_tmdl_documents", lambda documents: bim
+    )
+
+    assert main(["import", "-i", str(root / "mini.SemanticModel" / entry)]) == 0
+    document = yaml.safe_load(capsys.readouterr().out)
+    assert any(item["name"] == "Total Sales" for item in document["metrics"])
 
 
 def test_cli_imports_a_tmsl_semantic_model_folder(tmp_path, bim, capsys):
