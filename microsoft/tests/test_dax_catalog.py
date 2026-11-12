@@ -55,7 +55,7 @@ def test_every_function_translates_or_is_refused_by_name(name):
     and nothing falls through to a generic error."""
 
     def resolve(table, column):
-        return (table, column) if (table, column) == ("Sales", "Amount") else None
+        return (table, column, "Decimal") if (table, column) == ("Sales", "Amount") else None
 
     sql, reason = translate_measure(f"{name}('Sales'[Amount])", resolve)
     if name in TRANSLATED_FUNCTIONS and sql is not None:
