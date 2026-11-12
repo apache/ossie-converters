@@ -410,7 +410,7 @@ def pick_expression(ossie_expression, preferred=None):
     if primary is not None:
         by_dialect[DIALECT_OSSIE_SQL] = primary
     primary_dialect = DIALECT_OSSIE_SQL if primary is not None else None
-    for candidate in (preferred, primary_dialect, DIALECT_ANSI, DIALECT_OSSIE_SQL):
+    for candidate in dict.fromkeys((preferred, primary_dialect, DIALECT_ANSI, DIALECT_OSSIE_SQL)):
         if candidate and candidate in by_dialect:
             return _checked_expression(by_dialect[candidate]), candidate
     for dialect, expr in dialects:

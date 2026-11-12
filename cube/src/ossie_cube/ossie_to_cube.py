@@ -1310,14 +1310,30 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
             pinned_members.setdefault(ds_name, set()).add(pinned.lower())
     for ds_name, metric, scope in _dataset_metrics(datasets):
         target = cube_names[ds_name]
-        expr, used = pick_expression(metric.get("expression"), dialect)
+        fields = [f["name"] for f in datasets[ds_name].get("fields") or []]
+        aliases = {field: member for field, member in restored_fields[target].items()
+                   if field != member}
+        expression = metric["expression"]
+        restored_expression = expression
+        if expression.get("sql") is not None:
+            try:
+                sql = _qualify_dataset_metric(expression["sql"], DIALECT_OSSIE_SQL,
+                                              None, fields, scope, aliases)
+            except ConversionError as exc:
+                expression = {key: value for key, value in expression.items() if key != "sql"}
+                restored_expression = expression
+                issues.add(IssueType.APPROXIMATED, scope,
+                           f"{exc}; ignored the primary SQL expression")
+            else:
+                if aliases:
+                    restored_expression = {**expression, "sql": sql}
+        expr, used = pick_expression(expression, dialect)
         if expr is None:
             issues.add(IssueType.NO_USABLE_DIALECT, scope,
                        "no ANSI_SQL expression and no warehouse dialect Cube could "
                        "pass through; metric dropped")
             continue
         _report_dialect_fallback(issues, scope, used, dialect)
-        fields = [f["name"] for f in datasets[ds_name].get("fields") or []]
         raw_columns = {}
         try:
             qualified = _qualify_dataset_metric(expr, used, ds_name, fields, scope,
@@ -1362,17 +1378,6 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
         translated = {**metric, "expression": {"dialects": [
             {"dialect": used, "expression": qualified}]}}
         _apply_measure_metadata(translated, measure, stash, used)
-        restored_expression = metric["expression"]
-        aliases = {field: member for field, member in restored_fields[target].items()
-                   if field != member}
-        if aliases and restored_expression.get("sql") is not None:
-            try:
-                sql = _qualify_dataset_metric(restored_expression["sql"], DIALECT_OSSIE_SQL,
-                                              None, fields, scope, aliases)
-            except ConversionError as exc:
-                issues.add(IssueType.DROPPED_NO_CUBE_EQUIVALENT, scope, f"{exc}; metric dropped")
-                continue
-            restored_expression = {**restored_expression, "sql": sql}
         if aliases and restored_expression.get("dialects"):
             # Fields re-import under their sanitized Cube identifiers. A local
             # expression must name those fields too, rather than restore dangling

@@ -1905,7 +1905,7 @@ def _valid_dataset_metric_expression(expression):
     entries = expression["dialects"]
     dialects = {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL, "MDX", "TABLEAU", "MAQL",
                 "SIGMA", "THOUGHTSPOT", "DAX", "HOLISTICS_AQL"}
-    return isinstance(entries, list) and bool(entries) and all(
+    return isinstance(entries, list) and (bool(entries) or "sql" in expression) and all(
         isinstance(entry, dict) and set(entry) == {"dialect", "expression"}
         and isinstance(entry["dialect"], str) and entry["dialect"] in dialects
         and isinstance(entry["expression"], str) and bool(entry["expression"].strip())

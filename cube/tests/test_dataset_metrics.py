@@ -148,10 +148,10 @@ def test_new_local_metric_is_qualified_when_a_model_metric_already_requests_the_
 
 @pytest.mark.parametrize("with_legacy", [False, True])
 def test_primary_sql_survives_for_fields_and_both_metric_scopes(with_legacy):
-    def primary(sql, legacy):
+    def primary(sql, legacy_sql):
         result = {"sql": sql}
         if with_legacy:
-            result["dialects"] = expression(legacy, "OSSIE_SQL_2026")["dialects"]
+            result["dialects"] = expression(legacy_sql, "OSSIE_SQL_2026")["dialects"]
         return result
 
     ds = dataset(
@@ -186,6 +186,22 @@ def test_primary_sql_survives_for_fields_and_both_metric_scopes(with_legacy):
     )
     assert orders["metrics"][0]["expression"] == primary('SUM("net_amount")', "MAX(id)")
     assert document["metrics"][0]["expression"] == global_expression
+
+
+def test_invalid_primary_sql_keeps_usable_local_alternative():
+    ds = dataset(metrics=[{
+        "name": "local_total",
+        "expression": {
+            "sql": "SUM(missing_column)",
+            "dialects": expression("SUM(id)", "ANSI_SQL")["dialects"],
+        },
+    }])
+    files, issues = export(model(ds))
+    assert measures(files)["local_total"]["sql"] == "{CUBE}.id"
+    assert any("ignored the primary SQL expression" in str(issue) for issue in issues)
+    returned, _ = convert_cube_to_ossie(files)
+    local = yaml.safe_load(returned)["datasets"][0]["metrics"][0]
+    assert local["expression"] == expression("SUM(id)", "ANSI_SQL")
 
 
 def test_editing_a_restored_local_expression_changes_the_native_operand():
