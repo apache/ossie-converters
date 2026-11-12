@@ -38,6 +38,7 @@ from .checks import (
     native_content,
 )
 from .execution import diagnostics, has_degradation, run_command, succeeded
+from .live_databricks import run_check as run_live_databricks
 from .manifest import Manifest, expand
 from .portability import GRADER, as_dict, diagnostics_text, load_grader
 
@@ -103,10 +104,12 @@ class Runner:
         timeout=600,
         prepare=True,
         native=False,
+        live_databricks=False,
     ):
         self.root, self.manifest, self.output = root, manifest, output
         self.timeout, self.prepare_enabled, self.native = timeout, prepare, native
         self.validator = Validator(root)
+        self.live_databricks = live_databricks
         self.report = {
             "schema_version": 1,
             "metadata": {
@@ -473,6 +476,8 @@ class Runner:
                             variant, path, target, mode, exports=exports
                         )
                     )
+        if self.live_databricks:
+            self.report["live_databricks"] = run_live_databricks(self)
         return self.report
 
     def portability_targets(self):
@@ -777,6 +782,8 @@ class Runner:
 def exit_code(report, strict=False):
     if report["harness_errors"]:
         return 2
+    if report.get("live_databricks", {}).get("grade") == "FAIL":
+        return 1
     if strict:
         results = (
             list(report["preparations"].values())

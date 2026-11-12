@@ -309,6 +309,35 @@ Foreign-extension counts are a conservative text heuristic, not an exact measure
 of extension loss. Source diagnostics stay on source rows; they are not counted
 against every downstream exporter.
 
+## Live Databricks measure parity
+
+Run the opt-in check with a built Cube checkout (schema compiler and Databricks
+JDBC query adapter), Databricks unified authentication, and a SQL warehouse.
+Use a scratch Unity Catalog schema where the caller can create and drop views.
+The caller also needs read access to `samples.tpcds_sf1`. Set
+`OSSIE_DATABRICKS_TPCDS_SCHEMA` to use another `catalog.schema` with the TPC-DS
+fixture columns instead. The built-in sample supplies `d_month_name` from the
+date column in the scratch view.
+
+```bash
+OSSIE_CUBE_REPO=/path/to/cube \
+OSSIE_DATABRICKS_WAREHOUSE_ID=warehouse_id \
+OSSIE_DATABRICKS_SCRATCH_SCHEMA=catalog.scratch \
+uv run --project interop --locked --with databricks-sdk python -m interop \
+  --converters cube,databricks --live-databricks
+```
+
+The check creates a uniquely named Metric View from the matrix export and removes
+it after the comparison. `--timeout` also applies to each warehouse statement. It runs Cube-generated SQL and native `MEASURE` queries
+on the same warehouse. The report counts missing groups and differences for
+`total_sales`, `total_profit`, `sales_by_brand`, `customer_lifetime_value`, and
+`store_productivity` at the total, `i_brand`, and `s_store_name` grains. Sums use
+exact equality. Ratios use absolute and relative tolerances of `1e-8`.
+
+An explicitly requested live check returns exit status 1 on failure, including
+when its configuration or prerequisites are missing. Regular matrix runs do not
+require the Databricks SDK or make warehouse requests.
+
 ## Portability scores (report-only)
 
 The core repository's portability ladder (`ossie/compliance/portability/`,
