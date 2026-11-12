@@ -424,6 +424,65 @@ public class OssieConverterSuite {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  public void joinedIntegerSumDeduplicatesByPrimaryKeyAndRoundTrips() {
+    String osi = """
+        version: 0.2.0.dev0
+        name: sales
+        datasets:
+        - name: sales
+          source: c.s.sales
+          fields:
+          - name: amount
+            expression: {dialects: [{dialect: ANSI_SQL, expression: amount}]}
+        - name: store
+          source: c.s.store
+          primary_key: [id]
+          fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+          - name: employees
+            datatype: Integer
+            expression: {dialects: [{dialect: ANSI_SQL, expression: employees}]}
+        relationships:
+        - {name: sale_store, from: sales, to: store, from_columns: [store_id], to_columns: [id]}
+        metrics:
+        - name: productivity
+          expression:
+            dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(sales.amount) / NULLIF(SUM(store.employees), 0)
+          custom_extensions:
+          - vendor_name: CUBE
+            data: '{"integer_sum_grain": ["store"]}'
+        - name: different_counts
+          expression:
+            dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(DISTINCT store.employees)
+        """;
+    Map<String, Object> view = (Map<String, Object>) export(osi, "sales");
+    List<Map<String, Object>> measures = (List<Map<String, Object>>) view.get("measures");
+    String expected = "SUM(amount) / NULLIF(AGGREGATE(COLLECT_SET(STRUCT(store.id AS ossie_key, "
+        + "store.employees AS ossie_value)) FILTER (WHERE store.id IS NOT NULL "
+        + "AND store.employees IS NOT NULL), CAST(NULL AS BIGINT), "
+        + "(ossie_acc, ossie_row) -> COALESCE(ossie_acc, 0L) + "
+        + "CAST(ossie_row.ossie_value AS BIGINT)), 0)";
+    assertEquals(expected, measures.get(0).get("expr"));
+    assertEquals("SUM(DISTINCT store.employees)", measures.get(1).get("expr"));
+
+    String nativeYaml = OssieConverter.convertOssieToMetricView(osi, "sales").yaml;
+    String imported = OssieConverter.convertMetricViewToOssie(nativeYaml, "sales").yaml;
+    assertTrue(imported.contains("SUM(amount) / NULLIF(SUM(store.employees), 0)"), imported);
+    assertEquals(view, export(imported, "sales"));
+
+    String decimal = osi.replace("datatype: Integer", "datatype: Decimal");
+    assertFalse(OssieConverter.convertOssieToMetricView(decimal, "sales").yaml.contains("COLLECT_SET"));
+    String noGrain = osi.replace("[\"store\"]", "[]");
+    assertFalse(OssieConverter.convertOssieToMetricView(noGrain, "sales").yaml.contains("COLLECT_SET"));
+  }
+
+  @Test
   public void modelWithNoFieldsOrMetricsIsRejected() {
     // A Metric View requires at least one dimension or measure, so emitting a version+source-only
     // view would just fail at CREATE. Fail at conversion time instead.

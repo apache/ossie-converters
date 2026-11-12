@@ -1788,6 +1788,7 @@ class _MeasureContext:
 
     resolver: object
     fanned_out: dict
+    integer_sum_grains: frozenset
     dataset_names: frozenset
     plain_by_cube: dict
     pk_by_cube: dict
@@ -2056,6 +2057,11 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
     context = _MeasureContext(
         resolver=resolver,
         fanned_out=fanned_out,
+        integer_sum_grains=frozenset(
+            cname for cname in fanned_out if len(pk_by_cube.get(cname) or []) == 1
+            and any(parked_of(dim.get("meta")).get("datatype") == "Integer"
+                    for dim in _as_named_list(cubes[cname].get("dimensions"),
+                                              f"cube '{cname}' dimensions"))),
         dataset_names=frozenset(cubes),
         plain_by_cube=plain_by_cube,
         pk_by_cube=pk_by_cube,
@@ -2137,12 +2143,15 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
     # the cube a measure is *declared* on is not necessarily the one an aggregate
     # inside it *reads* -- `SUM(users.ltv) / SUM(orders.amount)` sits on `orders`
     # while `users` is the fanned-out side.
+    integer_sum_grain = []
     for dataset in sorted(
             _fanout_unsafe_datasets(resolver.inlined(cname, mname), cname,
                                     context.dataset_names, resolver.source_dialect)):
         if dataset not in context.fanned_out:
             continue
         _report_fanout(issues, scope, dataset, context.fanned_out[dataset])
+        if dataset_metric is None and dataset in context.integer_sum_grains:
+            integer_sum_grain.append(dataset)
 
     metric = {
         "name": metric_name,
@@ -2168,6 +2177,11 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         metric["ai_context"] = ai
 
     stash = {}
+    if integer_sum_grain:
+        # The portable expression alone cannot say whether the aggregate sums fact-joined
+        # rows or runs once per joined dataset key. Preserve Cube's intent for consumers
+        # that can implement it for explicitly typed integer operands.
+        stash["integer_sum_grain"] = integer_sum_grain
     if context.derived_cube(expr) != cname:
         # The owning cube, recorded only when export would not place the measure
         # here on its own. The mirror of export's derivation: the sole cube the

@@ -594,6 +594,22 @@ final class OssieConverterCommon {
     return stash != null ? stash : new LinkedHashMap<>();
   }
 
+  /** Reads Cube's aggregate grain hint without imposing validation on other foreign metadata. */
+  static List<String> cubeIntegerSumGrain(Map<String, Object> metric) {
+    for (Map<String, Object> extension : customExtensions(metric)) {
+      if ("CUBE".equals(get(extension, "vendor_name"))
+          && get(extension, "data") instanceof String data) {
+        try {
+          Map<String, Object> parsed = asMap(JSON_READER.readValue(data, Object.class));
+          return strList(get(parsed, "integer_sum_grain"));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+          return List.of();
+        }
+      }
+    }
+    return List.of();
+  }
+
   static List<Object> foreignVendorExtensions(Map<String, Object> obj) {
     List<Object> out = new ArrayList<>();
     for (Map<String, Object> extension : customExtensions(obj)) {

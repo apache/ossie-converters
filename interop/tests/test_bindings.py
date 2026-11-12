@@ -431,6 +431,23 @@ def test_real_cube_databricks_cube_preserves_native_aggregate_bindings(tmp_path,
     runner = Runner(ROOT, selected, tmp_path, prepare=False)
     report = runner.run()
     write_report(report, tmp_path)
+    if name == "cube-databricks-tpcds":
+        acceptance = next(
+            case
+            for case in report["cases"]
+            if case["tier"] == "A" and case["target"] == "databricks"
+        )
+        assert acceptance["grade"] in ("OK", "LOSSY"), acceptance
+        view = yaml.safe_load(Path(acceptance["output"]).read_text())
+        productivity = next(
+            measure["expr"]
+            for measure in view["measures"]
+            if measure["name"] == "store_productivity"
+        )
+        assert (
+            "COLLECT_SET(STRUCT(store.s_store_sk AS ossie_key, "
+            "store.s_number_employees AS ossie_value))" in productivity
+        )
     result = report["regressions"][0]
     assert result["grade"] == "OK", json.dumps(result, indent=2)
     assert result["source_bindings"]["grade"] == "OK"
