@@ -990,7 +990,7 @@ def _tmsl_text(value):
 
 def _warn_foreign_extensions(scope, obj):
     for ext in foreign_vendor_extensions(obj):
-        vendor = ext.get("vendor_name", ext.get("vendor"))
+        vendor = ext.get("vendor_name") or ext.get("vendor") or "<unknown>"
         warn(
             scope,
             f"custom_extensions for vendor '{vendor}' have no Power BI "

@@ -1317,6 +1317,18 @@ def test_another_vendors_extensions_are_reported_as_dropped():
         _convert(semantic_model)
 
 
+@pytest.mark.parametrize(("extension", "vendor"), [
+    ({"vendor_name": None, "vendor": "SNOWFLAKE"}, "SNOWFLAKE"),
+    ({"vendor_name": "", "vendor": "SNOWFLAKE"}, "SNOWFLAKE"),
+    ({}, "<unknown>"),
+])
+def test_legacy_extension_vendor_is_reported_in_warning(extension, vendor):
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["custom_extensions"] = [extension]
+    with pytest.warns(UserWarning, match=f"vendor '{vendor}'"):
+        _convert(semantic_model)
+
+
 def write_stash_for_other_vendor(obj):
     obj.setdefault("custom_extensions", []).append(
         {"vendor_name": "DATABRICKS", "data": "{}"}
