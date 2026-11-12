@@ -54,7 +54,9 @@ COLUMNS = (
     Column("amount", "amount", "Decimal", "NUMBER(12, 2)", "Currency.Type"),
 )
 COLUMN_NAMES = tuple(column.name for column in COLUMNS)
-METRICS = {
+# Expected rows in the sales fixture use this metric order after the grain.
+METRIC_NAMES = ("revenue", "distinct_customers", "revenue_per_customer")
+METRIC_SQL = {
     "revenue": "SUM(sales.amount)",
     "distinct_customers": "COUNT(DISTINCT sales.customer_id)",
     "revenue_per_customer": "SUM(sales.amount) / NULLIF(COUNT(DISTINCT sales.customer_id), 0)",
@@ -88,7 +90,8 @@ def _ossie_model(version):
             ],
         }],
         "metrics": [
-            {"name": name, "expression": expression(sql)} for name, sql in METRICS.items()
+            {"name": name, "expression": expression(METRIC_SQL[name])}
+            for name in METRIC_NAMES
         ],
     }
 
@@ -117,7 +120,7 @@ def _inline_m():
 
 
 def _create_view_sql(view, table):
-    metrics = ",\n    ".join(f"sales.{name} AS {sql}" for name, sql in METRICS.items())
+    metrics = ",\n    ".join(f"sales.{name} AS {METRIC_SQL[name]}" for name in METRIC_NAMES)
     return (
         f"CREATE SEMANTIC VIEW {view}\n"
         f"TABLES (sales AS {table})\n"
@@ -129,9 +132,9 @@ def _create_view_sql(view, table):
 def _snowflake_query(view, case):
     grain = case["grain"]
     filters = case.get("filters", {})
-    columns = ", ".join([*grain, *METRICS])
+    columns = ", ".join([*grain, *METRIC_NAMES])
     dimensions = ", ".join(f"sales.{column}" for column in grain)
-    metrics = ", ".join(f"sales.{name}" for name in METRICS)
+    metrics = ", ".join(f"sales.{name}" for name in METRIC_NAMES)
     clauses = [view, f"METRICS {metrics}"]
     if dimensions:
         clauses.append(f"DIMENSIONS {dimensions}")
@@ -146,7 +149,7 @@ def _dax_query(case):
         f"TREATAS({{{_quoted(value)}}}, 'sales'[{column}])"
         for column, value in case.get("filters", {}).items()
     ]
-    measures = [f'"{name}", [{name}]' for name in METRICS]
+    measures = [f'"{name}", [{name}]' for name in METRIC_NAMES]
     if groups:
         return f"EVALUATE SUMMARIZECOLUMNS({', '.join([*groups, *filters, *measures])})"
     row = f"ROW({', '.join(measures)})"
@@ -170,10 +173,10 @@ def _dax_rows(rows, columns):
 def _index_metrics(rows, grain, context):
     indexed = {}
     for row in rows:
-        assert len(row) == len(grain) + len(METRICS), f"{context}: unexpected row {row!r}"
+        assert len(row) == len(grain) + len(METRIC_NAMES), f"{context}: unexpected row {row!r}"
         key = tuple(row[:len(grain)])
         assert key not in indexed, f"{context}: duplicate group {key!r}"
-        indexed[key] = dict(zip(METRICS, row[len(grain):], strict=True))
+        indexed[key] = dict(zip(METRIC_NAMES, row[len(grain):], strict=True))
     return indexed
 
 
@@ -288,7 +291,7 @@ def test_live_measure_results_match(live_engines, case):
     cursor, view, dax = live_engines
     sql, parameters = _snowflake_query(view, case)
     snowflake = cursor.execute(sql, parameters).fetchall()
-    power_bi = list(_dax_rows(dax(_dax_query(case)), (*case["grain"], *METRICS)))
+    power_bi = list(_dax_rows(dax(_dax_query(case)), (*case["grain"], *METRIC_NAMES)))
     _assert_metrics(case, snowflake, case["expected"], "Snowflake vs fixture")
     _assert_metrics(case, power_bi, case["expected"], "Power BI vs fixture")
     _assert_metrics(case, power_bi, snowflake, "Power BI vs Snowflake")
@@ -298,7 +301,7 @@ def test_live_measure_results_match(live_engines, case):
 def test_fixture_expectations_match_relational_results(case):
     grain = [f"src_{name}" for name in case["grain"]]
     filters = case.get("filters", {})
-    select = ", ".join([*grain, *METRICS.values()])
+    select = ", ".join([*grain, *(METRIC_SQL[name] for name in METRIC_NAMES)])
     sql = f"SELECT {select} FROM sales"
     if filters:
         sql += " WHERE " + " AND ".join(f"src_{name} = ?" for name in filters)

@@ -439,7 +439,7 @@ def evaluate(workspace, dataset, token, query):
         {"queries": [{"query": query}], "serializerSettings": {"includeNulls": True}},
     )
     if status != 200:
-        return None, _engine_message(body)
+        return None, _request_failure(status, body)
     try:
         if body.get("error"):
             return None, _engine_message(body)
