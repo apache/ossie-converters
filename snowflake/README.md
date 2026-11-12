@@ -39,6 +39,13 @@ uv sync
 uv run ossie-snowflake -i input.yaml -o output.yaml
 ```
 
+## Expression dialects
+
+The exporter prefers `SNOWFLAKE`, `ANSI_SQL`, and tagged `OSSIE_SQL_2026`
+expressions in that order. It then translates supported `BIGQUERY` field and
+metric expressions to Snowflake SQL using SQLGlot. Untranslatable expressions
+are skipped with a warning.
+
 ## Data Type Mapping
 
 The exporter maps the optional logical `datatype` on Ossie fields to Snowflake
