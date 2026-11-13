@@ -850,8 +850,10 @@ final class OssieToMetricView {
       return null;
     }
     if (!isFact) {
-      if (isSimpleIdentifier(expr)) {
-        expr = qualifier + "." + expr;
+      String qualified = isSimpleIdentifier(expr)
+          ? qualifier + "." + expr : ExpressionDialect.qualifyFieldColumns(expr, qualifier);
+      if (qualified != null) {
+        expr = qualified;
       } else if (prefix != null) {
         notices.warn(scope, "complex expression on a fanned-out (diamond) join cannot be "
             + "unambiguously qualified; dropped");

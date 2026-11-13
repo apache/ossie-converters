@@ -331,6 +331,8 @@ public class OssieConverterSuite {
         + "  source: c.s.d\n"
         + "  fields:\n"
         + "  - {name: dcol, expression: {dialects: [{dialect: DATABRICKS, expression: dcol}]}}\n"
+        + "  - name: named_branch\n"
+        + "    expression: {dialects: [{dialect: DATABRICKS, expression: UPPER(b.b_d.dcol)}]}\n"
         + "relationships:\n"
         + "- {name: ab, from: a, to: b, from_columns: [k], to_columns: [k]}\n"
         + "- {name: ac, from: a, to: c, from_columns: [k], to_columns: [k]}\n"
@@ -340,7 +342,10 @@ public class OssieConverterSuite {
     assertEquals("c.s.a", view.get("source"));
     // `d` is reached by two paths, so its column is emitted once per fan-out alias.
     List<Object> dims = (List<Object>) view.get("dimensions");
-    assertEquals(2, dims.size(), "diamond should fan out to one dimension per path, got: " + dims);
+    assertEquals(3, dims.size());
+    assertTrue(dims.contains(Map.of("name", "b_d_named_branch", "expr", "UPPER(b.b_d.dcol)")));
+    assertFalse(dims.stream().map(value -> (Map<?, ?>) value)
+        .anyMatch(value -> "c_d_named_branch".equals(value.get("name"))));
   }
 
   @Test
@@ -349,7 +354,7 @@ public class OssieConverterSuite {
     // Same diamond as above (`d` reached via `a -> b -> d` and `a -> c -> d`), plus a measure that
     // names `d` by its bare dataset name. A measure addresses a dataset by name, so it cannot be
     // split per fan-out path the way the dimension on `d` is; it is dropped with a notice rather
-    // than silently bound to one arbitrary branch (as the dimension complex-expression path does).
+    // than silently bound to one arbitrary branch.
     String osi =
         "version: 0.2.0.dev0\n"
         + "name: m\n"
@@ -386,7 +391,7 @@ public class OssieConverterSuite {
 
   @Test
   @SuppressWarnings("unchecked")
-  public void nestedJoinColumnInMeasureGetsFullAliasPath() {
+  public void nestedJoinColumnsInDimensionsAndMeasuresGetFullAliasPath() {
     // orders -> customer -> nation: `nation` nests under `customer`, so its columns are addressed
     // as `customer.nation.col`. A bare `nation.` head would be read as struct access on a
     // parameter, so the measure must be re-qualified -- and identically to the dimension path,
@@ -405,6 +410,17 @@ public class OssieConverterSuite {
         + "  primary_key: [n_nationkey]\n"
         + "  fields:\n"
         + "  - {name: population, expression: {dialects: [{dialect: DATABRICKS, expression: population}]}}\n"
+        + "  - name: population_bucket\n"
+        + "    expression:\n"
+        + "      dialects:\n"
+        + "      - dialect: ANSI_SQL\n"
+        + "        expression: >-\n"
+        + "          CASE WHEN CAST(population AS DECIMAL(12, 0)) > 0\n"
+        + "          AND EXTRACT(YEAR FROM census_date) = 2024 THEN 'population' ELSE 'unknown' END\n"
+        + "  - name: qualified_population\n"
+        + "    expression: {dialects: [{dialect: DATABRICKS, expression: ABS(customer.nation.population)}]}\n"
+        + "  - name: mixed_population\n"
+        + "    expression: {dialects: [{dialect: DATABRICKS, expression: customer.nation.population + estimate}]}\n"
         + "relationships:\n"
         + "- {name: oc, from: orders, to: customer, from_columns: [c_custkey], to_columns: [c_custkey]}\n"
         + "- {name: cn, from: customer, to: nation, from_columns: [n_nationkey], to_columns: [n_nationkey]}\n"
@@ -416,6 +432,13 @@ public class OssieConverterSuite {
     Map<String, Object> dim = (Map<String, Object>) dims.get(0);
     assertEquals("customer.nation.population", dim.get("expr"),
         "dimension path should qualify with the full alias path");
+    Map<String, Object> computed = (Map<String, Object>) dims.get(1);
+    assertEquals("CASE WHEN CAST(customer.nation.population AS DECIMAL(12, 0)) > 0 "
+        + "AND EXTRACT(YEAR FROM customer.nation.census_date) = 2024 "
+        + "THEN 'population' ELSE 'unknown' END", computed.get("expr"));
+    assertEquals("ABS(customer.nation.population)", ((Map<?, ?>) dims.get(2)).get("expr"));
+    assertEquals("customer.nation.population + customer.nation.estimate",
+        ((Map<?, ?>) dims.get(3)).get("expr"));
 
     List<Object> measures = (List<Object>) view.get("measures");
     Map<String, Object> measure = (Map<String, Object>) measures.get(0);
