@@ -126,6 +126,24 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 | `ai_context.synonyms` | `synonyms` | Only `synonyms`: every other member of an `ai_context` object is dropped with a notice. |
 | `custom_extensions[DATABRICKS]` | `filter`, `parameters`, `materialization`, per-column `format`, measure `window` / `partition` / `display_name` | Import stashes Metric-View-only features here; export restores them -- keeping `MV -> Apache Ossie -> MV` lossless. |
 
+### Cube measure grain
+
+The Cube importer can record the owning dataset for sums over a joined table.
+The Databricks exporter uses that hint for simple sums of integer columns on a
+joined dataset with a single physical primary key. Declare those columns with
+`meta.ossie.datatype: Integer` on the Cube dimensions. Cube `type: number` alone
+imports as `Decimal`, whose precision and scale are unspecified in Ossie. The
+exporter uses a `BIGINT` accumulator, so it leaves sums over those unannotated
+columns unchanged.
+
+When the exporter can preserve every referenced operand on the hinted join
+paths, it deduplicates by key before summing. The conversion notice names the
+datasets whose distinct key/value pairs are collected in memory for each query
+group. When any of those operands is unsupported, the entire expression is
+exported unchanged with a notice. Databricks import retains the native expression
+and records the decoded grain and key bindings alongside the portable alternative
+so it can be exported again.
+
 ### Dialect labels on import
 
 Import labels each expression with the most portable dialect it fits, so a model that went

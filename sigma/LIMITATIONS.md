@@ -113,6 +113,15 @@ displayed text may not be: Sigma's `Text()` and a warehouse's `CAST` can format 
 and dates differently. A cast to a sized text type such as `CHAR(1)` is not mapped,
 because it truncates and `Text()` does not.
 
+`In(x, a, b)` translates to `x IN (a, b)` and back, only when every candidate is a
+non-null literal. With a `NULL` candidate, SQL `IN` returns `NULL` instead of `FALSE`
+on a miss, while Sigma's `In()` is documented as returning `True` or `False`; a column
+candidate can be `NULL` at run time, so column lists, `NULL` candidates and `IN`
+over a subquery are not mapped. `NOT IN` translates as `NOT (In(...))`.
+When the tested value is `NULL`, SQL `IN` returns `NULL`, so `NOT IN` excludes the row.
+Sigma's `In()` behaves the same way: it compiles to the warehouse's `IN`, so `In(Null, ...)`
+and `Not In(Null, ...)` are both `Null`, and a filter on either drops the row.
+
 `Number(x)` translates to `CAST(x AS DOUBLE)`, and an unsized `FLOAT`, `REAL` or `DOUBLE`
 cast reads back as `Number(x)`. An integer or `DECIMAL`/`NUMBER` cast is not mapped,
 because it rounds to a scale (`DECIMAL` and `NUMBER` default to scale 0). `Int(x)`

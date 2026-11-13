@@ -45,6 +45,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -538,8 +539,33 @@ final class MetricViewToOssie {
     // DATABRICKS stash; a portable label would let another tool compute a plain aggregate instead.
     boolean portable =
         !filtered && !measure.containsKey("window") && !measure.containsKey("partition");
-    metric.put("expression",
-        dialectExpr(expr, portable ? scope.dialectOf(expr, name, true) : DIALECT_DATABRICKS));
+    Map<String, Object> expression =
+        dialectExpr(expr, portable ? scope.dialectOf(expr, name, true) : DIALECT_DATABRICKS);
+    if (portable) {
+      JoinedIntegerSum.Decoded keyedSum = JoinedIntegerSum.decode(rawExpr);
+      if (!keyedSum.keys().isEmpty()) {
+        String decoded = rewriteQualifiers(keyedSum.expression(), aliasHead, aliasToDataset::get);
+        String dialect = scope.dialectOf(decoded, name, true, keyedSum.physicalColumns());
+        Map<String, String> keys = new LinkedHashMap<>();
+        Set<String> grain = new LinkedHashSet<>();
+        keyedSum.keys().forEach((value, key) -> {
+          String alias = lastIdentifier(JoinedIntegerSum.qualifier(value));
+          String dataset = aliasToDataset.get(alias);
+          if (dataset != null && !"source".equals(alias)) {
+            grain.add(dataset);
+            keys.put(dataset + "." + lastIdentifier(value), dataset + "." + lastIdentifier(key));
+          }
+        });
+        if (!DIALECT_DATABRICKS.equals(dialect) && keys.size() == keyedSum.keys().size()) {
+          asList(get(expression, "dialects")).add(Map.of("dialect", dialect, "expression", decoded));
+          Map<String, Object> grainStash = new LinkedHashMap<>();
+          grainStash.put("integer_sum_grain", new ArrayList<>(grain));
+          grainStash.put("integer_sum_keys", keys);
+          writeStash(metric, grainStash, "CUBE");
+        }
+      }
+    }
+    metric.put("expression", expression);
     if (truthy(get(measure, "comment"))) {
       metric.put("description", get(measure, "comment"));
     }
@@ -626,12 +652,17 @@ final class MetricViewToOssie {
   private record DialectScope(Set<String> datasets, Set<String> viewNames, boolean hiddenNames) {
     /** The most portable dialect for the expression of the column {@code self}. */
     String dialectOf(String expr, String self, boolean measure) {
+      return dialectOf(expr, self, measure, Set.of());
+    }
+
+    String dialectOf(String expr, String self, boolean measure, Set<String> physicalColumns) {
       if (hiddenNames) {
         return DIALECT_DATABRICKS;
       }
       // A column naming itself refers to the source column, not to itself.
       Set<String> opaque = new HashSet<>(viewNames);
       opaque.remove(self.toLowerCase(Locale.ROOT));
+      opaque.removeAll(physicalColumns);
       return ExpressionDialect.classify(expr, datasets, opaque, measure);
     }
   }

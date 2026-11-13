@@ -28,7 +28,11 @@ import datetime
 import json
 import os
 import re
+import warnings
 
+import sqlglot
+from sqlglot import Dialect, exp
+from sqlglot.errors import ErrorLevel, SqlglotError
 import yaml
 
 # Ossie semantic model spec version this converter targets (see core-spec).
@@ -38,10 +42,19 @@ OSSIE_VERSION = "0.3.0.dev0"
 VENDOR = "OMNI"
 
 # Omni SQL is the SQL of the model's database connection, so there is no OMNI
-# entry in the Ossie dialect enum. Import emits ANSI_SQL; export prefers ANSI_SQL
-# and lets the caller prepend a warehouse dialect (e.g. SNOWFLAKE) that the
-# actual connection would accept.
+# entry in the Ossie dialect enum. Import emits ANSI_SQL. SQLGlot has no ANSI
+# dialect, so explicitly use its generic Dialect for portable SQL.
 DIALECT_ANSI = "ANSI_SQL"
+_PORTABLE_SQL_DIALECTS = (DIALECT_ANSI, "OSSIE_SQL_2026")
+_WAREHOUSE_SQL_DIALECTS = {
+    "DATABRICKS": "databricks",
+    "SNOWFLAKE": "snowflake",
+    "BIGQUERY": "bigquery",
+}
+_SQL_DIALECT_READERS = {
+    **dict.fromkeys(_PORTABLE_SQL_DIALECTS, Dialect),
+    **_WAREHOUSE_SQL_DIALECTS,
+}
 
 # Bump when the shape of a stashed `data` blob changes.
 STASH_VERSION = 1
@@ -326,31 +339,62 @@ def foreign_vendor_extensions(obj):
     ]
 
 
-def pick_expression(ossie_expression, preferred=None):
+def pick_expression(ossie_expression, preferred=None, *, scope="expression"):
     """Choose the SQL string for an Ossie expression.
 
-    Preference order: the caller-chosen warehouse dialect (Omni passes SQL through
-    to the connection's database, so e.g. SNOWFLAKE SQL is valid on a Snowflake-
-    backed Omni model), then ANSI_SQL. Returns None if neither is present (the
-    caller warns and skips).
+    Preserve a matching preferred or ANSI_SQL expression verbatim. Otherwise
+    translate a supported SQL alternative into the requested warehouse dialect
+    or generic SQL.
     """
+    ossie_expression = ossie_expression or {}
     dialects = {
         d.get("dialect"): d.get("expression")
-        for d in (ossie_expression or {}).get("dialects") or []
+        for d in ossie_expression.get("dialects") or []
     }
-    expr = None
-    if preferred:
-        expr = dialects.get(preferred)
+    primary = ossie_expression.get("sql")
+    if primary is not None:
+        dialects["OSSIE_SQL_2026"] = primary
+    expr = dialects.get(preferred) if preferred else primary
     if expr is None:
         expr = dialects.get(DIALECT_ANSI)
-    if expr is None:
-        # A portable `sql` expression carries no dialect; Omni passes it through as
-        # ANSI-compatible SQL, the same fallback as a bare ANSI_SQL dialect entry.
-        expr = (ossie_expression or {}).get("sql")
-    if expr is not None and not isinstance(expr, str):
-        raise ConversionError(
-            f"expression must be a string, got {type(expr).__name__}")
-    return expr
+    if expr is not None:
+        if not isinstance(expr, str):
+            raise ConversionError(
+                f"expression must be a string, got {type(expr).__name__}")
+        return expr
+
+    writer = (Dialect if not preferred or preferred in _PORTABLE_SQL_DIALECTS
+              else _WAREHOUSE_SQL_DIALECTS.get(preferred))
+    if writer is None:
+        return None
+    for dialect, reader in _SQL_DIALECT_READERS.items():
+        candidate = dialects.get(dialect)
+        if candidate is None:
+            continue
+        if not isinstance(candidate, str):
+            raise ConversionError(
+                f"expression must be a string, got {type(candidate).__name__}")
+        try:
+            statements = sqlglot.parse(candidate, read=reader)
+            if len(statements) != 1 or statements[0] is None:
+                continue
+            tree = statements[0]
+            # Unknown functions can carry warehouse-specific semantics. SQLGlot
+            # passes them through without detecting a translation failure.
+            if tree.find(exp.Anonymous, exp.Query, exp.Command, exp.DDL, exp.DML):
+                continue
+            rendered = tree.sql(dialect=writer, unsupported_level=ErrorLevel.RAISE)
+            if not preferred and dialect in _WAREHOUSE_SQL_DIALECTS:
+                warnings.warn(
+                    f"[{scope}] translated {dialect} to generic SQL without a target "
+                    "warehouse. Pass --dialect for the Omni connection before using "
+                    "this expression.",
+                    stacklevel=2,
+                )
+            return rendered
+        except SqlglotError:
+            continue
+    return None
 
 
 def synonyms_of(ai_context):

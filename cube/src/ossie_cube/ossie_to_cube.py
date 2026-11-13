@@ -1435,7 +1435,7 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
 # legacy whole-measure record (`measure`).
 _METRIC_STASH_CONSUMED = frozenset(
     {"cube", "measure", "sql", "filters", "type", "name", "title", "meta",
-     "model_metric_name", "dataset_metric_member"})
+     "model_metric_name", "dataset_metric_member", "integer_sum_grain", "integer_sum_keys"})
 
 
 def _pinned_cube(stash, metric_name, known_cubes, issues):

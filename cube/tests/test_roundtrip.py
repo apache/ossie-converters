@@ -56,6 +56,29 @@ def test_cube_roundtrip_is_lossless(fixture):
     assert parse_files(files2) == parse_files(files)
 
 
+def test_joined_sum_grain_comes_from_the_cube_that_owns_the_aggregate():
+    files = load_fixture_dir("tpcds_cube")
+    path = "model/cubes/store_sales.yml"
+    cube_file = yaml.safe_load(files[path])
+    cube_file["cubes"][0]["measures"].extend([
+        {"name": "employees_per_sale", "type": "sum", "sql": "{store.s_number_employees}"},
+        {"name": "mixed_ownership", "type": "number",
+         "sql": "{store.store_productivity_part_2} + SUM({store.s_number_employees})"},
+    ])
+    files[path] = yaml.safe_dump(cube_file)
+    ossie, _ = convert_cube_to_ossie(files)
+    metrics = {metric["name"]: metric for metric in yaml.safe_load(ossie)["metrics"]}
+
+    def grain(name):
+        return next((json.loads(ext["data"]).get("integer_sum_grain")
+                     for ext in metrics[name].get("custom_extensions", [])
+                     if ext["vendor_name"] == "CUBE"), None)
+
+    assert grain("store_productivity") == ["store"]
+    assert grain("employees_per_sale") is None
+    assert grain("mixed_ownership") is None
+
+
 @pytest.mark.parametrize("cube_dir,ossie_file", [
     ("fixtureA_cube", "fixtureA_ossie.yaml"),
     ("tpcds_cube", "tpcds_ossie.yaml"),

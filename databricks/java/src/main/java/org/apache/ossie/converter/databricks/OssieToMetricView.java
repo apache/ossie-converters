@@ -19,6 +19,7 @@ package org.apache.ossie.converter.databricks;
 
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.CARD_MANY_TO_ONE;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.CARD_ONE_TO_MANY;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.DIALECT_DATABRICKS;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAPPER;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOIN_NODES;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
@@ -27,6 +28,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_S
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SYNONYM_LIMIT;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asList;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asMap;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.cubeIntegerSumMetadata;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.findOutsideLiterals;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.foreignVendorExtensions;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.get;
@@ -209,6 +211,7 @@ final class OssieToMetricView {
     // Dataset name -> the alias path that addresses its columns from the primary source, collected
     // from the same walk the dimensions use so measures qualify identically (see qualifyMeasure).
     Map<String, String> datasetAliasPath = new LinkedHashMap<>();
+    Map<String, String> integerSumKeys = new HashMap<>();
     for (Object[] entry : nodeOrder(root)) {
       Node node = (Node) entry[0];
       @SuppressWarnings("unchecked")
@@ -217,12 +220,15 @@ final class OssieToMetricView {
       String prefix = counts.get(node.dataset) > 1 ? node.alias : null;
       // Fixed per node, like `prefix`: hoisted so it is not rebuilt for every field.
       String qualifier = String.join(".", joinPath);
+      List<Map<String, Object>> fields = datasetFields.get(node.dataset);
+      String sumKey = isFact || node.isOtm || prefix != null ? null
+          : singlePhysicalPrimaryKey(datasets.get(node.dataset), fields);
       if (!isFact) {
         // A dataset reachable by more than one path (diamond) appears once per path; the first
         // wins, matching the order dimensions are emitted in.
         datasetAliasPath.putIfAbsent(node.dataset, qualifier);
       }
-      for (Map<String, Object> field : datasetFields.get(node.dataset)) {
+      for (Map<String, Object> field : fields) {
         String fname = requireStr(field, "name", "dataset '" + node.dataset + "': field");
         if (node.isOtm) {
           notices.warn("field '" + fname + "'",
@@ -244,6 +250,10 @@ final class OssieToMetricView {
               + "dimension/measure names -- rename before use");
         }
         dimensions.add(dim);
+        if (sumKey != null && "Integer".equals(get(field, "datatype"))
+            && (qualifier + "." + fname).equals(get(dim, "expr"))) {
+          integerSumKeys.put(qualifier + "." + fname, qualifier + "." + sumKey);
+        }
       }
     }
 
@@ -262,7 +272,8 @@ final class OssieToMetricView {
     }
     for (Map<String, Object> metric : metrics) {
       Map<String, Object> measure = convertMetric(
-          metric, factQualifier, datasetHead, datasetAliasPath, diamondDatasets, seenDims, notices);
+          metric, factQualifier, datasetHead, datasetAliasPath, diamondDatasets, integerSumKeys,
+          seenDims, notices);
       if (measure == null) {
         droppedMeasures.add(str(get(metric, "name")));
         continue;
@@ -814,6 +825,22 @@ final class OssieToMetricView {
     }
   }
 
+  private static String singlePhysicalPrimaryKey(Map<String, Object> dataset,
+      List<Map<String, Object>> fields) {
+    List<String> primary = strList(get(dataset, "primary_key"));
+    if (primary.size() != 1 || !isSimpleIdentifier(primary.get(0))) {
+      return null;
+    }
+    String key = primary.get(0);
+    for (Map<String, Object> field : fields) {
+      if (key.equals(get(field, "name"))
+          && key.equals(pickExpression(get(field, "expression"), "field '" + key + "'"))) {
+        return key;
+      }
+    }
+    return null;
+  }
+
   private static Map<String, Object> convertField(Map<String, Object> field, String name0,
       String qualifier, boolean isFact, String prefix, Notices notices) {
     String scope = "field '" + name0 + "'";
@@ -823,8 +850,10 @@ final class OssieToMetricView {
       return null;
     }
     if (!isFact) {
-      if (isSimpleIdentifier(expr)) {
-        expr = qualifier + "." + expr;
+      String qualified = isSimpleIdentifier(expr)
+          ? qualifier + "." + expr : ExpressionDialect.qualifyFieldColumns(expr, qualifier);
+      if (qualified != null) {
+        expr = qualified;
       } else if (prefix != null) {
         notices.warn(scope, "complex expression on a fanned-out (diamond) join cannot be "
             + "unambiguously qualified; dropped");
@@ -863,6 +892,7 @@ final class OssieToMetricView {
       Pattern datasetHead,
       Map<String, String> datasetAliasPath,
       Set<String> diamondDatasets,
+      Map<String, String> integerSumKeys,
       Set<String> seenNames,
       Notices notices) {
     String name = requireStr(metric, "name", "metric");
@@ -893,6 +923,36 @@ final class OssieToMetricView {
     // Only outside string literals / comments: a literal such as 'customer.us' must not be
     // rewritten, or the measure's predicate changes.
     expr = replaceOutsideLiterals(expr, factQualifier, "");
+    if (!hasDatabricksExpression(metric)) {
+      Map<String, Object> grain = cubeIntegerSumMetadata(metric);
+      List<String> grainDatasets = strList(get(grain, "integer_sum_grain"));
+      if (!grainDatasets.isEmpty()) {
+        Set<String> grainPaths = new LinkedHashSet<>();
+        for (String dataset : grainDatasets) {
+          String path = datasetAliasPath.get(dataset);
+          if (path != null) {
+            grainPaths.add(path);
+          }
+        }
+        Map<String, String> keys = new HashMap<>(integerSumKeys);
+        asMap(get(grain, "integer_sum_keys")).forEach((value, key) -> {
+          if (key instanceof String column) {
+            keys.put(qualifyMeasure(value, datasetHead, datasetAliasPath),
+                qualifyMeasure(column, datasetHead, datasetAliasPath));
+          }
+        });
+        String encoded = grainPaths.size() == grainDatasets.size()
+            ? JoinedIntegerSum.encode(expr, keys, grainPaths) : null;
+        if (encoded == null) {
+          notices.warn(scope, "cannot preserve the entire Cube aggregate grain for "
+              + grainDatasets + "; leaving the expression unchanged");
+        } else {
+          expr = encoded;
+          notices.warn(scope, "preserving Cube aggregate grain for " + grainDatasets
+              + " collects every distinct joined key per group; memory grows with the key count");
+        }
+      }
+    }
     Map<String, Object> measure = new LinkedHashMap<>();
     measure.put("name", name);
     measure.put("expr", expr);
@@ -921,6 +981,18 @@ final class OssieToMetricView {
     }
     warnDroppedColumn(metric, scope, notices);
     return measure;
+  }
+
+  private static boolean hasDatabricksExpression(Map<String, Object> metric) {
+    Map<String, Object> expression = asMap(get(metric, "expression"));
+    for (Object item : asList(get(expression, "dialects"))) {
+      Map<String, Object> variant = asMap(item);
+      if (DIALECT_DATABRICKS.equals(get(variant, "dialect"))
+          && truthy(get(variant, "expression"))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static void cascadeDrop(List<Map<String, Object>> dimensions,

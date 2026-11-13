@@ -331,6 +331,8 @@ public class OssieConverterSuite {
         + "  source: c.s.d\n"
         + "  fields:\n"
         + "  - {name: dcol, expression: {dialects: [{dialect: DATABRICKS, expression: dcol}]}}\n"
+        + "  - name: named_branch\n"
+        + "    expression: {dialects: [{dialect: DATABRICKS, expression: UPPER(b.b_d.dcol)}]}\n"
         + "relationships:\n"
         + "- {name: ab, from: a, to: b, from_columns: [k], to_columns: [k]}\n"
         + "- {name: ac, from: a, to: c, from_columns: [k], to_columns: [k]}\n"
@@ -340,7 +342,10 @@ public class OssieConverterSuite {
     assertEquals("c.s.a", view.get("source"));
     // `d` is reached by two paths, so its column is emitted once per fan-out alias.
     List<Object> dims = (List<Object>) view.get("dimensions");
-    assertEquals(2, dims.size(), "diamond should fan out to one dimension per path, got: " + dims);
+    assertEquals(3, dims.size());
+    assertTrue(dims.contains(Map.of("name", "b_d_named_branch", "expr", "UPPER(b.b_d.dcol)")));
+    assertFalse(dims.stream().map(value -> (Map<?, ?>) value)
+        .anyMatch(value -> "c_d_named_branch".equals(value.get("name"))));
   }
 
   @Test
@@ -349,7 +354,7 @@ public class OssieConverterSuite {
     // Same diamond as above (`d` reached via `a -> b -> d` and `a -> c -> d`), plus a measure that
     // names `d` by its bare dataset name. A measure addresses a dataset by name, so it cannot be
     // split per fan-out path the way the dimension on `d` is; it is dropped with a notice rather
-    // than silently bound to one arbitrary branch (as the dimension complex-expression path does).
+    // than silently bound to one arbitrary branch.
     String osi =
         "version: 0.3.0.dev0\n"
         + "name: m\n"
@@ -386,7 +391,7 @@ public class OssieConverterSuite {
 
   @Test
   @SuppressWarnings("unchecked")
-  public void nestedJoinColumnInMeasureGetsFullAliasPath() {
+  public void nestedJoinColumnsInDimensionsAndMeasuresGetFullAliasPath() {
     // orders -> customer -> nation: `nation` nests under `customer`, so its columns are addressed
     // as `customer.nation.col`. A bare `nation.` head would be read as struct access on a
     // parameter, so the measure must be re-qualified -- and identically to the dimension path,
@@ -405,6 +410,17 @@ public class OssieConverterSuite {
         + "  primary_key: [n_nationkey]\n"
         + "  fields:\n"
         + "  - {name: population, expression: {dialects: [{dialect: DATABRICKS, expression: population}]}}\n"
+        + "  - name: population_bucket\n"
+        + "    expression:\n"
+        + "      dialects:\n"
+        + "      - dialect: ANSI_SQL\n"
+        + "        expression: >-\n"
+        + "          CASE WHEN CAST(population AS DECIMAL(12, 0)) > 0\n"
+        + "          AND EXTRACT(YEAR FROM census_date) = 2024 THEN 'population' ELSE 'unknown' END\n"
+        + "  - name: qualified_population\n"
+        + "    expression: {dialects: [{dialect: DATABRICKS, expression: ABS(customer.nation.population)}]}\n"
+        + "  - name: mixed_population\n"
+        + "    expression: {dialects: [{dialect: DATABRICKS, expression: customer.nation.population + estimate}]}\n"
         + "relationships:\n"
         + "- {name: oc, from: orders, to: customer, from_columns: [c_custkey], to_columns: [c_custkey]}\n"
         + "- {name: cn, from: customer, to: nation, from_columns: [n_nationkey], to_columns: [n_nationkey]}\n"
@@ -416,11 +432,132 @@ public class OssieConverterSuite {
     Map<String, Object> dim = (Map<String, Object>) dims.get(0);
     assertEquals("customer.nation.population", dim.get("expr"),
         "dimension path should qualify with the full alias path");
+    Map<String, Object> computed = (Map<String, Object>) dims.get(1);
+    assertEquals("CASE WHEN CAST(customer.nation.population AS DECIMAL(12, 0)) > 0 "
+        + "AND EXTRACT(YEAR FROM customer.nation.census_date) = 2024 "
+        + "THEN 'population' ELSE 'unknown' END", computed.get("expr"));
+    assertEquals("ABS(customer.nation.population)", ((Map<?, ?>) dims.get(2)).get("expr"));
+    assertEquals("customer.nation.population + customer.nation.estimate",
+        ((Map<?, ?>) dims.get(3)).get("expr"));
 
     List<Object> measures = (List<Object>) view.get("measures");
     Map<String, Object> measure = (Map<String, Object>) measures.get(0);
     assertEquals("SUM(customer.nation.population)", measure.get("expr"),
         "measure must use the same full alias path as the dimension, not a bare nested alias");
+  }
+
+  @Test
+  public void joinedIntegerSumHandlesFormattingAndOnlySkipsModifiedOperands() {
+    String filtered = "SUM(sales.amount) /* note */ FILTER (WHERE active)";
+    String windowed = "SUM(sales.amount) OVER (PARTITION BY region)";
+    String sum = "SUM(store.employees)";
+    String expression = filtered + " + " + windowed + " + " + sum;
+    String encoded = JoinedIntegerSum.encode(expression, Map.of("store.employees", "store.id"),
+        java.util.Set.of("store"));
+    assertTrue(encoded.startsWith(filtered + " + " + windowed + " + AGGREGATE("));
+    String formatted = encoded.replace("AGGREGATE(COLLECT_SET", "aggregate ( \n  collect_set")
+        .replace(" AS ossie_key, ", " AS ossie_key ,\n  ");
+    assertEquals(expression, JoinedIntegerSum.decode(formatted).expression());
+  }
+
+  @Test
+  public void joinedIntegerSumKeepsTheWholeExpressionWhenAnyOperandIsUnsupported() {
+    for (String unsupported : List.of("SUM(store.floor_space)", "COUNT(store.id)",
+        "SUM(store.a + store.b)", "SUM(store.employees) /* note */ FILTER (WHERE active)",
+        "SUM(store.employees) OVER (PARTITION BY region)")) {
+      assertEquals(null, JoinedIntegerSum.encode("SUM(store.employees) / " + unsupported,
+          Map.of("store.employees", "store.id"), java.util.Set.of("store")));
+    }
+  }
+
+  @Test
+  public void joinedIntegerSumDoesNotDecodeConflictingKeys() {
+    String sum = "SUM(store.employees)";
+    String first = JoinedIntegerSum.encode(sum, Map.of("store.employees", "store.id"),
+        java.util.Set.of("store"));
+    String second = JoinedIntegerSum.encode(sum, Map.of("store.employees", "store.other_id"),
+        java.util.Set.of("store"));
+    assertTrue(JoinedIntegerSum.decode(first + " + " + second).keys().isEmpty());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void joinedIntegerSumDeduplicatesByPrimaryKeyAndRoundTrips() throws Exception {
+    String osi = """
+        version: 0.3.0.dev0
+        name: sales
+        datasets:
+        - name: sales
+          source: c.s.sales
+          fields:
+          - name: amount
+            expression: {dialects: [{dialect: ANSI_SQL, expression: amount}]}
+        - name: store
+          source: c.s.store
+          primary_key: [id]
+          fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+          - name: employees
+            datatype: Integer
+            expression: {dialects: [{dialect: ANSI_SQL, expression: employees}]}
+        relationships:
+        - {name: sale_store, from: sales, to: store, from_columns: [store_id], to_columns: [id]}
+        metrics:
+        - name: productivity
+          expression:
+            dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(sales.amount) / NULLIF(SUM(store.employees), 0)
+          custom_extensions:
+          - vendor_name: CUBE
+            data: '{invalid'
+          - vendor_name: CUBE
+            data: '{"integer_sum_grain": ["store"]}'
+        - name: different_counts
+          expression:
+            dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(DISTINCT store.employees)
+        """;
+    Map<String, Object> view = (Map<String, Object>) export(osi, "sales");
+    List<Map<String, Object>> measures = (List<Map<String, Object>>) view.get("measures");
+    String expected = "SUM(amount) / NULLIF(AGGREGATE(COLLECT_SET(STRUCT(store.id AS ossie_key, "
+        + "store.employees AS ossie_value)) FILTER (WHERE store.id IS NOT NULL "
+        + "AND store.employees IS NOT NULL), CAST(NULL AS BIGINT), "
+        + "(ossie_acc, ossie_row) -> COALESCE(ossie_acc, 0L) + "
+        + "CAST(ossie_row.ossie_value AS BIGINT)), 0)";
+    assertEquals(expected, measures.get(0).get("expr"));
+    assertEquals("SUM(DISTINCT store.employees)", measures.get(1).get("expr"));
+
+    OssieConverter.Result exported = OssieConverter.convertOssieToMetricView(osi, "sales");
+    assertTrue(exported.notices.stream().anyMatch(notice -> notice.contains("[store]")
+        && notice.contains("memory grows with the key count")));
+    String nativeYaml = exported.yaml;
+    String imported = OssieConverter.convertMetricViewToOssie(nativeYaml, "sales").yaml;
+    assertTrue(imported.contains("SUM(amount) / NULLIF(SUM(store.employees), 0)"), imported);
+    assertEquals(view, export(imported, "sales"));
+    Map<String, Object> importedModel = OssieConverterCommon.asMap(OssieConverter.parseYaml(imported));
+    Map<String, Object> metric = OssieConverterCommon.asMap(
+        OssieConverterCommon.asList(importedModel.get("metrics")).get(0));
+    assertEquals(List.of("store"), OssieConverterCommon.cubeIntegerSumMetadata(metric)
+        .get("integer_sum_grain"));
+    Map<String, Object> expression = OssieConverterCommon.asMap(metric.get("expression"));
+    OssieConverterCommon.asList(expression.get("dialects")).removeIf(entry ->
+        "DATABRICKS".equals(OssieConverterCommon.asMap(entry).get("dialect")));
+    assertEquals(view, export(OssieConverterCommon.MAPPER.writeValueAsString(importedModel), "sales"));
+
+    String mixed = osi.replace("NULLIF(SUM(store.employees), 0)",
+        "NULLIF(SUM(store.employees) + SUM(store.floor_space), 0)");
+    OssieConverter.Result mixedExport = OssieConverter.convertOssieToMetricView(mixed, "sales");
+    assertFalse(mixedExport.yaml.contains("COLLECT_SET"));
+    assertTrue(mixedExport.notices.stream().anyMatch(notice -> notice.contains(
+        "cannot preserve the entire Cube aggregate grain for [store]")));
+
+    String decimal = osi.replace("datatype: Integer", "datatype: Decimal");
+    assertFalse(OssieConverter.convertOssieToMetricView(decimal, "sales").yaml.contains("COLLECT_SET"));
+    String noGrain = osi.replace("[\"store\"]", "[]");
+    assertFalse(OssieConverter.convertOssieToMetricView(noGrain, "sales").yaml.contains("COLLECT_SET"));
   }
 
   @Test

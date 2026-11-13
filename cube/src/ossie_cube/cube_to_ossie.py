@@ -75,6 +75,7 @@ from ._common import (
     source_part_count,
     sql_is_reversible,
     unescape_braces_from_cube,
+    validate_source_defaults,
     view_file,
     read_stash,
     write_stash,
@@ -125,7 +126,7 @@ _RELATIONSHIP_ALIASES = {
 }
 
 def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False,
-                         *, source_dialect=None):
+                         *, source_dialect=None, default_catalog=None, default_schema=None):
     """Convert Cube model files ({relative filename: YAML str}) to Ossie YAML.
 
     Returns (ossie_yaml_str, IssueLog). `model_name` overrides the Ossie model
@@ -137,6 +138,10 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
     parsing and generated expression labels, and validates emitted SQL before
     returning. None preserves the legacy permissive ANSI_SQL import. Original
     Ossie expressions restored from meta.ossie keep their own dialect declarations.
+
+    `default_catalog` qualifies two-part table sources. Supply `default_schema`
+    as well to qualify one-part sources. Fully qualified tables and SQL queries
+    are unaffected; without defaults, table sources keep their original names.
 
     A metric whose value a static Ossie expression cannot keep correct under row
     multiplication is converted with a FANOUT_UNSAFE_METRIC issue; `strict_fanout`
@@ -153,20 +158,24 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
     if not cubes:
         raise ConversionError(_no_cubes_message(views))
     model = _build_model(cubes, cube_paths, views, view_paths, extra_files,
-                         model_name, view, issues, source_dialect)
+                         model_name, view, issues, source_dialect,
+                         default_catalog=default_catalog, default_schema=default_schema)
     if source_dialect is not None:
         validate_imported_expressions(model)
     return dump_yaml({"version": OSSIE_VERSION, **model}), issues
 
 
 def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
-                 view, issues, source_dialect=None, *, restore_dataset_metrics=True):
+                 view, issues, source_dialect=None, *, restore_dataset_metrics=True,
+                 default_catalog=None, default_schema=None):
     """The Ossie model (a dict, without `version`) for the collected Cube model.
 
     Split from `convert_cube_to_ossie` so view projection can run the same import over
     the reduced cube set it builds, rather than serializing that set to YAML only to
     parse it straight back.
     """
+    default_catalog, default_schema = validate_source_defaults(
+        default_catalog, default_schema, source_dialect)
     # The mapped view supplies the Ossie model's identity. Cube users are
     # view-first, and Cube's own agent reads `meta.ai_context` only from views and
     # individual members -- so the view, not any cube, is the model boundary.
@@ -218,7 +227,8 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
 
     model["datasets"] = [
         _convert_cube(cname, cube, plain_by_cube[cname], extra_joins.get(cname),
-                      extra_measures.get(cname), issues, source_dialect)
+                      extra_measures.get(cname), issues, source_dialect,
+                      default_catalog=default_catalog, default_schema=default_schema)
         for cname, cube in cubes.items()
     ]
     for ds in model["datasets"]:
@@ -748,14 +758,16 @@ def _column_datatype(cubes, cname, column):
 
 
 def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
-                  source_dialect=None):
+                  source_dialect=None, *, default_catalog=None, default_schema=None):
     """Build one Ossie dataset from a Cube cube."""
     scope = f"cube '{cname}'"
     ds = {"name": cname}
     stash = {}
 
-    ds["source"] = join_source(cube, cname)
-    parts = source_part_count(ds["source"])
+    ds["source"] = join_source(cube, cname, default_catalog=default_catalog,
+                               default_schema=default_schema, source_dialect=source_dialect)
+    parts = (source_part_count(ds["source"], source_dialect)
+             if cube.get("sql_table") is not None else None)
     if parts is not None and parts < 3:
         # Cube accepts a one- or two-part `sql_table`, but the Ossie spec describes
         # `source` as `database.schema.table` and the Databricks, Snowflake and
@@ -765,8 +777,9 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
         issues.add(IssueType.SOURCE_NOT_FULLY_QUALIFIED, scope,
                    f"source '{ds['source']}' has {parts} part(s); several Ossie "
                    f"converters (Databricks, Snowflake, NVIDIA Auto Ontology) "
-                   f"require a 3-part catalog.schema.table, so qualify the cube's "
-                   f"`sql_table` if the model needs to convert onward")
+                   "require a 3-part catalog.schema.table. Qualify the cube's "
+                   "`sql_table` or pass --default-catalog and, for a one-part name, "
+                   "--default-schema")
     if cube.get("description"):
         ds["description"] = unescape_braces_from_cube(cube["description"])
 
@@ -1707,6 +1720,52 @@ class _MeasureResolver:
         # exactly the expression it was split from.
         return f"({inner})" if has_top_level_operator(inner) else inner
 
+    def aggregate_owners(self, cname, mname):
+        """Prove the native owner of each dataset read by emitted unsafe aggregates."""
+        owners = {}
+        pending = [(cname, mname)]
+        visited = set()
+        canonical = lookup_map(self._cube_names)
+        while pending:
+            key = pending.pop()
+            if key in visited:
+                continue
+            visited.add(key)
+            owner, name = key
+            measure = self._raw[key]
+            if self.aggregate_of(owner, name) in CALCULATED_MEASURE_TYPES:
+                # Aggregate syntax written inline is ambiguous. Test the glue with
+                # its measure references removed, then visit only inlined members.
+                sqls = [measure.get("sql"), *[
+                    f.get("sql") for f in measure.get("filters") or [] if isinstance(f, dict)]]
+                for sql in filter(None, sqls):
+                    def resolve(body):
+                        target = self._reference_target(body, owner)
+                        if target is None:
+                            return None
+                        metric_name = self._metric_names.get(target)
+                        if not metric_name or not is_referenceable_name(metric_name):
+                            pending.append(target)
+                        return "NULL"
+
+                    glue, _ = cube_sql_to_ossie(sql, owner, resolve_ref=resolve,
+                                                self_prefix=owner, cube_names=self._cube_names)
+                    if unsafe_aggregate_heads(glue, self.source_dialect) != (set(), False):
+                        return {}
+                continue
+            analysed = unsafe_aggregate_heads(self.expression(owner, name), self.source_dialect)
+            if analysed is None:
+                return {}
+            heads, bare = analysed
+            datasets = {resolve_identifier(canonical, head) for head in heads}
+            if bare:
+                datasets.add(owner)
+            if None in datasets:
+                return {}
+            for dataset in datasets:
+                owners.setdefault(dataset, set()).add(owner)
+        return owners
+
     def _operand(self, cname, sql, stack, inline_refs):
         """Translate an aggregate's operand into an Ossie reference.
 
@@ -1822,6 +1881,7 @@ class _MeasureContext:
 
     resolver: object
     fanned_out: dict
+    integer_sum_grains: frozenset
     dataset_names: frozenset
     plain_by_cube: dict
     pk_by_cube: dict
@@ -2090,6 +2150,11 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
     context = _MeasureContext(
         resolver=resolver,
         fanned_out=fanned_out,
+        integer_sum_grains=frozenset(
+            cname for cname in fanned_out if len(pk_by_cube.get(cname) or []) == 1
+            and any(parked_of(dim.get("meta")).get("datatype") == "Integer"
+                    for dim in _as_named_list(cubes[cname].get("dimensions"),
+                                              f"cube '{cname}' dimensions"))),
         dataset_names=frozenset(cubes),
         plain_by_cube=plain_by_cube,
         pk_by_cube=pk_by_cube,
@@ -2202,6 +2267,16 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         metric["ai_context"] = ai
 
     stash = {}
+    integer_sum_grain = []
+    if dataset_metric is None and context.integer_sum_grains and "expression" not in parked:
+        owners = resolver.aggregate_owners(cname, mname)
+        integer_sum_grain = sorted(dataset for dataset in context.integer_sum_grains
+                                   if owners.get(dataset) == {dataset})
+    if integer_sum_grain:
+        # The portable expression alone cannot say whether the aggregate sums fact-joined
+        # rows or runs once per joined dataset key. Preserve Cube's intent for consumers
+        # that can implement it for explicitly typed integer operands.
+        stash["integer_sum_grain"] = integer_sum_grain
     if context.derived_cube(expr) != cname:
         # The owning cube, recorded only when export would not place the measure
         # here on its own. The mirror of export's derivation: the sole cube the
