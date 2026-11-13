@@ -20,6 +20,7 @@
 import warnings
 
 import pytest
+import sqlglot
 import yaml
 
 from ossie_snowflake.ossie_to_snowflake import (
@@ -435,9 +436,23 @@ class TestExtractExpression:
         }
         assert _extract_expression(expr, "f") == "ansi_expr"
 
+    @pytest.mark.parametrize("dialect", ["SNOWFLAKE", "ANSI_SQL", "OSSIE_SQL_2026"])
+    def test_bigquery_fallback_preserves_existing_preference(self, dialect):
+        expression = {"dialects": [
+            {"dialect": "BIGQUERY", "expression": "CAST(amount AS FLOAT64)"},
+            {"dialect": dialect, "expression": "preferred"},
+        ]}
+        assert _extract_expression(expression, "amount") == "preferred"
+
+    @pytest.mark.parametrize("sql", ["SELECT amount", "amount; SELECT 1", "my_udf(amount)", "CAST("])
+    def test_untranslatable_bigquery_expression_warns_and_is_omitted(self, sql):
+        expression = {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+        with pytest.warns(UserWarning, match="'amount'.*could not translate BIGQUERY"):
+            assert _extract_expression(expression, "amount") is None
+
     def test_unsupported_dialect_returns_none_with_warning(self):
         expr = {
-            "dialects": [{"dialect": "BIGQUERY", "expression": "bq_expr"}]
+            "dialects": [{"dialect": "DAX", "expression": "dax_expr"}]
         }
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -508,7 +523,7 @@ class TestConvertNamedExpr:
         entry = {
             "name": "col1",
             "expression": {
-                "dialects": [{"dialect": "BIGQUERY", "expression": "x"}]
+                "dialects": [{"dialect": "DAX", "expression": "x"}]
             },
         }
         with warnings.catch_warnings(record=True):
@@ -859,7 +874,7 @@ class TestConvertOssieToSnowflake:
                             "name": "bad",
                             "expression": {
                                 "dialects": [
-                                    {"dialect": "BIGQUERY", "expression": "bad"}
+                                    {"dialect": "DAX", "expression": "bad"}
                                 ]
                             },
                             "dimension": {"is_time": False},
@@ -898,6 +913,41 @@ class TestConvertOssieToSnowflake:
         }
         result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
         assert "definition" in result["tables"][0]["base_table"]
+
+    def test_holistics_bigquery_fields_and_metrics_survive_export(self):
+        def expression(sql):
+            return {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+
+        model = _minimal_model(
+            name="interop_orders",
+            datasets=[
+                {
+                    "name": "orders",
+                    "source": "analytics.sales.orders",
+                    "primary_key": ["order_id"],
+                    "fields": [
+                        {"name": "order_id", "expression": expression("order_id")},
+                        {"name": "amount", "expression": expression("amount")},
+                        {
+                            "name": "float_amount",
+                            "expression": expression("CAST(amount AS FLOAT64)"),
+                        },
+                    ],
+                }
+            ],
+            metrics=[{"name": "orders__total_amount", "expression": expression("SUM(amount)")}],
+        )
+
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        table = result["tables"][0]
+        assert table["base_table"] == {"database": "ANALYTICS", "schema": "SALES", "table": "ORDERS"}
+        facts = {field["name"]: field["expr"] for field in table["facts"]}
+        cast = sqlglot.parse_one(facts.pop("float_amount"), read="snowflake")
+        assert isinstance(cast, sqlglot.exp.Cast)
+        assert cast.this.name == "amount"
+        assert cast.to.this == sqlglot.exp.DataType.Type.DOUBLE
+        assert facts == {"order_id": "order_id", "amount": "amount"}
+        assert result["metrics"] == [{"name": "orders__total_amount", "expr": "SUM(amount)"}]
 
     def test_field_in_ossie_sql_2026_only_is_exported(self):
         """A dimension expressed only in OSSIE_SQL_2026 is exported, not dropped (#442)."""

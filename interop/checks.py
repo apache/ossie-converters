@@ -249,8 +249,8 @@ def _additional_members(data, native_format):
             for page in data.get("pages") or []
             for element in page.get("elements") or []
         )
-    if native_format == "snowflake":
-        return sum(
+    if native_format in ("snowflake", "semantic-view"):
+        return len(data.get("metrics") or []) + sum(
             sum(
                 len(table.get(key) or [])
                 for key in (
@@ -263,8 +263,6 @@ def _additional_members(data, native_format):
             )
             for table in data.get("tables") or []
         )
-    if native_format == "semantic-view":
-        return _additional_members(data, "snowflake") + len(data.get("metrics") or [])
     if native_format == "thoughtspot":
         return len(
             (data.get("table") or data.get("sql_view") or {}).get("columns") or []
