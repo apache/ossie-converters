@@ -418,7 +418,7 @@ final class OssieConverterCommon {
 
   /** Build a source query for a numeric comparison over a single physical source column. */
   static String filteredSourceQuery(Object source, Object filter,
-      Collection<String> viewNames, boolean hiddenNames) {
+      Collection<String> viewNames, boolean requireSourceQualifier) {
     if (!(source instanceof String table) || !(filter instanceof String predicate)
         || !SIMPLE_SOURCE_TABLE.matcher(table.trim()).matches()) {
       return null;
@@ -429,7 +429,7 @@ final class OssieConverterCommon {
     }
     String column = match.group(2);
     if (match.group(1) == null
-        && (hiddenNames || viewNames.contains(column.toLowerCase(Locale.ROOT)))) {
+        && (requireSourceQualifier || viewNames.contains(column.toLowerCase(Locale.ROOT)))) {
       return null;
     }
     return "SELECT * FROM " + table.trim() + " WHERE " + column

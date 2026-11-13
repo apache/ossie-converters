@@ -18,6 +18,7 @@
 package org.apache.ossie.converter.databricks;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -93,6 +94,15 @@ public class OssieDatabricksConverterCliSuite {
     String out = stdout("import", write("view.yaml", METRIC_VIEW).toString());
     assertTrue(out.contains("datasets:"), "expected an Apache Ossie model, got:\n" + out);
     assertTrue(out.contains("0.2.0.dev0"), "expected the Apache Ossie version, got:\n" + out);
+  }
+
+  @Test
+  public void sourceFilterPushdownIsImportOnlyAndOptIn() throws IOException {
+    Path file = write("filtered.yaml", METRIC_VIEW + "filter: o_amount > 0\n");
+    String query = "SELECT * FROM cat.sch.orders WHERE o_amount > 0";
+    assertFalse(stdout("import", file.toString()).contains(query));
+    assertTrue(stdout("import", file.toString(), "--push-down-source-filter").contains(query));
+    assertEquals(2, exitFrom("export", file.toString(), "--push-down-source-filter").code);
   }
 
   @Test

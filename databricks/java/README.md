@@ -147,15 +147,21 @@ so it can be exported again.
 
 ### Source filters
 
-On import, a filter that compares one source column to a numeric literal on a
-three-part table becomes a `WHERE` clause in the Ossie dataset source query.
-Cube and other consumers that execute source queries can apply that predicate.
-A comparison through `source.column` identifies the physical column explicitly.
-A bare name must resolve directly to the source column.
+By default, import preserves the table reference and stores the filter in the
+Databricks extension. For Cube and other consumers that support SQL sources,
+enable pushdown with the import flag `--push-down-source-filter` or the Java
+overload `OssieConverter.convertMetricViewToOssie(yaml, name, true)`.
+
+Pushdown turns a numeric comparison on a physical column of a three-part
+table into a `WHERE` clause. With joins, qualify the fact column explicitly,
+for example `source.ss_net_profit > 0`. Views with a one-to-many join at any
+depth keep their filter in the extension, since filtering the fact source
+alone can leave rows from the many side in downstream aggregates.
 
 An unchanged query exports back to Databricks as the original table and filter.
 If the query is edited, Databricks export uses the edited source and warns about
-the original filter. Other filter forms remain in the Databricks extension.
+the original filter. If pushdown was requested but is unsupported, import
+keeps the filter in the Databricks extension and emits a notice.
 
 ### Dialect labels on import
 
