@@ -225,10 +225,9 @@ keeps its legacy permissive fallback: unparseable SQL can pass through without a
 syntax-validation error. Other conversion requirements, including column attribution
 checks during view projection, still apply.
 
-Export prefers `ANSI_SQL` with `--dialect` prepending a warehouse dialect (e.g.
-`SNOWFLAKE` for a Snowflake-backed Cube model). `OSSIE_SQL_2026`, Ossie's portable
-SQL, is ANSI-compatible and taken next; its label is kept in `meta.ossie.dialect` so
-re-import hands it back unchanged.
+Export prefers an explicitly selected `--dialect`, then primary
+`expression.sql`, then `ANSI_SQL` and tagged `OSSIE_SQL_2026`. The primary
+expression and its alternatives are stored in Cube metadata for re-import.
 
 Failing those, export falls back to the **first** dialect on offer that is warehouse SQL
 (`SNOWFLAKE`, `DATABRICKS`, `BIGQUERY`), records which one in `meta.ossie.dialect`, and
