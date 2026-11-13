@@ -310,20 +310,80 @@ def test_sanitized_intrinsic_names_remain_quoted_fields(dialect, quote):
         files = next_files
 
 
-@pytest.mark.parametrize("key_name", ["id_pk", "ID_PK", "id_pk_2"])
-def test_synthetic_primary_key_names_avoid_allocated_measures(key_name):
-    ds = dataset(metrics=[metric(key_name)])
-    ds["fields"][0]["expression"] = expression("LOWER(email)")
+@pytest.mark.parametrize("member_name", ["lat_key", "LAT_KEY", "lat_key_pk"])
+def test_private_geo_key_dimension_does_not_rename_an_allocated_measure(member_name):
+    rows = metric("rows", "COUNT(DISTINCT lat_key)")
+    rows["custom_extensions"] = [
+        {"vendor_name": "CUBE", "data": json.dumps({"_v": 1, "name": member_name})}
+    ]
+    ds = dataset(metrics=[rows])
+    ds["primary_key"] = ["lat_key"]
+    for name, part, column in [
+        ("lat_key", "latitude", "lat"),
+        ("lon", "longitude", "lon"),
+    ]:
+        ds["fields"].append(
+            {
+                "name": name,
+                "expression": expression(column),
+                "datatype": "Float",
+                "custom_extensions": [
+                    {
+                        "vendor_name": "CUBE",
+                        "data": json.dumps(
+                            {"_v": 1, "geo": {"of": "location", "part": part}}
+                        ),
+                    }
+                ],
+            }
+        )
     files, _ = export(model(ds))
     cube = yaml.safe_load(files["model/cubes/orders.yml"])["cubes"][0]
     key = next(d for d in cube["dimensions"] if d.get("primary_key"))
-    assert key["name"].lower() != key_name.lower()
-    assert key["sql"] == "id"
-    assert key["public"] is False
-    assert key_name in measures(files)
+    assert key["name"].lower() != member_name.lower()
+    assert key["sql"] == "{CUBE}.lat" and key["public"] is False
+    assert measures(files)[member_name]["type"] == "count"
     returned, _ = convert_cube_to_ossie(files)
-    assert yaml.safe_load(returned)["datasets"][0]["primary_key"] == ["id"]
-    assert parse_files(export(yaml.safe_load(returned))[0]) == parse_files(files)
+    back = yaml.safe_load(returned)
+    assert back["datasets"][0]["primary_key"] == ["location_latitude"]
+    assert back["datasets"][0]["metrics"][0]["expression"] == expression(
+        "COUNT(DISTINCT location_latitude)"
+    )
+    assert parse_files(export(back)[0]) == parse_files(files)
+
+
+def test_legacy_key_column_does_not_shadow_a_local_metric():
+    ds = dataset(metrics=[metric("id", "SUM(amount)")])
+    ds["fields"] = ds["fields"][1:]
+    files, _ = export(model(ds))
+    returned, _ = convert_cube_to_ossie(files)
+    back = yaml.safe_load(returned)
+    ds = back["datasets"][0]
+    assert ds["primary_key"] == ["source__id"]
+    assert ds["metrics"][0]["name"] == "id"
+    assert by_name(ds["fields"])["source__id"]["expression"] == expression("id")
+    assert parse_files(export(back)[0]) == parse_files(files)
+
+
+def test_local_metric_keeps_its_column_only_field_without_a_join():
+    ds = dataset(metrics=[metric("volume", "SUM(units)")])
+    ds["fields"].append(
+        {
+            "name": "units",
+            "expression": expression("quantity"),
+            "custom_extensions": [
+                {"vendor_name": "CUBE", "data": '{"_v": 1, "raw_column": true}'}
+            ],
+        }
+    )
+    files, _ = export(model(ds))
+    cube = yaml.safe_load(files["model/cubes/orders.yml"])["cubes"][0]
+    assert by_name(cube["dimensions"])["units"]["public"] is False
+    assert measures(files)["volume"]["sql"] == "{CUBE.units}"
+    returned, _ = convert_cube_to_ossie(files)
+    back = yaml.safe_load(returned)
+    assert back["datasets"][0]["metrics"][0]["expression"] == expression("SUM(units)")
+    assert parse_files(export(back)[0]) == parse_files(files)
 
 
 @validator_gate

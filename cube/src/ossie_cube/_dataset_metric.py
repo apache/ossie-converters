@@ -155,11 +155,7 @@ def field_signatures(dimensions, cube_name):
     out = {}
     for name, dim in members.items():
         dtype = snake(dim.get("type") or "")
-        if (
-            dim.get("sub_query")
-            or dtype == "switch"
-            or _parked(dim).get("synthetic_key")
-        ):
+        if dim.get("sub_query") or dtype == "switch" or _parked(dim).get("key_field"):
             continue
         value = definition(dim)
         if dtype == "geo":

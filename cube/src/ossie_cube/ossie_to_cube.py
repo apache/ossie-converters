@@ -67,6 +67,8 @@ from ._common import (
     primary_key_operand,
     requalify_self_refs,
     read_stash,
+    write_stash,
+    relationship_binding,
     DOTTED_REF_RE,
     lookup_map,
     match_keys,
@@ -139,8 +141,36 @@ def _convert_model(model, dialect, base_cube, issues):
             ds_name, f"Model '{name}': dataset", taken)
         taken.add(cube_names[ds_name].lower())
     datasets = {ds["name"]: ds for ds in dataset_list}
-
     relationships = model.get("relationships") or []
+    _declare_legacy_columns(datasets, relationships, model.get("metrics") or [], issues)
+    local_fields = {}
+    for ds_name, metric, scope in _dataset_metrics(datasets):
+        fields = datasets[ds_name].get("fields") or []
+        if not any(read_stash(field).get("raw_column") for field in fields):
+            continue
+        if pick_expression(metric.get("expression"), dialect)[0] is None:
+            continue
+        try:
+            used_fields = expression_fields(metric["expression"], [f["name"] for f in fields], scope)
+        except ConversionError:
+            continue  # The measure builder reports unusable local expressions.
+        local_fields.setdefault(ds_name, set()).update(used_fields)
+    for ds in dataset_list:
+        for field in ds.get("fields") or []:
+            stash = read_stash(field)
+            if not stash.get("raw_column"):
+                continue
+            expr, _ = pick_expression(field.get("expression"), dialect)
+            described = set(field) - {"name", "expression", "custom_extensions"}
+            if (described or set(stash) - {"raw_column"} or foreign_vendor_extensions(field)
+                    or field["name"] in local_fields.get(ds["name"], ())
+                    or (expr is not None and not is_simple_identifier(expr))):
+                # A local metric needs its field to survive import even if the
+                # join that originally declared the raw column is later removed.
+                stash.pop("raw_column")
+                stash.setdefault("public", False)
+                write_stash(field, stash)
+
     for rel in relationships:
         scope = f"Model '{name}': relationship '{rel.get('name', '<unnamed>')}'"
         if (require_str(rel, "from", scope) not in datasets
@@ -154,16 +184,17 @@ def _convert_model(model, dialect, base_cube, issues):
     # about which members exist, and so about `{CUBE.member}` vs `{CUBE}.column` and
     # where a measure lands.
     plan = {cube_names[ds_name]: _CubePlan.of(ds, cube_names[ds_name], dialect,
-                                              f"Model '{name}': dataset '{ds_name}'")
+                                              f"Model '{name}': dataset '{ds_name}'", issues)
             for ds_name, ds in datasets.items()}
 
     tables = _reference_tables(plan, cube_names)
 
-    joins_by_cube, join_parked_by_cube = _build_joins(
-        relationships, cube_names, issues)
+    base_relationships = relationships
+    joins_by_cube, join_parked_by_cube, relationships = _build_joins(
+        relationships, cube_names, issues, datasets, plan)
     measures_by_cube = _build_measures(
         model, cube_names, plan, tables, datasets, relationships, base_cube, dialect,
-        issues)
+        issues, base_relationships=base_relationships)
 
     # Cubes, grouped by the file they belong in: several datasets can share one
     # stashed original path, in which case they go back into the same file.
@@ -191,7 +222,9 @@ def _convert_model(model, dialect, base_cube, issues):
 
     for vpath, views in _build_views(model, model_stash, cube_names, relationships,
                                      datasets, base_cube, emitted_members,
-                                     issues).items():
+                                     issues, base_relationships=base_relationships).items():
+        if any(p.dropped for p in plan.values()):
+            _drop_unavailable_view_members(views, cubes_by_name, emitted_members, issues)
         files_content.setdefault(vpath, {}).setdefault("views", []).extend(views)
 
     if not _a_view_carries_the_model(model_stash):
@@ -211,6 +244,101 @@ def _convert_model(model, dialect, base_cube, issues):
                 f"file of the same name; rename the dataset or the stashed file.")
         files[path] = text
     return files, issues
+
+
+def _declare_legacy_columns(datasets, relationships, model_metrics, issues):
+    """Keep accepting older warehouse documents whose keys name source columns.
+
+    Declared fields always win. Only an undeclared bare identifier receives the
+    old source-column interpretation; no datatype or calculation is inferred.
+    """
+    legacy_fields = {}
+    # Model metric placement depends on the declared fields. Reserve its possible
+    # measure names before creating any legacy fields.
+    model_metric_names = _model_metric_measure_names(model_metrics)
+
+    def declare(ds_name, names, scope):
+        ds = datasets.get(ds_name)
+        if ds is None or not isinstance(names, list):
+            return  # The ordinary structural validation diagnoses this.
+        lookup = lookup_map(f["name"] for f in ds.get("fields") or [])
+        aliases = legacy_fields.setdefault(ds_name, {})
+        metrics = ds.get("metrics")
+        metrics = metrics if isinstance(metrics, list) else []
+        metric_names = model_metric_names | {
+            sanitize_name(m["name"], "metric", set()).lower() for m in metrics
+            if isinstance(m, dict) and isinstance(m.get("name"), str)}
+        for index, name in enumerate(names):
+            if not is_simple_identifier(name) or resolve_identifier(lookup, name) is not None:
+                continue
+            key = normalize_identifier(name)
+            if key in aliases:
+                names[index] = aliases[key]
+                continue
+            field_name = name
+            if sanitize_name(name, scope, set()).lower() in metric_names:
+                base, suffix = f"source__{name}", 2
+                field_name = base
+                while (sanitize_name(field_name, scope, set()).lower() in metric_names
+                       or resolve_identifier(lookup, field_name) is not None):
+                    field_name, suffix = f"{base}_{suffix}", suffix + 1
+                aliases[key] = names[index] = field_name
+            field = {"name": field_name, "expression": {"dialects": [
+                {"dialect": DIALECT_ANSI, "expression": name}]}}
+            write_stash(field, {"raw_column": True})
+            ds.setdefault("fields", []).append(field)
+            lookup = lookup_map(f["name"] for f in ds["fields"])
+            issues.add(IssueType.APPROXIMATED, scope,
+                       f"undeclared field '{ds_name}.{name}' interpreted as a legacy source "
+                       "column; declared a column-only field (key dimensions are private)")
+
+    for ds_name, ds in datasets.items():
+        declare(ds_name, ds.get("primary_key"), f"dataset '{ds_name}': primary_key")
+        if isinstance(ds.get("unique_keys"), list):
+            for index, key in enumerate(ds["unique_keys"]):
+                declare(ds_name, key, f"dataset '{ds_name}': unique_keys[{index}]")
+    for rel in relationships:
+        for side in ("from", "to"):
+            declare(rel.get(side), rel.get(side + "_columns"),
+                    f"relationship '{rel.get('name', '<unnamed>')}'")
+
+
+def _drop_unavailable_view_members(views, cubes, emitted_members, issues):
+    """A restored view must not reference fields or joins just dropped by export."""
+    for view in views:
+        if not isinstance(view.get("cubes"), list):
+            continue
+        kept = []
+        for entry in view.get("cubes") or []:
+            path = str(entry.get("join_path", "")).split(".")
+            if any(name not in cubes for name in path):
+                # Cubes in verbatim JS/Jinja files have no static member inventory.
+                kept.append(entry)
+                continue
+            unavailable = any(
+                right not in {j["name"] for j in cubes[left].get("joins") or []}
+                for left, right in zip(path, path[1:]))
+            if unavailable:
+                issues.add(IssueType.DROPPED_INVALID_REFERENCE, f"view '{view['name']}'",
+                           f"join_path '{entry.get('join_path')}' dropped because its join "
+                           "is unavailable after dropping fields without a usable dialect")
+                continue
+            members = set(emitted_members[path[-1]])
+            entry = dict(entry)
+            for key in ("includes", "excludes"):
+                values = entry.get(key)
+                if not isinstance(values, list):
+                    continue
+                retained = [v for v in values if (v.get("name") if isinstance(v, dict) else v)
+                            in members | {"*"}]
+                if retained != values:
+                    issues.add(IssueType.DROPPED_INVALID_REFERENCE, f"view '{view['name']}'",
+                               f"{key} on '{entry['join_path']}' dropped references to "
+                               "members that did not export")
+                entry[key] = retained
+            if entry.get("includes") != []:
+                kept.append(entry)
+        view["cubes"] = kept
 
 
 # --- ai_context -----------------------------------------------------------------
@@ -311,8 +439,15 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
         cube["description"] = escape_braces_for_cube(ds["description"])
 
     parked = {}
-    if ds.get("unique_keys"):
-        parked["unique_keys"] = [list(k) for k in ds["unique_keys"]]
+    if plan.unique_keys:
+        parked["unique_keys"] = [[plan.restored_fields[n] for n in k]
+                                 for k in plan.unique_keys]
+        # Same-named source columns retain the legacy spelling. Aliases,
+        # calculations, geo halves and column-only fields need explicit field
+        # semantics so import cannot reinterpret a field name as a column.
+        if any(n in plan.references or n in plan.inline_sql
+               for key in plan.unique_keys for n in key):
+            parked["key_fields"] = True
         issues.add(IssueType.PARKED_IN_META, scope,
                    "unique_keys have no Cube field; parked under meta.ossie")
     foreign = foreign_vendor_extensions(ds)
@@ -340,16 +475,10 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     for item in sorted(stash.get("extra_joins") or [], key=lambda x: x.get("index", 0)):
         output_joins.insert(min(item.get("index", 0), len(output_joins)), item["join"])
 
-    dimensions, by_name_scalar, by_column, by_name_computed = _build_dimensions(
-        ds, plan, tables, dialect, issues)
-    # Resolve each `primary_key` entry to the dimension Cube should mark. A
-    # dimension only qualifies when it is *scalar* -- backed by a single source
-    # column -- because `primary_key: true` in Cube declares that dimension's own
-    # sql to be the key. A computed dimension would declare the wrong expression,
-    # and a merged geo dimension has no single sql at all, so neither counts even
-    # when its name matches. Anything left uncovered gets a private dimension.
+    dimensions = _build_dimensions(ds, plan, tables, dialect, issues)
+    # Keys name declared fields, including computed fields. A geo coordinate is
+    # the exception: its merged Cube dimension has no scalar SQL to mark as a key.
     pk_names = []
-    computed_keys = set(stash.get("computed_primary_key") or [])
     taken = {d["name"].lower() for d in dimensions}
     # Measures have already been allocated. A private key dimension can choose a
     # new name, whereas renaming those measures here would break view references.
@@ -358,51 +487,35 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     # `plan.primary_key`, not the dataset's own field: the plan is where the fallback to
     # `unique_keys` is resolved, and every stage has to agree on the answer.
     for entry in plan.primary_key:
-        entry = str(entry)
-        # Import records the *dimension name*, so the name match is checked first;
-        # a hand-authored model naming the source column resolves by column.
-        match = by_name_scalar.get(entry) or by_column.get(entry)
+        field = entry
+        if field in plan.dropped:
+            raise ConversionError(f"{scope}: key field '{entry}' has no usable expression")
+        member = plan.names.get(field)
+        match = next((d["name"] for d in dimensions if d["name"] == member
+                      and d.get("type") != "geo"), None)
         if match:
             pk_names.append(match)
             continue
-        # A dimension name import recorded because the Cube key was an expression:
-        # `primary_key: true` goes back on that dimension, so Cube keys on the same
-        # expression the source model did. Synthesizing one instead would read a column
-        # that does not exist. Only entries import flagged qualify -- for anything else
-        # a name match is not evidence, since Ossie `primary_key` names columns.
-        if entry in computed_keys and entry in by_name_computed:
-            pk_names.append(by_name_computed[entry])
-            continue
-        name = _unique_pk_dimension_name(entry, taken)
+        preferred = (stash.get("key_dimensions") or {}).get(plan.restored_fields[field], entry)
+        name = _unique_pk_dimension_name(preferred, taken)
         taken.add(name.lower())
-        detail = (f"primary key '{entry}' is not backed by a scalar dimension; "
-                  f"emitted as a non-public dimension with type 'string' (Cube "
-                  f"requires a type and Ossie carries none here)")
-        if name != entry:
-            detail += f", named '{name}' to avoid colliding with the existing member"
-        issues.add(IssueType.APPROXIMATED, scope, detail)
+        field_def = next(f for f in ds["fields"] if f["name"] == field)
+        ctype = _dimension_type(field_def, read_stash(field_def), f"{ds_name}.{field}", issues)
         dimensions.append({
-            "name": name, "sql": entry, "type": "string",
+            "name": name, "sql": plan.inline_sql[field], "type": ctype,
             "primary_key": True, "public": False,
-            # This dimension exists only to carry Cube's primary key; the Ossie model
-            # had no field for the column. Marked so re-import does not invent one.
-            "meta": {"ossie": {"synthetic_key": True}},
+            "meta": {"ossie": {"key_field": plan.restored_fields[field]}},
         })
         pk_names.append(name)
     for dim in dimensions:
         if dim["name"] in pk_names:
             dim["primary_key"] = True
-    # Whichever way the key arrived -- declared, or promoted from `unique_keys` -- what
-    # matters is whether the columns can be read back off the dimensions carrying them.
-    key_columns = list(plan.primary_key)
-    if key_columns and pk_names != key_columns:
-        # Import rebuilds the key from Cube *dimension* names, which are the columns only
-        # when they happen to coincide: a field `order_id` reading column `id` is marked
-        # as the key and comes back named `order_id`, and a synthesized `id_pk` comes back
-        # as `id_pk`. Both name something the table need not have, so the column list is
-        # recorded -- and only then, so a model whose names already agree keeps a clean
-        # round trip.
-        parked["primary_key"] = key_columns
+    # Native dimension names normally recover the field key directly. A merged
+    # geo coordinate needs the coordinate field name recorded instead.
+    key_fields = [plan.restored_fields[n] for n in plan.primary_key]
+    if key_fields and pk_names != key_fields:
+        parked["primary_key"] = key_fields
+        parked["key_fields"] = True
     if plan.key_from_unique_keys and pk_names:
         issues.add(IssueType.APPROXIMATED, scope,
                    f"no primary_key, so the first unique_keys entry "
@@ -500,6 +613,7 @@ class _CubePlan:
     all answers about the same cube, so they travel together.
 
     `names`     Ossie field name -> the Cube dimension name it becomes.
+    `restored_fields` the field names import emits (geo dimensions split again).
     `inline_sql` Ossie field name -> Cube SQL to substitute for it (a split geo half,
                 which exists only in Ossie and so has no member to reference).
     `references` the members that must be addressed as `{CUBE.member}`, keyed by every
@@ -509,34 +623,45 @@ class _CubePlan:
     `members`   every member name the cube will carry, stashed ones included -- what a
                 generated name has to avoid.
     `dropped`   fields with no expression in a usable dialect, which become no dimension.
-    `primary_key` the dataset's declared key columns.
+    `primary_key` the dataset's declared key fields.
+    `unique_keys` every canonical unique-key entry, including secondary keys.
+    `key_fields`  all fields needed to preserve either kind of key.
     """
 
     cname: str
     names: dict
     inline_sql: dict
+    restored_fields: dict
     references: dict
     lookup: dict
     members: frozenset
     dropped: frozenset
     primary_key: tuple
+    unique_keys: tuple
+    key_fields: frozenset
     key_from_unique_keys: bool
 
     @classmethod
-    def of(cls, ds, cname, dialect, scope):
+    def of(cls, ds, cname, dialect, scope, issues):
         names, inline_sql = _resolve_dimension_names(ds, dialect, scope)
         stash = read_stash(ds)
-        key, from_unique = _primary_key_columns(ds)
+        dropped = frozenset(_undialected_fields(ds, dialect))
+        key, unique_keys, from_unique = _primary_key_fields(ds, dropped, issues)
+        key_fields = frozenset(key) | frozenset(n for k in unique_keys for n in k)
         lookup = dict(names)
         lookup.update({dname: dname for dname in names.values()})
         return cls(
             cname=cname,
             names=names,
             inline_sql=inline_sql,
+            restored_fields={f["name"]: (f"{names[f['name']]}_{read_stash(f)['geo']['part']}"
+                                        if read_stash(f).get("geo") else names[f["name"]])
+                             for f in ds.get("fields") or []},
             references=_reference_members(ds, names, dialect),
             lookup=lookup,
             members=frozenset(
-                set(names.values())
+                {names[f["name"]] for f in ds.get("fields") or []
+                 if not read_stash(f).get("raw_column") or f["name"] in key_fields}
                 | {str(item["dimension"]["name"])
                    for item in (stash.get("extra_dimensions") or [])
                    if (item.get("dimension") or {}).get("name")}
@@ -544,14 +669,16 @@ class _CubePlan:
                    for item in (stash.get("extra_measures") or [])
                    if (item.get("measure") or {}).get("name")}
                 | _stashed_segment_names(stash)),
-            dropped=frozenset(_undialected_fields(ds, dialect)),
+            dropped=dropped,
             primary_key=key,
+            unique_keys=unique_keys,
+            key_fields=key_fields,
             key_from_unique_keys=from_unique,
         )
 
 
-def _primary_key_columns(ds):
-    """(key columns, whether they came from `unique_keys`).
+def _primary_key_fields(ds, dropped, issues):
+    """(canonical primary key, unique keys, whether primary came from unique keys).
 
     Cube needs a primary key on any cube that declares a join, and several source
     formats have no primary-key concept at all -- a Databricks metric view does not --
@@ -559,14 +686,38 @@ def _primary_key_columns(ds):
     just as well. Without that fallback the information sat parked in `meta.ossie` while
     Cube refused the model for want of exactly it.
     """
-    declared = [str(c) for c in (ds.get("primary_key") or [])]
+    names = lookup_map(f["name"] for f in ds.get("fields") or [])
+    def checked(key, label):
+        if not isinstance(key, list):
+            raise ConversionError(f"Dataset '{ds['name']}': {label} must be a list of field names")
+        resolved = []
+        for name in key:
+            field = resolve_identifier(names, name) if isinstance(name, str) else None
+            if field is None:
+                raise ConversionError(f"Dataset '{ds['name']}': {label} references undeclared "
+                                      f"field '{name}'")
+            resolved.append(field)
+        unavailable = [n for n in resolved if n in dropped]
+        if unavailable:
+            issues.add(IssueType.NO_USABLE_DIALECT, f"dataset '{ds['name']}': {label}",
+                       f"key dropped: fields {', '.join(unavailable)} have no usable "
+                       "expression; the entire constraint is dropped")
+            return []
+        return resolved
+    declared = checked(ds.get("primary_key") if ds.get("primary_key") is not None else [],
+                       "primary_key")
+    unique_keys = ds.get("unique_keys") if ds.get("unique_keys") is not None else []
+    if not isinstance(unique_keys, list):
+        raise ConversionError(f"Dataset '{ds['name']}': unique_keys must be a list of field lists")
+    unique = tuple(key for index, k in enumerate(unique_keys)
+                   if (key := tuple(checked(k, f"unique_keys[{index}]"))))
     if declared:
-        return tuple(declared), False
-    for candidate in (ds.get("unique_keys") or []):
-        columns = [str(c) for c in (candidate or [])]
+        return tuple(declared), unique, False
+    for candidate in unique:
+        columns = candidate
         if columns:
-            return tuple(columns), True
-    return (), False
+            return tuple(columns), unique, True
+    return (), unique, False
 
 
 def _reference_members(ds, dim_names, dialect):
@@ -582,6 +733,8 @@ def _reference_members(ds, dim_names, dialect):
         fname = field.get("name")
         dname = dim_names.get(fname)
         if not dname:
+            continue
+        if read_stash(field).get("raw_column"):
             continue
         expr, _ = pick_expression(field.get("expression"), dialect)
         if expr is None:
@@ -689,7 +842,9 @@ def _resolve_dimension_names(ds, dialect, scope):
     names, inline_sql = {}, {}
     taken = set()
     geo_halves = {}  # base -> {part: field name}, for validating the pair
-    for field in (ds.get("fields") or []):
+    # Real members keep their names; column-only dependencies take an unused
+    # private member name if materializing one would otherwise collide.
+    for field in sorted(ds.get("fields") or [], key=lambda f: bool(read_stash(f).get("raw_column"))):
         fname = require_str(field, "name", f"{scope}: field")
         geo = read_stash(field).get("geo")
         if geo:
@@ -719,9 +874,15 @@ def _resolve_dimension_names(ds, dialect, scope):
             names[fname] = base
             inline_sql[fname] = _geo_half_sql(field, geo, dialect, scope)
             continue
-        dname = sanitize_name(fname, f"{scope}: field", taken)
+        dname = (_unique_pk_dimension_name(fname, taken) if read_stash(field).get("raw_column")
+                 else sanitize_name(fname, f"{scope}: field", taken))
         taken.add(dname.lower())
         names[fname] = dname
+        if read_stash(field).get("raw_column"):
+            expr, _ = pick_expression(field.get("expression"), dialect)
+            if expr is not None:
+                inline_sql[fname] = ("{CUBE}." + expr if is_simple_identifier(expr)
+                                     else qualify_bare_columns(expr))
     for base, seen in geo_halves.items():
         missing = {"latitude", "longitude"} - set(seen)
         if missing:
@@ -734,14 +895,6 @@ def _resolve_dimension_names(ds, dialect, scope):
 def _build_dimensions(ds, plan, tables, dialect, issues):
     """Build a cube's dimensions from an Ossie dataset's fields.
 
-    Returns (dimensions, by_name_scalar, by_column, by_name_computed).
-
-    The first two maps hold only *scalar* dimensions (those whose expression is a
-    single source column), which are the ones Cube's `primary_key: true` can mark
-    without declaring something other than the column Ossie named. `by_name_computed`
-    holds the rest by name, except merged geo dimensions -- a computed dimension is
-    still the right thing to mark when Ossie's `primary_key` names it, because import
-    writes dimension *names* there and a computed key has no column to name instead.
     Fields carrying a `geo` stash are re-merged into the single Cube dimension they
     were split from.
     Dimension names come from `plan.names` (see `_resolve_dimension_names`) rather
@@ -750,7 +903,6 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
     ds_name = ds["name"]
     cname = plan.cname
     dim_names = plan.names
-    by_name_scalar, by_column, by_name_computed = {}, {}, {}
     # Built by target dimension name rather than by list position: a geo dimension
     # is assembled from two fields that may appear in either order and need not be
     # adjacent, so an insertion index computed mid-loop is not a safe way to hold
@@ -761,6 +913,11 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
         fname = require_str(field, "name", f"dataset '{ds_name}': field")
         stash = read_stash(field)
         dname = dim_names[fname]
+        if stash.get("raw_column"):
+            if fname not in plan.key_fields and fname not in plan.dropped:
+                continue
+            stash = {k: v for k, v in stash.items() if k != "raw_column"}
+            stash["public"] = False
         if dname not in order:
             order.append(dname)
         if "geo" in stash:
@@ -815,6 +972,8 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
         if field.get("description"):
             dim["description"] = escape_braces_for_cube(field["description"])
         parked = {}
+        if stash.get("synthetic_key"):
+            parked["synthetic_key"] = True
         foreign = foreign_vendor_extensions(field)
         if foreign:
             parked["custom_extensions"] = foreign
@@ -841,7 +1000,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
         # `sql`/`type` are an older stash shape, `dim_type` supplies the Cube type,
         # and `geo` was used to merge the halves back together.
         extras = {k: v for k, v in stash.items()
-                  if k not in ("sql", "type", "dim_type", "meta", "geo")}
+                  if k not in ("sql", "type", "dim_type", "meta", "geo", "synthetic_key")}
         meta = _build_meta(field.get("ai_context"), stash.get("meta"), parked)
         if meta:
             dim["meta"] = meta
@@ -849,14 +1008,6 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
             dim[key] = value
 
         built[dname] = dim
-        if is_simple_identifier(expr):
-            # Scalar: this dimension is exactly one source column, so Cube can mark
-            # it as the key. Reachable by its own name and by that column's name.
-            by_name_scalar[dname] = dname
-            by_column.setdefault(expr.strip(), dname)
-        else:
-            by_name_computed[dname] = dname
-
     # Both halves are guaranteed present by _resolve_dimension_names, which
     # validates the pair before anything is built.
     for base, slot in geo_parts.items():
@@ -870,8 +1021,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
 
     # A name in `order` with nothing built is a field dropped for want of a usable
     # dialect; it simply does not appear.
-    return ([built[n] for n in order if n in built], by_name_scalar, by_column,
-            by_name_computed)
+    return [built[n] for n in order if n in built]
 
 
 def _unique_pk_dimension_name(entry, taken):
@@ -957,7 +1107,7 @@ def _stashed_segment_names(stash):
             if isinstance(seg, dict) and seg.get("name")}
 
 
-def _build_joins(relationships, cube_names, issues):
+def _build_joins(relationships, cube_names, issues, datasets, plan):
     """Group Ossie relationships into per-cube `joins` lists.
 
     A stashed `declared_on`/`relationship` restores the original declaring side and
@@ -972,6 +1122,7 @@ def _build_joins(relationships, cube_names, issues):
     joins_by_cube = {}
     parked_by_cube = {}
     declared_targets = {}
+    kept_relationships = []
     for rel in relationships:
         rname = rel.get("name", "<unnamed>")
         from_cols = rel.get("from_columns") or []
@@ -985,6 +1136,19 @@ def _build_joins(relationships, cube_names, issues):
             raise ConversionError(
                 f"Relationship '{rname}': from_columns ({len(from_cols)}) and "
                 f"to_columns ({len(to_cols)}) must have the same length")
+
+        unavailable = []
+        for side, columns in (("from", from_cols), ("to", to_cols)):
+            target = plan[cube_names[rel[side]]]
+            for column in columns:
+                field = resolve_identifier(lookup_map(list(target.names)), str(column))
+                if field in target.dropped:
+                    unavailable.append(f"{rel[side]}.{field}")
+        if unavailable:
+            issues.add(IssueType.NO_USABLE_DIALECT, f"relationship '{rname}'",
+                       f"relationship dropped: fields {', '.join(unavailable)} have no "
+                       "usable expression; the entire join is dropped")
+            continue
 
         stash = read_stash(rel)
         from_cube = cube_names[rel["from"]]
@@ -1016,15 +1180,46 @@ def _build_joins(relationships, cube_names, issues):
             own, other = from_cube, to_cube
             own_cols, other_cols = from_cols, to_cols
 
+        own_ds = rel["to"] if declared_on == to_cube else rel["from"]
+        other_ds = rel["from"] if declared_on == to_cube else rel["to"]
+        ds = datasets[own_ds]
+        if (not plan[own].primary_key and plan[own].dropped
+                and (ds.get("primary_key") or ds.get("unique_keys"))):
+            issues.add(IssueType.NO_USABLE_DIALECT, f"relationship '{rname}'",
+                       "join dropped: the declaring cube's required key was dropped "
+                       "because it has no usable expression")
+            continue
+
         join = {"name": other, "relationship": relationship}
-        if "sql" in stash:
-            join["sql"] = stash["sql"]
-        else:
-            join["sql"] = " AND ".join(
-                "{CUBE}." + str(a) + " = {" + other + "}." + str(b)
-                for a, b in zip(own_cols, other_cols))
+        def reference(dataset_name, column):
+            ds = datasets[dataset_name]
+            field = resolve_identifier(lookup_map(f["name"] for f in ds.get("fields") or []),
+                                       str(column))
+            if field is None:
+                raise ConversionError(f"Relationship '{rname}': '{column}' is not a "
+                                      f"declared field of '{dataset_name}'")
+            target = cube_names[dataset_name]
+            if field in plan[target].dropped:
+                raise ConversionError(f"Relationship '{rname}': field '{dataset_name}.{field}' "
+                                      "has no usable expression")
+            if field in plan[target].inline_sql:
+                sql = plan[target].inline_sql[field]
+                return sql if target == own else requalify_self_refs(sql, target)
+            alias = "CUBE" if target == own else target
+            member = plan[target].names[field]
+            return ("{" + alias + "." + member + "}" if field in plan[target].references
+                    else "{" + alias + "}." + member)
+        generated_sql = " AND ".join(
+            reference(own_ds, a) + " = " + reference(other_ds, b)
+            for a, b in zip(own_cols, other_cols))
+        unchanged = ("field_binding" not in stash
+                     or stash["field_binding"] == relationship_binding(rel, datasets))
+        join["sql"] = stash["sql"] if "sql" in stash and unchanged else generated_sql
+        if "sql" in stash and not unchanged:
+            issues.add(IssueType.APPROXIMATED, f"relationship '{rname}'",
+                       "declared field bindings changed; regenerated the native join SQL")
         for key, value in stash.items():
-            if key not in ("declared_on", "relationship", "sql"):
+            if key not in ("declared_on", "relationship", "sql", "field_binding"):
                 join[key] = value
         if rel.get("ai_context"):
             # A Cube join entry takes only name/sql/relationship -- no `meta` -- so
@@ -1053,38 +1248,42 @@ def _build_joins(relationships, cube_names, issues):
         existing[other] = rname
         joins_by_cube.setdefault(own, []).append(
             _ordered(join, ["name", "sql", "relationship"]))
-    return joins_by_cube, parked_by_cube
+        kept_relationships.append(rel)
+    return joins_by_cube, parked_by_cube, kept_relationships
 
 
 # --- measures -------------------------------------------------------------------
 
+def _model_metric_measure_names(metrics):
+    names = set()
+    for metric in metrics:
+        if not isinstance(metric, dict) or not isinstance(metric.get("name"), str):
+            continue
+        stash = read_stash(metric)
+        names.add((stash.get("name") or sanitize_name(metric["name"], "metric", set())).lower())
+        measure = stash.get("measure")
+        if isinstance(measure, dict) and measure.get("name"):
+            names.add(str(measure["name"]).lower())
+    return names
+
+
 def _build_measures(model, cube_names, plan, tables, datasets, relationships,
-                    base_cube, dialect, issues):
+                    base_cube, dialect, issues, *, base_relationships=None):
     """Group Ossie metrics into per-cube `measures` lists."""
     name = model.get("name", "<unnamed>")
     base_cache = []
     def resolve_base():
         if not base_cache:
             base_cache.append(cube_names[_pick_base_cube(
-                name, datasets, relationships, base_cube)])
+                name, datasets, (relationships if base_relationships is None
+                                 else base_relationships), base_cube)])
         return base_cache[0]
 
     # Every measure name the metrics will produce, reserved up front. Allocating part
     # names against only the measures built *so far* made the conversion order-
     # dependent: a composite `ratio` ahead of a metric named `ratio_part_1` took that
     # name first and the later metric then collided, while the reverse order worked.
-    reserved = set()
-    for metric in (model.get("metrics") or []):
-        mstash = read_stash(metric)
-        raw = metric.get("name")
-        if not isinstance(raw, str):
-            continue
-        reserved.add((mstash.get("name")
-                      or sanitize_name(raw, "metric", set())).lower())
-        if isinstance(mstash.get("measure"), dict):
-            stashed_name = mstash["measure"].get("name")
-            if stashed_name:
-                reserved.add(str(stashed_name).lower())
+    reserved = _model_metric_measure_names(model.get("metrics") or [])
     for _, metric, scope in _dataset_metrics(datasets):
         reserved.add(sanitize_name(metric["name"], scope, set()).lower())
 
@@ -1288,19 +1487,9 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
     # Local expressions contain no metric references, so model-level metric names
     # must never shadow their fields. Ownership comes from the declaring dataset,
     # including COUNT(*) and other expressions with no field reference.
-    # Import splits merged geo dimensions back into coordinate fields. Those
-    # names, rather than the merged member name, define the restored namespace.
-    restored_fields = {}
-    for ds_name, ds in datasets.items():
-        target = cube_names[ds_name]
-        restored_fields[target] = {}
-        for field in ds.get("fields") or []:
-            fname = field["name"]
-            if fname in plan[target].dropped:
-                continue
-            member = plan[target].names[fname]
-            geo = read_stash(field).get("geo")
-            restored_fields[target][fname] = f"{member}_{geo['part']}" if geo else member
+    restored_fields = {cname: {field: member for field, member in p.restored_fields.items()
+                               if field not in p.dropped}
+                       for cname, p in plan.items()}
     restored_names = {c: {normalize_identifier(n) for n in fields.values()}
                       for c, fields in restored_fields.items()}
     pinned_members = {}
@@ -2160,7 +2349,7 @@ def _record_model_name(parked, model, view_name, issues, collided=False):
 
 
 def _build_views(model, model_stash, cube_names, relationships, datasets,
-                 base_cube, emitted_members, issues):
+                 base_cube, emitted_members, issues, *, base_relationships=None):
     """Return {file path: [view dict, ...]}.
 
     A list per path, not a single view: several views can share one YAML file, and
@@ -2238,7 +2427,8 @@ def _build_views(model, model_stash, cube_names, relationships, datasets,
     view["cubes"] = generated_view_cubes(
         cube_names, relationships,
         cube_names[_pick_base_cube(model.get("name", "<unnamed>"), datasets,
-                                  relationships, base_cube)],
+                                  (relationships if base_relationships is None
+                                   else base_relationships), base_cube)],
         emitted_members, vname, issues)
     out[view_file(vname)] = [view]
     return out

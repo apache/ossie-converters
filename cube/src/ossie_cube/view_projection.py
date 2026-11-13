@@ -68,12 +68,15 @@ from .cube_to_ossie import (
     _build_model,
     _case_expression,
     _collect,
-    _column_of,
     _decomposed_measure_names,
     _fanned_out_datasets,
     _fanout_unsafe_datasets,
     _is_generated_part,
     _MeasureResolver,
+    _ImportedFields,
+    _convert_dimension,
+    _field_member,
+    _plain_members,
     _metric_names_of,
     _no_cubes_message,
     _primary_key_of,
@@ -153,8 +156,9 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     `convert_cube_to_ossie` takes. Returns (ossie_yaml_str, resolved_source, IssueLog).
 
     Unlike `convert_cube_to_ossie`, this is a publication transform, not a round trip:
-    the model holds exactly the dimensions and measures `view` exposes, under the names
-    it exposes them by, with every hidden dependency inlined. `resolved_source` is the
+    the model holds the dimensions and measures `view` exposes under their published
+    names, plus non-public supporting fields required by keys and relationships.
+    Other hidden dependencies are inlined. `resolved_source` is the
     root of the view's join paths -- the dataset a downstream converter needing a single
     fact should start from -- unless `source` names another dataset in the projection.
 
@@ -614,9 +618,8 @@ def _reduced_measure(inliner, cubes, measure, cname, mname):
     """A measure as the reduced cube set carries it, and the measures it references.
 
     Dimension references are inlined and columns qualified. A bare `type: count` is
-    spelled out as the distinct count of its primary key's own SQL -- the same value,
-    and the form `primary_key_count_expression` gives -- because the projected model
-    publishes no field for a hidden key to name.
+    spelled out as the distinct count of its primary key's own SQL for dependency
+    and fan-out analysis. Publication later binds it to the declared key-field aliases.
     """
     scope = f"measure '{cname}.{mname}'"
     _refuse_windowing(measure, scope)
@@ -663,13 +666,28 @@ def _primary_key_sql(inliner, cubes, cname, source_dialect=None):
     """Cube SQL for a cube's primary key: its columns, or its key dimensions' SQL."""
     cube = cubes[cname]
     keys = _primary_key_of(cube, cname)
-    if "primary_key" in parked_of(cube.get("meta")):
+    parked = parked_of(cube.get("meta"))
+    if parked.get("key_fields") and parked.get("primary_key"):
+        native_names = {d["name"] for d in _as_named_list(cube.get("dimensions"),
+                                                        f"cube '{cname}' dimensions")}
+        if any(_native_key_dimension(cube, key) not in native_names for key in keys):
+            # Stale metadata is dropped by import; the count still follows the
+            # key dimensions Cube actually has, rather than the stale names.
+            keys = _primary_key_of(cube, cname, native=True)
+    if "primary_key" in parked and not parked.get("key_fields"):
         # Recorded by a previous export, and columns by construction.
         return primary_key_operand(cname, keys, lambda key: "{CUBE}." + key,
                                    source_dialect)
     return primary_key_operand(
-        cname, keys, lambda key: inliner.dimension(cname, key),
+        cname, keys, lambda key: inliner.dimension(cname, _native_key_dimension(cube, key)),
         source_dialect)
+
+
+def _native_key_dimension(cube, field):
+    """A recorded field key may be carried by a private scalar geo dimension."""
+    return next((d["name"] for d in _as_named_list(cube.get("dimensions"),
+                                                  f"cube '{cube['name']}' dimensions")
+                 if parked_of(d.get("meta")).get("key_field") == field), field)
 
 
 def _published_dimension(inliner, cubes, member):
@@ -830,6 +848,65 @@ def _reduced_cubes(tree, cubes, dimensions, measures, inliner, issues):
     """The cube set the import runs over: each tree cube's source and labels, the joins
     the tree uses (SQL inlined, so a key member reads its column), the published
     dimensions and the measures they need -- nothing else to convert."""
+    # Keep keys available during import so raw joins can reuse their fields,
+    # even when those dimensions are hidden by the view.
+    for cname in tree.order:
+        cube = cubes[cname]
+        parked = parked_of(cube.get("meta"))
+        keys = set(_primary_key_of(cube, cname, native=True))
+        if parked.get("key_fields"):
+            keys.update(parked.get("primary_key") or [])
+            keys.update(n for k in parked.get("unique_keys") or [] for n in k)
+        for native in _as_named_list(cube.get("dimensions"), f"cube '{cname}' dimensions"):
+            dname = native["name"]
+            if snake(native.get("type") or "") == "geo":
+                if not any(f"{dname}_{part}" in keys for part in ("latitude", "longitude")):
+                    continue
+                dim = copy.deepcopy(native)
+                for part in ("latitude", "longitude"):
+                    if isinstance(dim.get(part), dict) and "sql" in dim[part]:
+                        dim[part]["sql"] = inliner.rewrite(
+                            dim[part]["sql"], cname, f"dimension '{cname}.{dname}'")
+            elif dname in keys:
+                dim = {**_labels_of(native), "sql": inliner.dimension(cname, dname)}
+                if native.get("primary_key"):
+                    dim["primary_key"] = True
+                if _is_private(native):
+                    dim["public"] = False
+            else:
+                continue
+            dimensions.setdefault((cname, dname), dim)
+
+    # Keep local member references in joins: Ossie can now name the corresponding
+    # computed fields directly. Their SQL is still fully inlined within each field.
+    join_sql = {}
+    for child, (parent, join) in tree.parent.items():
+        sql = join.get("sql") or ""
+        expanded = inliner.rewrite(sql, parent, f"join '{parent}' -> '{child}'")
+        needed = {}
+        for match in _CUBE_REF_RE.finditer(sql):
+            body = match.group(1).strip()
+            head, dot, tail = body.partition(".")
+            if not dot and (head in (*_SELF_REFS, parent) or
+                            (head in cubes and sql[match.end():].lstrip().startswith("."))):
+                continue
+            owner = parent if not dot or head in (*_SELF_REFS, parent) else head
+            member = tail if dot else head
+            if owner not in cubes or not _field_member(cubes, owner, member):
+                needed = None
+                break
+            native = next(d for d in _as_named_list(cubes[owner].get("dimensions"),
+                                                   f"cube '{owner}' dimensions")
+                          if d.get("name") == member)
+            dim = {**native, "sql": inliner.dimension(owner, member)}
+            dim.pop("case", None)
+            needed[owner, member] = dim
+        if needed is not None:
+            dimensions.update({k: v for k, v in needed.items() if k not in dimensions})
+            join_sql[parent, child] = qualify_column_paths(sql, parent, cubes,
+                                                           inliner.source_dialect)
+        else:
+            join_sql[parent, child] = expanded
     reduced = {}
     for cname in tree.order:
         cube = cubes[cname]
@@ -843,9 +920,8 @@ def _reduced_cubes(tree, cubes, dimensions, measures, inliner, issues):
             child = join.get("name")
             if tree.parent.get(child, (None,))[0] != cname:
                 continue
-            scope = f"join '{cname}' -> '{child}'"
             joins.append({"name": child, "relationship": join.get("relationship"),
-                          "sql": inliner.rewrite(join.get("sql") or "", cname, scope)})
+                          "sql": join_sql[cname, child]})
         if joins:
             out["joins"] = joins
         dims = [d for (c, _), d in dimensions.items() if c == cname]
@@ -938,11 +1014,44 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues):
     metric_names = _metric_names_of(resolver, _decomposed_measure_names(reduced))
     metrics = {m["name"]: m for m in model.get("metrics") or []}
     datasets = {ds["name"]: ds for ds in model["datasets"]}
+    for cname, ds in datasets.items():
+        cube = cubes[cname]
+        parked = parked_of(cube.get("meta"))
+        keys = _primary_key_of(cube, cname)
+        if not keys or parked.get("key_from_unique_keys"):
+            continue
+        if "primary_key" in parked and parked.get("key_fields"):
+            # The reduced import already restored these declared fields, including
+            # geo coordinates, whose names differ from native key dimensions.
+            continue
+        dialect = next((f["expression"]["dialects"][0]["dialect"]
+                        for f in ds.get("fields") or []), None)
+        registry = _ImportedFields(ds, cubes, cname, dialect)
+        if "primary_key" in parked and not parked.get("key_fields"):
+            ds["primary_key"] = [registry.column(n) for n in keys]
+            continue
+        supported = []
+        native = {d["name"]: d for d in _as_named_list(cube.get("dimensions"),
+                                                       f"cube '{cname}' dimensions")}
+        for key in keys:
+            if not _field_member(cubes, cname, key):
+                _report_dropped(issues, f"cube '{cname}'", ["primary_key"],
+                                "the primary key cannot be expressed as local dataset fields")
+                supported = []
+                break
+            if not any(f["name"] == key for f in ds.get("fields") or []):
+                ds.setdefault("fields", []).extend(_convert_dimension(
+                    cname, key, native[key], _plain_members(cube, cname), issues, dialect))
+            supported.append(registry.member(key))
+        ds.pop("primary_key", None)
+        if supported:
+            ds["primary_key"] = supported
     fields = {(ds["name"], f["name"]): f
               for ds in model["datasets"] for f in ds.get("fields") or []}
 
     published_fields = {name: [] for name in datasets}
     published_metrics = []
+    field_aliases = {}
     for member in members:
         key = (member.cube, member.name)
         scope = f"{member.kind} '{member.cube}.{member.name}'"
@@ -951,6 +1060,7 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues):
                 raise ConversionError(f"{scope} has no Ossie field form")
             item = copy.deepcopy(fields[key])
             published_fields[member.cube].append(item)
+            field_aliases[key] = member.output
         else:
             if key not in metric_names:
                 reasons = [i.detail for i in issues
@@ -959,26 +1069,56 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues):
                     f"{scope} has no static Ossie expression"
                     + (f": {reasons[0]}" if reasons else ""))
             item = copy.deepcopy(metrics[metric_names[key]])
-            item["expression"] = {"dialects": [{
-                "dialect": item["expression"]["dialects"][0]["dialect"],
-                "expression": resolver.inlined(*key)}]}
             published_metrics.append(item)
         item["name"] = member.output
         _apply_override(item, member)
         _report_dropped(issues, f"{member.cube}.{member.name}",
                         _dropped_member_keys(member))
 
+    # Relationships and keys must name declared fields even when the view hides
+    # their dimensions. Include the minimum dependency fields as non-public Cube
+    # members, keeping the published aliases separate from technical identifiers.
+    required = {name: set(ds.get("primary_key") or [])
+                | {n for key in ds.get("unique_keys") or [] for n in key}
+                for name, ds in datasets.items()}
+    for rel in model.get("relationships") or []:
+        required[rel["from"]].update(rel["from_columns"])
+        required[rel["to"]].update(rel["to_columns"])
+    taken = {m.output.lower() for m in members}
+    for cname, names in required.items():
+        for fname in sorted(names):
+            key = (cname, fname)
+            if key in field_aliases:
+                continue
+            item = copy.deepcopy(fields[key])
+            # Reprojecting an exported support field must retain its identifier,
+            # otherwise key-based counts drift on every cycle.
+            base = (fname if read_stash(item).get("public") is False
+                    and fname.startswith(f"__{cname}_") else f"__{cname}_{fname}")
+            name, suffix = base, 2
+            while name.lower() in taken:
+                name, suffix = f"{base}_{suffix}", suffix + 1
+            taken.add(name.lower())
+            item["name"] = field_aliases[key] = name
+            _set_stash(item, {"public": False})
+            published_fields[cname].append(item)
+
+    for rel in model.get("relationships") or []:
+        rel["from_columns"] = [field_aliases[rel["from"], n] for n in rel["from_columns"]]
+        rel["to_columns"] = [field_aliases[rel["to"], n] for n in rel["to_columns"]]
+
     for ds in model["datasets"]:
         name = ds["name"]
         # In the import's key order: fields, then the key, then the stash.
         extensions = ds.pop("custom_extensions", None)
         ds.pop("fields", None)
-        ds.pop("primary_key", None)
+        key = ds.pop("primary_key", None)
         if published_fields[name]:
             ds["fields"] = published_fields[name]
-        key = _primary_key_columns(cubes, name, issues)
         if key:
-            ds["primary_key"] = key
+            ds["primary_key"] = [field_aliases[name, n] for n in key]
+        if ds.get("unique_keys"):
+            ds["unique_keys"] = [[field_aliases[name, n] for n in k] for k in ds["unique_keys"]]
         if extensions:
             ds["custom_extensions"] = extensions
         # The data source is a fact about the published dataset -- which warehouse its
@@ -988,6 +1128,29 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues):
                    else {"cube_extras": {"data_source": data_source}})
     model.pop("metrics", None)
     if published_metrics:
+        # Analysis uses physical key SQL, but the published metrics must count
+        # the declared fields under their final aliases. Resolve native row
+        # counts again so hidden count dependencies and filters follow the same
+        # binding, without rewriting unrelated source-column references.
+        published_cubes = copy.deepcopy(reduced)
+        keys = {ds["name"]: ds.get("primary_key") or next(
+            iter(ds.get("unique_keys") or []), []) for ds in model["datasets"]}
+        for cname, cube in published_cubes.items():
+            originals = {m["name"]: m for m in _as_named_list(
+                cubes[cname].get("measures"), f"cube '{cname}' measures")}
+            if not keys[cname]:
+                continue  # A cross-dataset key has only its physical SQL form.
+            for measure in cube.get("measures") or []:
+                original = originals[measure["name"]]
+                if snake(original.get("type") or "") == "count" and original.get("sql") is None:
+                    measure["type"] = "count"
+                    measure.pop("sql", None)
+        published_resolver = _MeasureResolver(published_cubes, keys, IssueLog(), qualify=False,
+                                              source_dialect=resolver.source_dialect)
+        for member, item in zip((m for m in members if m.kind == "measure"), published_metrics):
+            item["expression"] = {"dialects": [{
+                "dialect": item["expression"]["dialects"][0]["dialect"],
+                "expression": published_resolver.inlined(member.cube, member.name)}]}
         model["metrics"] = published_metrics
     for rel in model.get("relationships") or []:
         stash = read_stash(rel)
@@ -1018,29 +1181,6 @@ def _apply_override(item, member):
             stash[key] = override[key]
     _set_stash(item, stash)
 
-
-def _primary_key_columns(cubes, cname, issues):
-    """The dataset's primary key, as the columns it reads, or None.
-
-    Ossie's `primary_key` names columns. The lossless import can name key *fields*,
-    because every dimension becomes one; here a hidden key has no field, so each key
-    member is resolved to its column. A key reading an expression has none, and the
-    dataset then declares no key.
-    """
-    cube = cubes[cname]
-    parked = parked_of(cube.get("meta"))
-    keys = _primary_key_of(cube, cname)
-    if not keys or parked.get("key_from_unique_keys"):
-        return None
-    if "primary_key" in parked:
-        return keys
-    columns = [_column_of(cubes, cname, key) for key in keys]
-    if all(columns):
-        return columns
-    _report_dropped(issues, f"cube '{cname}'", ["primary_key"],
-                        "the primary key reads an expression, and Ossie's "
-                        "`primary_key` names columns, so the dataset declares none")
-    return None
 
 
 def _dropped_member_keys(member):
