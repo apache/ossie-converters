@@ -147,10 +147,14 @@ qualifies. A metric that references several datasets or none is dropped with
 
 ## Column formats carry only a coarse datatype
 
-The spec has no column datatype — only a display `format`, with two documented kinds,
-`number` and `date`. So Sigma → Ossie can infer no more than `Decimal`/`DateTime`, any
+The spec has no column datatype — only a display `format`, and Sigma accepts two kinds,
+`number` and `datetime`. So Sigma → Ossie can infer no more than `Decimal`/`DateTime`, any
 other kind becomes `Opaque` (`OPAQUE_DATATYPE`), and a column with no format correctly
-gets no `datatype` at all. Ossie → Sigma emits only those two kinds; `String`,
+gets no `datatype` at all. Ossie → Sigma emits only `number`, and only for numeric
+columns (`Integer`, `Decimal`, `Float`). Sigma rejects the whole model for a kind it does
+not know, and writing `datetime` ourselves would mean choosing a default date format, so
+`Date`, `DateTime` and `DateTimeTz` get no `format` and Sigma shows its own default.
+A format kept in `custom_extensions` is still written back. `String`,
 `Boolean`, `Time`, and `Opaque` produce no `format` key, because an invented `kind`
 would be rejected for the whole document. The full native format object is always
 preserved, so display detail (`formatString`, `currencySymbol`, ...) survives.

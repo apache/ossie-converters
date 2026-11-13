@@ -46,7 +46,7 @@
               "id": "colCreatedAt",
               "formula": "[ORDERS/CREATED_AT]",
               "name": "Created At",
-              "format": {"kind": "date", "formatString": "%Y-%m-%d"}
+              "format": {"kind": "datetime", "formatString": "%Y-%m-%d"}
             },
             {
               "id": "colIsClosed",

@@ -58,10 +58,14 @@ _MAPPED_METRIC_KEYS = frozenset({"id", "formula", "name", "description"})
 _MAPPED_RELATIONSHIP_KEYS = frozenset({"id", "name", "description", "targetElementId", "keys"})
 
 # Sigma column formats describe *display* formatting, not storage type — the data model
-# spec has no datatype field at all — so only the two documented format kinds carry any
-# type signal, and only coarsely. Anything else is `Opaque` with the format preserved.
+# spec has no datatype field at all — so only the format kinds Sigma accepts (`number` and
+# `datetime`) carry any type signal, and only coarsely. Anything else is `Opaque` with the
+# format preserved.
 _FORMAT_TO_DATATYPE = {
     "number": "Decimal",
+    "datetime": "DateTime",
+    # Sigma's API does not accept kind "date". Older Ossie files written by this converter
+    # may still carry it, so keep reading it as a date and time.
     "date": "DateTime",
 }
 
