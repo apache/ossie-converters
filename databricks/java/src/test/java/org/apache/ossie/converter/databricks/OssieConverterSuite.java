@@ -999,6 +999,39 @@ public class OssieConverterSuite {
   // -- parity edge cases found in review round 3 ----------------------------
 
   @Test
+  @SuppressWarnings("unchecked")
+  public void exportsPrimarySqlForDimensionsAndMeasures() {
+    for (String legacyDialect : List.of("", "ANSI_SQL", "OSSIE_SQL_2026")) {
+      String field = "sql: amount * 2";
+      String metric = "sql: SUM(orders.amount)";
+      if (!legacyDialect.isEmpty()) {
+        String prefix = ", dialects: [{dialect: DATABRICKS, expression: '  '}, {dialect: ";
+        field += prefix + legacyDialect + ", expression: amount * 3}]";
+        metric += prefix + legacyDialect + ", expression: MAX(orders.amount)}]";
+      }
+      String ossie = "version: 0.2.0.dev0\nname: m\ndatasets:\n"
+          + "- name: orders\n  source: c.s.orders\n  fields:\n"
+          + "  - {name: adjusted_amount, expression: {" + field + "}}\n"
+          + "metrics:\n- {name: total_amount, expression: {" + metric + "}}\n";
+      Map<String, Object> view = (Map<String, Object>) OssieConverter.parseYaml(
+          OssieConverter.convertOssieToMetricView(ossie, null).yaml);
+      assertEquals(List.of(Map.of("name", "adjusted_amount", "expr", "amount * 2")),
+          view.get("dimensions"));
+      assertEquals(List.of(Map.of("name", "total_amount", "expr", "SUM(amount)")),
+          view.get("measures"));
+    }
+  }
+
+  @Test
+  public void blankPortableFallbackIsNotUsable() {
+    for (String blank : List.of("", "   ")) {
+      assertEquals(null, OssieConverterCommon.pickExpression(
+          Map.of("dialects", List.of(Map.of("dialect", "OSSIE_SQL_2026", "expression", blank))),
+          "field 'amount'"));
+    }
+  }
+
+  @Test
   public void pickExpressionFallsThroughEmptyDatabricksToAnsi() {
     // An empty DATABRICKS dialect must fall through to ANSI_SQL,
     // not be selected as the (empty) expression.
@@ -1112,7 +1145,7 @@ public class OssieConverterSuite {
         + "- {name: n, expression: {dialects: [{dialect: DATABRICKS, expression: COUNT(*)}]}}\n";
     List<String> notices = OssieConverter.convertOssieToMetricView(osi, null).notices;
     assertTrue(
-        notices.stream().anyMatch(n -> n.contains("no DATABRICKS/ANSI_SQL/OSSIE_SQL_2026 dialect")),
+        notices.stream().anyMatch(n -> n.contains("no usable expression.sql or DATABRICKS/ANSI_SQL/OSSIE_SQL_2026 entry")),
         notices.toString());
   }
 

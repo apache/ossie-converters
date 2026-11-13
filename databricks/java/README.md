@@ -36,10 +36,11 @@ On **export** (Apache Ossie -> Metric View), Apache Ossie features with no Metri
 relationship `ai_context`, the non-`synonyms` members of a field/metric `ai_context` object,
 a field/metric `datatype`, `dimension.is_time`, foreign-vendor `custom_extensions` -- are
 **dropped with a notice**. An
-expression prefers the `DATABRICKS` dialect, then `ANSI_SQL`, then `OSSIE_SQL_2026` (Apache
-Ossie's portable, ANSI-SQL-compatible dialect); the other dialect alternatives are ignored (no
-notice) when a supported one is present, while a field or metric with no supported dialect is
-dropped with a notice. A measure that names a dataset reached by more than one join
+expression prefers the `DATABRICKS` dialect, then the primary `expression.sql` (written in
+`OSSIE_SQL_2026`, Apache Ossie's portable, ANSI-SQL-compatible dialect), then `ANSI_SQL`, then a
+tagged `OSSIE_SQL_2026` entry, skipping blank expressions; the other dialect alternatives are
+ignored (no notice) when a usable one is present, while a field or metric with no usable
+expression is dropped with a notice. A measure that names a dataset reached by more than one join
 path (a diamond) is likewise dropped with a notice, because a bare dataset reference cannot be
 unambiguously qualified; and a second `DATABRICKS` `custom_extensions` entry on one object is
 ignored with a notice (the first one wins) rather than rejected. On **import** (Metric View ->
@@ -119,7 +120,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 | `relationship.from`/`to` direction | join `cardinality` | Export: source on the many (`from`) side -> `many_to_one`; on the one (`to`) side -> `one_to_many`. |
 | `dataset.primary_key` / `unique_keys` | join `rely.at_most_one_match` | Both directions: export sets `at_most_one_match` when a key covers the join columns; import recovers a `unique_keys` from it. |
 | `dataset.fields[]` | `dimensions[]` | Export: fields flatten into one list and a joined column is qualified by its full join path (`customer.c_name`; `customer.region.r_name` when nested). |
-| `field.expression.dialects[]` | `expr` | Export: prefer the `DATABRICKS` dialect, then `ANSI_SQL`, then `OSSIE_SQL_2026` (Apache Ossie's portable, ANSI-SQL-compatible dialect); other alternatives are ignored when a supported one is present, and a field with no supported dialect is dropped with a notice. Import: one entry, labeled with the most portable dialect it fits (see [Dialect labels on import](#dialect-labels-on-import)). |
+| `field.expression` / `metric.expression` | `expr` | Export prefers native `DATABRICKS`, then primary `expression.sql`, then legacy `ANSI_SQL` and tagged `OSSIE_SQL_2026`. Fields and metrics with no usable expression are dropped with a notice. Import: one entry, labeled with the most portable dialect it fits (see [Dialect labels on import](#dialect-labels-on-import)). |
 | `metrics[]` | `measures[]` | Fact columns are referenced bare (`SUM(amount)`). A joined column is addressed by dataset name in Apache Ossie and by its full join path in the Metric View, so export expands `SUM(region.population)` to `SUM(customer.region.population)` and import maps it back. |
 | `field.label` | dimension `display_name` | A measure's `display_name` has no `label` on the Apache Ossie metric shape, so it rides in the stash instead (see the `custom_extensions` row). |
 | `field` / `metric` `description` | `comment` | |

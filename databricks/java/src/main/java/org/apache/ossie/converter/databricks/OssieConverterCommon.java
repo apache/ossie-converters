@@ -443,10 +443,8 @@ final class OssieConverterCommon {
   }
 
   static String pickExpression(Object osiExpression, String scope) {
-    // Keep the raw (possibly non-string) values so
-    // the type check below can fire; select the first truthy of DATABRICKS, ANSI_SQL, then
-    // OSSIE_SQL_2026 (`or` chain), so a null/empty earlier dialect falls through to the next;
-    // and raise on a non-string chosen value rather than silently coercing it.
+    // Keep the raw value so a non-string chosen expression is rejected instead of coerced.
+    // Prefer native SQL, then the primary expression, then legacy SQL entries.
     if (osiExpression == null) {
       return null;
     }
@@ -456,16 +454,13 @@ final class OssieConverterCommon {
     }
     Map<String, Object> expression = asMap(osiExpression);
     Object dialectValues = get(expression, "dialects");
-    if (dialectValues == null) {
-      return null;
-    }
-    if (!(dialectValues instanceof List)) {
+    if (dialectValues != null && !(dialectValues instanceof List)) {
       String reason = scope + ": 'expression.dialects' must be a list";
       throw ConversionException.invalidInput(reason, reason);
     }
     Map<String, Object> dialects = new LinkedHashMap<>();
     int index = 0;
-    for (Object d : (List<Object>) dialectValues) {
+    for (Object d : asList(dialectValues)) {
       if (!(d instanceof Map)) {
         String reason = scope + ": 'expression.dialects[" + index + "]' must be a mapping";
         throw ConversionException.invalidInput(reason, reason);
@@ -474,9 +469,14 @@ final class OssieConverterCommon {
       dialects.put(str(get(dm, "dialect")), get(dm, "expression"));
       index++;
     }
-    Object chosen = truthy(dialects.get(DIALECT_DATABRICKS)) ? dialects.get(DIALECT_DATABRICKS)
-        : truthy(dialects.get(DIALECT_ANSI)) ? dialects.get(DIALECT_ANSI)
-        : dialects.get(DIALECT_OSSIE_SQL);
+    Object chosen = null;
+    for (Object candidate : java.util.Arrays.asList(dialects.get(DIALECT_DATABRICKS),
+        get(expression, "sql"), dialects.get(DIALECT_ANSI), dialects.get(DIALECT_OSSIE_SQL))) {
+      if (truthy(candidate) && !(candidate instanceof String text && text.isBlank())) {
+        chosen = candidate;
+        break;
+      }
+    }
     if (chosen != null && !(chosen instanceof String)) {
       throw new ConversionException(
           "expression must be a string, got " + chosen.getClass().getSimpleName());
