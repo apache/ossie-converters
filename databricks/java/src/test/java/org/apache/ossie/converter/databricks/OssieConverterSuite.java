@@ -424,6 +424,120 @@ public class OssieConverterSuite {
   }
 
   @Test
+  public void joinedIntegerSumHandlesFormattingAndOnlySkipsModifiedOperands() {
+    String filtered = "SUM(sales.amount) /* note */ FILTER (WHERE active)";
+    String windowed = "SUM(sales.amount) OVER (PARTITION BY region)";
+    String sum = "SUM(store.employees)";
+    String expression = filtered + " + " + windowed + " + " + sum;
+    String encoded = JoinedIntegerSum.encode(expression, Map.of("store.employees", "store.id"),
+        java.util.Set.of("store"));
+    assertTrue(encoded.startsWith(filtered + " + " + windowed + " + AGGREGATE("));
+    String formatted = encoded.replace("AGGREGATE(COLLECT_SET", "aggregate ( \n  collect_set")
+        .replace(" AS ossie_key, ", " AS ossie_key ,\n  ");
+    assertEquals(expression, JoinedIntegerSum.decode(formatted).expression());
+  }
+
+  @Test
+  public void joinedIntegerSumKeepsTheWholeExpressionWhenAnyOperandIsUnsupported() {
+    for (String unsupported : List.of("SUM(store.floor_space)", "COUNT(store.id)",
+        "SUM(store.a + store.b)", "SUM(store.employees) /* note */ FILTER (WHERE active)",
+        "SUM(store.employees) OVER (PARTITION BY region)")) {
+      assertEquals(null, JoinedIntegerSum.encode("SUM(store.employees) / " + unsupported,
+          Map.of("store.employees", "store.id"), java.util.Set.of("store")));
+    }
+  }
+
+  @Test
+  public void joinedIntegerSumDoesNotDecodeConflictingKeys() {
+    String sum = "SUM(store.employees)";
+    String first = JoinedIntegerSum.encode(sum, Map.of("store.employees", "store.id"),
+        java.util.Set.of("store"));
+    String second = JoinedIntegerSum.encode(sum, Map.of("store.employees", "store.other_id"),
+        java.util.Set.of("store"));
+    assertTrue(JoinedIntegerSum.decode(first + " + " + second).keys().isEmpty());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void joinedIntegerSumDeduplicatesByPrimaryKeyAndRoundTrips() throws Exception {
+    String osi = """
+        version: 0.2.0.dev0
+        name: sales
+        datasets:
+        - name: sales
+          source: c.s.sales
+          fields:
+          - name: amount
+            expression: {dialects: [{dialect: ANSI_SQL, expression: amount}]}
+        - name: store
+          source: c.s.store
+          primary_key: [id]
+          fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+          - name: employees
+            datatype: Integer
+            expression: {dialects: [{dialect: ANSI_SQL, expression: employees}]}
+        relationships:
+        - {name: sale_store, from: sales, to: store, from_columns: [store_id], to_columns: [id]}
+        metrics:
+        - name: productivity
+          expression:
+            dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(sales.amount) / NULLIF(SUM(store.employees), 0)
+          custom_extensions:
+          - vendor_name: CUBE
+            data: '{invalid'
+          - vendor_name: CUBE
+            data: '{"integer_sum_grain": ["store"]}'
+        - name: different_counts
+          expression:
+            dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(DISTINCT store.employees)
+        """;
+    Map<String, Object> view = (Map<String, Object>) export(osi, "sales");
+    List<Map<String, Object>> measures = (List<Map<String, Object>>) view.get("measures");
+    String expected = "SUM(amount) / NULLIF(AGGREGATE(COLLECT_SET(STRUCT(store.id AS ossie_key, "
+        + "store.employees AS ossie_value)) FILTER (WHERE store.id IS NOT NULL "
+        + "AND store.employees IS NOT NULL), CAST(NULL AS BIGINT), "
+        + "(ossie_acc, ossie_row) -> COALESCE(ossie_acc, 0L) + "
+        + "CAST(ossie_row.ossie_value AS BIGINT)), 0)";
+    assertEquals(expected, measures.get(0).get("expr"));
+    assertEquals("SUM(DISTINCT store.employees)", measures.get(1).get("expr"));
+
+    OssieConverter.Result exported = OssieConverter.convertOssieToMetricView(osi, "sales");
+    assertTrue(exported.notices.stream().anyMatch(notice -> notice.contains("[store]")
+        && notice.contains("memory grows with the key count")));
+    String nativeYaml = exported.yaml;
+    String imported = OssieConverter.convertMetricViewToOssie(nativeYaml, "sales").yaml;
+    assertTrue(imported.contains("SUM(amount) / NULLIF(SUM(store.employees), 0)"), imported);
+    assertEquals(view, export(imported, "sales"));
+    Map<String, Object> importedModel = OssieConverterCommon.asMap(OssieConverter.parseYaml(imported));
+    Map<String, Object> metric = OssieConverterCommon.asMap(
+        OssieConverterCommon.asList(importedModel.get("metrics")).get(0));
+    assertEquals(List.of("store"), OssieConverterCommon.cubeIntegerSumMetadata(metric)
+        .get("integer_sum_grain"));
+    Map<String, Object> expression = OssieConverterCommon.asMap(metric.get("expression"));
+    OssieConverterCommon.asList(expression.get("dialects")).removeIf(entry ->
+        "DATABRICKS".equals(OssieConverterCommon.asMap(entry).get("dialect")));
+    assertEquals(view, export(OssieConverterCommon.MAPPER.writeValueAsString(importedModel), "sales"));
+
+    String mixed = osi.replace("NULLIF(SUM(store.employees), 0)",
+        "NULLIF(SUM(store.employees) + SUM(store.floor_space), 0)");
+    OssieConverter.Result mixedExport = OssieConverter.convertOssieToMetricView(mixed, "sales");
+    assertFalse(mixedExport.yaml.contains("COLLECT_SET"));
+    assertTrue(mixedExport.notices.stream().anyMatch(notice -> notice.contains(
+        "cannot preserve the entire Cube aggregate grain for [store]")));
+
+    String decimal = osi.replace("datatype: Integer", "datatype: Decimal");
+    assertFalse(OssieConverter.convertOssieToMetricView(decimal, "sales").yaml.contains("COLLECT_SET"));
+    String noGrain = osi.replace("[\"store\"]", "[]");
+    assertFalse(OssieConverter.convertOssieToMetricView(noGrain, "sales").yaml.contains("COLLECT_SET"));
+  }
+
+  @Test
   public void modelWithNoFieldsOrMetricsIsRejected() {
     // A Metric View requires at least one dimension or measure, so emitting a version+source-only
     // view would just fail at CREATE. Fail at conversion time instead.

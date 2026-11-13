@@ -232,8 +232,8 @@ final class OssieConverterCommon {
 
   /**
    * As {@link #replaceOutsideLiterals(String, Pattern, String)}, but each match is replaced with
-   * {@code replacer.apply(match)} -- for a rewrite whose result depends on what matched. The
-   * returned text is inserted literally, not as a regex replacement template.
+   * {@code replacer.apply(match)} -- for a rewrite whose result depends on what matched. Match
+   * offsets refer to the full SQL string. Replacement text is inserted literally.
    */
   static String replaceOutsideLiterals(
       String sql, Pattern pattern, Function<MatchResult, String> replacer) {
@@ -241,11 +241,11 @@ final class OssieConverterCommon {
     int codeStart = 0;
     for (int[] span : literalSpans(sql)) {
       // Rewrite the code span that precedes this literal/comment, then copy the span verbatim.
-      out.append(rewriteLiterally(sql.substring(codeStart, span[0]), pattern, replacer));
+      rewriteLiterally(sql, codeStart, span[0], pattern, replacer, out);
       out.append(sql, span[0], span[1]);
       codeStart = span[1];
     }
-    out.append(rewriteLiterally(sql.substring(codeStart), pattern, replacer));
+    rewriteLiterally(sql, codeStart, sql.length(), pattern, replacer, out);
     return out.toString();
   }
 
@@ -327,10 +327,14 @@ final class OssieConverterCommon {
     return sql.length();
   }
 
-  private static String rewriteLiterally(
-      String code, Pattern pattern, Function<MatchResult, String> replacer) {
-    return pattern.matcher(code)
-        .replaceAll(m -> Matcher.quoteReplacement(replacer.apply(m)));
+  private static void rewriteLiterally(String sql, int start, int end, Pattern pattern,
+      Function<MatchResult, String> replacer, StringBuilder out) {
+    Matcher matcher = pattern.matcher(sql).region(start, end);
+    while (matcher.find()) {
+      out.append(sql, start, matcher.start()).append(replacer.apply(matcher.toMatchResult()));
+      start = matcher.end();
+    }
+    out.append(sql, start, end);
   }
 
   /**
@@ -594,6 +598,24 @@ final class OssieConverterCommon {
     return stash != null ? stash : new LinkedHashMap<>();
   }
 
+  /** Reads Cube's aggregate grain hint without imposing validation on other foreign metadata. */
+  static Map<String, Object> cubeIntegerSumMetadata(Map<String, Object> metric) {
+    for (Map<String, Object> extension : customExtensions(metric)) {
+      if ("CUBE".equals(get(extension, "vendor_name"))
+          && get(extension, "data") instanceof String data) {
+        try {
+          Map<String, Object> parsed = asMap(JSON_READER.readValue(data, Object.class));
+          if (!strList(get(parsed, "integer_sum_grain")).isEmpty()) {
+            return parsed;
+          }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+          // Foreign metadata is opaque. A malformed entry does not hide later hints.
+        }
+      }
+    }
+    return Map.of();
+  }
+
   static List<Object> foreignVendorExtensions(Map<String, Object> obj) {
     List<Object> out = new ArrayList<>();
     for (Map<String, Object> extension : customExtensions(obj)) {
@@ -605,8 +627,12 @@ final class OssieConverterCommon {
   }
 
   /** Attach a DATABRICKS custom_extensions entry holding `data`; no-op when empty. */
-  @SuppressWarnings("unchecked")
   static void writeStash(Map<String, Object> obj, Map<String, Object> data) {
+    writeStash(obj, data, VENDOR);
+  }
+
+  @SuppressWarnings("unchecked")
+  static void writeStash(Map<String, Object> obj, Map<String, Object> data, String vendor) {
     if (data.isEmpty()) {
       return;
     }
@@ -630,13 +656,13 @@ final class OssieConverterCommon {
     List<Object> exts = (List<Object>) obj.computeIfAbsent("custom_extensions", k -> new ArrayList<>());
     for (Object extObj : exts) {
       Map<String, Object> ext = asMap(extObj);
-      if (VENDOR.equals(str(get(ext, "vendor_name")))) {
+      if (vendor.equals(str(get(ext, "vendor_name")))) {
         ext.put("data", blob);
         return;
       }
     }
     Map<String, Object> ext = new LinkedHashMap<>();
-    ext.put("vendor_name", VENDOR);
+    ext.put("vendor_name", vendor);
     ext.put("data", blob);
     exts.add(ext);
   }
