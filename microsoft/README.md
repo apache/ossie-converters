@@ -151,7 +151,7 @@ in the Power BI stash for round trip, but not represented in the Apache Ossie do
 | --- | --- |
 | `--strict` | exit non-zero if anything could not be converted faithfully |
 | `-q`, `--quiet` | suppress the report |
-| `--translate-dax` | `import` only: also translate DAX measures to `OSSIE_SQL_2026` where the translation is exact (off by default) |
+| `--translate-dax` | `import` only: also translate DAX measures and calculated columns to `OSSIE_SQL_2026` where the translation is exact (off by default) |
 
 `--strict` exits non-zero when the converter reports a construct it could not represent.
 It does not check that every TMDL `ref` has a definition, or validate DAX expressions.
@@ -237,8 +237,8 @@ expressions and retains their original dialect and text in annotations.
 Concretely:
 
 - A Power BI measure becomes a metric with a `DAX` dialect expression, not a SQL one.
-  With the opt-in `--translate-dax`, a measure whose translation is exact also gets an
-  `OSSIE_SQL_2026` expression, with the DAX kept beside it (see below).
+  With the opt-in `--translate-dax`, a measure or calculated column whose translation is
+  exact also gets an `OSSIE_SQL_2026` expression, with the DAX kept beside it (see below).
 - On export, a metric becomes a measure from `DAX` or a supported SQL-to-DAX
   translation. Untranslatable SQL gets a warning and an annotated `BLANK()` measure.
 - A field expression becomes a TMSL `sourceColumn` only when it is a plain column
@@ -426,7 +426,7 @@ unambiguous string concatenation. Other expressions become annotated `BLANK()`
 columns. These placeholders are **not correct computed values**: review converter
 warnings and supply a DAX expression before using the exported model for analysis.
 
-### DAX measures (opt-in `--translate-dax`)
+### DAX measures and calculated columns (opt-in `--translate-dax`)
 
 By default an imported measure keeps only its DAX. With `--translate-dax`, the import
 also translates a measure to `OSSIE_SQL_2026` when the translation is exact, and keeps
@@ -435,7 +435,13 @@ the DAX. A measure that cannot be translated exactly stays DAX only, with a warn
 names the reason.
 
 Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
-`Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
+`Table[Column]`; `COUNT` over a typed, non-boolean column; `DISTINCTCOUNT` (BLANK counts as
+one more distinct value, so 1 is added when the column holds a NULL); `MEDIAN`,
+`PERCENTILE.INC` with a literal k, `STDEV.S` / `STDEV.P` and `VAR.S` / `VAR.P` over a
+numeric column; the X-iterators `SUMX`, `AVERAGEX`, `MINX`, `MAXX`, `COUNTX`, `MEDIANX`,
+`PERCENTILEX.INC`, `STDEVX.*` and `VARX.*` over a table named directly, whose row
+expression reads only that table's columns (`SUMX('Sales', 'Sales'[Qty] * 'Sales'[Price])`
+-> `SUM(Sales.Qty * Sales.Price)`); `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
 `BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
 other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
 `BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
@@ -453,6 +459,33 @@ DAX function is refused with a reason from a per-function registry, for example:
 [table 'Sales' measure 'YTD'] DAX measure kept as-is; not translated to OSSIE_SQL_2026
 (TOTALYTD needs window measures (time intelligence), which the Apache Ossie
 specification does not define yet)
+```
+
+The same rules apply to a calculated column, which DAX evaluates once per row of its own
+table, plus the text functions `LEFT`, `RIGHT`, `MID`, `LEN`, `UPPER`, `LOWER`,
+`SUBSTITUTE` and `CONCATENATE` / `&`, again only for values that can never be BLANK: a
+literal, `COALESCE(x, "")`, or a column the model declares `isNullable: false`. A column
+reference becomes the referenced column's *source column*, because the spec's field
+expressions refer to source columns, not to other fields; a referenced calculated column
+is expanded inline. An aggregate (which in a calculated column ranges over the whole
+table), a measure, a column of another table (`RELATED`), and `TRIM`, `EXACT`, `VALUE`,
+`FIND`, `SEARCH` and `CONTAINSSTRING` are refused with a reason.
+
+Date functions, in measures and calculated columns, again only for a date that can never
+be BLANK (DAX reads BLANK as 30 December 1899, SQL gives NULL): `YEAR`, `QUARTER`,
+`MONTH` and `DAY` of a date or datetime, `HOUR`, `MINUTE` and `SECOND` of a datetime
+(a `dateTime` column with a date-only format string is a date, as on import),
+`DATE(y, m, d)` with literals for a valid date from 1900 on (-> `DATE 'YYYY-MM-DD'`),
+`EDATE(date, n)` -> `DATEADD(month, n, date)` for a date, and `EOMONTH(date, n)` -> the
+day before the first of the month `n + 1` months on. `DATEDIFF` is refused: DAX counts
+the interval boundaries crossed, and the spec does not say whether its `DATEDIFF` does.
+
+```
+
+LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
+[First] & " " & [Last]      ->  refused: & of a value that may be BLANK
+YEAR([Booked])              ->  YEAR(booked_on)        (Booked: a date, isNullable false)
+YEAR(MAX('Sales'[Date]))    ->  refused: a date that may be BLANK
 ```
 
 `_dax_to_sql.py` documents each rule and each refusal.

@@ -52,6 +52,7 @@ def resolve(table, column):
         ("Sales", "ShipDate"): ("Sales", "ShipDate", "Date"),
         ("Sales", "OrderDate"): ("Sales", "OrderDate", "Date"),
         ("Sales", "Note"): ("Sales", "Note", None),  # the model gives no datatype
+        ("Sales", "Paid"): ("Sales", "Paid", "Boolean"),
         ("Customer", "Country"): ("Customer", "Country", "String"),
         ("Order Lines", "Qty"): ("Order Lines", "Qty", "Integer"),  # table name needs quoting
     }
@@ -90,11 +91,11 @@ def test_leading_equals_and_whitespace_are_tolerated():
 @pytest.mark.parametrize(
     "dax",
     [
-        "COUNT('Sales'[Amount])",            # TRUE/FALSE unsupported in DAX
-        "DISTINCTCOUNT('Sales'[Customer])",  # BLANK counted as distinct
-        "COUNTROWS('Sales')",                # row count, not single column
-        "MEDIAN('Sales'[Amount])",           # later tier
-        "SUMX('Sales', 'Sales'[Amount])",    # iterator, two args
+        "COUNT('Sales'[Paid])",              # TRUE/FALSE unsupported in DAX
+        "DISTINCTCOUNT('Sales'[Note])",      # column type unknown
+        "COUNTROWS('Sales')",                # COUNT(*) reads no dataset
+        "MEDIAN('Sales'[Customer])",         # statistics over text
+        "SUMX('Sales', 'Product'[Cost])",    # iterator reading another table
         "CALCULATE(SUM('Sales'[Amount]), 'Sales'[Status] = \"done\")",  # filter context
         "DIVIDE(SUM('Sales'[Amount]), COUNTA('Sales'[Customer]), 0)",   # alternate result
         "SUM('Sales'[Amount]) / COUNTA('Sales'[Customer])",             # / operator
@@ -110,11 +111,11 @@ def test_refuses_everything_outside_the_safe_set(dax):
     assert reason  # a non-empty reason is always given
 
 
-def test_count_and_distinctcount_refusals_name_the_semantic_difference():
-    _, count_reason = translate_measure("COUNT('Sales'[Amount])", resolve)
-    _, distinct_reason = translate_measure("DISTINCTCOUNT('Sales'[Customer])", resolve)
+def test_count_refusal_names_the_semantic_difference():
+    # COUNT and DISTINCTCOUNT are translated by rule (test_dax_aggregates.py); a boolean
+    # column is where DAX COUNT and SQL COUNT part ways.
+    _, count_reason = translate_measure("COUNT('Sales'[Paid])", resolve)
     assert "TRUE/FALSE" in count_reason
-    assert "BLANK" in distinct_reason
 
 
 def test_unqualified_column_is_refused():
@@ -559,7 +560,8 @@ def test_a_date_comparison_measure_stays_dax_on_import(bim):
         "Same Country": "MIN('Customer'[Country]) = MAX('Customer'[Country])",
         "Big Order": "IF(MAX('Sales'[Amount]) > 1000, 1, 0)",
     })
-    with pytest.warns(UserWarning, match="date value"):
+    # ShipDate is a date-and-time column in the fixture, so it reads "datetime value".
+    with pytest.warns(UserWarning, match="date(time)? value"):
         document = build_ossie_document(model, translate_dax=True)
     assert list(_dialects(_metric(document, "Shipped Late"))) == ["DAX"]
     assert list(_dialects(_metric(document, "Same Country"))) == ["DAX"]
