@@ -200,6 +200,17 @@ converters:
     output: file
     fixtures: {}
     import_skip: No native-to-Ossie importer is implemented in this converter.
+  solid:
+    cwd: solid
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-solid, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-solid, export, -i, '{input}', -o, '{output}']
+    native_format: solid
+    output: file
+    fixtures:
+      tpcds: solid/tests/fixtures/tpcds_solid.yaml
+      orders: solid/tests/fixtures/databricks_solid.yaml
   thoughtspot:
     cwd: thoughtspot
     toolchain: uv

@@ -1,0 +1,673 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+"""Solid semantic model -> Apache Ossie."""
+
+import datetime
+
+import pytest
+import yaml
+from conftest import (
+    by_name,
+    convert_quietly,
+    dataset_of,
+    expression_of,
+    field_of,
+    fixture,
+    model_of,
+    normalized_yaml,
+    solid_model_of,
+    stash_of,
+)
+
+from ossie_solid import ConversionError, convert_ossie_to_solid, convert_solid_to_ossie
+
+
+@pytest.fixture(scope="module")
+def tpcds():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
+    return model_of(ossie)
+
+
+def test_output_matches_the_committed_fixture():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
+    assert yaml.safe_load(ossie) == yaml.safe_load(fixture("tpcds_ossie.yaml"))
+
+
+def test_output_validates_against_the_ossie_schema(assert_valid_ossie):
+    for name in ("tpcds_solid.yaml", "databricks_solid.yaml", "bigquery_solid.yaml"):
+        ossie, _ = convert_quietly(convert_solid_to_ossie, fixture(name))
+        assert_valid_ossie(ossie)
+
+
+def test_document_declares_the_spec_version():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
+    document = yaml.safe_load(ossie)
+    assert document["version"] == "0.2.0.dev0"
+
+
+def test_the_model_sits_at_the_document_root():
+    """One model per document, its properties beside `version` -- no wrapper."""
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
+    document = yaml.safe_load(ossie)
+    assert "semantic_model" not in document
+    assert list(document)[:3] == ["version", "name", "description"]
+    assert document["name"] == "tpcds_retail_model"
+
+
+# --- datasets ---------------------------------------------------------------------
+
+
+def test_table_fqn_becomes_the_source_and_its_last_part_the_name(tpcds):
+    dataset = dataset_of(tpcds, "store_sales")
+    assert dataset["source"] == "tpcds.public.store_sales"
+
+
+def test_dataset_names_are_disambiguated_when_the_last_part_collides():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    # Two tables named `orders` in different schemas: the first keeps the short name,
+    # the second widens to schema_table rather than colliding.
+    solid["semantic_model"]["tables"][1]["name"] = "main.returns.orders"
+    solid["semantic_model"]["relationships"][0]["right_table"] = "main.returns.orders"
+    solid["semantic_model"]["tables"][1]["primary_key"] = "customer_id"
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    names = [d["name"] for d in model_of(ossie)["datasets"]]
+    assert names == ["orders", "returns_orders"]
+
+
+def test_dataset_names_are_unique_ignoring_case():
+    # `ORDERS.amount` and `orders.amount` are the same qualifier to a SQL reader, so a
+    # table whose short name differs only in case widens like any other collision.
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    tables = solid["semantic_model"]["tables"]
+    tables.append(dict(tables[0], name="main.archive.ORDERS"))
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    names = [d["name"] for d in model_of(ossie)["datasets"]]
+    assert names == ["orders", "customers", "archive_ORDERS"]
+
+
+@pytest.mark.parametrize("duplicate", ["main.sales.orders", "MAIN.SALES.ORDERS"])
+def test_a_table_listed_twice_is_rejected(duplicate):
+    # Relationships and metrics find their tables by FQN, case-insensitively, so
+    # accepting a second copy would bind them to whichever one came last.
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    tables = solid["semantic_model"]["tables"]
+    tables.append(dict(tables[0], name=duplicate))
+    with pytest.raises(ConversionError, match="lists table"):
+        convert_solid_to_ossie(yaml.safe_dump(solid))
+
+
+def test_composite_primary_key_scalar_is_split_into_columns(tpcds):
+    assert dataset_of(tpcds, "store_sales")["primary_key"] == [
+        "ss_item_sk",
+        "ss_ticket_number",
+    ]
+
+
+def test_single_primary_key_becomes_a_one_element_list(tpcds):
+    assert dataset_of(tpcds, "customer")["primary_key"] == ["c_customer_sk"]
+
+
+def test_table_descriptions_split_across_description_and_ai_context(tpcds):
+    dataset = dataset_of(tpcds, "store_sales")
+    assert dataset["description"].startswith("Fact table containing all store sales")
+    assert dataset["ai_context"]["instructions"].startswith("Grain is (ss_item_sk")
+
+
+def test_table_synonyms_become_ai_context_synonyms(tpcds):
+    assert "POS data" in dataset_of(tpcds, "store_sales")["ai_context"]["synonyms"]
+
+
+def test_quality_rank_and_indexes_are_stashed(tpcds):
+    stash = stash_of(dataset_of(tpcds, "store_sales"))
+    assert stash["quality_rank"] == "high"
+    assert stash["indexes"] == ["ss_sold_date_sk", "ss_customer_sk"]
+
+
+def test_a_table_without_indexes_gets_no_index_stash(tpcds):
+    assert "indexes" not in stash_of(dataset_of(tpcds, "customer"))
+
+
+# --- fields -----------------------------------------------------------------------
+
+
+def test_dimensions_and_facts_merge_into_one_field_list(tpcds):
+    fields = by_name(dataset_of(tpcds, "store_sales")["fields"])
+    assert "ss_customer_sk" in fields  # a dimension
+    assert "ss_net_profit" in fields  # a fact
+
+
+def test_a_dimension_carries_the_dimension_block_and_a_fact_does_not(tpcds):
+    assert field_of(tpcds, "store_sales", "ss_customer_sk")["dimension"] == {
+        "is_time": False
+    }
+    assert "dimension" not in field_of(tpcds, "store_sales", "ss_net_profit")
+
+
+def test_a_temporal_dimension_is_marked_is_time(tpcds):
+    assert field_of(tpcds, "store_sales", "ss_sold_at")["dimension"] == {"is_time": True}
+    assert field_of(tpcds, "date_dim", "d_date")["dimension"] == {"is_time": True}
+
+
+def test_a_column_expression_is_its_own_name(tpcds):
+    assert expression_of(field_of(tpcds, "customer", "c_email_address")) == (
+        "c_email_address"
+    )
+
+
+def test_the_raw_warehouse_type_is_stashed_alongside_the_portable_datatype(tpcds):
+    field = field_of(tpcds, "store_sales", "ss_sales_price")
+    assert field["datatype"] == "Decimal"
+    assert stash_of(field)["type"] == "NUMBER(7,2)"
+
+
+def test_sample_values_are_stashed(tpcds):
+    assert stash_of(field_of(tpcds, "item", "i_category"))["sample_values"] == [
+        "Electronics",
+        "Home",
+        "Sports",
+    ]
+
+
+def test_an_expression_only_fact_keeps_its_expression_and_is_marked_a_metric(tpcds):
+    field = field_of(tpcds, "store_sales", "ss_discount_pct")
+    assert expression_of(field) == "1 - (ss_sales_price / NULLIF(ss_list_price, 0))"
+    assert stash_of(field) == {"role": "metric"}
+    assert "datatype" not in field
+
+
+def test_a_column_description_pair_maps_to_description_and_ai_context(tpcds):
+    field = field_of(tpcds, "store_sales", "ss_sales_price")
+    assert field["description"] == "Sales price per unit."
+    assert field["ai_context"]["instructions"].startswith("Per-unit price.")
+
+
+# --- relationships ----------------------------------------------------------------
+
+
+def test_direction_follows_the_primary_key_not_the_left_right_order(tpcds):
+    # date_dim is the left table in the fixture, but its primary key covers the join,
+    # so it is the one side and store_sales must be the many side.
+    relationship = by_name(tpcds["relationships"])["store_sales_to_date_dim"]
+    assert relationship["from"] == "store_sales"
+    assert relationship["to"] == "date_dim"
+    assert relationship["from_columns"] == ["ss_sold_date_sk"]
+    assert relationship["to_columns"] == ["d_date_sk"]
+    assert stash_of(relationship)["flipped"] is True
+
+
+def test_a_relationship_already_in_many_to_one_order_is_not_flipped(tpcds):
+    relationship = by_name(tpcds["relationships"])["store_sales_to_customer"]
+    assert relationship["from"] == "store_sales"
+    assert "flipped" not in stash_of(relationship)
+
+
+def test_relationships_keep_their_declaration_order(tpcds):
+    assert [r["name"] for r in tpcds["relationships"]] == [
+        "store_sales_to_date_dim",
+        "store_sales_to_customer",
+        "store_sales_to_item",
+        "store_sales_to_store",
+    ]
+
+
+def test_only_a_flipped_relationship_carries_a_stash(tpcds):
+    stashes = [stash_of(r) for r in tpcds["relationships"]]
+    assert stashes == [{"flipped": True}, {}, {}, {}]
+
+
+def test_undetermined_cardinality_warns_and_keeps_solid_order():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    del solid["semantic_model"]["tables"][1]["primary_key"]
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert any("could not be determined" in w for w in warnings_)
+    relationship = model_of(ossie)["relationships"][0]
+    assert (relationship["from"], relationship["to"]) == ("orders", "customers")
+
+
+def test_a_one_to_one_relationship_is_annotated():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    # Make the join unique on both ends.
+    solid["semantic_model"]["tables"][0]["primary_key"] = "customer_id"
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    relationship = model_of(ossie)["relationships"][0]
+    assert "One-to-one" in relationship["ai_context"]["instructions"]
+
+
+def test_a_relationship_naming_an_unknown_table_is_dropped_with_a_warning():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["semantic_model"]["relationships"][0]["right_table"] = "main.sales.missing"
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert any("main.sales.missing" in w for w in warnings_)
+    assert "relationships" not in model_of(ossie)
+
+
+def test_mismatched_join_key_counts_drop_the_relationship_with_a_warning():
+    """One relationship whose keys cannot pair up is one construct dropped, not a
+    reason to fail the whole model (the README's error policy)."""
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["semantic_model"]["relationships"][0]["join_keys"]["right"] = [
+        "customer_id",
+        "region",
+    ]
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert len(model_of(ossie).get("relationships") or []) == len(
+        solid["semantic_model"]["relationships"]) - 1
+    assert any("which must correspond positionally; the relationship was dropped" in w
+               for w in warnings_), warnings_
+
+
+# --- metrics ----------------------------------------------------------------------
+
+
+def test_a_single_table_metric_is_qualified_with_its_dataset(tpcds):
+    metrics = by_name(tpcds["metrics"])
+    assert expression_of(metrics["TOTAL_SALES"]) == (
+        "SUM(store_sales.ss_ext_sales_price)"
+    )
+
+
+def test_a_qualified_metric_needs_no_table_stash(tpcds):
+    assert stash_of(by_name(tpcds["metrics"])["TOTAL_SALES"]) == {}
+
+
+def test_a_metric_referencing_no_column_keeps_its_tables_in_the_stash(tpcds):
+    metric = by_name(tpcds["metrics"])["ROW_COUNT"]
+    assert expression_of(metric) == "COUNT(*)"
+    assert stash_of(metric)["tables"] == ["tpcds.public.store_sales"]
+
+
+def test_a_cross_table_metric_qualifies_each_column_with_the_table_that_has_it(tpcds):
+    # A model-scoped metric must qualify every field. Each of these columns belongs to
+    # only one of the metric's two tables, so that is the one it reads.
+    metric = by_name(tpcds["metrics"])["CUSTOMER_LIFETIME_VALUE"]
+    assert expression_of(metric) == (
+        "SUM(store_sales.ss_ext_sales_price) / "
+        "COUNT(DISTINCT customer.c_customer_sk)"
+    )
+    # The expression names both tables, so there is nothing to stash.
+    assert "tables" not in stash_of(metric)
+
+
+SHARED_COLUMN = """
+semantic_model:
+  name: shop
+  tables:
+    - name: db.s.orders
+      facts: [{name: amount, type: 'NUMBER(38,2)'}, {name: id, type: 'NUMBER(38,0)'}]
+    - name: db.s.customers
+      dimensions: [{name: id, type: 'NUMBER(38,0)'}]
+  metrics:
+    - name: per_customer
+      expression: SUM(amount) / COUNT(DISTINCT id)
+      tables: [db.s.orders, db.s.customers]
+"""
+
+
+def test_a_cross_table_metric_reading_a_column_both_tables_have_is_left_as_written():
+    # Which table's `id` the formula means is recorded only in solid-server's
+    # `metric.column_ids`, which its YAML export does not carry.
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, SHARED_COLUMN)
+    metric = model_of(ossie)["metrics"][0]
+    assert expression_of(metric) == "SUM(amount) / COUNT(DISTINCT id)"
+    assert stash_of(metric)["tables"] == ["db.s.orders", "db.s.customers"]
+    assert any("'per_customer' spans 2 tables (orders, customers) and reads a column "
+               "more than one of them has" in w for w in warnings_)
+    solid, _ = convert_quietly(convert_ossie_to_solid, ossie)
+    assert solid_model_of(solid)["metrics"][0]["tables"] == [
+        "db.s.orders", "db.s.customers"]
+
+
+def test_metric_synonyms_become_ai_context_synonyms(tpcds):
+    assert by_name(tpcds["metrics"])["TOTAL_SALES"]["ai_context"]["synonyms"] == [
+        "total revenue",
+        "gross sales",
+        "sales amount",
+    ]
+
+
+def test_a_metric_without_an_expression_is_dropped_with_a_warning():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    del solid["semantic_model"]["metrics"][0]["expression"]
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert any("LATE_ORDER_COUNT" in w and "no expression" in w for w in warnings_)
+    assert [m["name"] for m in model_of(ossie)["metrics"]] == ["GROSS_REVENUE"]
+
+
+# --- model level ------------------------------------------------------------------
+
+
+def test_asset_link_markup_is_resolved_in_ai_context_and_kept_raw_in_the_stash(tpcds):
+    instructions = tpcds["ai_context"]["instructions"]
+    assert "public.store_sales" in instructions
+    assert "assetlink" not in instructions
+    assert "@<assetlink" in stash_of(tpcds)["custom_instructions"]
+
+
+def test_business_questions_become_ai_context_examples(tpcds):
+    assert len(tpcds["ai_context"]["examples"]) == 3
+
+
+def test_example_queries_and_benchmark_questions_are_stashed(tpcds):
+    stash = stash_of(tpcds)
+    assert [q["name"] for q in stash["example_queries"]] == [
+        "Monthly revenue and profit",
+        "Sales per employee by state",
+    ]
+    assert stash["benchmark_questions"][0]["is_enabled"] is True
+    assert stash["benchmark_questions"][1]["is_enabled"] is False
+
+
+def test_both_model_descriptions_are_preserved(tpcds):
+    stash = stash_of(tpcds)
+    assert tpcds["description"].startswith("TPC-DS retail semantic model")
+    assert stash["model_llm_description"].startswith("TPC-DS retail semantic model")
+    assert stash["model_description"].startswith("Retail analytics for the TPC-DS")
+
+
+def test_the_model_name_can_be_overridden():
+    ossie, _ = convert_quietly(
+        convert_solid_to_ossie, fixture("tpcds_solid.yaml"), model_name="renamed"
+    )
+    assert model_of(ossie)["name"] == "renamed"
+
+
+# --- input validation --------------------------------------------------------------
+
+
+def test_an_ossie_document_is_rejected_with_a_pointed_message():
+    with pytest.raises(ConversionError, match="ossie-solid export"):
+        convert_solid_to_ossie(fixture("tpcds_ossie.yaml"))
+
+
+def test_a_legacy_wrapped_ossie_document_is_rejected_with_a_pointed_message():
+    flat = yaml.safe_load(fixture("tpcds_ossie.yaml"))
+    wrapped = {"version": flat.pop("version"), "semantic_model": [flat]}
+    with pytest.raises(ConversionError, match="ossie-solid export"):
+        convert_solid_to_ossie(yaml.safe_dump(wrapped))
+
+
+def test_a_model_without_tables_is_rejected():
+    with pytest.raises(ConversionError, match="at least one dataset"):
+        convert_solid_to_ossie("semantic_model:\n  name: empty\n")
+
+
+def test_malformed_yaml_is_rejected_cleanly():
+    with pytest.raises(ConversionError, match="Invalid YAML"):
+        convert_solid_to_ossie("semantic_model: [unclosed\n")
+
+
+def test_a_missing_semantic_model_key_is_rejected():
+    with pytest.raises(ConversionError, match="missing the top-level"):
+        convert_solid_to_ossie("tables: []\n")
+
+
+RESERVED_NAMES = """
+semantic_model:
+  name: shop
+  tables:
+    - name: db.s.order
+      dimensions:
+        - name: group
+          type: TEXT
+      facts:
+        - name: amount
+          type: NUMBER(38,2)
+  metrics:
+    - name: revenue
+      expression: SUM(amount)
+      tables:
+        - db.s.order
+"""
+
+
+@pytest.mark.parametrize(
+    ("dialect", "field", "metric"),
+    [
+        ("SNOWFLAKE", '"GROUP"', 'SUM("ORDER".amount)'),
+        ("DATABRICKS", "`group`", "SUM(`order`.amount)"),
+        ("BIGQUERY", "`group`", "SUM(`order`.amount)"),
+        ("ANSI_SQL", '"group"', 'SUM("order".amount)'),
+    ],
+)
+def test_a_reserved_column_or_dataset_name_is_quoted_in_every_dialect(
+        dialect, field, metric):
+    ossie, _ = convert_quietly(convert_solid_to_ossie, RESERVED_NAMES, dialect=dialect)
+    model = model_of(ossie)
+    assert expression_of(field_of(model, "order", "group")) == field
+    assert expression_of(model["metrics"][0]) == metric
+
+    # And the quoted qualifier comes back off on export.
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    restored = solid_model_of(solid)["metrics"][0]
+    assert (restored["expression"], restored["tables"]) == ("SUM(amount)", ["db.s.order"])
+    assert warnings_ == []
+
+
+def test_keys_this_converter_does_not_map_survive_the_round_trip_with_a_warning():
+    """Solid's export gains keys over time; a key the converter does not know is
+    carried in the stash at every level and restored, so the round trip does not
+    break until the converter catches up. It is reported, as Apache Ossie consumers
+    do not see it."""
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["exported_by"] = "solid-server"
+    model = solid["semantic_model"]
+    model["owner"] = "data team"
+    model["business_context"]["audience"] = "finance"
+    model["tables"][0]["certified"] = True
+    model["tables"][0]["dimensions"][0]["pii"] = {"level": 2, "tags": ["id"]}
+    model["metrics"][0]["unit"] = "orders"
+    model["relationships"][0]["cardinality"] = "many_to_one"
+    model["relationships"][0]["join_keys"]["operator"] = "="
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid))
+    assert any("semantic_model: 'owner' is not part of a Solid semantic model as this "
+               "converter maps it; it was carried unchanged" in w for w in warnings_)
+    assert any("column 'orders.order_id': 'pii' is not part of" in w for w in warnings_)
+
+    back, export_warnings = convert_quietly(convert_ossie_to_solid, ossie)
+    assert normalized_yaml(back) == normalized_yaml(yaml.safe_dump(solid))
+    assert not [w for w in export_warnings if "owner" in w or "pii" in w]
+
+
+def test_structured_custom_instructions_render_into_the_model_instructions():
+    """Solid's root-level instruction entries reach an Apache Ossie consumer as text:
+    each enabled one with its title, condition and assets, asset links resolved. A
+    disabled entry is not in force, so it is not rendered, but the stash keeps every
+    entry for the way back."""
+    ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("databricks_solid.yaml"))
+    model = model_of(ossie)
+    assert model["ai_context"]["instructions"] == (
+        "Late shipments:\n"
+        "Applies when: The question asks about late or delayed orders.\n"
+        "Applies to: main.sales.orders\n"
+        "An order is late when orders.status is not 'shipped' two days after it was "
+        "placed."
+    )
+    entries = stash_of(model)["custom_instruction_entries"]
+    assert [e["title"] for e in entries] == ["Late shipments", "Old fiscal calendar"]
+    assert "@<assetlink" in entries[0]["content"]
+
+
+def test_a_mapping_keyed_by_a_yaml_date_is_rejected_cleanly():
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["semantic_model"]["example_queries"] = [
+        {"name": "q", "sql": "SELECT 1", "by_day": {datetime.date(2024, 1, 1): 3}}]
+    with pytest.raises(ConversionError, match="cannot be carried in custom_extensions"):
+        convert_solid_to_ossie(yaml.safe_dump(solid))
+
+
+@pytest.mark.parametrize("key", ["description", "manual_description", "type"])
+def test_a_list_or_mapping_in_a_text_slot_is_rejected_rather_than_dropped(key):
+    solid = yaml.safe_load(fixture("databricks_solid.yaml"))
+    solid["semantic_model"]["tables"][0]["dimensions"][0][key] = {"name": "DATE"}
+    with pytest.raises(ConversionError, match=f"'{key}' must be text"):
+        convert_solid_to_ossie(yaml.safe_dump(solid))
+
+
+# --- fields solid-server added in October 2026 --------------------------------------
+
+
+def _current_export(source_system="databricks", types=None):
+    """databricks_solid.yaml as solid-server writes it since October 2026: with
+    `version_number`, `source_system`, `target_system` and
+    `model_llm_short_description`, in the template's key order."""
+    model = yaml.safe_load(fixture("databricks_solid.yaml"))["semantic_model"]
+    if types:
+        for table in model["tables"]:
+            for column in (table.get("dimensions") or []) + (table.get("facts") or []):
+                if column.get("type"):
+                    column["type"] = types.get(column["type"], column["type"])
+    ordered = {"name": model.pop("name"), "version_number": 0,
+               "source_system": source_system, "target_system": "solid"}
+    for key, value in model.items():
+        ordered[key] = value
+        if key == "model_llm_description":
+            ordered["model_llm_short_description"] = "Orders and their customers."
+    return yaml.safe_dump({"semantic_model": ordered}, sort_keys=False)
+
+
+def test_a_current_solid_export_round_trips_exactly():
+    solid = _current_export()
+    ossie, import_warnings = convert_quietly(convert_solid_to_ossie, solid)
+    back, _ = convert_quietly(convert_ossie_to_solid, ossie)
+    assert not [w for w in import_warnings if "not part of a Solid" in w]
+    assert normalized_yaml(back) == normalized_yaml(solid)
+    assert list(solid_model_of(back))[:4] == [
+        "name", "version_number", "source_system", "target_system"]
+
+
+def test_source_system_sets_the_dialect():
+    """`source_system` names the warehouse, so it wins over what the types suggest."""
+    ossie, warnings_ = convert_quietly(
+        convert_solid_to_ossie, _current_export(source_system="snowflake"))
+    assert stash_of(model_of(ossie))["dialect"] == "SNOWFLAKE"
+    assert not [w for w in warnings_ if "infer" in w]
+
+
+def test_a_source_system_with_no_ossie_dialect_reads_as_ansi_sql():
+    """A Starburst model's BIGINT and TIMESTAMP are Trino's, not Databricks': no
+    Databricks label, and a TIMESTAMP with no time zone."""
+    solid = _current_export(source_system="starburst",
+                            types={"LONG": "bigint", "TIMESTAMP": "timestamp(3)"})
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, solid)
+    model = model_of(ossie)
+    assert stash_of(model)["dialect"] == "ANSI_SQL"
+    assert any("comes from starburst, which has no Apache Ossie dialect" in w
+               for w in warnings_), warnings_
+    datatypes = {f["datatype"] for d in model["datasets"] for f in d["fields"]
+                 if f.get("datatype") in ("DateTime", "DateTimeTz")}
+    assert datatypes == {"DateTime"}
+
+
+# --- metrics import leaves as written --------------------------------------------------
+
+
+def _import_metric(expression):
+    solid = {"semantic_model": {"name": "m", "tables": [
+        {"name": "shop.sales.orders", "facts": [
+            {"name": n, "type": "NUMBER"} for n in ("amount", "order_id", "customer_id")]},
+    ], "metrics": [{"name": "x", "expression": expression,
+                    "tables": ["shop.sales.orders"]}]}}
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(solid),
+                                       dialect="SNOWFLAKE")
+    metric = model_of(ossie)["metrics"][0]
+    back, _ = convert_quietly(convert_ossie_to_solid, ossie)
+    return metric, warnings_, solid_model_of(back)["metrics"][0]
+
+
+@pytest.mark.parametrize(("expression", "reported"), [
+    (("COUNT(DISTINCT CASE WHEN customer_id IN (SELECT customer_id FROM crm.vip) "
+     "THEN order_id END)"), "has a subquery or lambda"),
+    ("COUNT(DISTINCT CASE WHEN p.amount > 0 THEN p.order_id END)",
+     "qualifies a column with a table alias"),
+    ("SUM(amount * discount)", "reads a name that is not a column of its tables"),
+])
+def test_a_metric_import_cannot_qualify_safely_is_reported_and_round_trips(
+        expression, reported):
+    metric, warnings_, back = _import_metric(expression)
+    assert expression_of(metric) == expression
+    assert any(f"'x' {reported}" in w for w in warnings_), warnings_
+    assert back == {"name": "x", "expression": expression,
+                    "tables": ["shop.sales.orders"]}
+
+
+# --- key and join columns a Solid table does not list ---------------------------------
+
+
+_UNLISTED_KEYS = {"semantic_model": {"name": "m", "tables": [
+    {"name": "db.s.orders", "primary_key": "order_uuid",
+     "facts": [{"name": "amount", "type": "NUMBER"}]},
+    {"name": "db.s.customers", "primary_key": "id",
+     "dimensions": [{"name": "id", "type": "NUMBER"}], "facts": []},
+], "relationships": [{"left_table": "db.s.orders", "right_table": "db.s.customers",
+                      "join_keys": {"left": ["cust_fk"], "right": ["id"]}}]}}
+
+
+def test_a_key_or_join_column_a_table_does_not_list_is_declared_as_a_field():
+    """Apache Ossie keys and join columns name fields (apache/ossie#649 validates it),
+    so a column Solid keys or joins on without listing it is declared as one."""
+    ossie, warnings_ = convert_quietly(convert_solid_to_ossie,
+                                       yaml.safe_dump(_UNLISTED_KEYS), dialect="SNOWFLAKE")
+    model = model_of(ossie)
+    orders = dataset_of(model, "orders")
+    declared = {f["name"] for f in orders["fields"]}
+    assert {"order_uuid", "cust_fk"} <= declared
+    relationship = model["relationships"][0]
+    for dataset, columns in ((relationship["from"], relationship["from_columns"]),
+                             (relationship["to"], relationship["to_columns"])):
+        names = {f["name"] for f in dataset_of(model, dataset)["fields"]}
+        assert set(columns) <= names
+    assert set(orders["primary_key"]) <= declared
+    assert any("'orders' keys or joins on order_uuid, cust_fk, which the Solid table "
+               "does not list" in w for w in warnings_), warnings_
+
+
+def test_a_declared_key_column_is_left_out_again_on_export():
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(_UNLISTED_KEYS),
+                               dialect="SNOWFLAKE")
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, ossie)
+    model, original = solid_model_of(solid), _UNLISTED_KEYS["semantic_model"]
+
+    def shape(m):
+        return [(t["name"], t.get("primary_key"),
+                 [c["name"] for c in (t.get("dimensions") or []) + t["facts"]])
+                for t in m["tables"]]
+
+    assert shape(model) == shape(original)
+    assert model["relationships"] == original["relationships"]
+    assert not [w for w in warnings_ if "order_uuid" in w or "cust_fk" in w]
+
+
+@pytest.mark.parametrize("edit", [
+    lambda field: field.update(description="The order's unique id."),
+    lambda field: field.update(datatype="String"),
+    lambda field: field.update(ai_context={"synonyms": ["order key"]}),
+])
+def test_a_declared_key_column_edited_in_ossie_is_exported_as_a_column(edit):
+    """Leaving it out again is right only while it is what import wrote: an edit means
+    someone described a real column, and dropping it would lose the edit silently."""
+    ossie, _ = convert_quietly(convert_solid_to_ossie, yaml.safe_dump(_UNLISTED_KEYS),
+                               dialect="SNOWFLAKE")
+    model = yaml.safe_load(ossie)
+    orders = next(d for d in model["datasets"] if d["name"] == "orders")
+    edit(next(f for f in orders["fields"] if f["name"] == "order_uuid"))
+    solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
+    table = solid_model_of(solid)["tables"][0]
+    columns = [c["name"] for c in (table.get("dimensions") or []) + table["facts"]]
+    assert "order_uuid" in columns
+    assert any("'orders.order_uuid' was declared at import only because a key or join "
+               "names it, but it was edited in Apache Ossie" in w for w in warnings_)
