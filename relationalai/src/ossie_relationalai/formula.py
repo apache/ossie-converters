@@ -26,6 +26,7 @@ SDK. This module is the half that needs it.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Optional
 
 from relationalai.util.naming import NameCache
@@ -89,7 +90,7 @@ class FormulaConverter(GenericFormulaConverter):
         self._ontology = ontology
         self._reasoner = reasoner
         self._formula = formula
-        self._target_var = formula.formula_target()
+        self._target_var = self._formula_target()
         self._var_name_cache = var_name_cache
         self._var_refs: dict = {}
         self._body_statements: list = []
@@ -110,6 +111,12 @@ class FormulaConverter(GenericFormulaConverter):
             # `_var_name` is NameCache-backed, so these stay unique across formulas.
             var_name = self._var_name(var)
             self._var_refs[var_name] = pyrel_c.ref(var_name)
+        self._emit()
+
+    def _formula_target(self):
+        return self._formula.formula_target()
+
+    def _emit(self):
         self._ontology.base_model().define(self._head()).where(*self._body())
 
     def _head(self):
@@ -293,6 +300,191 @@ class FormulaConverter(GenericFormulaConverter):
             return rel
         else:
             return concept.__getattr__(relationship.name)
+
+class RequirementConverter(FormulaConverter):
+    """Render the supported boolean subset as a requirement over its scope."""
+
+    def _formula_target(self):
+        # A comparison in a requirement tests its operands without assigning
+        # the last primitive role as an output of a derivation.
+        return None
+
+    def _ref(self, name, concept):
+        key = self._var_name(name)
+        if key not in self._var_refs:
+            player = self._ontology.lookup_concept(concept.name)
+            if player is None:
+                raise NotImplementedError("requires role player is unavailable in PyRel")
+            self._var_refs[key] = player.ref(key)
+        return self._var_refs[key]
+
+    def _emit(self):
+        scope = self._formula.parent
+        self._scope_refs = {}
+        self._concept_refs = {}
+        if isinstance(scope, Concept):
+            if scope.is_primitive:
+                raise NotImplementedError("requires on a value concept needs a finite instance relation")
+            concept = self._ontology.lookup_concept(scope.name)
+            if concept is None:
+                raise NotImplementedError("requires concept is unavailable in PyRel")
+            ref = self._ref(scope.name, scope)
+            self._concept_refs[scope.name] = (ref, scope)
+            domain = [concept(ref)]
+        elif isinstance(scope, Relationship):
+            refs = []
+            players = Counter(role.player.name for role in scope.roles)
+            if any(not role.player.is_primitive and players[role.player.name] > 1 for role in scope.roles):
+                raise NotImplementedError("requires on repeated entity roles cannot be emitted by the SDK")
+            for role in scope.roles:
+                if role.name in self._scope_refs:
+                    raise NotImplementedError("requires relationship has ambiguous role names")
+                ref = self._ref(role.name, role.player)
+                refs.append(ref)
+                self._scope_refs[role.name] = (ref, role.player)
+                # An unnamed role uses the player's name. When the player is
+                # repeated, only that default role owns the bare concept name.
+                if not role.explicit_name or players[role.player.name] == 1:
+                    self._concept_refs[role.player.name] = (ref, role.player)
+            domain = [self._pyrel_relationship(scope)(*refs)]
+        elif scope is None:
+            raise NotImplementedError("ontology-level requires are not supported")
+        else:
+            raise NotImplementedError("requires scope is not supported")
+        condition = self._body()
+        if not condition:
+            raise NotImplementedError("requires did not yield a condition")
+        self._ontology.base_model().where(*domain).require(*condition)
+
+    def _binding(self, node):
+        if isinstance(node, VarHandle):
+            binding = self._scope_refs.get(node.name())
+        else:
+            binding = self._concept_refs.get(node._concept.name)
+        if binding is None:
+            raise NotImplementedError("requires reference is outside the current scope or ambiguous")
+        return binding
+
+    def _bound_operand(self, node, parent):
+        if not isinstance(parent, (Expression, FactRef, DotJoinHandle, Disjunction)):
+            raise NotImplementedError("requires reference must be an operand or a fact argument")
+        return self._binding(node)[0]
+
+    def visit_varhandle(self, node: VarHandle, parent: Optional[Node]):
+        return self._bound_operand(node, parent)
+
+    def visit_conceptrefhandle(self, node: ConceptRefHandle, parent: Optional[Node]):
+        return self._bound_operand(node, parent)
+
+    @staticmethod
+    def _check_literal(concept, value):
+        primitive = concept.primitive_root
+        compatible = {str: {"String"}, bool: {"Boolean"}, int: {"Integer", "Decimal", "Float"},
+                      float: {"Decimal", "Float"}}
+        if primitive is None or primitive.name not in compatible.get(type(value), ()):
+            raise NotImplementedError("requires literal is incompatible with its scoped role")
+
+    def visit_expression(self, node: Expression, parent: Optional[Node]):
+        comparison = {BinOp.EQ, BinOp.NE, BinOp.LT, BinOp.LE, BinOp.GT, BinOp.GE}
+        left, right = node._args
+        if node._op in comparison:
+            reference = (ConceptRefHandle, VarHandle)
+            if not any(isinstance(arg, reference) for arg in (left, right)):
+                raise NotImplementedError("requires comparison must reference a scoped value")
+            left_value, right_value = (arg.accept(self, node) for arg in (left, right))
+            if not isinstance(right, reference):
+                self._check_literal(self._binding(left)[1], right_value)
+            elif not isinstance(left, reference):
+                self._check_literal(self._binding(right)[1], left_value)
+            return self._apply_operator(left_value, node._op, right_value)
+
+        if (
+            not isinstance(parent, Expression) or node._op != BinOp.MINUS
+            or not isinstance(left, LiteralHandle) or left._val != 0
+            or not isinstance(right, LiteralHandle) or type(right._val) not in (int, float)
+        ):
+            raise NotImplementedError("requires arithmetic is limited to negative numeric literals")
+        return -right._val
+
+    def visit_literalhandle(self, node: LiteralHandle, parent: Optional[Node]):
+        if not isinstance(parent, (Expression, FactRef)):
+            raise NotImplementedError("requires literal must be an operand or a fact argument")
+        return super().visit_literalhandle(node, parent)
+
+    def visit_conjunction(self, node: Conjunction, parent: Optional[Node]):
+        if parent is not None and not isinstance(parent, Conjunction):
+            raise NotImplementedError("requires conjunction must be at the top level")
+        return super().visit_conjunction(node, parent)
+
+    def _predicate(self, node: DotJoinHandle, arguments=()):
+        owner, target = node._handle1, node._handle2
+        if not isinstance(owner, (ConceptRefHandle, VarHandle)) or not isinstance(target, RelationshipRefHandle):
+            raise NotImplementedError("requires paths must use one relationship")
+        relationship = target._relationship
+        if len(relationship.roles) != len(arguments) + 1:
+            raise NotImplementedError("requires predicate must bind every role")
+        bound = owner.accept(self, node)
+        for role, value in zip(relationship.roles[1:], arguments):
+            if type(value) in (str, int, float, bool):
+                self._check_literal(role.player, value)
+        return self._pyrel_relationship(relationship)(bound, *arguments)
+
+    def visit_factref(self, node: FactRef, parent: Optional[Node]):
+        if not isinstance(node._handle, DotJoinHandle) or not all(
+            isinstance(arg, (ConceptRefHandle, VarHandle, LiteralHandle)) for arg in node._args
+        ):
+            raise NotImplementedError("requires fact arguments must be scoped references or literals")
+        return self._predicate(node._handle, [arg.accept(self, node) for arg in node._args])
+
+    def visit_dotjoinhandle(self, node: DotJoinHandle, parent: Optional[Node]):
+        if isinstance(parent, Expression):
+            raise NotImplementedError("path value lookup in requires is not supported")
+        return self._predicate(node)
+
+    def visit_exists(self, node: Exists, parent: Optional[Node]):
+        if not isinstance(node._body, DotJoinHandle):
+            raise NotImplementedError("requires EXISTS must use a scoped unary relationship")
+        return self._predicate(node._body)
+
+    def visit_relationshiprefhandle(self, node: RelationshipRefHandle, parent: Optional[Node]):
+        raise NotImplementedError("requires relationship must bind every role")
+
+    def visit_datasetrefhandle(self, node: DatasetRefHandle, parent: Optional[Node]):
+        raise NotImplementedError("dataset access in requires is not supported")
+
+    def visit_datasetfieldhandle(self, node: DatasetFieldHandle, parent: Optional[Node]):
+        raise NotImplementedError("dataset access in requires is not supported")
+
+    def visit_disjunction(self, node: Disjunction, parent: Optional[Node]):
+        # A disjunction of equalities on one variable is an enum. A general
+        # disjunction can introduce new bindings and is outside this lowering.
+        if parent is not None or len(self._formula.expr()) != 1:
+            raise NotImplementedError("requires OR must be a complete enumeration")
+        pending = [node]
+        variable = None
+        values = []
+        while pending:
+            term = pending.pop()
+            if isinstance(term, Disjunction):
+                pending.extend((term.right(), term.left()))
+                continue
+            if not isinstance(term, Expression) or term._op != BinOp.EQ:
+                raise NotImplementedError("requires OR must enumerate one variable")
+            left, right = term._args
+            if not isinstance(left, (ConceptRefHandle, VarHandle)) or not isinstance(right, LiteralHandle):
+                raise NotImplementedError("requires OR must enumerate one variable")
+            if variable is not None and variable != left:
+                raise NotImplementedError("requires OR must enumerate one variable")
+            variable = left
+            values.append(right._val)
+        ref, concept = self._binding(variable)
+        for value in values:
+            self._check_literal(concept, value)
+        return ref.in_(values)
+
+    def visit_aggexpr(self, node: AggExpr, parent: Optional[Node]):
+        raise NotImplementedError("requires aggregates are not supported")
+
 
 class MappingFormulaConverter(GenericFormulaConverter):
     """Converts a mapping formula AST to a PyRel expression.
