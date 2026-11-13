@@ -305,7 +305,10 @@ def _extract_agg_info(
 
 
 def _try_parse_ratio(expr_str: str, dialect: str = "") -> Optional[Tuple[str, str]]:
-    """Try to parse ``(expr_a) / (expr_b)`` using sqlglot, returning ``(num_expr, den_expr)`` or None."""
+    """Try to parse ``(expr_a) / (expr_b)`` using sqlglot, returning ``(num_expr, den_expr)`` or None.
+
+    A denominator wrapped as ``NULLIF(expr_b, 0)`` is unwrapped: a MetricFlow RATIO adds that NULLIF itself.
+    """
     try:
         tree = sqlglot.parse_one(expr_str.strip(), read=dialect)
     except sqlglot.errors.SqlglotError:
@@ -322,8 +325,17 @@ def _try_parse_ratio(expr_str: str, dialect: str = "") -> Optional[Tuple[str, st
         num = num.this
     if isinstance(den, exp.Paren):
         den = den.this
+    if _is_nullif_zero(den):
+        den = den.this
+        if isinstance(den, exp.Paren):
+            den = den.this
 
     return num.sql(dialect=dialect), den.sql(dialect=dialect)
+
+
+def _is_nullif_zero(node: exp.Expression) -> bool:
+    zero = node.expression if isinstance(node, exp.Nullif) else None
+    return isinstance(zero, exp.Literal) and not zero.is_string and zero.this == "0"
 
 
 def _get_dataset_qualifier(expression: str, dialect: str = "") -> Optional[str]:
