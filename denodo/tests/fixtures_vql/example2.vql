@@ -1,0 +1,39 @@
+CONNECT DATABASE demo_metricview_metadata_db;
+CREATE OR REPLACE ASSOCIATION psql_tpch_nation_psql_tpch_customer REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_customer psql_tpch_nation PRINCIPAL (1)
+    ENDPOINT psql_tpch_nation psql_tpch_customer (0,*)
+    ADD MAPPING c_nationkey=n_nationkey;
+CLOSE;
+
+CONNECT DATABASE demo_metricview_metadata_db;
+CREATE OR REPLACE ASSOCIATION psql_tpch_customer_psql_tpch_orders REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_orders psql_tpch_customer PRINCIPAL (1)
+    ENDPOINT psql_tpch_customer psql_tpch_orders (0,*)
+    ADD MAPPING o_custkey=c_custkey;
+CLOSE;
+
+CREATE OR REPLACE METRIC VIEW sales_view_diff_database
+    DESCRIPTION = 'Example of metric view'
+    TAGS (sales_data, sensitive)
+    SOURCES (
+        nation AS demo_metricview_metadata_db.psql_tpch_nation,
+        orders AS demo_metricview_metadata_db.psql_tpch_orders,
+        customer AS demo_metricview_metadata_db.psql_tpch_customer
+    )
+    ASSOCIATIONS (
+        customer nation demo_metricview_metadata_db.psql_tpch_nation_psql_tpch_customer,
+        orders customer demo_metricview_metadata_db.psql_tpch_customer_psql_tpch_orders
+    )
+    DIMENSIONS (
+        nation_name AS nation.n_name,
+        order_date AS orders.o_orderdate,
+        customer_address_full AS concat(customer.c_address, '-', nation.n_name),
+        customer_name AS customer.c_name,
+        customer_address AS customer.c_address,
+        customer_comment AS customer.c_comment
+    )
+    METRICS (
+        count_order_keys AS count(orders.o_orderkey),
+        order_average_value AS avg(orders.o_totalprice)
+    )
+CONTEXT ('I18N' = 'us_pst');

@@ -1,0 +1,36 @@
+CREATE OR REPLACE ASSOCIATION psql_tpch_nation_psql_tpch_customer REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_customer psql_tpch_nation PRINCIPAL (1)
+    ENDPOINT psql_tpch_nation psql_tpch_customer (0,*)
+    ADD MAPPING c_nationkey=n_nationkey;
+
+CREATE OR REPLACE ASSOCIATION psql_tpch_customer_psql_tpch_orders REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_orders psql_tpch_customer PRINCIPAL (1)
+    ENDPOINT psql_tpch_customer psql_tpch_orders (0,*)
+    ADD MAPPING o_custkey=c_custkey;
+
+CREATE OR REPLACE METRIC VIEW sales_view_metric_condition
+    FOLDER = '/3. views'
+    DESCRIPTION = 'Example of metric view'
+    SOURCES (
+        nation AS psql_tpch_nation,
+        orders AS psql_tpch_orders,
+        customer AS psql_tpch_customer
+    )
+    ASSOCIATIONS (
+        customer nation psql_tpch_nation_psql_tpch_customer,
+        orders customer psql_tpch_customer_psql_tpch_orders
+    )
+    DIMENSIONS (
+        nation_name AS nation.n_name,
+        order_date AS orders.o_orderdate,
+        customer_address AS customer.c_address,
+        customer_name AS customer.c_name,
+        customer_address_full AS concat(customer.c_address, '-', nation.n_name),
+        customer_comment AS customer.c_comment
+    )
+    METRICS (
+        count_order_keys AS count(orders.o_orderkey),
+        order_average_value AS avg(orders.o_totalprice),
+        test_metric AS nullif(sum(case WHEN (orders.o_totalprice > 10000) THEN 1 ELSE 0 END), 0)
+    )
+CONTEXT ('I18N' = 'us_pst');

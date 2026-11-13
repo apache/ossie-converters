@@ -1,0 +1,61 @@
+CREATE OR REPLACE ASSOCIATION psql_tpch_region_nation REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_nation psql_tpch_region PRINCIPAL (1)
+    ENDPOINT psql_tpch_region psql_tpch_nation (+)
+    ADD MAPPING r_regionkey=n_regionkey;
+
+CREATE OR REPLACE ASSOCIATION psql_tpch_nation_customer REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_customer psql_tpch_nation PRINCIPAL (1)
+    ENDPOINT psql_tpch_nation psql_tpch_customer (1)
+    ADD MAPPING n_nationkey=c_nationkey;
+
+CREATE OR REPLACE ASSOCIATION psql_tpch_customer_orders REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_orders psql_tpch_customer PRINCIPAL (1)
+    ENDPOINT psql_tpch_customer psql_tpch_orders (0,1)
+    ADD MAPPING c_custkey=o_custkey;
+
+CREATE OR REPLACE ASSOCIATION psql_tpch_orders_lineitem REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_lineitem psql_tpch_orders PRINCIPAL (1)
+    ENDPOINT psql_tpch_orders psql_tpch_lineitem (+)
+    ADD MAPPING o_orderkey=l_orderkey;
+
+CREATE OR REPLACE ASSOCIATION psql_tpch_nation_supplier REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_nation psql_tpch_supplier PRINCIPAL (1)
+    ENDPOINT psql_tpch_supplier psql_tpch_nation (+)
+    ADD MAPPING s_nationkey=n_nationkey;
+
+CREATE OR REPLACE METRIC VIEW example9_metric
+    SOURCES (
+        psql_tpch_customer AS psql_tpch_customer,
+        psql_tpch_nation AS psql_tpch_nation,
+        psql_tpch_region AS psql_tpch_region,
+        psql_tpch_lineitem AS psql_tpch_lineitem,
+        psql_tpch_orders AS psql_tpch_orders,
+        psql_tpch_supplier AS psql_tpch_supplier
+    )
+    ASSOCIATIONS (
+        psql_tpch_nation psql_tpch_region psql_tpch_region_nation,
+        psql_tpch_customer psql_tpch_nation psql_tpch_nation_customer,
+        psql_tpch_orders psql_tpch_customer psql_tpch_customer_orders,
+        psql_tpch_lineitem psql_tpch_orders psql_tpch_orders_lineitem,
+        psql_tpch_nation psql_tpch_supplier psql_tpch_nation_supplier
+    )
+    DIMENSIONS (
+        customer_name AS psql_tpch_customer.c_name,
+        full_name AS concat(psql_tpch_customer.c_name, '_', psql_tpch_customer.c_address),
+        customer_address AS psql_tpch_customer.c_address,
+        nation_name AS psql_tpch_nation.n_name,
+        region_name AS psql_tpch_region.r_name,
+        line_number AS psql_tpch_lineitem.l_linenumber,
+        return_flag AS psql_tpch_lineitem.l_returnflag,
+        line_status AS psql_tpch_lineitem.l_linestatus,
+        order_id AS psql_tpch_orders.o_orderkey,
+        id_supplier AS psql_tpch_supplier.s_suppkey,
+        supplier_name AS psql_tpch_supplier.s_name,
+        supplier_addres AS psql_tpch_supplier.s_address
+    )
+    METRICS (
+        count_nations AS count(psql_tpch_nation.n_nationkey),
+        count_orders AS count(psql_tpch_orders.o_orderkey),
+        total_order_price AS sum(psql_tpch_orders.o_totalprice),
+        n_supplier AS count(psql_tpch_supplier.s_suppkey)
+    );
