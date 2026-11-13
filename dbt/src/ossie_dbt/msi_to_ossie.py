@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ossie import (
     OssieCustomExtension,
@@ -161,6 +161,7 @@ class MSIToOssieConverter:
         entity_index, entity_issues = self._build_entity_index(manifest.semantic_models)
         issues.extend(entity_issues)
         relationships = self._build_relationships(entity_index)
+        filter_columns = self._build_filter_columns(manifest.semantic_models)
 
         metric_index = self._build_metric_index(manifest.metrics)
         expression_cache: Dict[Tuple[str, Optional[str]], str] = {}
@@ -190,7 +191,7 @@ class MSIToOssieConverter:
                 )
                 continue
             try:
-                expr = self._resolve_metric_expression(metric, metric_index, expression_cache)
+                expr = self._resolve_metric_expression(metric, metric_index, expression_cache, filter_columns)
             except AmbiguousDerivedReferenceError:
                 # Every other unsupported shape drops one metric and records an issue;
                 # an ambiguous reference is no reason to fail the whole conversion.
@@ -367,10 +368,11 @@ class MSIToOssieConverter:
         metric: Metric,
         metric_index: Dict[str, Metric],
         cache: Dict[Tuple[str, Optional[str]], str],
+        columns: Mapping[str, str],
         parent_filter: Optional[str] = None,
     ) -> str:
         """Recursively resolve a metric to a fully-inlined SQL expression string."""
-        own_filter = _collect_filter_sql(metric.filter)
+        own_filter = _collect_filter_sql(metric.filter, columns=columns)
         combined_filter = _merge_filter_sqls(parent_filter, own_filter)
 
         cache_key = (metric.name, combined_filter)
@@ -380,11 +382,11 @@ class MSIToOssieConverter:
         if metric.type is MetricType.SIMPLE:
             expr = self._resolve_simple(metric, combined_filter)
         elif metric.type is MetricType.CUMULATIVE:
-            expr = self._resolve_cumulative(metric, metric_index, cache, combined_filter)
+            expr = self._resolve_cumulative(metric, metric_index, cache, columns, combined_filter)
         elif metric.type is MetricType.RATIO:
-            expr = self._resolve_ratio(metric, metric_index, cache, combined_filter)
+            expr = self._resolve_ratio(metric, metric_index, cache, columns, combined_filter)
         elif metric.type is MetricType.DERIVED:
-            expr = self._resolve_derived(metric, metric_index, cache, combined_filter)
+            expr = self._resolve_derived(metric, metric_index, cache, columns, combined_filter)
         elif metric.type is MetricType.CONVERSION:
             # CONVERSION metrics are skipped in convert(); this branch should never be reached.
             raise RuntimeError(f"Unexpected CONVERSION metric in expression resolver: metric_name={metric.name!r}")
@@ -446,6 +448,7 @@ class MSIToOssieConverter:
         metric: Metric,
         metric_index: Dict[str, Metric],
         cache: Dict[Tuple[str, Optional[str]], str],
+        columns: Mapping[str, str],
         filter_sql: Optional[str] = None,
     ) -> str:
         """Resolve a CUMULATIVE metric to its base aggregation expression.
@@ -458,11 +461,12 @@ class MSIToOssieConverter:
                 f"CUMULATIVE metric has no sub-metric after transformation: metric_name={metric.name!r}"
             )
         sub_input = cumulative_params.metric
-        sub_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(sub_input.filter))
+        sub_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(sub_input.filter, columns=columns))
         return self._resolve_metric_expression(
             self._lookup_metric(metric_index, sub_input.name, f"CUMULATIVE metric '{metric.name}'"),
             metric_index,
             cache,
+            columns,
             sub_filter,
         )
 
@@ -471,6 +475,7 @@ class MSIToOssieConverter:
         metric: Metric,
         metric_index: Dict[str, Metric],
         cache: Dict[Tuple[str, Optional[str]], str],
+        columns: Mapping[str, str],
         filter_sql: Optional[str] = None,
     ) -> str:
         """Resolve a RATIO metric as (numerator) / (denominator), both fully inlined."""
@@ -480,18 +485,20 @@ class MSIToOssieConverter:
             )
         num_input = metric.type_params.numerator
         den_input = metric.type_params.denominator
-        num_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(num_input.filter))
-        den_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(den_input.filter))
+        num_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(num_input.filter, columns=columns))
+        den_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(den_input.filter, columns=columns))
         num_expr = self._resolve_metric_expression(
             self._lookup_metric(metric_index, num_input.name, f"RATIO metric '{metric.name}' numerator"),
             metric_index,
             cache,
+            columns,
             num_filter,
         )
         den_expr = self._resolve_metric_expression(
             self._lookup_metric(metric_index, den_input.name, f"RATIO metric '{metric.name}' denominator"),
             metric_index,
             cache,
+            columns,
             den_filter,
         )
         return f"({num_expr}) / ({den_expr})"
@@ -501,6 +508,7 @@ class MSIToOssieConverter:
         metric: Metric,
         metric_index: Dict[str, Metric],
         cache: Dict[Tuple[str, Optional[str]], str],
+        columns: Mapping[str, str],
         filter_sql: Optional[str] = None,
     ) -> str:
         """Resolve a DERIVED metric by substituting each input metric's expression into the expr string.
@@ -529,8 +537,8 @@ class MSIToOssieConverter:
         for input_metric in metric.type_params.metrics or []:
             ref = input_metric.alias if input_metric.alias else input_metric.name
             dep_metric = self._lookup_metric(metric_index, input_metric.name, f"DERIVED metric '{metric.name}'")
-            input_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(input_metric.filter))
-            resolved = self._resolve_metric_expression(dep_metric, metric_index, cache, input_filter)
+            input_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(input_metric.filter, columns=columns))
+            resolved = self._resolve_metric_expression(dep_metric, metric_index, cache, columns, input_filter)
             if dep_metric.type in (MetricType.DERIVED, MetricType.RATIO):
                 resolved = f"({resolved})"
             distinct = resolutions.setdefault(ref, [])
@@ -558,6 +566,24 @@ class MSIToOssieConverter:
                 )
 
         return pattern.sub(lambda match: resolutions[match.group(0)][0], expr)
+
+    @staticmethod
+    def _build_filter_columns(semantic_models: Sequence[SemanticModel]) -> Dict[str, str]:
+        """Map each `<primary entity>__<dimension>` a filter can name to its `<dataset>.<column>`.
+
+        Only categorical dimensions on a plain column, and only names one semantic model declares:
+        a SQL dimension has no column to name, and a time dimension may need a truncation to its grain.
+        """
+        found: Dict[str, List[str]] = defaultdict(list)
+        for sm in semantic_models:
+            entity = sm.primary_entity or next((e.name for e in sm.entities if e.type is EntityType.PRIMARY), None)
+            if entity is None:
+                continue
+            for dim in sm.dimensions:
+                col = dim.expr if dim.expr is not None else dim.name
+                if dim.type is DimensionType.CATEGORICAL and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", col):
+                    found[f"{entity}__{dim.name}"].append(f"{sm.name}.{col}")
+        return {name: cols[0] for name, cols in found.items() if len(cols) == 1}
 
     @staticmethod
     def _build_entity_index(

@@ -116,6 +116,11 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 
 ### Conversion notes
 
+A metric filter on a categorical dimension, `{{ Dimension('order__status') }}`, becomes the dimension's
+column, `orders.status`, when one semantic model declares it on a plain column. Other references (a join
+path, a time dimension, a SQL dimension, a name two semantic models declare) keep their MetricFlow name,
+`order__status`, which a consumer must resolve itself.
+
 **MSI → Ossie** is lossy in the following ways, each recorded as a `ConverterIssue` in the result:
 
 | Issue type | Reason |
