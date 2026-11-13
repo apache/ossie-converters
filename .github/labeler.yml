@@ -16,6 +16,10 @@
 # under the License.
 
 # One label per converter
+converter/celonis:
+  - changed-files:
+      - any-glob-to-any-file: 'celonis/**'
+
 converter/bigquery:
   - changed-files:
       - any-glob-to-any-file: 'bigquery/**'
