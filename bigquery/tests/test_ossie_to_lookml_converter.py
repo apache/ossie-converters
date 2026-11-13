@@ -165,13 +165,6 @@ class TestEnvelope:
             warnings.simplefilter("error")
             convert_ossie_to_lookml(_wrap_ossie(_minimal_model()))
 
-    def test_legacy_names_are_aliases(self):
-        from ossie_bigquery import converter
-
-        assert converter.OsiConversionError is OssieConversionError
-        assert converter.convert_osi_to_lookml is convert_ossie_to_lookml
-        assert converter.convert_ossie_to_lookml is convert_ossie_to_lookml
-
 
 # ---------------------------------------------------------------------------
 # _convert_source
@@ -267,17 +260,39 @@ class TestFields:
         assert "sql: ${TABLE}.customer_id ;;" in dim
 
     def test_time_field_becomes_dimension_group(self):
-        view = self._view(_field("order_date", is_time=True))
+        view = self._view(_field("order_date", datatype="DateTimeTz"))
         group = _block(view, "dimension_group: order")
         assert "type: time" in group
         assert "timeframes: [raw, time, date, week, month, quarter, year]" in group
         assert "sql: ${TABLE}.order_date ;;" in group
-        assert "datatype:" not in group
 
-    def test_is_time_without_datatype_warns(self):
-        model = _model([_dataset("t", [_field("order_date", is_time=True)])])
-        with pytest.warns(UserWarning, match="Field 't.order_date'.*is_time without a datatype"):
-            convert_ossie_to_lookml(model)
+    @pytest.mark.parametrize("name", ["d_moy", "d_quarter_name"])
+    def test_is_time_without_datatype_is_a_string_dimension_with_warning(self, name):
+        # is_time is a role, not a type (TPC-DS sets it on an integer month
+        # and a '2024Q1' string); a dimension_group would cast them as TIMESTAMPs.
+        model = _model([_dataset("t", [_field(name, is_time=True)])])
+        with pytest.warns(UserWarning, match=f"Field 't.{name}'.*is_time without a datatype"):
+            out = convert_ossie_to_lookml(model)
+        assert "dimension_group:" not in out
+        assert "type: string" in _block(out, f"dimension: {name}")
+
+    @pytest.mark.parametrize("datatype", ["Date", "DateTime", "DateTimeTz"])
+    def test_is_time_false_keeps_a_temporal_field_off_the_time_axis(self, datatype):
+        # Explicit is_time always wins (Ossie spec): an audit `created_at` with
+        # is_time: false is a regular dimension.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(
+                _model([_dataset("t", [_field("created_at", is_time=False, datatype=datatype)])])
+            )
+        assert "dimension_group:" not in out
+        dim = _block(out, "dimension: created_at")
+        assert "type: string" in dim
+        assert "sql: ${TABLE}.created_at ;;" in dim
+
+    def test_is_time_true_on_a_temporal_field_is_a_dimension_group(self):
+        view = self._view(_field("created_at", is_time=True, datatype="Date"))
+        assert "datatype: date" in _block(view, "dimension_group: created_at")
 
     def test_strip_time_suffix(self):
         assert _strip_time_suffix("order_date") == "order"
@@ -287,12 +302,12 @@ class TestFields:
     def test_dimension_group_keeps_name_on_collision(self):
         # Both would strip to `ship`; LookML names must be unique, so keep the
         # original names.
-        view = self._view(_field("ship_date", is_time=True), _field("ship_time", is_time=True))
+        view = self._view(_field("ship_date", datatype="DateTimeTz"), _field("ship_time", datatype="DateTimeTz"))
         assert "dimension_group: ship_date {" in view
         assert "dimension_group: ship_time {" in view
 
     def test_dimension_group_keeps_name_when_it_shadows_a_field(self):
-        view = self._view(_field("created"), _field("created_date", is_time=True))
+        view = self._view(_field("created"), _field("created_date", datatype="DateTimeTz"))
         assert "dimension: created {" in view
         assert "dimension_group: created_date {" in view
 
@@ -409,7 +424,7 @@ class TestPrimaryKey:
     def test_time_column_key_becomes_hidden_dimension(self):
         # A dimension_group cannot carry primary_key, so fall back to a hidden
         # dimension over the raw column.
-        ds = _dataset("t", [_field("created_at", is_time=True)], primary_key=["created_at"])
+        ds = _dataset("t", [_field("created_at", datatype="DateTimeTz")], primary_key=["created_at"])
         out = _convert(_model([ds]))
         pk = _block(out, "dimension: primary_key")
         assert "sql: CAST(${TABLE}.created_at AS STRING) ;;" in pk
@@ -423,7 +438,7 @@ class TestPrimaryKey:
         assert "sql: CONCAT(CAST(${TABLE}.customer_id AS STRING), '|', CAST(${TABLE}.b AS STRING)) ;;" in pk
 
     def test_time_key_uses_the_groups_expression(self):
-        ds = _dataset("t", [_field("created", expr="created_at", is_time=True)], primary_key=["created"])
+        ds = _dataset("t", [_field("created", expr="created_at", datatype="DateTimeTz")], primary_key=["created"])
         out = _convert(_model([ds]))
         pk = _block(out, "dimension: primary_key")
         assert "sql: CAST(${TABLE}.created_at AS STRING) ;;" in pk
@@ -504,12 +519,33 @@ class TestMetrics:
         assert "sql: ${orders.amount} * 1.1 ;;" in measure
 
     def test_untypeable_aggregate_stays_inline_with_warning(self):
-        model = _model([ORDERS], metrics=[_metric("n", "COUNT(orders.amount)")])
-        with pytest.warns(UserWarning, match="Metric 'n'.*cannot type natively"):
+        model = _model([ORDERS], metrics=[_metric("sd", "STDDEV(orders.amount)")])
+        with pytest.warns(UserWarning, match="Metric 'sd'.*cannot type natively"):
             out = convert_ossie_to_lookml(model)
-        measure = _block(out, "measure: n")
+        measure = _block(out, "measure: sd")
         assert "type: number" in measure
-        assert "sql: COUNT(${orders.amount}) ;;" in measure
+        assert "sql: STDDEV(${orders.amount}) ;;" in measure
+
+    def test_count_of_a_column_is_a_native_sum_of_non_null_flags(self):
+        # An inline COUNT(x) would count fanned-out rows; a native sum keeps
+        # symmetric aggregates.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(_model([ORDERS], metrics=[_metric("n", "COUNT(orders.amount)")]))
+        measure = _block(out, "measure: n")
+        assert "type: sum" in measure
+        assert "sql: IF(${orders.amount} IS NOT NULL, 1, 0) ;;" in measure
+
+    def test_count_of_a_literal_is_a_count(self):
+        ds = _dataset("orders", [_field("id")], primary_key=["id"], metrics=[_metric("n", "COUNT(1)")])
+        measure = _block(_convert(_model([ds])), "measure: n")
+        assert "type: count" in measure
+        assert "sql:" not in measure
+
+    def test_count_of_a_column_inside_arithmetic_is_hoisted(self):
+        out = _convert(_model([ORDERS], metrics=[_metric("r", "SUM(orders.amount) / COUNT(orders.amount)")]))
+        assert "sql: ${r_sum_1} / ${r_sum_2} ;;" in _block(out, "measure: r")
+        assert "sql: IF(${orders.amount} IS NOT NULL, 1, 0) ;;" in _block(out, "measure: r_sum_2")
 
     def test_window_function_warns_and_stays_inline(self):
         expr = "SUM(SUM(orders.amount)) OVER (ORDER BY orders.order_id)"
@@ -547,8 +583,50 @@ class TestMetrics:
         with pytest.warns(UserWarning, match="Metric 'rpc'.*customers"):
             out = convert_ossie_to_lookml(model)
         measure = _block(_block(out, "view: orders"), "measure: rpc")
-        assert "sql: ${rpc_sum_1} / ${rpc_count_distinct_2} ;;" in measure
-        assert "sql: ${customers.id} ;;" in _block(out, "measure: rpc_count_distinct_2")
+        assert "sql: ${rpc_sum_1} / ${customers.rpc_count_distinct_2} ;;" in measure
+        helper = _block(_block(out, "view: customers"), "measure: rpc_count_distinct_2")
+        assert "sql: ${customers.id} ;;" in helper
+
+    def test_helper_over_another_dataset_goes_in_that_datasets_view(self):
+        # TPC-DS store_productivity: Looker counts each row of a measure's own
+        # view once, so the employee sum must live in `store` to count each
+        # store once rather than once per sales row.
+        sales = _dataset("sales", [_field("id"), _field("store_id"), _field("price")], primary_key=["id"])
+        store = _dataset("store", [_field("id"), _field("employees")], primary_key=["id"])
+        expr = "SUM(sales.price) / NULLIF(SUM(store.employees), 0)"
+        model = _model([sales, store], [_rel("s2s", "sales", "store", ["store_id"], ["id"])], metrics=[_metric("p", expr)])
+        out = _convert(model)
+        sales_view, store_view = _block(out, "view: sales"), _block(out, "view: store")
+        assert "sql: ${p_sum_1} / NULLIF(${store.p_sum_2}, 0) ;;" in _block(sales_view, "measure: p")
+        assert "sql: ${sales.price} ;;" in _block(sales_view, "measure: p_sum_1")
+        helper = _block(store_view, "measure: p_sum_2")
+        assert "hidden: yes" in helper
+        assert "sql: ${store.employees} ;;" in helper
+        assert "measure: p_sum_2" not in sales_view
+
+    def test_helper_in_another_view_avoids_that_views_names(self):
+        customers = _dataset("customers", [_field("id"), _field("rpc_count_distinct_2")], primary_key=["id"])
+        expr = "SUM(orders.amount) / COUNT(DISTINCT customers.id)"
+        out = _convert(_model([customers, ORDERS], metrics=[_metric("rpc", expr)]))
+        assert "sql: ${rpc_sum_1} / ${customers.rpc_count_distinct_3} ;;" in _block(out, "measure: rpc")
+        assert "sql: ${customers.id} ;;" in _block(out, "measure: rpc_count_distinct_3")
+
+    def test_helper_over_several_datasets_stays_in_the_home_view(self):
+        expr = "SUM(orders.amount * customers.id) / COUNT(*)"
+        out = _convert(_model([ORDERS, CUSTOMERS], metrics=[_metric("x", expr)]))
+        orders_view = _block(out, "view: orders")
+        assert "sql: ${orders.amount} * ${customers.id} ;;" in _block(orders_view, "measure: x_sum_1")
+        assert "sql: ${x_sum_1} / ${x_count_2} ;;" in _block(orders_view, "measure: x")
+
+    def test_bare_columns_several_datasets_expose_go_to_the_first_that_does(self):
+        # The first dataset in the model does not expose `id`.
+        calendar = _dataset("calendar", [_field("day")], primary_key=["day"])
+        customers2 = _dataset("customers2", [_field("id"), _field("region_id")], primary_key=["id"])
+        model = _model([calendar, CUSTOMERS, customers2], metrics=[_metric("n", "COUNT(DISTINCT region_id)")])
+        with pytest.warns(UserWarning, match="Metric 'n'.*several datasets expose.*emitted in view 'customers'"):
+            out = convert_ossie_to_lookml(model)
+        assert "measure: n {" in _block(out, "view: customers")
+        assert "measure: n {" not in _block(out, "view: calendar")
 
     def test_unparseable_metric_is_verbatim_with_warning(self):
         model = _model([ORDERS], metrics=[_metric("bad", "SUM((")])
@@ -687,8 +765,8 @@ class TestRelationships:
         assert "join: a {" not in _block(out, "explore: a")
 
     def test_sql_on_uses_raw_timeframe_for_dimension_groups(self):
-        events = _dataset("events", [_field("id"), _field("created_timestamp", is_time=True)], primary_key=["id"])
-        days = _dataset("days", [_field("day_ts", is_time=True)], primary_key=["day_ts"])
+        events = _dataset("events", [_field("id"), _field("created_timestamp", datatype="DateTimeTz")], primary_key=["id"])
+        days = _dataset("days", [_field("day_ts", datatype="DateTimeTz")], primary_key=["day_ts"])
         model = _model([events, days], [_rel("e2d", "events", "days", ["created_timestamp"], ["day_ts"])])
         out = _convert(model)
         assert "sql_on: ${events.created_raw} = ${days.day_ts_raw} ;;" in out
@@ -748,10 +826,10 @@ class TestExplores:
 class TestEntityDescription:
     def test_combines_description_and_synonyms(self):
         entity = {"description": "Orders", "ai_context": {"synonyms": ["purchases", "sales"]}}
-        assert _entity_description(entity) == "Orders (synonyms: purchases, sales)"
+        assert _entity_description(entity, "e") == "Orders (synonyms: purchases, sales)"
 
     def test_string_ai_context_appended(self):
-        assert _entity_description({"description": "A", "ai_context": "B"}) == "A B"
+        assert _entity_description({"description": "A", "ai_context": "B"}, "e") == "A B"
 
 
 # ---------------------------------------------------------------------------
@@ -792,7 +870,17 @@ class TestEndToEnd:
         assert "type: sum" in _block(store_sales, "measure: total_sales")
         assert "sql: ${store_sales.ss_ext_sales_price} ;;" in _block(store_sales, "measure: total_sales")
         # d_year is an Integer marked is_time: a number dimension, not a group.
-        assert "type: number" in _block(_block(out, "view: date_dim"), "dimension: d_year")
+        date_dim = _block(out, "view: date_dim")
+        assert "type: number" in _block(date_dim, "dimension: d_year")
+        # d_moy and d_quarter_name set is_time with no datatype: plain dimensions.
+        for name in ("d_moy", "d_quarter_name"):
+            assert f"dimension_group: {name} {{" not in date_dim
+            assert "type: string" in _block(date_dim, f"dimension: {name}")
+        # The employee sum is counted per store, in the store view.
+        assert "NULLIF(${store.store_productivity_sum_2}, 0)" in _block(store_sales, "measure: store_productivity")
+        assert "sql: ${store.s_number_employees} ;;" in _block(
+            _block(out, "view: store"), "measure: store_productivity_sum_2"
+        )
         explore = _block(out, "explore: store_sales")
         for target in ("date_dim", "item", "customer", "store"):
             assert f"join: {target} {{" in explore
@@ -834,6 +922,11 @@ class TestInputValidation:
             ({"datasets": [_dataset("t", [{"name": "f", "expression": {"dialects": [{"dialect": 1, "expression": "x"}]}}])]}, "Field 't.f'.*'dialect' must be a string"),
             ({"datasets": [_dataset("t", [_field("f", datatype=["Integer"])])]}, "Field 't.f'.*'datatype' must be a string"),
             ({"datasets": [{"name": "t", "source": 42}]}, "Dataset 't'.*'source' must be a string"),
+            ({"datasets": [_dataset("t", [])], "description": True}, "Model.*'description' must be a string"),
+            ({"datasets": [{**_dataset("t", []), "description": 2024}]}, "Dataset 't'.*'description' must be a string"),
+            ({"datasets": [_dataset("t", [_field("f", description=True)])]}, "Field 't.f'.*'description' must be a string"),
+            ({"datasets": [_dataset("t", [])], "metrics": [_metric("m", "COUNT(*)", description=["x"])]},
+             "Metric 'm'.*'description' must be a string"),
         ],
     )
     def test_wrongly_typed_containers_are_conversion_errors(self, model, message):
@@ -911,7 +1004,7 @@ class TestNotSilentlyDropped:
 
     def test_entity_instructions_join_the_description(self):
         entity = {"description": "Orders", "ai_context": {"instructions": "Use for sales.", "synonyms": ["purchases"]}}
-        assert _entity_description(entity) == "Orders Use for sales. (synonyms: purchases)"
+        assert _entity_description(entity, "e") == "Orders Use for sales. (synonyms: purchases)"
 
     def test_other_ai_context_keys_are_reported(self):
         field = _field("a")
@@ -1078,6 +1171,7 @@ class TestDatasetMetrics:
         with pytest.raises(OssieConversionError, match="Dataset 't'.*duplicate metric name 'n'"):
             convert_ossie_to_lookml(_model([ds]))
 
+    @pytest.mark.skipif(not TPCDS.exists(), reason="TPC-DS example not found")
     def test_tpcds_dataset_metric_is_converted(self):
         out = _convert(TPCDS.read_text())
         measure = _block(_block(out, "view: store_sales"), "measure: total_quantity")

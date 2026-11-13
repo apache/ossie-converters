@@ -60,6 +60,10 @@ _SQLGLOT_DIALECTS = {"BIGQUERY": "bigquery", "ANSI_SQL": None, "OSSIE_SQL_2026":
 # A valid LookML object name (view, field, join); also a bare SQL identifier.
 _LOOKML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# A `${view.field}` reference, capturing the view (`${TABLE}` and `${field}`
+# have no dot inside the braces).
+_VIEW_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\.")
+
 # Ossie `datatype` -> LookML dimension `type`.
 _SCALAR_TYPES = {
     "String": "string",
@@ -216,7 +220,7 @@ def _convert_model(ossie):
 def _model_description(ossie):
     """Combines `description` and a string `ai_context.instructions` into a
     human-readable description for the model header."""
-    description = ossie.get("description") or ""
+    description = _description(ossie, "Model")
     ai_context = ossie.get("ai_context")
     if isinstance(ai_context, str) and ai_context:
         description = f"{description}\n{ai_context}".strip()
@@ -294,7 +298,7 @@ class _Dataset:
         self.reserved_names = set()    # every metric name a measure here may need
         for index, metric in enumerate(self.raw_metrics, 1):
             _require_mapping(metric, f"{context}: metric #{index}")
-        self.description = _entity_description(dataset)
+        self.description = _entity_description(dataset, context)
         self.fields = []
         self.pk_dimension = None
         self.measures = []
@@ -434,20 +438,20 @@ def _plan_dataset(dataset):
             # Ossie DateTime (BigQuery DATETIME) is civil time with no zone;
             # Looker's default timezone conversion would shift it.
             planned.convert_tz = lookml_datatype == "datetime"
-            if datatype is None:
-                warnings.warn(
-                    f"{context}: is_time without a datatype; emitted as a time "
-                    f"dimension_group (Looker assumes TIMESTAMP). Set datatype to "
-                    f"Date, DateTime or DateTimeTz if the column is temporal, or "
-                    f"to its scalar type if it is not"
-                )
             planned.timeframes = timeframes
         else:
+            if _is_time(field) is True and field.get("datatype") is None:
+                warnings.warn(
+                    f"{context}: is_time without a datatype; emitted as a string "
+                    f"dimension (a time dimension_group would make Looker treat "
+                    f"the column as a TIMESTAMP). Set datatype to Date, DateTime "
+                    f"or DateTimeTz to get timeframes"
+                )
             planned = _Field(name, name, "dimension", sql, column)
             planned.type = _dimension_type(field.get("datatype"), context)
 
         planned.label = field.get("label")
-        planned.description = _entity_description(field)
+        planned.description = _entity_description(field, context)
         plan.register(planned)
         _warn_dropped_fields(field, context, skip=("label",))
 
@@ -461,19 +465,25 @@ def _plan_dataset(dataset):
 
 
 def _is_temporal(field):
-    """A field becomes a dimension_group when its datatype is temporal, or when
-    it is marked is_time without a datatype. An is_time field with a scalar
-    datatype (e.g. an integer year) stays a dimension."""
-    datatype = field.get("datatype")
-    if datatype in _TEMPORAL_TYPES:
-        return True
+    """A field becomes a dimension_group when its datatype is temporal, unless
+    it sets is_time: false (explicit is_time always wins, Ossie spec). is_time
+    is a role, not a type: is_time: true alone does not make a group, since
+    Looker would treat a string or integer column as a TIMESTAMP."""
+    return field.get("datatype") in _TEMPORAL_TYPES and _is_time(field) is not False
+
+
+def _is_time(field):
+    """The field's explicit dimension.is_time, or None when it is not set."""
     dimension = field.get("dimension")
-    is_time = isinstance(dimension, dict) and dimension.get("is_time") is True
-    return is_time and datatype is None
+    return dimension.get("is_time") if isinstance(dimension, dict) else None
 
 
 def _dimension_type(datatype, context):
     if datatype is None:
+        return "string"
+    if datatype in _TEMPORAL_TYPES:
+        # A temporal field with is_time: false: kept off the time axis as a
+        # plain value, like Time, without Looker's date casts and conversion.
         return "string"
     if datatype == "Opaque":
         warnings.warn(
@@ -812,7 +822,7 @@ def _plan_metric(metric, plans, scope=None):
         warnings.warn(f"{context}: model has no datasets to hold the measure; skipped")
         return
 
-    description = _entity_description(metric)
+    description = _entity_description(metric, context)
     _warn_ai_context(metric, context, used=("synonyms", "instructions"))
     _warn_dropped_fields(
         metric, context, extra=["datatype"] if metric.get("datatype") else None,
@@ -873,22 +883,28 @@ def _plan_metric(metric, plans, scope=None):
 
     # Otherwise hoist each native aggregate into a hidden typed measure and
     # express the metric as arithmetic over them, so Looker's symmetric
-    # aggregates still protect the aggregates across joins.
+    # aggregates still protect the aggregates across joins. Looker counts each
+    # row of the measure's own view once, so a helper over another dataset's
+    # field goes in that dataset's view (SUM(store.employees) per store, not
+    # per sales row).
     helpers = []
-    taken = set(home.used_names) | home.reserved_names | {measure_name}
+    taken = {measure_name}
 
     def hoist(node):
         native = _native_measure(node)
         if native is None:
             return node
         lookml_type, agg_sql = native
+        view = _aggregated_view(node, home, plans)
+        used = taken | view.used_names | view.reserved_names
         n = len(helpers) + 1
-        while f"{name}_{lookml_type}_{n}" in taken:
+        while f"{name}_{lookml_type}_{n}" in used:
             n += 1
         helper_name = f"{name}_{lookml_type}_{n}"
         taken.add(helper_name)
-        helpers.append(_Measure(helper_name, lookml_type, agg_sql, hidden=True))
-        return exp.Var(this=f"${{{helper_name}}}")
+        helpers.append((view, _Measure(helper_name, lookml_type, agg_sql, hidden=True)))
+        ref = helper_name if view is home else f"{view.name}.{helper_name}"
+        return exp.Var(this=f"${{{ref}}}")
 
     composite = rewritten.transform(hoist)
     if composite.find(exp.AggFunc) is not None:
@@ -900,11 +916,25 @@ def _plan_metric(metric, plans, scope=None):
         home.add_measure(_Measure(measure_name, "number", sql, description=description))
         return
 
-    for helper in helpers:
-        home.add_measure(helper)
+    for view, helper in helpers:
+        view.add_measure(helper)
     home.add_measure(
         _Measure(measure_name, "number", composite.sql(dialect="bigquery"), description=description)
     )
+
+
+def _aggregated_view(node, home, plans):
+    """The view an aggregate rewritten by _qualify reads from: the dataset
+    its `${view.field}` references name when they all name one, else `home`
+    (which `${TABLE}.col` and bare `${field}` references point at)."""
+    views = set()
+    for var in node.find_all(exp.Var):
+        if var.name.startswith("${"):
+            match = _VIEW_REF.match(var.name)
+            views.add(match.group(1) if match else home.name)
+    if len(views) == 1:
+        return plans.get(views.pop(), home)
+    return home
 
 
 def _measure_name(home, name, context):
@@ -960,15 +990,20 @@ def _unwrap_filters(tree):
 def _native_measure(node):
     """Returns (lookml_type, sql) when `node` is an aggregate Looker can type
     natively: SUM/AVG/MIN/MAX over a row-level expression, COUNT(DISTINCT x),
-    or COUNT(*). Returns None otherwise."""
+    COUNT(*), COUNT(<literal>) or COUNT(x). Returns None otherwise."""
     if isinstance(node, exp.Count):
         arg = node.this
-        if isinstance(arg, exp.Star):
+        if isinstance(arg, (exp.Star, exp.Literal)):
             return "count", None
-        if isinstance(arg, exp.Distinct) and len(arg.expressions) == 1:
-            inner = arg.expressions[0]
-            if inner.find(exp.AggFunc) is None:
-                return "count_distinct", inner.sql(dialect="bigquery")
+        if isinstance(arg, exp.Distinct):
+            if len(arg.expressions) == 1 and arg.expressions[0].find(exp.AggFunc) is None:
+                return "count_distinct", arg.expressions[0].sql(dialect="bigquery")
+            return None
+        if isinstance(arg, exp.Expression) and arg.find(exp.AggFunc) is None:
+            # COUNT(x) counts non-null values. An inline COUNT would count
+            # fanned-out rows; a native sum of 0/1 flags keeps symmetric
+            # aggregates, like COUNT(*) FILTER (NULL rather than 0 over no rows).
+            return "sum", f"IF({arg.sql(dialect='bigquery')} IS NOT NULL, 1, 0)"
         return None
     lookml_type = _NATIVE_MEASURES.get(type(node))
     if lookml_type is None or node.args.get("distinct"):
@@ -981,7 +1016,7 @@ def _native_measure(node):
 
 def _metric_home(tree, plans, context):
     """Picks the view that holds a metric's measure: the first dataset it
-    qualifies a column with, else the only dataset exposing its bare columns,
+    qualifies a column with, else the first dataset exposing its bare columns,
     else the first dataset in the model."""
     order = list(plans)
     qualified = []
@@ -1010,12 +1045,13 @@ def _metric_home(tree, plans, context):
         if len(owners) == 1:
             return plans[owners[0]]
         reason = "no dataset exposes" if not owners else "several datasets expose"
+        fallback = owners[0] if owners else order[0]
         warnings.warn(
             f"{context}: {reason} column(s) {', '.join(repr(b) for b in bare)}; "
-            f"emitted in view '{order[0]}'. Qualify columns as dataset.field to "
+            f"emitted in view '{fallback}'. Qualify columns as dataset.field to "
             f"place the measure"
         )
-        return plans[order[0]]
+        return plans[fallback]
 
     warnings.warn(
         f"{context}: references no dataset columns; emitted in view '{order[0]}'"
@@ -1206,10 +1242,21 @@ def _strip_time_suffix(name):
     return name
 
 
-def _entity_description(entity):
+def _description(entity, context):
+    """The entity's `description`, checked to be a string (YAML reads `2024`
+    as an int and `yes` / `on` as booleans)."""
+    description = entity.get("description")
+    if description is None:
+        return ""
+    if not isinstance(description, str):
+        raise OssieConversionError(f"{context}: 'description' must be a string")
+    return description
+
+
+def _entity_description(entity, context):
     """Builds a description string from `description` plus any `ai_context`
     synonyms, mirroring the Snowflake converter's behavior."""
-    description = entity.get("description") or ""
+    description = _description(entity, context)
     ai_context = entity.get("ai_context")
     if isinstance(ai_context, str) and ai_context:
         description = f"{description} {ai_context}".strip()
