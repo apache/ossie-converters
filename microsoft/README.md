@@ -117,7 +117,9 @@ project root is not an input. A `.pbip` is followed through `datasetReference.by
 [optional TOM setup](#optional-tom-validation-and-tmdl-serialization). Importing
 `model.bim` does not, and a project stored as TMSL (a semantic model folder with
 `model.bim` instead of `definition/`, or a `.pbip` that points at one) is read through
-that `model.bim`. A folder with both is refused as ambiguous.
+that `model.bim`. A folder with both is refused as ambiguous, even if `definition/`
+is empty or missing `database.tmdl`. Passing `model.bim` or a valid `definition/`
+folder directly selects that format without checking for the other in its parent.
 
 Every `.tmdl` file under `definition/` (outside hidden folders such as `.pbi/`) is passed
 to TOM, which merges partial declarations of one object across files and reports real

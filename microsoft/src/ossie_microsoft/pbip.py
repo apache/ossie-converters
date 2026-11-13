@@ -55,7 +55,7 @@ def tmsl_model(path: Path) -> Path | None:
 
     For a ``.SemanticModel`` folder, or a ``.pbip`` whose ``byPath`` points at one,
     that has ``model.bim`` and no ``definition/``. A folder with both is ambiguous, as
-    it is to Power BI, and is refused.
+    it is to Power BI, and is refused even when ``definition/`` is empty or incomplete.
     """
     path = path.expanduser().resolve()
     if not path.exists():
@@ -69,7 +69,7 @@ def tmsl_model(path: Path) -> Path | None:
     model_bim = folder / "model.bim"
     if not model_bim.is_file():
         return None
-    if (folder / "definition" / "database.tmdl").is_file():
+    if (folder / "definition").is_dir():
         raise ConversionError(
             f"{folder} has both model.bim and definition/; remove one so the storage "
             "format is unambiguous"
