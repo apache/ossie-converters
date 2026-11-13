@@ -19,7 +19,7 @@
 
     ossie-microsoft import -i model.bim   [-o model.yaml]
     ossie-microsoft import -i Report.pbip [-o model.yaml]
-    ossie-microsoft export -i model.yaml  [-o model.bim]
+    ossie-microsoft export -i model.yaml  [-o model.bim] [--source-bindings bindings.yaml]
 
 With no ``-o``, the result is written to stdout.
 
@@ -42,6 +42,20 @@ from ._common import LOGGER, ConversionError
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
 from .pbip import import_powerbi_project, reraise_tom_load_failure
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
+
+
+class _SourceBindingsLoader(yaml.SafeLoader):
+    """Prevent one connection definition from silently overwriting another."""
+
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode) and any(
+            key.tag == "tag:yaml.org,2002:merge" for key, _ in node.value
+        ):
+            raise ConversionError("source bindings do not support YAML merge keys (<<)")
+        mapping = super().construct_mapping(node, deep=deep)
+        if len(mapping) != len(node.value):
+            raise ConversionError("source bindings must use unique mapping keys")
+        return mapping
 
 
 class _CountingHandler(logging.Handler):
@@ -123,6 +137,11 @@ def _build_parser():
     )
     exp.add_argument("-i", "--input", required=True, help="Apache Ossie YAML file")
     exp.add_argument("-o", "--output", help="output model.bim (default: stdout)")
+    exp.add_argument(
+        "--source-bindings",
+        type=Path,
+        help="YAML file mapping Ossie dataset names to Snowflake Import targets",
+    )
     return parser
 
 
@@ -145,10 +164,19 @@ def _run_import(args):
 def _run_export(args):
     with open(args.input, encoding="utf-8-sig") as fh:
         ossie_yaml = fh.read()
+    bindings = None
+    if args.source_bindings is not None:
+        text = args.source_bindings.read_text(encoding="utf-8-sig")
+        bindings = yaml.load(text, Loader=_SourceBindingsLoader)
+        if bindings is None:
+            raise ConversionError("source bindings must be a mapping keyed by dataset name")
+    bim = convert_ossie_to_semantic_model(
+        ossie_yaml,
+        source_bindings=bindings,
+        require_source_bindings=args.strict and args.source_bindings is not None,
+    )
     # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
-    return json.dumps(
-        convert_ossie_to_semantic_model(ossie_yaml), indent=2, ensure_ascii=False
-    ) + "\n"
+    return json.dumps(bim, indent=2, ensure_ascii=False) + "\n"
 
 
 def main(argv=None):

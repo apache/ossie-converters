@@ -27,8 +27,8 @@ Power BI evaluates DAX. An expression that cannot be translated is emitted as
 ``BLANK()`` so its calculated column or measure remains in the model, while its original
 dialect and expression are stored as annotations on that object.
 
-The semantic model is created in Direct Lake mode. The ``source`` argument generates
-the shared M expression for all Direct Lake partitions.
+The ``source`` argument configures generated Direct Lake partitions. Per-dataset
+``source_bindings`` generate Snowflake Import partitions instead.
 
 The ``ai_context`` values are saved as annotations on the semantic model object. Relationships which
 depend on multiple columns are not supported in Power BI and are skipped. The ``primary_key`` and
@@ -111,6 +111,7 @@ _LOSSY_TEMPORAL = {
 }
 
 DIRECT_LAKE_COMPATIBILITY_LEVEL = 1702
+M_PARTITION_COMPATIBILITY_LEVEL = 1400
 DIRECT_LAKE_EXPRESSION = "DatabaseQuery"
 ONELAKE_ENDPOINT = "https://onelake.dfs.fabric.microsoft.com"
 PLACEHOLDER_DATABASE = "database"
@@ -123,11 +124,17 @@ _TABLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$@#]*$")
 _DELIMITED_RE = re.compile(r'^\[([^\]]+)\]$|^"([^"]+)"$|^`([^`]+)`$')
 _QUERY_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
+_SNOWFLAKE_BINDING_REQUIRED = {"server", "warehouse", "database", "schema", "table"}
+_SNOWFLAKE_BINDING_FIELDS = _SNOWFLAKE_BINDING_REQUIRED | {"kind", "role"}
+
 
 def convert_ossie_to_semantic_model(
     ossie_yaml_str,
     source: dict = None,
     output_format: Literal["TMSL", "TMDL"] = "TMSL",
+    *,
+    source_bindings: dict | None = None,
+    require_source_bindings: bool = False,
 ) -> dict | str:
     """Convert an Apache Ossie document into a Power BI semantic model.
 
@@ -138,6 +145,11 @@ def convert_ossie_to_semantic_model(
             ``{"workspaceId": ..., "itemId": ...}``.
         output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
             ``"TMDL"`` for a single TMDL document as text.
+        source_bindings: Optional mapping from dataset names to Snowflake Import
+            targets. Each target supplies server, warehouse, database, schema, and
+            table, with optional kind ("table" or "view") and role.
+        require_source_bindings: Fail when a dataset has neither a Snowflake
+            binding nor preserved Power BI partitions.
 
     Returns:
         The TMSL model mapping or the TMDL text selected by ``output_format``.
@@ -175,6 +187,10 @@ def convert_ossie_to_semantic_model(
         or any(not isinstance(dataset, dict) or not dataset.get("name") for dataset in datasets)
     ):
         raise ValueError("document 'datasets' must be a non-empty list of named objects")
+    if require_source_bindings and source_bindings is None:
+        source_bindings = {}
+    if source_bindings is not None:
+        _validate_source_bindings(source_bindings, datasets)
 
     version = document.get("version")
     if version and version != OSSIE_VERSION:
@@ -189,7 +205,9 @@ def convert_ossie_to_semantic_model(
     _warn_foreign_extensions("model", semantic_model)
     warn_unsupported("model", semantic_model, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
-    tables, table_columns, generated_partitions = _convert_datasets(datasets)
+    tables, table_columns, generated_partitions = _convert_datasets(
+        datasets, source_bindings, require_source_bindings
+    )
     # Restore excluded hosts before placing model-level metrics so a metric whose
     # home table was a calculated table retains its original table placement.
     tables.extend(stash.get("excludedTables") or [])
@@ -229,17 +247,19 @@ def convert_ossie_to_semantic_model(
         bim["description"] = description
     bim.update(document_properties)
     bim.setdefault("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL)
-    if generated_partitions:
+    if generated_partitions or source_bindings is not None:
+        minimum_level = (
+            DIRECT_LAKE_COMPATIBILITY_LEVEL if generated_partitions
+            else M_PARTITION_COMPATIBILITY_LEVEL
+        )
         compatibility_level = bim["compatibilityLevel"]
         if not isinstance(compatibility_level, int) or isinstance(compatibility_level, bool):
             raise ConversionError(
                 "POWER_BI custom_extensions document 'compatibilityLevel' must be "
-                "an integer when generating Direct Lake partitions, got "
+                "an integer when generating Power BI partitions, got "
                 f"{compatibility_level!r}"
             )
-        bim["compatibilityLevel"] = max(
-            compatibility_level, DIRECT_LAKE_COMPATIBILITY_LEVEL
-        )
+        bim["compatibilityLevel"] = max(compatibility_level, minimum_level)
     bim["model"] = model
     if normalized_format == "TMSL":
         return bim
@@ -254,7 +274,36 @@ def convert_ossie_to_semantic_model(
 # ---------------------------------------------------------------------------
 
 
-def _convert_datasets(datasets):
+def _validate_source_bindings(bindings, datasets):
+    if not isinstance(bindings, dict):
+        raise ConversionError("source bindings must be a mapping keyed by dataset name")
+    dataset_names = {dataset["name"] for dataset in datasets}
+    for name, binding in bindings.items():
+        if name not in dataset_names:
+            raise ConversionError(f"source binding refers to unknown dataset {name!r}")
+        if not isinstance(binding, dict):
+            raise ConversionError(f"Snowflake source binding for {name!r} must be a mapping")
+        unknown_fields = binding.keys() - _SNOWFLAKE_BINDING_FIELDS
+        if unknown_fields:
+            fields = ", ".join(sorted(map(str, unknown_fields)))
+            raise ConversionError(
+                f"Snowflake source binding for {name!r} has unknown fields: {fields}"
+            )
+        text_fields = _SNOWFLAKE_BINDING_REQUIRED | (binding.keys() & {"role"})
+        for field in sorted(text_fields):
+            value = binding.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ConversionError(
+                    f"Snowflake source binding for {name!r} requires non-empty text for '{field}'"
+                )
+        kind = binding.get("kind", "table")
+        if not isinstance(kind, str) or kind.lower() not in ("table", "view"):
+            raise ConversionError(
+                f"Snowflake source binding for {name!r} requires kind 'table' or 'view'"
+            )
+
+
+def _convert_datasets(datasets, source_bindings, require_source_bindings):
     tables = []
     generated_partitions = []
     # Maps a table name to the set of its column names, used to validate relationships.
@@ -262,7 +311,9 @@ def _convert_datasets(datasets):
     for dataset in datasets:
         if not isinstance(dataset, dict) or not dataset.get("name"):
             continue
-        table, generated_partition = _convert_dataset(dataset)
+        table, generated_partition = _convert_dataset(
+            dataset, source_bindings, require_source_bindings
+        )
         if generated_partition is not None:
             generated_partitions.append(generated_partition)
         tables.append(table)
@@ -270,10 +321,17 @@ def _convert_datasets(datasets):
     return tables, table_columns, generated_partitions
 
 
-def _convert_dataset(dataset):
+def _convert_dataset(dataset, source_bindings, require_source_bindings):
     name = dataset["name"]
     scope = f"dataset '{name}'"
     stash = read_stash(dataset)
+    partitions = stash.get("partitions")
+    binding = source_bindings.get(name) if source_bindings is not None else None
+    if source_bindings is not None and binding is None and not partitions:
+        message = "missing Snowflake source binding; add this dataset to --source-bindings"
+        if require_source_bindings:
+            raise ConversionError(f"[{scope}] {message}")
+        warn(scope, f"{message}. Using the default partition")
     _warn_foreign_extensions(scope, dataset)
     warn_unsupported(scope, dataset, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
@@ -302,9 +360,17 @@ def _convert_dataset(dataset):
     for column in stash.get("excludedColumns") or []:
         columns.insert(0, column)
 
-    partitions = stash.get("partitions")
     generated_partition = None
-    if not partitions:
+    if binding is not None:
+        if "refreshPolicy" in stash or (partitions and len(partitions) > 1):
+            warn(
+                scope,
+                "the Snowflake source binding replaces the existing partition layout "
+                "and removes any incremental refresh policy",
+            )
+        stash.pop("refreshPolicy", None)
+        partitions = [_snowflake_import_partition(name, binding)]
+    elif not partitions:
         generated_partition = _convert_partition(name, dataset.get("source") or name)
         partitions = [generated_partition]
         if generated_partition["mode"] != "directLake":
@@ -316,6 +382,32 @@ def _convert_dataset(dataset):
             table.setdefault(key, value)
     _apply_ai_context(table, dataset.get("ai_context"))
     return table, generated_partition
+
+
+def _snowflake_import_partition(table_name, binding):
+    options = ['Implementation="2.0"']
+    if "role" in binding:
+        options.append(f"Role={_m_string(binding['role'])}")
+    server, warehouse, database, schema, table = (
+        _m_string(binding[key]) for key in ("server", "warehouse", "database", "schema", "table")
+    )
+    kind = binding.get("kind", "table").title()
+    return {
+        "name": table_name,
+        "mode": "import",
+        "source": {
+            "type": "m",
+            "expression": [
+                "let",
+                f"    Source = Snowflake.Databases({server}, {warehouse}, [{', '.join(options)}]),",
+                f'    Database = Source{{[Name={database}, Kind="Database"]}}[Data],',
+                f'    Schema = Database{{[Name={schema}, Kind="Schema"]}}[Data],',
+                f'    Navigation = Schema{{[Name={table}, Kind="{kind}"]}}[Data]',
+                "in",
+                "    Navigation",
+            ],
+        },
+    }
 
 
 def _convert_partition(table_name, source):
@@ -505,7 +597,9 @@ def _unquote(value):
 
 
 def _m_string(value):
-    return '"' + value.replace('"', '""') + '"'
+    escaped = value.replace("#(", "#(#)(").replace('"', '""')
+    escaped = escaped.replace("\r", "#(cr)").replace("\n", "#(lf)").replace("\t", "#(tab)")
+    return f'"{escaped}"'
 
 
 def _key_columns(dataset, scope):
