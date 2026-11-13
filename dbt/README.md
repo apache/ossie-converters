@@ -121,7 +121,7 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 | Issue type | Reason |
 |---|---|
 | `CONVERSION_METRIC_DROPPED` | Ossie has no conversion-funnel metric type |
-| `PRIVATE_METRIC_DROPPED` | Ossie has no visibility modifiers |
+| `PRIVATE_METRIC_DROPPED` | Ossie has no visibility modifiers. Every dropped private metric is reported, even when its expression is also inlined into a ratio. |
 | `NATURAL_ENTITY_DROPPED` | Ossie has no natural-key entity type |
 | `CUMULATIVE_SEMANTICS_LOSS` | Window/grain semantics cannot be expressed in an Ossie expression string; the base aggregation is preserved |
 | `NON_PORTABLE_METRIC_SEMANTICS` | A metric uses window, grain, offset, time-spine, or conversion semantics that Ossie cannot represent; the metric is dropped |
@@ -145,7 +145,7 @@ dates, are written as strings.
 - `COUNT(*)` / `COUNT(<dataset>.*)` → `count` SIMPLE metric with `expr: '1'`, because MetricFlow cannot render a bare `*` inside a count. The counted dataset comes from the qualifier, so with more than one dataset write `COUNT(orders.*)`; a bare `COUNT(*)`, or a qualifier that matches no dataset, is skipped with a `ROW_COUNT_METRIC_DROPPED` warning
 - `SUM(<constant>)` (e.g. `SUM(1)`) keeps its constant, but has no column to place it in a dataset: with more than one dataset it is skipped with `ROW_COUNT_METRIC_DROPPED`
 - `COUNT(DISTINCT *)`, `COUNT(DISTINCT 1)` and the like, anywhere in an expression, are skipped with `ROW_COUNT_METRIC_DROPPED`: they count whether any row exists, not how many
-- `(expr_a) / (expr_b)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended
+- `(expr_a) / (expr_b)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended. Generated helpers remain public and directly queryable, preserving compatibility with existing MetricFlow queries and saved queries. The owning ratio carries versioned `config.meta.ossie.generated_ratio_helpers` provenance (helper names and a signature of the complete generated definitions). Reverse conversion folds away helpers only when that family is unchanged, has no external metric or saved-query references, and exports without conversion issues. Missing, malformed, stale, or stripped provenance conservatively retains helpers; names alone never identify generated metrics. Legacy unmarked projects therefore retain their existing output. Private metrics always report `PRIVATE_METRIC_DROPPED`; inlining cannot preserve their visibility contract.
 - A root aggregate over a scalar SQL expression (for example,
   `SUM(CASE WHEN ... THEN amount ELSE 0 END)`) → SIMPLE metric with the
   scalar expression in `expr` and the root function in `agg`
@@ -172,6 +172,17 @@ dates, are written as strings.
 - `DBT` entries without a `meta` key (dbt config such as `materialized`), entries with an empty `meta`, other vendors' entries, and model- and relationship-level `custom_extensions` are not carried into the manifest
 - A `DBT` entry whose `data` is not a JSON object, or whose `meta` is not an object, is skipped with `INVALID_DBT_CUSTOM_EXTENSION`; the rest of the element still converts
 - When more than one `DBT` entry on the same element carries `meta`, the first is kept and the others are ignored with `DUPLICATE_DBT_CUSTOM_EXTENSION`
+
+### Generated ratio helper provenance
+
+New helper families use provenance version 2. Signatures reuse MetricFlow's
+COUNT-to-SUM, boolean-SUM, and MEDIAN-to-percentile rules on a private copy,
+so the raw converter API and the CLI's dbt manifest parser agree, including
+later round trips that re-express a COUNT as a boolean aggregation. This does
+not make the helpers private or rewrite their emitted definitions. All other
+semantic fields and external-consumer checks remain part of the conservative
+retention contract. Version 1 markers are accepted only when their exact original
+definitions still match; otherwise helpers are retained rather than guessed.
 
 ## Development
 
