@@ -271,6 +271,34 @@ def write_report(report, output):
                     f"| {name} | {stage}: {_cell(check['path'])} | {_cell(json.dumps(check['expected']))} "
                     f"| {_cell(json.dumps(check['actual']))} {_cell(check['error'] or '')} |"
                 )
+    if live := report.get("live_databricks"):
+        lines += [
+            "",
+            "## Live Databricks TPC-DS measure parity",
+            "",
+            f"{live['grade']} {_cell(live['reason'])}".rstrip(),
+        ]
+        if live.get("cleanup_error") and live["cleanup_error"] != live["reason"]:
+            lines.append(_cell(live["cleanup_error"]))
+        if live["grains"]:
+            measures = next(iter(live["grains"].values()))["measure_mismatches"]
+            lines += [
+                "",
+                "Counts of differing groups per measure.",
+                "",
+                "| Grain | Cube rows | Metric View rows | Missing groups | "
+                + " | ".join(measures)
+                + " |",
+                "|---|" + "---:|" * (3 + len(measures)),
+            ]
+            for grain, summary in live["grains"].items():
+                counts = " | ".join(
+                    str(value) for value in summary["measure_mismatches"].values()
+                )
+                lines.append(
+                    f"| {grain} | {summary['cube_rows']} | {summary['metric_view_rows']} | "
+                    f"{summary['missing_groups']} | {counts} |"
+                )
     if report.get("portability"):
         lines += _portability_section(report["portability"], output)
     for error in report["harness_errors"]:
