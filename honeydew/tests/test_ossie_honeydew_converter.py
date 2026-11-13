@@ -17,7 +17,6 @@
 
 """Tests for the bidirectional Ossie ↔ Honeydew converter."""
 
-import json
 import os
 import sys
 import warnings
@@ -37,7 +36,7 @@ from ossie_honeydew.converter import (
     _is_simple_identifier,
     _ossie_field_to_honeydew_datatype,
     _parse_ossie_source,
-    _pick_ansi_expression,
+    _pick_expression,
     _read_ossie_metadata,
     convert_honeydew_to_ossie,
     convert_ossie_to_honeydew,
@@ -235,32 +234,46 @@ def test_find_entity_in_expression(expr, entities, expected):
     assert _find_entity_in_expression(expr, entities) == expected
 
 
-def test_pick_ansi_expression_ansi_preferred():
+def test_pick_expression_ansi_preferred():
     expr = {"dialects": [
         {"dialect": "SNOWFLAKE", "expression": "col::VARCHAR"},
         {"dialect": "ANSI_SQL", "expression": "col"},
     ]}
-    assert _pick_ansi_expression(expr, "f") == "col"
+    assert _pick_expression(expr, "f") == "col"
 
 
-def test_pick_ansi_expression_fallback_warns():
+@pytest.mark.parametrize("value", [None, 42, {"sql": "bad"}, "", "  "])
+def test_pick_expression_skips_unusable_sql(value):
+    unusable = [
+        {"dialect": dialect, "expression": value}
+        for dialect in ("SNOWFLAKE", "OSSIE_SQL_2026", "ANSI_SQL")
+    ]
+    assert _pick_expression({"dialects": unusable}, "f") is None
+    portable = {"dialect": "OSSIE_SQL_2026", "expression": "portable_col"}
+    assert _pick_expression({"dialects": [*unusable, portable]}, "f") == "portable_col"
+    warehouse = {"dialect": "SNOWFLAKE", "expression": "warehouse_col"}
+    with pytest.warns(UserWarning, match="using first available"):
+        assert _pick_expression({"dialects": [*unusable, warehouse]}, "f") == "warehouse_col"
+
+
+def test_pick_expression_fallback_warns():
     expr = {"dialects": [{"dialect": "SNOWFLAKE", "expression": "col::VARCHAR"}]}
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = _pick_ansi_expression(expr, "f")
+        result = _pick_expression(expr, "f")
     assert result == "col::VARCHAR"
     assert any("ANSI_SQL" in str(x.message) for x in w)
 
 
 @pytest.mark.parametrize("expression", [None, {"dialects": []}])
-def test_pick_ansi_expression_returns_none(expression):
-    assert _pick_ansi_expression(expression, "f") is None
+def test_pick_expression_returns_none(expression):
+    assert _pick_expression(expression, "f") is None
 
 
-def test_pick_ansi_expression_non_dict_warns():
+def test_pick_expression_non_dict_warns():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = _pick_ansi_expression("just_a_string", "f")
+        result = _pick_expression("just_a_string", "f")
     assert result is None
     assert any("must be a mapping" in str(x.message) for x in w)
 
@@ -328,7 +341,7 @@ def test_build_ossie_metadata_nothing_to_store():
 def test_assign_metrics_by_expression():
     metrics = [{"name": "total", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.total)"}]}}]
     result = _assign_metrics_to_entities(metrics, ["orders", "customers"])
-    assert "total" in [m["name"] for m in result.get("orders", [])]
+    assert result == {"orders": [(metrics[0], "SUM(orders.total)")]}
 
 
 def test_assign_metrics_honeydew_hint_takes_priority():
@@ -338,15 +351,14 @@ def test_assign_metrics_honeydew_hint_takes_priority():
         "custom_extensions": [{"vendor_name": "HONEYDEW", "data": '{"entity": "customers"}'}],
     }]
     result = _assign_metrics_to_entities(metrics, ["orders", "customers"])
-    assert "cnt" in [m["name"] for m in result.get("customers", [])]
-    assert "orders" not in result
+    assert result == {"customers": [(metrics[0], "SUM(orders.x)")]}
 
 
 def test_assign_metrics_fallback_to_first_entity():
     metrics = [{"name": "cnt", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]}}]
     with warnings.catch_warnings(record=True):
         result = _assign_metrics_to_entities(metrics, ["orders"])
-    assert "cnt" in [m["name"] for m in result.get("orders", [])]
+    assert result == {"orders": [(metrics[0], "COUNT(*)")]}
 
 
 def test_assign_metrics_no_entities():
@@ -621,6 +633,68 @@ def test_ossie_to_honeydew_file_content(model, path, expected):
     files = convert_ossie_to_honeydew(_ossie(model))
     assert path in files
     assert yaml.safe_load(files[path]) == expected
+
+
+@pytest.mark.parametrize(
+    "form", ["sql-only", "tagged-portable", "conflicting-dialects"]
+)
+def test_portable_sql_drives_field_export_and_metric_placement(form):
+    def expression(portable, alternative):
+        if form == "sql-only":
+            return {"sql": portable}
+        if form == "tagged-portable":
+            return {
+                "dialects": [
+                    {"dialect": "SNOWFLAKE", "expression": alternative},
+                    {"dialect": "OSSIE_SQL_2026", "expression": portable},
+                ]
+            }
+        return {
+            "sql": portable,
+            "dialects": [
+                {"dialect": "ANSI_SQL", "expression": alternative},
+                {"dialect": "OSSIE_SQL_2026", "expression": alternative},
+            ],
+        }
+
+    amount = _minimal_ossie_field("amount", "amount")
+    model = {
+        "name": "sales",
+        "datasets": [
+            {
+                "name": "refunds",
+                "source": "analytics.public.refunds",
+                "fields": [amount],
+            },
+            {
+                "name": "orders",
+                "source": "analytics.public.orders",
+                "fields": [
+                    amount,
+                    {
+                        "name": "adjusted_amount",
+                        "expression": expression("amount * 2", "amount * 3"),
+                    },
+                ],
+            },
+        ],
+        "metrics": [
+            {
+                "name": "total_amount",
+                "expression": expression("SUM(orders.amount)", "SUM(refunds.amount)"),
+            },
+        ],
+    }
+
+    files = convert_ossie_to_honeydew(_ossie(model))
+    attribute = yaml.safe_load(files["schema/orders/attributes/adjusted_amount.yml"])
+    assert attribute["sql"] == "amount * 2"
+    assert [path for path in files if "/metrics/" in path] == [
+        "schema/orders/metrics/total_amount.yml"
+    ]
+    metric = yaml.safe_load(files["schema/orders/metrics/total_amount.yml"])
+    assert metric["entity"] == "orders"
+    assert metric["sql"] == "SUM(orders.amount)"
 
 
 def test_ossie_to_honeydew_metric_entity_hint_overrides_expression():
