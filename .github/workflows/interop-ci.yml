@@ -47,6 +47,7 @@ on:
       - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
+      - 'sap-csn-ontology/**'
       - 'polaris/**'
       - 'salesforce/**'
   pull_request:
@@ -78,6 +79,7 @@ on:
       - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
+      - 'sap-csn-ontology/**'
       - 'polaris/**'
       - 'salesforce/**'
   workflow_dispatch:
