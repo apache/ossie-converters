@@ -173,12 +173,14 @@ Document regression failures, empty outputs, and unavailable required targets
 also block strict mode. Their diagnostics and expected/actual assertions are
 retained in report-only mode.
 
-The harness is **not a SQL-equivalence or full-fidelity proof**. Physical bindings
-are checked only for registered native regression metrics. General SQL expression
-equivalence, metadata, data types, and AI context remain unchecked. Renames or
+The harness is **not a SQL-equivalence or full-fidelity proof**. Native physical bindings
+are checked for registered native regression metrics. Primary SQL regressions
+check metric bindings and physical table identity in returned Ossie documents.
+General SQL expression equivalence, metadata, data types, and AI context remain
+unchecked. Renames or
 equivalent extension serialization can conservatively appear as structural changes.
 
-## Dialect, key, and source assertions
+## Expression, key, and source assertions
 
 `document_regressions` entries declare a category, Ossie input, selected targets,
 and an expectations file:
@@ -201,6 +203,7 @@ sources, insert fallback dialects, or relax key assertions to make targets pass.
 | Category | Fixtures | Required evidence |
 |---|---|---|
 | `dialect` | DATABRICKS-only, SNOWFLAKE-only, OSSIE_SQL_2026-only | Every input expression has only the declared dialect; fields, computed expressions, and metrics survive conversion |
+| `portable-sql` | Primary SQL alone and primary SQL with conflicting tagged OSSIE_SQL_2026 | Field and metric expressions, metric dataset binding, and each dataset's physical table survive |
 | `keys` | Single primary/alternate keys, composite primary key, composite unique-only key, joined fact/dimension keys | Key declarations, their roles, compound grouping, and exposed key fields survive |
 | `sources` | Two-part, three-part, quoted identifiers containing dots | Physical table identity survives in both native metadata and returned Ossie |
 
@@ -214,6 +217,15 @@ deliberately bounded comparison is not an
 algebraic or SQL-value equivalence proof, and it does not run warehouse queries.
 An accidental ANSI fallback in a dialect-only input fails the fixture's baseline
 check before conversion.
+
+The two primary SQL fixtures run against Cube, Databricks, dbt, Honeydew, Omni,
+and Sigma. They share a two-dataset model where both physical tables have an
+`amount` column. The precedence fixture supplies different legacy expressions
+for the fields and points the legacy metric at the other dataset. The assertion checks the
+authoritative `expression.sql` when present on return and otherwise checks the
+returned SQL alternatives. A model-level metric must explicitly identify its
+dataset in SQL. A dataset-scoped metric establishes its binding through the
+containing dataset. The check compares physical table identity by dataset name.
 
 Key assertions preserve primary versus unique roles exactly. Replacing a primary
 key with an equivalent unique declaration is reported as a role change even if

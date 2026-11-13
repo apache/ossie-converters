@@ -292,6 +292,16 @@ document_regressions:
     input: interop/fixtures/contracts/source-quoted-parts/input.yaml
     targets: [cube, databricks, dbt]
     expectations: interop/fixtures/contracts/source-quoted-parts/expectations.yaml
+  portable-sql-only:
+    category: portable-sql
+    input: interop/fixtures/contracts/portable-sql-only/input.yaml
+    targets: [cube, databricks, dbt, honeydew, omni, sigma]
+    expectations: interop/fixtures/contracts/portable-sql-only/expectations.yaml
+  portable-sql-precedence:
+    category: portable-sql
+    input: interop/fixtures/contracts/portable-sql-precedence/input.yaml
+    targets: [cube, databricks, dbt, honeydew, omni, sigma]
+    expectations: interop/fixtures/contracts/portable-sql-precedence/expectations.yaml
 # Report-only portability scores (apache/ossie-converters#24): every fixture of the
 # core portability ladder, through every converter that can round-trip, graded by
 # the core grader. `modes` adds a second re-import for an opt-in converter flag.
