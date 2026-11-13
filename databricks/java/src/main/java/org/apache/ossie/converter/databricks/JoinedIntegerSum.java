@@ -92,6 +92,11 @@ final class JoinedIntegerSum {
         ? encoded : null;
   }
 
+  /** Whether {@code expression} already holds a keyed sum outside literals and comments. */
+  static boolean isEncoded(String expression) {
+    return findOutsideLiterals(expression, ENCODED);
+  }
+
   static String qualifier(String column) {
     return column.substring(0, column.lastIndexOf('.'));
   }

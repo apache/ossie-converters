@@ -520,9 +520,29 @@ public class OssieConverterSuite {
     assertEquals(List.of("store"), OssieConverterCommon.cubeIntegerSumMetadata(metric)
         .get("integer_sum_grain"));
     Map<String, Object> expression = OssieConverterCommon.asMap(metric.get("expression"));
+    for (Object entry : OssieConverterCommon.asList(expression.get("dialects"))) {
+      assertEquals(List.of("dialect", "expression"),
+          List.copyOf(OssieConverterCommon.asMap(entry).keySet()));
+    }
     OssieConverterCommon.asList(expression.get("dialects")).removeIf(entry ->
         "DATABRICKS".equals(OssieConverterCommon.asMap(entry).get("dialect")));
     assertEquals(view, export(OssieConverterCommon.MAPPER.writeValueAsString(importedModel), "sales"));
+
+    // The Cube importer labels every expression with --source-dialect, DATABRICKS included.
+    String databricks = osi.replace("- dialect: ANSI_SQL\n      expression: SUM(sales.amount)",
+        "- dialect: DATABRICKS\n      expression: SUM(sales.amount)");
+    assertEquals(view, export(databricks, "sales"));
+
+    // The view's source is never multiplied by its joins, so a hint naming it loses nothing.
+    for (String grain : List.of("[\"sales\", \"store\"]", "[\"sales\"]")) {
+      OssieConverter.Result withFact = OssieConverter.convertOssieToMetricView(
+          osi.replace("[\"store\"]", grain), "sales");
+      assertTrue(withFact.notices.stream().noneMatch(notice -> notice.contains("cannot preserve")),
+          withFact.notices.toString());
+    }
+    assertEquals(view, export(osi.replace("[\"store\"]", "[\"sales\", \"store\"]"), "sales"));
+    assertFalse(OssieConverter.convertOssieToMetricView(osi.replace("[\"store\"]", "[\"sales\"]"),
+        "sales").yaml.contains("COLLECT_SET"));
 
     String mixed = osi.replace("NULLIF(SUM(store.employees), 0)",
         "NULLIF(SUM(store.employees) + SUM(store.floor_space), 0)");
