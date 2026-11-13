@@ -444,7 +444,7 @@ final class ExpressionDialect {
       if (next != null && next.kind == Kind.STRING && !isKeyword(u)) {
         return typedLiteral(u);
       }
-      return word(t, u, prev, next, top);
+      return word(i, t, u, prev, next, top);
     }
 
     private boolean belongsToJoinPath(int i) {
@@ -536,7 +536,7 @@ final class ExpressionDialect {
       return inOssie || inAnsi;
     }
 
-    private boolean word(Token t, String u, Token prev, Token next, Frame top) {
+    private boolean word(int i, Token t, String u, Token prev, Token next, Frame top) {
       String opener = top == null ? "" : top.opener;
       switch (u) {
         case "AS":
@@ -589,19 +589,44 @@ final class ExpressionDialect {
           if (!isColumnPosition() || opaqueNames.contains(t.text.toLowerCase(Locale.ROOT))) {
             return false;
           }
-          if (columnStarts != null && !isNonColumnWord(u, top)) {
+          if (columnStarts != null && !isNonColumnWord(i, u, top)) {
             columnStarts.add(t.start);
           }
           return true;
       }
     }
 
-    private static boolean isNonColumnWord(String word, Frame frame) {
-      if (word.equals("CURRENT_DATE") || word.equals("CURRENT_TIMESTAMP")) {
-        return true;
+    /**
+     * A word in a column position that names no column: a niladic datetime keyword, the truth
+     * value in {@code IS [NOT] UNKNOWN}, the order in {@code NULLS FIRST | LAST}, or a bare
+     * date-part unit.
+     */
+    private boolean isNonColumnWord(int i, String word, Frame frame) {
+      switch (word) {
+        case "CURRENT_DATE":
+        case "CURRENT_TIMESTAMP":
+        case "LOCALTIMESTAMP":
+          return true;
+        case "UNKNOWN":
+          return isWordAt(i - 1, "IS") || (isWordAt(i - 1, "NOT") && isWordAt(i - 2, "IS"));
+        case "FIRST":
+        case "LAST":
+          if (isWordAt(i - 1, "NULLS")) {
+            return true;
+          }
+          break;
+        default:
+          break;
       }
+      // The unit of DATEADD, DATE_TRUNC, and DATE_PART comes first; Databricks takes a string
+      // there, so a bare word is a unit, never a column.
       return frame != null && ((frame.opener.equals("EXTRACT") && !frame.keywordForm)
-          || (frame.opener.equals("DATEADD") && frame.commas == 0));
+          || (frame.commas == 0 && (frame.opener.equals("DATEADD")
+              || frame.opener.equals("DATE_TRUNC") || frame.opener.equals("DATE_PART"))));
+    }
+
+    private boolean isWordAt(int i, String word) {
+      return i >= 0 && tokens.get(i).isWord(word);
     }
 
     /** FROM / FOR / BOTH inside SUBSTRING or TRIM: standard SQL, not the Ossie language. */

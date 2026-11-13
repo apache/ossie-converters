@@ -42,6 +42,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.validat
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.writeStash;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -516,7 +517,18 @@ final class MetricViewToOssie {
       rest.append(segments[j]);
     }
     String restStr = rest.toString();
-    return isSimpleIdentifier(restStr) ? new String[] {ds, restStr} : new String[] {ds, expr};
+    if (isSimpleIdentifier(restStr)) {
+      return new String[] {ds, restStr};
+    }
+    // A bare name in a Metric View dimension is a source column or another dimension, but in an
+    // Apache Ossie field it is a column of the field's own dataset, and the export qualifies it
+    // with that dataset's join path. So a computed dimension stays on the joined dataset only if
+    // every name it reads is already on that join path; one that also reads a bare name belongs to
+    // the fact. When the scanner cannot tell, the export cannot either and emits it as-is.
+    String joinPath = String.join(".", Arrays.copyOf(segments, i));
+    String qualified = ExpressionDialect.qualifyFieldColumns(expr, joinPath);
+    return qualified != null && !qualified.equals(expr)
+        ? new String[] {factName, expr} : new String[] {ds, expr};
   }
 
   /**

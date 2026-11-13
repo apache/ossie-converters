@@ -338,7 +338,8 @@ public class OssieConverterSuite {
         + "- {name: ac, from: a, to: c, from_columns: [k], to_columns: [k]}\n"
         + "- {name: bd, from: b, to: d, from_columns: [k], to_columns: [k]}\n"
         + "- {name: cd, from: c, to: d, from_columns: [k], to_columns: [k]}\n";
-    Map<String, Object> view = (Map<String, Object>) export(osi, "a");
+    OssieConverter.Result result = OssieConverter.convertOssieToMetricView(osi, "a");
+    Map<String, Object> view = (Map<String, Object>) OssieConverter.parseYaml(result.yaml);
     assertEquals("c.s.a", view.get("source"));
     // `d` is reached by two paths, so its column is emitted once per fan-out alias.
     List<Object> dims = (List<Object>) view.get("dimensions");
@@ -346,6 +347,10 @@ public class OssieConverterSuite {
     assertTrue(dims.contains(Map.of("name", "b_d_named_branch", "expr", "UPPER(b.b_d.dcol)")));
     assertFalse(dims.stream().map(value -> (Map<?, ?>) value)
         .anyMatch(value -> "c_d_named_branch".equals(value.get("name"))));
+    // The `c` branch cannot rewrite a name qualified with the `b` path, so the field is dropped.
+    assertTrue(result.notices.contains("[field 'named_branch'] expression on a fanned-out "
+        + "(diamond) join uses SQL or a qualifier the converter cannot map to this join path; "
+        + "dropped"), result.notices.toString());
   }
 
   @Test
@@ -937,6 +942,56 @@ public class OssieConverterSuite {
     String ossie = OssieConverter.convertMetricViewToOssie(mv, null).yaml;
     String back = OssieConverter.convertOssieToMetricView(ossie, null).yaml;
     assertEquals(OssieConverter.parseYaml(mv), OssieConverter.parseYaml(back));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void computedDimensionReadingBareNamesStaysOnTheFact() {
+    // A dimension that starts with a join alias but also reads a bare source column or another
+    // dimension belongs to the fact: on the joined dataset, the export would qualify the bare name
+    // with the join path. A dimension that reads only the join's columns stays on the join.
+    String mv =
+        "version: '1.1'\n"
+        + "source: c.s.orders\n"
+        + "joins:\n"
+        + "- name: customer\n"
+        + "  source: c.s.customer\n"
+        + "  on: source.o_custkey = customer.c_custkey\n"
+        + "dimensions:\n"
+        + "- name: first\n"
+        + "  expr: customer.c_first_name\n"
+        + "- name: gold_big_order\n"
+        + "  expr: customer.c_tier = 'gold' AND o_totalprice > 100\n"
+        + "- name: full_name\n"
+        + "  expr: customer.c_last_name || ', ' || first\n"
+        + "- name: display_name\n"
+        + "  expr: customer.c_first_name || ' ' || customer.c_last_name\n";
+    String ossie = OssieConverter.convertMetricViewToOssie(mv, null).yaml;
+    Map<String, List<String>> fieldsByDataset = new HashMap<>();
+    for (Object dataset : (List<Object>) ((Map<String, Object>) OssieConverter.parseYaml(ossie))
+        .get("datasets")) {
+      List<String> names = new ArrayList<>();
+      for (Object field : (List<Object>) ((Map<String, Object>) dataset).get("fields")) {
+        names.add((String) ((Map<String, Object>) field).get("name"));
+      }
+      fieldsByDataset.put((String) ((Map<String, Object>) dataset).get("name"), names);
+    }
+    assertEquals(List.of("gold_big_order", "full_name"), fieldsByDataset.get("orders"));
+    assertEquals(List.of("first", "display_name"), fieldsByDataset.get("customer"));
+
+    OssieConverter.Result back = OssieConverter.convertOssieToMetricView(ossie, null);
+    Map<String, Object> exprs = new HashMap<>();
+    for (Object dim : (List<Object>) ((Map<String, Object>) OssieConverter.parseYaml(back.yaml))
+        .get("dimensions")) {
+      exprs.put((String) ((Map<String, Object>) dim).get("name"),
+          ((Map<String, Object>) dim).get("expr"));
+    }
+    assertEquals(Map.of(
+        "first", "customer.c_first_name",
+        "gold_big_order", "customer.c_tier = 'gold' AND o_totalprice > 100",
+        "full_name", "customer.c_last_name || ', ' || first",
+        "display_name", "customer.c_first_name || ' ' || customer.c_last_name"), exprs);
+    assertEquals(List.of(), back.notices);
   }
 
   // -- fixture comparisons ---------------------------------------------------

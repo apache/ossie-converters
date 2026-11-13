@@ -855,11 +855,12 @@ final class OssieToMetricView {
       if (qualified != null) {
         expr = qualified;
       } else if (prefix != null) {
-        notices.warn(scope, "complex expression on a fanned-out (diamond) join cannot be "
-            + "unambiguously qualified; dropped");
+        notices.warn(scope, "expression on a fanned-out (diamond) join uses SQL or a qualifier "
+            + "the converter cannot map to this join path; dropped");
         return null;
       } else {
-        notices.warn(scope, "complex expression on a joined table; emitted as-is, verify qualification");
+        notices.warn(scope, "expression on a joined table uses SQL or a qualifier the converter "
+            + "cannot map to the join path; emitted as-is, verify qualification");
       }
     }
     String name = prefix != null ? prefix + "_" + name0 : name0;
