@@ -438,9 +438,31 @@ def evaluate(workspace, dataset, token, query):
         token,
         {"queries": [{"query": query}], "serializerSettings": {"includeNulls": True}},
     )
-    if status == 200:
-        return body["results"][0]["tables"][0].get("rows", []), None
-    return None, _engine_message(body)
+    if status != 200:
+        return None, _request_failure(status, body)
+    try:
+        if body.get("error"):
+            return None, _engine_message(body)
+        result, = body["results"]
+        if result.get("error"):
+            return None, _engine_message(result)
+        table, = result["tables"]
+        if table.get("error"):
+            return None, _engine_message(table)
+        rows = table.get("rows", [])
+        if isinstance(rows, list):
+            return rows, None
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
+    return None, "unexpected executeQueries response; expected one result table"
+
+
+def delete_model(workspace, dataset, token):
+    """Delete a deployed semantic model. Returns an error or None."""
+    status, body, _headers = _request(
+        "DELETE", f"{FABRIC_API}/workspaces/{workspace}/items/{dataset}", token
+    )
+    return None if status in (200, 202, 204) else _request_failure(status, body)
 
 
 def _expression_text(expression):
@@ -523,13 +545,7 @@ def validate_with_engine(bim, *, workspace, fabric_token, powerbi_token, name=No
                 )
     finally:
         if dataset is not None and not keep:
-            status, body, _headers = _request(
-                "DELETE",
-                f"{FABRIC_API}/workspaces/{workspace}/items/{dataset}",
-                fabric_token,
-            )
-            if status not in (200, 202, 204):
-                cleanup_error = _request_failure(status, body)
+            cleanup_error = delete_model(workspace, dataset, fabric_token)
 
     if cleanup_error:
         message = f"cleanup failed for dataset {dataset}: {cleanup_error}"

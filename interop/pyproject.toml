@@ -35,4 +35,7 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".."]
-markers = ["integration: requires prepared converter environments and Java 21+ (opt-in)"]
+markers = [
+    "integration: requires prepared converter environments and Java 21+ (opt-in)",
+    "live_query_parity: provisions Snowflake and Fabric test resources (opt-in)",
+]

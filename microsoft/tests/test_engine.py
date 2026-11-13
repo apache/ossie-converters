@@ -644,7 +644,52 @@ def test_evaluate_returns_the_engine_error(monkeypatch):
     )
     rows, error = engine.evaluate("w", "d", "t", "EVALUATE 1")
     assert rows is None
-    assert error == "bad dax"
+    assert error == "HTTP 400: bad dax"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"message": "query failed"}},
+        {"results": [{"error": {"message": "query failed"}}]},
+        {"results": [{"tables": [{"error": {"message": "query failed"}, "rows": [{"[v]": 1}]}]}]},
+    ],
+)
+def test_evaluate_rejects_errors_inside_successful_http_responses(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (None, "query failed")
+
+
+@pytest.mark.parametrize("body", [None, {"results": []}, {"results": [{"tables": [{}, {}]}]},
+                                  {"results": [{"tables": [{"rows": {}}]}]}])
+def test_evaluate_rejects_malformed_results(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (
+        None, "unexpected executeQueries response; expected one result table",
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (200, {}, None),
+        (202, {}, None),
+        (204, None, None),
+        (403, {"error": {"message": "forbidden"}}, "HTTP 403: forbidden"),
+        (None, "transport error (TimeoutError): timed out",
+         "transport error (TimeoutError): timed out"),
+    ],
+)
+def test_delete_model_reports_cleanup_outcome(monkeypatch, status, body, expected):
+    def handler(method, url, token, payload=None):
+        assert method == "DELETE"
+        assert url == f"{engine.FABRIC_API}/workspaces/w/items/d"
+        assert token == "t"
+        assert payload is None
+        return status, body, {}
+
+    _stub_request(monkeypatch, handler)
+    assert engine.delete_model("w", "d", "t") == expected
 
 
 # --- orchestration ---------------------------------------------------------
