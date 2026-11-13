@@ -446,13 +446,14 @@ expression reads only that table's columns (`SUMX('Sales', 'Sales'[Qty] * 'Sales
 other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
 `BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
 compares a BLANK number as 0, so `BLANK = 0` is TRUE; strict `==` does not); and math
-functions (`ABS`, `SQRT`, `POWER`, `LOG`, `INT`, `TRUNC`, `MOD`, `QUOTIENT`, trigonometry,
-...) when their argument can never be BLANK, for example `ABS(COALESCE([Sales], 0))`,
+functions (`ABS`, `SQRT`, `POWER`, `LOG`, `INT`, `TRUNC`, `ROUND`, `MOD`, `QUOTIENT`,
+trigonometry, ...) when their argument can never be BLANK, for example `ABS(COALESCE([Sales], 0))`,
 since what they return for BLANK is not documented. Arithmetic, comparisons and conditions
 take only numbers: `SUM`, `AVERAGE`, `MIN` and `MAX` count as numbers when their column's
 `datatype` is numeric, so `MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate])` (dates) or a
-column without a datatype stays DAX. `ROUND` is not translated: DAX
-rounds ties half away from zero, which the spec's `ROUND` does not guarantee. Every other
+column without a datatype stays DAX. `ROUND(x, d)` is translated as is, since DAX and the
+spec both round ties half away from zero, for a literal `d` of at least 0 (the spec defines
+`d` as decimal places; DAX also accepts a negative `d`). Every other
 DAX function is refused with a reason from a per-function registry, for example:
 
 ```

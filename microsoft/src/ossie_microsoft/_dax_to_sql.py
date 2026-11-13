@@ -297,7 +297,7 @@ _SEMANTIC_MISMATCH = {
 #: Every DAX function this module emits a translation for.
 TRANSLATED_FUNCTIONS = frozenset(_AGGREGATES) | frozenset(
     ("ABS", "SIGN", "SQRT", "POWER", "EXP", "LN", "LOG", "LOG10", "INT", "TRUNC",
-     "ROUNDDOWN", "QUOTIENT", "MOD", "PI", "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN",
+     "ROUND", "ROUNDDOWN", "QUOTIENT", "MOD", "PI", "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN",
      "DEGREES", "RADIANS")
 ) | {
     "DIVIDE", "IF", "IF.EAGER", "SWITCH", "COALESCE", "BLANK", "ISBLANK",
@@ -905,6 +905,15 @@ class _Translator:
         arities, render = _MATH_FUNCTIONS[node.name]
         if len(node.args) not in arities:
             raise _RefusedError(f"{node.name} takes {_arity_text(arities)} argument(s)")
+        if node.name == "ROUND":
+            # The spec defines d as a number of decimal places. DAX also accepts a
+            # negative d (rounding left of the decimal point), which the spec does not.
+            digits = node.args[1]
+            if not (isinstance(digits, Number) and _INTEGER.fullmatch(digits.text)):
+                raise _RefusedError(
+                    "ROUND is translated only with an integer literal number of decimal "
+                    "places of at least 0: the spec defines ROUND(x, d) for d decimal places"
+                )
         args = [self.number(arg, variables) for arg in node.args]
         if any(arg.nullable for arg in args):
             raise _RefusedError(
@@ -1189,6 +1198,12 @@ def _trunc(texts, args):
     return f"TRUNC({texts[0]}, {digits})", _ATOM
 
 
+def _round(texts, args):
+    # DAX ROUND breaks ties half away from zero, and so does the spec's ROUND(x, d)
+    # (expression_language.md, Numeric Semantics), so the call is the same.
+    return f"ROUND({texts[0]}, {texts[1]})", _ATOM
+
+
 def _quotient(texts, args):
     # QUOTIENT returns the integer portion of the division, truncated toward zero; the
     # division is forced to be true division, as for MOD.
@@ -1215,6 +1230,7 @@ _MATH_FUNCTIONS = {
     "LOG10": ({1}, _call("LOG10")),
     "INT": ({1}, _call("FLOOR")),  # INT rounds down to the nearest integer
     "TRUNC": ({1, 2}, _trunc),
+    "ROUND": ({2}, _round),
     "ROUNDDOWN": ({2}, _trunc),  # toward zero, like TRUNC
     "QUOTIENT": ({2}, _quotient),
     "MOD": ({2}, _mod),
@@ -1231,8 +1247,6 @@ _MATH_FUNCTIONS = {
 
 #: Math functions refused for a semantic reason more specific than "not yet".
 _MATH_REFUSED = {
-    "ROUND": "DAX ROUND breaks ties half away from zero; the spec's ROUND does not say how "
-    "ties are broken, so the result could differ on a tie",
     "ROUNDUP": "ROUNDUP (away from zero) is a later tier",
     "CEILING": "DAX CEILING rounds to a multiple of a significance, unlike SQL CEIL",
     "FLOOR": "DAX FLOOR rounds to a multiple of a significance, unlike SQL FLOOR",
