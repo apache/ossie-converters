@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_sales_by_customer_state",
+ "kind": "metric",
+ "app": "metric",
+ "name": "sales_by_customer_state",
+ "display_name": "Sales By Customer State",
+ "description": "Sales, distinct items, last sale and days idle per customer and state",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:sales_by_customer_state",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "sales_by_customer_state",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "customer, state",
+   "population": "US store sales with a positive quantity",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "SELECT c.C_FIRST_NAME, COALESCE(NULLIF(a.CA_STATE,''),'(unknown)') AS STATE, COUNT(*) AS SALES, COUNT(DISTINCT m.SS_ITEM_SK) AS ITEMS, MAX(m.SS_SOLD_TIMESTAMP)::DATE AS LAST_SALE, DATEDIFF('day', MAX(m.SS_SOLD_TIMESTAMP), CURRENT_TIMESTAMP) AS DAYS_IDLE FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER c ON m.SS_CUSTOMER_SK = c.C_CUSTOMER_SK LEFT JOIN TPCDS.PUBLIC.CUSTOMER_ADDRESS a ON c.C_CURRENT_ADDR_SK = a.CA_ADDRESS_SK WHERE a.CA_COUNTRY = 'United States' AND m.SS_QUANTITY > 0 AND m.SS_SOLD_TIMESTAMP >= '2026-03-18' AND m.SS_SOLD_TIMESTAMP < DATEADD(day,1,'2026-06-16') GROUP BY c.C_FIRST_NAME, COALESCE(NULLIF(a.CA_STATE,''),'(unknown)') ORDER BY SALES DESC",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

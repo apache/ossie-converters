@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_store_sales_count",
+ "kind": "metric",
+ "app": "metric",
+ "name": "store_sales_count",
+ "display_name": "Store Sales Count",
+ "description": "Count all rows in the store sales fact table",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:store_sales_count",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "count"
+   },
+   "output": {
+    "alias": "store_sales_count",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "table-level",
+   "population": "All rows in TPCDS.PUBLIC.STORE_SALES",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "COUNT(*)",
+   "source": {
+    "sql": "SELECT * FROM TPCDS.PUBLIC.STORE_SALES",
+    "table": null,
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

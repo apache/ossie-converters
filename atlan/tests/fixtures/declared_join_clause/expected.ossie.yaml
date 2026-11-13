@@ -1,0 +1,106 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 0.2.0.dev0
+name: declared_join_clause
+description: a declared join whose sql is a full `JOIN table alias ON ...`, plus a time column
+datasets:
+- name: store_sales
+  source: TPCDS.PUBLIC.STORE_SALES
+  fields:
+  - name: ss_customer_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_CUSTOMER_SK
+      - dialect: ANSI_SQL
+        expression: SS_CUSTOMER_SK
+  - name: ss_sold_date
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SS_SOLD_DATE
+      - dialect: ANSI_SQL
+        expression: SS_SOLD_DATE
+    dimension:
+      is_time: true
+    datatype: Date
+    description: Sale date.
+- name: customer
+  source: TPCDS.PUBLIC.CUSTOMER
+  primary_key:
+  - c_customer_sk
+  fields:
+  - name: c_customer_sk
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: C_CUSTOMER_SK
+      - dialect: ANSI_SQL
+        expression: C_CUSTOMER_SK
+  - name: preferred
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: C_PREFERRED_CUST_FLAG
+      - dialect: ANSI_SQL
+        expression: C_PREFERRED_CUST_FLAG
+    dimension:
+      is_time: false
+    datatype: String
+    description: Preferred customer flag.
+  - name: birth_country
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: C_BIRTH_COUNTRY
+      - dialect: ANSI_SQL
+        expression: C_BIRTH_COUNTRY
+    dimension:
+      is_time: false
+    datatype: String
+    description: Customer birth country.
+relationships:
+- name: store_sales_to_customer
+  from: store_sales
+  to: customer
+  from_columns:
+  - ss_customer_sk
+  to_columns:
+  - c_customer_sk
+metrics:
+- name: sales_to_active_customers
+  expression:
+    dialects:
+    - dialect: OSSIE_SQL_2026
+      expression: COUNT(store_sales.*)
+    - dialect: ANSI_SQL
+      expression: COUNT(store_sales.*)
+  datatype: Integer
+  description: Store sales that can be attributed to a known customer
+  ai_context:
+    instructions: 'Grain: sale. Counts: Store sales joined to their customer. Unit: sales. Re-aggregation:
+      sum.'
+  custom_extensions:
+  - vendor_name: ATLAN
+    data: '{"registry": {"id": "metric_synth_sales_to_active_customers", "definition_version": 1}, "agent_context":
+      {"grain": "sale", "population": "Store sales joined to their customer", "unit": "sales", "reaggregation":
+      "sum", "sql_dialect": "snowflake", "dimensions": ["store_sales.ss_sold_date", "customer.preferred",
+      "customer.birth_country"], "relationships": ["store_sales_to_customer"], "timeframe_field": "store_sales.ss_sold_date"}}'
+custom_extensions:
+- vendor_name: ATLAN
+  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

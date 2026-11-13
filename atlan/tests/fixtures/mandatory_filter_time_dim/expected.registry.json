@@ -1,0 +1,56 @@
+{
+ "open_returns": {
+  "name": "open_returns",
+  "description": "Number of distinct return tickets, excluding voided returns",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT(DISTINCT CASE WHEN (m.SR_RETURN_STATUS <> 'void') THEN m.SR_TICKET_NUMBER END)",
+   "aggregation": {
+    "type": "custom",
+    "reaggregation": "none"
+   },
+   "output": {
+    "alias": "open_returns",
+    "datatype": "integer",
+    "unit": "returns"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "sql": null,
+    "parameters": [],
+    "timeframe_column": "m.SR_RETURNED_DATE"
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "sr_returned_date",
+     "sql": "m.SR_RETURNED_DATE",
+     "kind": "time",
+     "datatype": "date",
+     "description": "Day the return was filed."
+    },
+    {
+     "name": "store_name",
+     "sql": "m.STORE_NAME",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Store the return belongs to."
+    },
+    {
+     "name": "sr_return_status",
+     "sql": "m.SR_RETURN_STATUS",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "open, closed or void."
+    }
+   ],
+   "examples": [],
+   "grain": "return ticket",
+   "population": "Store returns that are not void"
+  }
+ }
+}

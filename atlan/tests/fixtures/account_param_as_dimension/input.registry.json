@@ -1,0 +1,89 @@
+{
+ "id": "metric_synth_resolved_returns",
+ "kind": "metric",
+ "app": "metric",
+ "name": "Resolved Returns",
+ "display_name": "Resolved Returns",
+ "description": "Returns resolved for one store in a window",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "metric:builder:0003",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "count",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "Resolved Returns",
+    "datatype": "integer",
+    "unit": "returns"
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "Store",
+     "kind": "categorical",
+     "sql": "TPCDS.PUBLIC.STORE_RETURNS.SR_STORE_SK",
+     "datatype": "string",
+     "required_join": null,
+     "description": "The store the return is attributed to."
+    },
+    {
+     "name": "Return Date",
+     "kind": "time",
+     "sql": "TPCDS.PUBLIC.STORE_RETURNS.SR_RETURNED_DATE",
+     "datatype": "date",
+     "required_join": null,
+     "description": "When the return was filed."
+    }
+   ],
+   "filters": [
+    "TPCDS.PUBLIC.STORE_RETURNS.SR_STORE_SK = {{store_sk}}",
+    "COALESCE(TPCDS.PUBLIC.STORE_RETURNS.SR_RESOLVED_AT, TPCDS.PUBLIC.STORE_RETURNS.SR_RETURNED_DATE) >= DATEADD(day, -{{window_days}}, CURRENT_TIMESTAMP)"
+   ],
+   "mandatory_filters": [
+    "(TPCDS.PUBLIC.STORE_RETURNS.SR_RESOLVED_AT IS NOT NULL OR LOWER(TPCDS.PUBLIC.STORE_RETURNS.SR_RETURN_STATUS) IN ('resolved', 'closed'))"
+   ],
+   "examples": [
+    {
+     "question": "How many returns did store 42 resolve in the last 30 days?",
+     "sql": "SELECT COUNT(*) FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_STORE_SK = 42 AND SR_RESOLVED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)",
+     "source": "metric_builder"
+    }
+   ],
+   "exclusions": [],
+   "grain": "TPCDS.PUBLIC.STORE_RETURNS.SR_TICKET_NUMBER",
+   "population": "Returns that reached a resolved or closed state",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "COUNT_IF((TPCDS.PUBLIC.STORE_RETURNS.SR_RESOLVED_AT IS NOT NULL OR LOWER(TPCDS.PUBLIC.STORE_RETURNS.SR_RETURN_STATUS) IN ('resolved', 'closed')))",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "Store Returns",
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "parameters": [
+     {
+      "name": "store_sk",
+      "datatype": "string",
+      "default": null
+     },
+     {
+      "name": "window_days",
+      "datatype": "integer",
+      "default": 30
+     }
+    ]
+   }
+  },
+  "validation_warnings": []
+ }
+}

@@ -16,6 +16,9 @@
 # under the License.
 
 # One label per converter
+converter/atlan:
+  - changed-files:
+      - any-glob-to-any-file: 'atlan/**'
 converter/bigquery:
   - changed-files:
       - any-glob-to-any-file: 'bigquery/**'

@@ -1,0 +1,129 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+version: 0.2.0.dev0
+name: bare_columns_ratio_dims
+description: a ratio over bare column names with six dimensions; the display-style name is slugged
+datasets:
+- name: store_monthly_snapshot
+  source: TPCDS.PUBLIC.STORE_MONTHLY_SNAPSHOT
+  fields:
+  - name: store_name
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: STORE_NAME
+      - dialect: ANSI_SQL
+        expression: STORE_NAME
+    dimension:
+      is_time: false
+    datatype: String
+    description: Store name.
+  - name: division
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: DIVISION
+      - dialect: ANSI_SQL
+        expression: DIVISION
+    dimension:
+      is_time: false
+    datatype: String
+    description: Sales division.
+  - name: state
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: STATE
+      - dialect: ANSI_SQL
+        expression: STATE
+    dimension:
+      is_time: false
+    datatype: String
+    description: Store state.
+  - name: segment
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SEGMENT
+      - dialect: ANSI_SQL
+        expression: SEGMENT
+    dimension:
+      is_time: false
+    datatype: String
+    description: Store size segment.
+  - name: lifecycle_stage
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: LIFECYCLE_STAGE
+      - dialect: ANSI_SQL
+        expression: LIFECYCLE_STAGE
+    dimension:
+      is_time: false
+    datatype: String
+    description: Opened, mature or closing.
+  - name: milestone
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: MILESTONE
+      - dialect: ANSI_SQL
+        expression: MILESTONE
+    dimension:
+      is_time: false
+    datatype: String
+    description: Latest milestone reached.
+  - name: shoppers_90d
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: SHOPPERS_90D
+      - dialect: ANSI_SQL
+        expression: SHOPPERS_90D
+  - name: active_shoppers
+    expression:
+      dialects:
+      - dialect: OSSIE_SQL_2026
+        expression: ACTIVE_SHOPPERS
+      - dialect: ANSI_SQL
+        expression: ACTIVE_SHOPPERS
+metrics:
+- name: active_shoppers_change_vs_60_90_days_ago
+  expression:
+    dialects:
+    - dialect: OSSIE_SQL_2026
+      expression: 100.0 * (SUM(store_monthly_snapshot.active_shoppers) - SUM(store_monthly_snapshot.shoppers_90d))
+        / NULLIF(SUM(store_monthly_snapshot.shoppers_90d), 0)
+    - dialect: ANSI_SQL
+      expression: 100.0 * (SUM(store_monthly_snapshot.active_shoppers) - SUM(store_monthly_snapshot.shoppers_90d))
+        / NULLIF(SUM(store_monthly_snapshot.shoppers_90d), 0)
+  datatype: Decimal
+  description: Percentage change in active shoppers against the value 60 to 90 days ago
+  ai_context:
+    instructions: 'Grain: store. Counts: Stores with a monthly snapshot. Unit: percent. Re-aggregation:
+      none. Nulls: ignore.'
+  custom_extensions:
+  - vendor_name: ATLAN
+    data: '{"registry": {"id": "metric_synth_active_shoppers_change_vs_60-90_days_ago", "definition_version":
+      1}, "agent_context": {"grain": "store", "population": "Stores with a monthly snapshot", "unit":
+      "percent", "reaggregation": "none", "null_handling": "ignore", "sql_dialect": "snowflake", "dimensions":
+      ["store_monthly_snapshot.store_name", "store_monthly_snapshot.division", "store_monthly_snapshot.state",
+      "store_monthly_snapshot.segment", "store_monthly_snapshot.lifecycle_stage", "store_monthly_snapshot.milestone"]}}'
+custom_extensions:
+- vendor_name: ATLAN
+  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'

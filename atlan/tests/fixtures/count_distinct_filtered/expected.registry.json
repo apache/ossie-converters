@@ -1,0 +1,34 @@
+{
+ "book_manufacturer_count": {
+  "name": "book_manufacturer_count",
+  "description": "Distinct manufacturers of items in the Books category, excluding one brand family",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT(DISTINCT CASE WHEN (m.I_CATEGORY = 'Books') AND (NOT m.I_BRAND LIKE '%importo%') THEN m.I_MANUFACT_ID END)",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "book_manufacturer_count",
+    "datatype": "integer"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.ITEM",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.ITEM",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [],
+   "dimensions": [],
+   "examples": [],
+   "grain": "one row per distinct manufacturer",
+   "population": "Items in the Books category",
+   "exclusions": [
+    "brands containing 'importo'"
+   ]
+  }
+ }
+}

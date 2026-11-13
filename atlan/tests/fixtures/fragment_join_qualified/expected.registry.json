@@ -1,0 +1,76 @@
+{
+ "store_sale_errors": {
+  "name": "store_sale_errors",
+  "description": "Store sales that were voided: the reliability signal store managers act on",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "SUM(CASE WHEN m.SS_IS_VOID = TRUE THEN 1 ELSE 0 END)",
+   "aggregation": {
+    "type": "custom",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "store_sale_errors",
+    "datatype": "integer",
+    "unit": "sales"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [
+    {
+     "name": "t1",
+     "to": "TPCDS.PUBLIC.ITEM",
+     "sql": "m.SS_ITEM_SK = t1.I_ITEM_SK",
+     "cardinality": "many_to_one",
+     "origin": "ossie relationship"
+    }
+   ],
+   "dimensions": [
+    {
+     "name": "sale_date",
+     "sql": "m.SS_SOLD_TIMESTAMP",
+     "kind": "time",
+     "datatype": "date",
+     "description": "When the sale happened."
+    },
+    {
+     "name": "store",
+     "sql": "m.SS_STORE_SK",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "The store the sale belongs to."
+    },
+    {
+     "name": "channel",
+     "sql": "INITCAP(m.SS_CHANNEL)",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Sales channel."
+    },
+    {
+     "name": "seasonal",
+     "sql": "CASE WHEN t1.I_ITEM_TAGS LIKE '%Seasonal%' THEN 'Yes' ELSE 'No' END",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Whether the item is tagged seasonal."
+    }
+   ],
+   "examples": [
+    {
+     "question": "How are voided sales trending month by month per store, broken down by channel and whether the item is seasonal?",
+     "sql": "SELECT DATE_TRUNC('MONTH', SS_SOLD_TIMESTAMP) AS month, SS_STORE_SK, SUM(CASE WHEN SS_IS_VOID = TRUE THEN 1 ELSE 0 END) FROM TPCDS.PUBLIC.STORE_SALES GROUP BY 1, 2",
+     "source": "ossie"
+    }
+   ],
+   "grain": "TPCDS.PUBLIC.STORE_SALES.SS_STORE_SK, TPCDS.PUBLIC.STORE_SALES.SS_CUSTOMER_SK, TPCDS.PUBLIC.STORE_SALES.SS_SOLD_TIMESTAMP",
+   "population": "Store sales, one row per sale, attributed to the store and carrying the channel and item tags"
+  }
+ }
+}

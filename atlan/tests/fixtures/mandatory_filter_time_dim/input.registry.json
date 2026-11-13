@@ -1,0 +1,75 @@
+{
+ "id": "metric_synth_open_returns",
+ "kind": "metric",
+ "app": "metric",
+ "name": "Open returns",
+ "display_name": "Open Returns",
+ "description": "Number of distinct return tickets, excluding voided returns",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "warehouse-tables/open_returns",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "count_distinct",
+    "reaggregation": "none"
+   },
+   "output": {
+    "alias": "open_returns",
+    "datatype": "integer",
+    "unit": "returns"
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "sr_returned_date",
+     "kind": "time",
+     "sql": "sr_returned_date",
+     "datatype": "date",
+     "description": "Day the return was filed."
+    },
+    {
+     "name": "store_name",
+     "kind": "categorical",
+     "sql": "store_name",
+     "datatype": "string",
+     "description": "Store the return belongs to."
+    },
+    {
+     "name": "sr_return_status",
+     "kind": "categorical",
+     "sql": "sr_return_status",
+     "datatype": "string",
+     "description": "open, closed or void."
+    }
+   ],
+   "filters": [],
+   "mandatory_filters": [
+    "sr_return_status <> 'void'"
+   ],
+   "examples": [],
+   "exclusions": [],
+   "grain": "return ticket",
+   "population": "Store returns that are not void",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "COUNT(DISTINCT sr_ticket_number)",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "store_returns",
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "parameters": [],
+    "timeframe_column": "sr_returned_date"
+   }
+  },
+  "validation_warnings": []
+ }
+}
