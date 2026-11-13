@@ -19,7 +19,6 @@ package org.apache.ossie.converter.databricks;
 
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.CARD_MANY_TO_ONE;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.CARD_ONE_TO_MANY;
-import static org.apache.ossie.converter.databricks.OssieConverterCommon.DIALECT_DATABRICKS;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAPPER;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOIN_NODES;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
@@ -272,8 +271,8 @@ final class OssieToMetricView {
     }
     for (Map<String, Object> metric : metrics) {
       Map<String, Object> measure = convertMetric(
-          metric, factQualifier, datasetHead, datasetAliasPath, diamondDatasets, integerSumKeys,
-          seenDims, notices);
+          metric, fact, factQualifier, datasetHead, datasetAliasPath, diamondDatasets,
+          integerSumKeys, seenDims, notices);
       if (measure == null) {
         droppedMeasures.add(str(get(metric, "name")));
         continue;
@@ -886,6 +885,7 @@ final class OssieToMetricView {
 
   private static Map<String, Object> convertMetric(
       Map<String, Object> metric,
+      String fact,
       Pattern factQualifier,
       Pattern datasetHead,
       Map<String, String> datasetAliasPath,
@@ -921,9 +921,14 @@ final class OssieToMetricView {
     // Only outside string literals / comments: a literal such as 'customer.us' must not be
     // rewritten, or the measure's predicate changes.
     expr = replaceOutsideLiterals(expr, factQualifier, "");
-    if (!hasDatabricksExpression(metric)) {
+    // A DATABRICKS label alone does not mean the expression is deduplicated: the Cube importer
+    // uses it for every expression under --source-dialect DATABRICKS. Only an expression that
+    // already holds keyed sums, as a Metric View import writes, is exported as written.
+    if (!JoinedIntegerSum.isEncoded(expr)) {
       Map<String, Object> grain = cubeIntegerSumMetadata(metric);
-      List<String> grainDatasets = strList(get(grain, "integer_sum_grain"));
+      // The view's source is never multiplied by its many-to-one joins, so it needs no key.
+      List<String> grainDatasets = strList(get(grain, "integer_sum_grain")).stream()
+          .filter(dataset -> !dataset.equals(fact)).toList();
       if (!grainDatasets.isEmpty()) {
         Set<String> grainPaths = new LinkedHashSet<>();
         for (String dataset : grainDatasets) {
@@ -979,18 +984,6 @@ final class OssieToMetricView {
     }
     warnDroppedColumn(metric, scope, notices);
     return measure;
-  }
-
-  private static boolean hasDatabricksExpression(Map<String, Object> metric) {
-    Map<String, Object> expression = asMap(get(metric, "expression"));
-    for (Object item : asList(get(expression, "dialects"))) {
-      Map<String, Object> variant = asMap(item);
-      if (DIALECT_DATABRICKS.equals(get(variant, "dialect"))
-          && truthy(get(variant, "expression"))) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private static void cascadeDrop(List<Map<String, Object>> dimensions,

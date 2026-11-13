@@ -557,7 +557,7 @@ final class MetricViewToOssie {
           }
         });
         if (!DIALECT_DATABRICKS.equals(dialect) && keys.size() == keyedSum.keys().size()) {
-          asList(get(expression, "dialects")).add(Map.of("dialect", dialect, "expression", decoded));
+          asList(get(expression, "dialects")).add(dialectEntry(decoded, dialect));
           Map<String, Object> grainStash = new LinkedHashMap<>();
           grainStash.put("integer_sum_grain", new ArrayList<>(grain));
           grainStash.put("integer_sum_keys", keys);
@@ -591,14 +591,19 @@ final class MetricViewToOssie {
 
   /** An Apache Ossie expression with the single dialect entry {@code label: expr}. */
   private static Map<String, Object> dialectExpr(String expr, String label) {
-    Map<String, Object> dialect = new LinkedHashMap<>();
-    dialect.put("dialect", label);
-    dialect.put("expression", expr);
     List<Object> dialects = new ArrayList<>();
-    dialects.add(dialect);
+    dialects.add(dialectEntry(expr, label));
     Map<String, Object> expression = new LinkedHashMap<>();
     expression.put("dialects", dialects);
     return expression;
+  }
+
+  /** One {@code dialects} entry, its keys in a fixed order so import output is deterministic. */
+  private static Map<String, Object> dialectEntry(String expr, String label) {
+    Map<String, Object> dialect = new LinkedHashMap<>();
+    dialect.put("dialect", label);
+    dialect.put("expression", expr);
+    return dialect;
   }
 
   private static boolean isWildcard(Map<String, Object> col) {

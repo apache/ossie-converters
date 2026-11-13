@@ -144,6 +144,12 @@ exported unchanged with a notice. Databricks import retains the native expressio
 and records the decoded grain and key bindings alongside the portable alternative
 so it can be exported again.
 
+The hint also applies to a `DATABRICKS` expression, which is what
+`ossie-cube import --source-dialect DATABRICKS` writes for every measure. An
+expression that already holds keyed sums, such as one from a Databricks import,
+is exported as written. The view's source dataset is left out of the hint,
+because the view's joins never multiply its rows.
+
 ### Dialect labels on import
 
 Import labels each expression with the most portable dialect it fits, so a model that went
