@@ -105,7 +105,7 @@ def _write_workspace(tmp_dir, workspace_name, entities):
             "key_dataset": e.get("key_dataset", ename),
             "relations": e.get("relations", []),
         }
-        for k in ("owner", "display_name", "hidden", "folder"):
+        for k in ("owner", "display_name", "hidden", "folder", "metadata"):
             if k in e:
                 entity_dict[k] = e[k]
         with open(os.path.join(base, f"{ename}.yml"), "w") as f:
@@ -527,6 +527,21 @@ _REL_MODEL = {
         },
         id="unique-keys",
     ),
+    pytest.param(
+        {"name": "m", "datasets": [{"name": "lines", "source": "db.s.lines",
+            "primary_key": ["order_id", "line_no"],
+            "unique_keys": [["line_no", "order_id"], ["sku"]],
+            "fields": []}]},
+        "schema/lines/lines.yml",
+        {
+            "type": "entity", "name": "lines", "keys": ["order_id", "line_no"],
+            "key_dataset": "lines", "relations": [],
+            "metadata": [{"name": "ossie", "metadata": [
+                {"name": "unique_keys", "value": '[["sku"]]'},
+            ]}],
+        },
+        id="unique-key-restating-primary-key-reordered",
+    ),
     # ── non-HONEYDEW custom_extensions → entity metadata ──────────────────────
     pytest.param(
         {"name": "m", "datasets": [{"name": "orders", "source": "db.s.orders",
@@ -784,6 +799,21 @@ def _ansi(expr):
         }]}),
         id="field-number",
     ),
+    # ── preserved unique key over the entity keys in another order ───────────
+    pytest.param(
+        "ws",
+        [{"name": "lines", "keys": ["order_id", "line_no"], "key_dataset": "lines",
+          "sql": "db.s.lines", "dataset_attrs": [],
+          "metadata": [{"name": "ossie", "metadata": [
+              {"name": "unique_keys", "value": '[["line_no", "order_id"]]'},
+          ]}]}],
+        _hd_root({"name": "ws", "datasets": [{
+            "name": "lines", "source": "db.s.lines",
+            "primary_key": ["order_id", "line_no"],
+            "unique_keys": [["line_no", "order_id"]],
+        }]}),
+        id="preserved-unique-key-reordered",
+    ),
     pytest.param(
         "ws",
         [{"name": "orders", "keys": ["id"], "key_dataset": "orders", "sql": "db.s.orders",
@@ -1017,6 +1047,17 @@ def test_honeydew_to_ossie_relation_target_columns_are_unique_keys(tmp_path):
             "primary_key": ["id"],
             "unique_keys": [["sku"], ["id", "variant"], ["id"]]}]},
         id="unique-keys",
+    ),
+    pytest.param(
+        {"name": "m", "datasets": [{"name": "lines", "source": "db.s.lines",
+            "primary_key": ["order_id", "line_no"],
+            "unique_keys": [["line_no", "order_id"]],
+            "fields": []}]},
+        # The reordered key restates the primary key: it comes back once, as the key.
+        {"name": "m", "datasets": [{"name": "lines", "source": "db.s.lines",
+            "primary_key": ["order_id", "line_no"],
+            "unique_keys": [["order_id", "line_no"]]}]},
+        id="unique-key-restating-primary-key-reordered",
     ),
     pytest.param(
         {"name": "m", "datasets": [{"name": "orders", "source": "db.s.orders",

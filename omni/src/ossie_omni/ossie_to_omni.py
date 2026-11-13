@@ -353,8 +353,9 @@ def _convert_dataset(ds, vname, view_names, dialect):
             view["custom_compound_primary_key_sql"] = pk_dims
 
     if ds.get("unique_keys"):
-        # A unique key that merely restates the primary key is redundant, not lost.
-        extra = [k for k in ds["unique_keys"] if list(k) != list(pk)]
+        # A unique key that merely restates the primary key (the same columns,
+        # in any order) is redundant, not lost.
+        extra = [k for k in ds["unique_keys"] if set(k) != set(pk)]
         if extra:
             _warn(scope, "unique_keys have no Omni home; dropped")
 

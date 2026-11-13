@@ -276,12 +276,12 @@ def _dataset_to_files(
 
     primary_key = ds.get("primary_key") or []
     unique_keys = ds.get("unique_keys")
-    # A unique key identical to the primary key is re-derived from the entity's
-    # keys on the Honeydew → Ossie path, so don't persist it as metadata — that
+    # A unique key over the primary key's columns (in any order) is re-derived from
+    # the entity's keys on the Honeydew → Ossie path, so don't persist it as metadata — that
     # would inject a redundant metadata block on a Honeydew → Ossie → Honeydew round-trip.
     if unique_keys:
-        pk_tuple = tuple(primary_key)
-        unique_keys = [uk for uk in unique_keys if tuple(uk) != pk_tuple] or None
+        pk_cols = set(primary_key)
+        unique_keys = [uk for uk in unique_keys if set(uk) != pk_cols] or None
     description = ds.get("description")
     ai_context = ds.get("ai_context")
     fields = ds.get("fields") or []
@@ -720,9 +720,9 @@ def _entity_to_ossie_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
     # A Honeydew entity's keys uniquely identify its rows — Honeydew enforces this
     # and validates that relationships join to those keys — so surface them as a
     # unique key as well as the primary key. Union with any unique keys preserved
-    # from an Ossie source, de-duplicated.
+    # from an Ossie source, de-duplicated as column sets.
     unique_keys = [list(uk) for uk in (ossie_meta.get("unique_keys") or [])]
-    if keys and tuple(keys) not in {tuple(uk) for uk in unique_keys}:
+    if keys and frozenset(keys) not in {frozenset(uk) for uk in unique_keys}:
         unique_keys.append(list(keys))
     if unique_keys:
         ds["unique_keys"] = unique_keys
