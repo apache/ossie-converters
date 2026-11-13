@@ -77,7 +77,9 @@ def test_independent_inputs_pass_core_validation_and_their_oracles(name):
         ]
         == "OK"
     )
-    assert set(contract.targets) == {"cube", "databricks", "dbt"}
+    base_targets = {"cube", "databricks", "dbt"}
+    dialect_targets = {"omni", "sigma"} if contract.category == "dialect" else set()
+    assert set(contract.targets) == base_targets | dialect_targets
 
 
 @pytest.mark.parametrize(
