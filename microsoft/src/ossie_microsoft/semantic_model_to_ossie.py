@@ -80,6 +80,11 @@ _M_BQ_STEP_RE = re.compile(r"\{\[([^\]]*)\]\}")
 _M_BQ_NAME_RE = re.compile(r'Name\s*=\s*"([^"]+)"')
 _M_BQ_KIND_RE = re.compile(r'Kind\s*=\s*"([^"]+)"')
 _BQ_TABLE_KINDS = frozenset({"View", "Table"})
+# Snowflake navigation steps: Source{[Name="X",Kind="Database"]}[Data], ...
+_M_SF_STEP_RE = re.compile(r"\{\[([^\]]*)\]\}")
+_M_SF_NAME_RE = re.compile(r'Name\s*=\s*"([^"]+)"')
+_M_SF_KIND_RE = re.compile(r'Kind\s*=\s*"([^"]+)"')
+_SF_TABLE_KINDS = frozenset({"View", "Table"})
 
 # TMSL properties consumed by the Apache Ossie mapping at each level. Everything else is
 # preserved verbatim in the stash. This is deliberately a deny-list rather than an
@@ -397,11 +402,44 @@ def _qualified_name_from_bigquery_m(expression):
     return ".".join(parts)
 
 
+def _qualified_name_from_snowflake_m(expression):
+    """Read database.schema.[table|view] from a Snowflake source.
+
+    Each navigation step carries an explicit Kind (Database, Schema, Table or
+    View). Missing outer parts are left off, as in the other parsers; without a
+    table or view there is no physical relation.
+    """
+    if "Snowflake.Databases" not in expression:
+        return None
+    database = schema = table = None
+    for step in _M_SF_STEP_RE.finditer(expression):
+        name_match = _M_SF_NAME_RE.search(step.group(1))
+        kind_match = _M_SF_KIND_RE.search(step.group(1))
+        if name_match is None or kind_match is None:
+            continue
+        name, kind = name_match.group(1), kind_match.group(1)
+        if kind == "Database":
+            database = name
+        elif kind == "Schema":
+            schema = name
+        elif kind in _SF_TABLE_KINDS:
+            table = name
+    if table is None:
+        return None
+    parts = [table]
+    if schema:
+        parts.insert(0, schema)
+        if database:
+            parts.insert(0, database)
+    return ".".join(parts)
+
+
 # Each parser returns a qualified name, or None when the M expression is not
 # that warehouse. Another warehouse is another function in this tuple.
 _M_SOURCE_PARSERS = (
     _qualified_name_from_sql_server_m,
     _qualified_name_from_bigquery_m,
+    _qualified_name_from_snowflake_m
 )
 
 
