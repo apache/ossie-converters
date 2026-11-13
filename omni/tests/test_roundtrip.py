@@ -53,11 +53,13 @@ def test_omni_roundtrip_is_lossless(fixture):
     assert parse_files(files2) == parse_files(files)
 
 
-@pytest.mark.parametrize("path", [
-    "fixtureA_ossie.yaml",
-    str(REPO_ROOT / "examples" / "tpcds_semantic_model.yaml"),
+@pytest.mark.parametrize("path,dataset_metric_projection", [
+    ("fixtureA_ossie.yaml", []),
+    (str(REPO_ROOT / "examples" / "tpcds_semantic_model.yaml"), [
+        ("store_sales", "total_quantity", "SUM(ss_quantity)", "SUM(store_sales.ss_quantity)"),
+    ]),
 ])
-def test_ossie_roundtrip_up_to_documented_normalizations(path):
+def test_ossie_roundtrip_up_to_documented_normalizations(path, dataset_metric_projection):
     if "/" in path:
         with open(path) as fh:
             ossie_yaml = fh.read()
@@ -65,7 +67,19 @@ def test_ossie_roundtrip_up_to_documented_normalizations(path):
         ossie_yaml = load_fixture(path)
     files = _quiet(convert_ossie_to_omni, ossie_yaml)
     ossie2 = _quiet(convert_omni_to_ossie, files)
-    original = strip_normalized(parse(ossie_yaml))
+    original_model = parse(ossie_yaml)
+    # Import retains model-root metric placement. Pin the fixture's equivalent
+    # qualified expression explicitly instead of dropping dataset metrics.
+    for owner, name, local_sql, qualified_sql in dataset_metric_projection:
+        ds = next(ds for ds in original_model["datasets"] if ds["name"] == owner)
+        metric = next(m for m in ds["metrics"] if m["name"] == name)
+        assert metric["expression"] == {"dialects": [{"dialect": "ANSI_SQL", "expression": local_sql}]}
+        ds["metrics"].remove(metric)
+        if not ds["metrics"]:
+            ds.pop("metrics")
+        metric["expression"]["dialects"][0]["expression"] = qualified_sql
+        original_model.setdefault("metrics", []).append(metric)
+    original = strip_normalized(original_model)
     # Foreign-vendor extensions are dropped on export (documented); Ossie-side
     # normalization strips all custom_extensions from both sides.
     assert strip_normalized(parse(ossie2)) == original
