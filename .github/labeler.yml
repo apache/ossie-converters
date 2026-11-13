@@ -52,6 +52,10 @@ converter/lightdash:
   - changed-files:
       - any-glob-to-any-file: 'lightdash/**'
 
+converter/linkml:
+  - changed-files:
+      - any-glob-to-any-file: 'linkml/**'
+
 converter/microsoft:
   - changed-files:
       - any-glob-to-any-file: 'microsoft/**'
