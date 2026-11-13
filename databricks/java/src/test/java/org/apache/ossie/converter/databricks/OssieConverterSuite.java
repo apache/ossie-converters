@@ -1023,6 +1023,23 @@ public class OssieConverterSuite {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  public void exportsNativeDatabricksAheadOfPrimarySql() {
+    String ossie = "version: 0.2.0.dev0\nname: m\ndatasets:\n"
+        + "- name: orders\n  source: c.s.orders\n  fields:\n"
+        + "  - {name: adjusted_amount, expression: {sql: amount * 2,"
+        + " dialects: [{dialect: DATABRICKS, expression: amount * 4}]}}\n"
+        + "metrics:\n- {name: total_amount, expression: {sql: SUM(orders.amount),"
+        + " dialects: [{dialect: DATABRICKS, expression: TRY_SUM(orders.amount)}]}}\n";
+    Map<String, Object> view = (Map<String, Object>) OssieConverter.parseYaml(
+        OssieConverter.convertOssieToMetricView(ossie, null).yaml);
+    assertEquals(List.of(Map.of("name", "adjusted_amount", "expr", "amount * 4")),
+        view.get("dimensions"));
+    assertEquals(List.of(Map.of("name", "total_amount", "expr", "TRY_SUM(amount)")),
+        view.get("measures"));
+  }
+
+  @Test
   public void blankPortableFallbackIsNotUsable() {
     for (String blank : List.of("", "   ")) {
       assertEquals(null, OssieConverterCommon.pickExpression(
