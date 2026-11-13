@@ -481,14 +481,14 @@ final class OssieConverterCommon {
       throw new ConversionException(
           "expression must be a string, got " + chosen.getClass().getSimpleName());
     }
-    return (String) chosen; // null when no supported dialect present -> caller warns and skips
+    return (String) chosen; // null when no usable expression is present -> caller warns and skips
   }
 
   /**
    * Emptiness test used throughout the converter for optional YAML values: null, the empty string,
    * an empty list/map, numeric zero, and boolean false are all treated as absent; everything else
-   * is present. Used for the DATABRICKS-or-ANSI expression fallthrough (so an empty or absent
-   * DATABRICKS expr falls through to ANSI) and for optional-field mapping (so an empty
+   * is present. Used for the expression fallthrough in pickExpression (so an empty or absent
+   * expression falls through to the next candidate) and for optional-field mapping (so an empty
    * `comment`/`synonyms` is dropped rather than emitted as an empty value).
    */
   static boolean truthy(Object v) {
