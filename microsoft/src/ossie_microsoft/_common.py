@@ -287,13 +287,18 @@ def is_date_only_format(format_string):
     return not _TIME_FORMAT_TOKEN_RE.search(stripped)
 
 
+def extension_vendor(extension):
+    """Read the vendor identifier from a current or legacy extension."""
+    return extension.get("vendor_name") or extension.get("vendor")
+
+
 def read_stash(obj):
     """Return the POWER_BI `custom_extensions` payload attached to `obj`, or {}."""
     for ext in (obj or {}).get("custom_extensions") or []:
-        if not isinstance(ext, dict) or ext.get("vendor_name") != VENDOR:
+        if not isinstance(ext, dict) or extension_vendor(ext) != VENDOR:
             continue
         try:
-            data = json.loads(ext.get("data") or "{}")
+            data = json.loads(ext.get("data", ext.get("content")) or "{}")
         except json.JSONDecodeError as e:
             raise ConversionError(
                 f"{VENDOR} custom_extensions data is not valid JSON: {e}") from e
@@ -341,7 +346,7 @@ def foreign_vendor_extensions(obj):
     return [
         ext
         for ext in (obj or {}).get("custom_extensions") or []
-        if isinstance(ext, dict) and ext.get("vendor_name") != VENDOR
+        if isinstance(ext, dict) and extension_vendor(ext) != VENDOR
     ]
 
 
