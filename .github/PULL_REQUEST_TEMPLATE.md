@@ -30,7 +30,7 @@
 ### Converters
 - [ ] Converter logic is updated to reflect spec or ontology changes in [apache/ossie-converters](https://github.com/apache/ossie-converters)
 - [ ] New converters include tests under the converter's test directory
-- [ ] If adding a new converter, `.github/labeler.yml`, `.github/dependabot.yml` and a `converter-<name>-ci.yml` workflow are added for the new path
+- [ ] If adding a new converter, `.github/labeler.yml`, `.github/dependabot.yml`, a `converter-<name>-ci.yml` workflow and the `Converter` dropdown in `.github/ISSUE_TEMPLATE/bug_report.yml` and `feature_request.yml` are updated for the new path
 
 ### Documentation
 - [ ] The converter's `README.md` is updated to reflect any user-facing changes
