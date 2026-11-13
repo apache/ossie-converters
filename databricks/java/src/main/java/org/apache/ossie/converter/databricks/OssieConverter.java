@@ -136,7 +136,16 @@ public final class OssieConverter {
 
   /** IMPORT: Metric View v1.1 YAML -&gt; Apache Ossie semantic model YAML. */
   public static Result convertMetricViewToOssie(String mvYamlStr, String modelName) {
-    return MetricViewToOssie.convertMetricViewToOssie(mvYamlStr, modelName);
+    return convertMetricViewToOssie(mvYamlStr, modelName, false);
+  }
+
+  /**
+   * Import a Metric View, optionally turning supported filters into SQL dataset sources.
+   * Enable pushdown only when the downstream consumer supports SQL sources.
+   */
+  public static Result convertMetricViewToOssie(
+      String mvYamlStr, String modelName, boolean pushDownSourceFilter) {
+    return MetricViewToOssie.convertMetricViewToOssie(mvYamlStr, modelName, pushDownSourceFilter);
   }
 
   /** Parse YAML text into a plain value (YAML 1.2 booleans, matching the converter). */

@@ -66,6 +66,8 @@ final class OssieConverterCommon {
   static final int SYNONYM_LIMIT = 10;
   static final int STASH_VERSION = 1;
   static final String STASH_SOURCE_KEY = "source_dataset";
+  static final String STASH_FILTER_SOURCE_KEY = "filter_source_table";
+  static final String STASH_FILTER_QUERY_KEY = "filter_source_query";
   static final String CARD_ONE_TO_MANY = "one_to_many";
   static final String CARD_MANY_TO_ONE = "many_to_one";
   static final int MAX_JOIN_NODES = 200;
@@ -73,6 +75,12 @@ final class OssieConverterCommon {
   static final Pattern IDENTIFIER_RE = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
   static final Pattern SELECT_WITH_RE =
       Pattern.compile("(?i)^(select|with)\\b");
+
+  private static final Pattern SIMPLE_SOURCE_TABLE =
+      Pattern.compile("[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*){2}");
+  private static final Pattern SIMPLE_SOURCE_FILTER = Pattern.compile(
+      "(?i)(source\\.)?([A-Za-z_][A-Za-z0-9_]*)\\s*(<=|>=|<>|!=|=|<|>)\\s*"
+      + "([+-]?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+))");
 
   static final ObjectMapper MAPPER = buildMapper();
   private static final ObjectMapper JSON_READER = new ObjectMapper()
@@ -406,6 +414,26 @@ final class OssieConverterCommon {
     }
     throw new ConversionException(
         what + ": '" + key + "' must be a string, got " + v.getClass().getSimpleName());
+  }
+
+  /** Build a source query for a numeric comparison over a single physical source column. */
+  static String filteredSourceQuery(Object source, Object filter,
+      Collection<String> viewNames, boolean requireSourceQualifier) {
+    if (!(source instanceof String table) || !(filter instanceof String predicate)
+        || !SIMPLE_SOURCE_TABLE.matcher(table.trim()).matches()) {
+      return null;
+    }
+    Matcher match = SIMPLE_SOURCE_FILTER.matcher(predicate.trim());
+    if (!match.matches()) {
+      return null;
+    }
+    String column = match.group(2);
+    if (match.group(1) == null
+        && (requireSourceQualifier || viewNames.contains(column.toLowerCase(Locale.ROOT)))) {
+      return null;
+    }
+    return "SELECT * FROM " + table.trim() + " WHERE " + column
+        + " " + match.group(3) + " " + match.group(4);
   }
 
   static String validateSource(Object source, String datasetName) {

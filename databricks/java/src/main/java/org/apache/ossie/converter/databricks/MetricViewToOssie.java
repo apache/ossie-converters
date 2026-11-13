@@ -25,9 +25,12 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOI
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.OSSIE_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SELECT_WITH_RE;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_QUERY_KEY;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asList;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.asMap;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.filteredSourceQuery;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.get;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.isSimpleIdentifier;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.loadYaml;
@@ -90,7 +93,8 @@ final class MetricViewToOssie {
 
   private MetricViewToOssie() {}
 
-  static Result convertMetricViewToOssie(String mvYamlStr, String modelName) {
+  static Result convertMetricViewToOssie(
+      String mvYamlStr, String modelName, boolean pushDownSourceFilter) {
     Notices notices = new Notices();
     if (mvYamlStr == null || mvYamlStr.trim().isEmpty()) {
       throw ConversionException.invalidInput(
@@ -124,7 +128,7 @@ final class MetricViewToOssie {
               + "'. This converter targets v" + MV_VERSION + " only.",
           version);
     }
-    Map<String, Object> model = convertView(view, modelName, notices);
+    Map<String, Object> model = convertView(view, modelName, notices, pushDownSourceFilter);
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("version", OSSIE_VERSION);
     out.putAll(model);
@@ -141,7 +145,7 @@ final class MetricViewToOssie {
   }
 
   private static Map<String, Object> convertView(
-      Map<String, Object> view, String modelName, Notices notices) {
+      Map<String, Object> view, String modelName, Notices notices, boolean pushDownSourceFilter) {
     Object source = get(view, "source");
     if (source == null || source.toString().isEmpty()) {
       throw new ConversionException("Metric View is missing required 'source'");
@@ -171,7 +175,8 @@ final class MetricViewToOssie {
     Set<String> seenNames = new HashSet<>();
     seenNames.add(factName.trim().toLowerCase(Locale.ROOT));
 
-    walk(factName, "source", asList(get(view, "joins")), datasets, relationships,
+    List<Object> joins = asList(get(view, "joins"));
+    walk(factName, "source", joins, datasets, relationships,
         aliasToDataset, seenNames);
 
     // The reverse conversion bounds how many datasets it will build (see buildJoinTree), so a
@@ -200,8 +205,9 @@ final class MetricViewToOssie {
     for (Map<String, Object> d : datasets) {
       datasetNames.add(((String) d.get("name")).toLowerCase(Locale.ROOT));
     }
-    DialectScope scope =
-        new DialectScope(datasetNames, viewDefinedNames(view, dims), hasHiddenNames(dims));
+    Set<String> viewNames = viewDefinedNames(view, dims);
+    boolean hiddenNames = hasHiddenNames(dims);
+    DialectScope scope = new DialectScope(datasetNames, viewNames, hiddenNames);
     for (Object dimObj : dims) {
       Map<String, Object> dim = asMap(dimObj);
       if (isWildcard(dim)) {
@@ -222,7 +228,7 @@ final class MetricViewToOssie {
     List<Object> metrics = new ArrayList<>();
     // Fixed once the join tree is walked, so compile it once for all measures.
     Pattern aliasHead = qualifierChainPattern(aliasToDataset.keySet());
-    // A view filter changes every measure's value, and it rides only in the DATABRICKS stash.
+    // A view filter changes every measure's value. Keep the Databricks expression label.
     boolean filtered = view.containsKey("filter");
     for (Object mObj : asList(get(view, "measures"))) {
       Map<String, Object> m = asMap(mObj);
@@ -253,7 +259,20 @@ final class MetricViewToOssie {
         modelStash.put(k, view.get(k));
       }
     }
-    if (hasOtm(asList(get(view, "joins")))) {
+    boolean hasOneToManyJoin = hasOtm(joins);
+    if (pushDownSourceFilter && filtered) {
+      String filteredSource = hasOneToManyJoin ? null : filteredSourceQuery(
+          source, get(view, "filter"), viewNames, hiddenNames || !joins.isEmpty());
+      if (filteredSource != null) {
+        factDs.put("source", filteredSource);
+        modelStash.put(STASH_FILTER_SOURCE_KEY, source);
+        modelStash.put(STASH_FILTER_QUERY_KEY, filteredSource);
+      } else {
+        notices.warn("view", "cannot push down the filter to the fact source; "
+            + "retaining it in the Databricks extension");
+      }
+    }
+    if (hasOneToManyJoin) {
       modelStash.put(STASH_SOURCE_KEY, factName);
     }
     writeStash(model, modelStash);

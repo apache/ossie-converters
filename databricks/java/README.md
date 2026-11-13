@@ -145,6 +145,24 @@ exported unchanged with a notice. Databricks import retains the native expressio
 and records the decoded grain and key bindings alongside the portable alternative
 so it can be exported again.
 
+### Source filters
+
+By default, import preserves the table reference and stores the filter in the
+Databricks extension. For Cube and other consumers that support SQL sources,
+enable pushdown with the import flag `--push-down-source-filter` or the Java
+overload `OssieConverter.convertMetricViewToOssie(yaml, name, true)`.
+
+Pushdown turns a numeric comparison on a physical column of a three-part
+table into a `WHERE` clause. With joins, qualify the fact column explicitly,
+for example `source.ss_net_profit > 0`. Views with a one-to-many join at any
+depth keep their filter in the extension, since filtering the fact source
+alone can leave rows from the many side in downstream aggregates.
+
+An unchanged query exports back to Databricks as the original table and filter.
+If the query is edited, Databricks export uses the edited source and warns about
+the original filter. If pushdown was requested but is unsupported, import
+keeps the filter in the Databricks extension and emits a notice.
+
 ### Dialect labels on import
 
 Import labels each expression with the most portable dialect it fits, so a model that went
@@ -154,7 +172,7 @@ recognize stays `DATABRICKS`, which is always correct for an expression read fro
 An expression also stays `DATABRICKS` when:
 
 - it is a measure with a `window` or `partition`, or any measure of a view with a `filter`: those
-  settings change the value and ride only in the `DATABRICKS` stash;
+  settings change the value. Filters retain the native label even when the source query applies them;
 - it is a measure that names anything outside an aggregate call (`cost / row_count`), which the
   Metric View resolves to another measure rather than a column;
 - it names a parameter, or a dimension other than a plain same-named column, bare or as

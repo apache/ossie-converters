@@ -939,6 +939,112 @@ public class OssieConverterSuite {
     assertEquals(OssieConverter.parseYaml(mv), OssieConverter.parseYaml(back));
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  public void sourceFilterSurvivesViaTheOssieSource() throws Exception {
+    for (String filter : List.of("net_profit > 0", "source.net_profit > 0")) {
+      String mv = "version: '1.1'\nsource: c.s.orders\nfilter: " + filter + "\n"
+          + "measures:\n- {name: revenue, expr: SUM(amount)}\n";
+      String ossie = OssieConverter.convertMetricViewToOssie(mv, null, true).yaml;
+      Map<String, Object> model = (Map<String, Object>) OssieConverter.parseYaml(ossie);
+      Map<String, Object> dataset = ((List<Map<String, Object>>) model.get("datasets")).get(0);
+      String query = ((String) dataset.get("source")).replaceAll("\\s+", " ");
+      assertTrue(query.contains("FROM c.s.orders"));
+      assertTrue(query.contains("WHERE net_profit > 0"));
+      assertEquals(OssieConverter.parseYaml(mv),
+          OssieConverter.parseYaml(OssieConverter.convertOssieToMetricView(ossie, null).yaml));
+
+      String importedQuery = (String) dataset.get("source");
+      Map<String, Object> extension =
+          ((List<Map<String, Object>>) model.get("custom_extensions")).get(0);
+      String originalStash = (String) extension.get("data");
+      Map<String, Object> stash = (Map<String, Object>) OssieConverter.parseYaml(originalStash);
+      String reformatted = importedQuery.replace("SELECT", "select");
+      stash.put("filter_source_query", reformatted);
+      extension.put("data", OssieConverterCommon.JSON_WRITER.writeValueAsString(stash));
+      dataset.put("source", reformatted);
+      assertEquals(OssieConverter.parseYaml(mv), OssieConverter.parseYaml(
+          OssieConverter.convertOssieToMetricView(
+              OssieConverterCommon.MAPPER.writeValueAsString(model), null).yaml));
+
+      extension.put("data", originalStash);
+      dataset.put("source", importedQuery.replace("WHERE net_profit > 0", "WHERE net_profit > 10"));
+      String edited = OssieConverterCommon.MAPPER.writeValueAsString(model);
+      Map<String, Object> returned = (Map<String, Object>) OssieConverter.parseYaml(
+          OssieConverter.convertOssieToMetricView(edited, null).yaml);
+      assertEquals(query.replace("net_profit > 0", "net_profit > 10"),
+          ((String) returned.get("source")).replaceAll("\\s+", " "));
+      assertFalse(returned.containsKey("filter"));
+    }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void viewDefinedFilterStaysInDatabricksMetadata() {
+    String mv = "version: '1.1'\nsource: c.s.orders\nfilter: adjusted_amount > 0\n"
+        + "dimensions:\n- {name: adjusted_amount, expr: amount * 2}\n"
+        + "measures:\n- {name: revenue, expr: SUM(amount)}\n";
+    String ossie = OssieConverter.convertMetricViewToOssie(mv, null, true).yaml;
+    Map<String, Object> model = (Map<String, Object>) OssieConverter.parseYaml(ossie);
+    Map<String, Object> dataset = ((List<Map<String, Object>>) model.get("datasets")).get(0);
+    assertEquals("c.s.orders", dataset.get("source"));
+    assertEquals(OssieConverter.parseYaml(mv),
+        OssieConverter.parseYaml(OssieConverter.convertOssieToMetricView(ossie, null).yaml));
+  }
+
+  @Test
+  public void joinedTpcdsFilterRequiresOptInAndExplicitFactQualification() {
+    String bare = loadFixture("tpcds_metric_view.yaml");
+    String qualified = bare.replace("filter: ss_net_profit > 0",
+        "filter: source.ss_net_profit > 0");
+    assertTrue(bare.contains("filter: ss_net_profit > 0"));
+    assertFilterSource(qualified, false, "tpcds.public.store_sales", false);
+    assertFilterSource(bare, true, "tpcds.public.store_sales", true);
+    assertFilterSource(qualified, true,
+        "SELECT * FROM tpcds.public.store_sales WHERE ss_net_profit > 0", false);
+  }
+
+  @Test
+  public void joinedBareColumnAndNestedOneToManyKeepFiltersInMetadata() {
+    String view = """
+        version: '1.1'
+        source: c.s.orders
+        joins:
+        - name: customer
+          source: c.s.customer
+          on: source.cust_id = customer.id
+        measures:
+        - {name: order_count, expr: COUNT(*)}
+        """;
+    assertFilterSource(view + "filter: c_age > 30\n", true, "c.s.orders", true);
+    String oneToMany = view.replace("measures:", "  cardinality: one_to_many\nmeasures:");
+    assertFilterSource(oneToMany + "filter: source.amount > 0\n", true, "c.s.orders", true);
+    String nested = oneToMany.replace("measures:", """
+          joins:
+          - name: address
+            source: c.s.address
+            on: customer.id = address.cust_id
+            cardinality: one_to_many
+        measures:""");
+    assertFilterSource(nested + "filter: source.amount > 0\n", true, "c.s.orders", true);
+  }
+
+  private static void assertFilterSource(
+      String view, boolean pushDown, String expectedSource, boolean expectNotice) {
+    OssieConverter.Result imported = OssieConverter.convertMetricViewToOssie(view, null, pushDown);
+    Map<String, Object> model = OssieConverterCommon.asMap(OssieConverter.parseYaml(imported.yaml));
+    Map<String, Object> fact = OssieConverterCommon.asMap(
+        OssieConverterCommon.asList(model.get("datasets")).get(0));
+    assertEquals(expectedSource, fact.get("source"));
+    assertEquals(expectNotice, imported.notices.stream()
+        .anyMatch(notice -> notice.contains("cannot push down the filter")));
+    Map<String, Object> input = OssieConverterCommon.asMap(OssieConverter.parseYaml(view));
+    Map<String, Object> returned = OssieConverterCommon.asMap(OssieConverter.parseYaml(
+        OssieConverter.convertOssieToMetricView(imported.yaml, null).yaml));
+    assertEquals(input.get("source"), returned.get("source"));
+    assertEquals(input.get("filter"), returned.get("filter"));
+  }
+
   // -- fixture comparisons ---------------------------------------------------
   // The fixtures under src/test/resources/ossie_*.yaml pin the expected outputs
   // checked into apache/ossie. Asserting the Java output parses equal to them (structure

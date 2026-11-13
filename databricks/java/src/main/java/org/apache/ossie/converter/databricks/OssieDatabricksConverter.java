@@ -80,7 +80,8 @@ public final class OssieDatabricksConverter {
           // `--source` picks the fact/grain (optional).
           case EXPORT -> OssieConverter.convertOssieToMetricView(input, parsed.option);
           // `--name` sets the model name (optional).
-          case IMPORT -> OssieConverter.convertMetricViewToOssie(input, parsed.option);
+          case IMPORT -> OssieConverter.convertMetricViewToOssie(
+              input, parsed.option, parsed.pushDownSourceFilter);
         };
 
     write(parsed.outputPath, result.yaml, out);
@@ -119,7 +120,8 @@ public final class OssieDatabricksConverter {
   private static String usage() {
     return "Usage:\n"
         + "  ossie-databricks export <model.yaml> [-o <view.yaml>] [--source <dataset>]\n"
-        + "  ossie-databricks import <view.yaml>  [-o <model.yaml>] [--name <model>]";
+        + "  ossie-databricks import <view.yaml>  [-o <model.yaml>] [--name <model>]"
+        + " [--push-down-source-filter]";
   }
 
   /**
@@ -151,28 +153,38 @@ public final class OssieDatabricksConverter {
     }
   }
 
-  /** Parsed command-line arguments: the input file, an optional output file, and the option. */
+  /** Parsed command-line arguments. */
   private static final class Args {
     final String inputPath;
     final String outputPath;
     final String option;
+    final boolean pushDownSourceFilter;
 
-    private Args(String inputPath, String outputPath, String option) {
+    private Args(String inputPath, String outputPath, String option, boolean pushDownSourceFilter) {
       this.inputPath = inputPath;
       this.outputPath = outputPath;
       this.option = option;
+      this.pushDownSourceFilter = pushDownSourceFilter;
     }
 
     static Args parse(String[] args, Command command) {
       String inputPath = null;
       String outputPath = null;
       String option = null;
+      boolean pushDownSourceFilter = false;
       for (int i = 1; i < args.length; i++) {
         String arg = args[i];
         switch (arg) {
           case "-o":
           case "--output":
             outputPath = requireValue(args, ++i, arg);
+            break;
+          case "--push-down-source-filter":
+            if (command != Command.IMPORT) {
+              throw new ExitException(2, "Option '" + arg + "' is only valid for 'import'.\n"
+                  + usage());
+            }
+            pushDownSourceFilter = true;
             break;
           case "--source":
           case "--name":
@@ -203,7 +215,7 @@ public final class OssieDatabricksConverter {
       if (inputPath == null) {
         throw new ExitException(2, "Missing input file.\n" + usage());
       }
-      return new Args(inputPath, outputPath, option);
+      return new Args(inputPath, outputPath, option, pushDownSourceFilter);
     }
 
     private static String requireValue(String[] args, int index, String flag) {
