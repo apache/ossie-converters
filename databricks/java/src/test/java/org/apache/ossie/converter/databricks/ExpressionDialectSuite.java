@@ -170,4 +170,26 @@ public class ExpressionDialectSuite {
         "(a",
         "a, b");
   }
+
+  @Test
+  public void joinedFieldQualificationSkipsWordsThatNameNoColumn() {
+    String[][] cases = {
+        {"x IS UNKNOWN", "customer.x IS UNKNOWN"},
+        {"x IS NOT UNKNOWN", "customer.x IS NOT UNKNOWN"},
+        {"unknown = 1", "customer.unknown = 1"},
+        {"LOCALTIMESTAMP > d", "LOCALTIMESTAMP > customer.d"},
+        {"CURRENT_DATE > d", "CURRENT_DATE > customer.d"},
+        {"PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x NULLS FIRST)",
+            "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY customer.x NULLS FIRST)"},
+        {"first || last", "customer.first || customer.last"},
+        {"DATE_TRUNC(month, d)", "DATE_TRUNC(month, customer.d)"},
+        {"DATE_TRUNC('month', d)", "DATE_TRUNC('month', customer.d)"},
+        {"DATE_PART(year, d)", "DATE_PART(year, customer.d)"},
+        {"DATEADD(day, 7, d)", "DATEADD(day, 7, customer.d)"},
+        {"EXTRACT(YEAR FROM d)", "EXTRACT(YEAR FROM customer.d)"},
+    };
+    for (String[] c : cases) {
+      assertEquals(c[1], ExpressionDialect.qualifyFieldColumns(c[0], "customer"), c[0]);
+    }
+  }
 }
