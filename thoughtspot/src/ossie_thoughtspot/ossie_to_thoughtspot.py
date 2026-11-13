@@ -286,6 +286,27 @@ def _physical_identity(field: dict, log: IssueLog, *, object_ref: str) -> tuple[
         )
         if isinstance(stashed_db_column_name, str) and stashed_db_column_name:
             return column, stashed_db_column_name
+        raw_stashed = field_stash.get(FIELD_STASH_DB_COLUMN_NAME)
+        if was_stashed and not (isinstance(raw_stashed, str) and raw_stashed):
+            # The stash is unusable, but NOT because the field was
+            # retargeted -- the value simply is not a warehouse column name.
+            # A hand-written object-form payload gets its scalars typed by
+            # the YAML loader, so an unquoted `2024` arrives as an int. The
+            # stale message below would tell the user their field had been
+            # repointed, which is a wrong diagnosis of a real problem and
+            # worse than no message.
+            log.add(
+                code="TS-FIELD-DB-COLUMN-NAME-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    f"the stashed warehouse column name for this field is "
+                    f"{type(raw_stashed).__name__}, not a non-empty string, "
+                    f"so it is dropped and db_column_name is set equal to "
+                    f"the display name {column!r} instead"
+                ),
+                object_ref=object_ref,
+            )
+            return column, column
         if was_stashed:
             log.add(
                 code="TS-FIELD-DB-COLUMN-NAME-STALE",
@@ -539,17 +560,36 @@ def _source_parts(dataset: dict, payload: dict, log: IssueLog, *, object_ref: st
             stashed.get(DATASET_STASH_SOURCE_PARTS_SCHEMA, ""),
             stashed.get(DATASET_STASH_SOURCE_PARTS_DB_TABLE, ""),
         )
-        if ".".join((db, schema, db_table)) == source:
+        if not all(isinstance(part, str) for part in (db, schema, db_table)):
+            # Not stale -- malformed. A hand-written object-form payload gets
+            # its scalars typed by the YAML loader, so an unquoted schema
+            # named `2024` arrives as an int and `".".join` below raises a
+            # bare TypeError the CLI does not catch. Reported under its own
+            # code rather than the stale one, because "the dataset was edited
+            # since the stash was written" is a different thing to tell a
+            # user than "this payload is not the shape we wrote".
+            log.add(
+                code="TS-DATASET-SOURCE-PARTS-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    "the stashed source_parts are not all strings, so they "
+                    "cannot name a db/schema/table; the source is re-split "
+                    "instead"
+                ),
+                object_ref=object_ref,
+            )
+        elif ".".join((db, schema, db_table)) == source:
             return db, schema, db_table
-        log.add(
-            code="TS-DATASET-SOURCE-PARTS-STALE",
-            severity=Severity.WARNING,
-            message=(
-                "the stashed source_parts no longer reconstruct this dataset's "
-                "current source; the source is re-split instead"
-            ),
-            object_ref=object_ref,
-        )
+        else:
+            log.add(
+                code="TS-DATASET-SOURCE-PARTS-STALE",
+                severity=Severity.WARNING,
+                message=(
+                    "the stashed source_parts no longer reconstruct this "
+                    "dataset's current source; the source is re-split instead"
+                ),
+                object_ref=object_ref,
+            )
 
     parts = _split_three_part_identifier(source)
     if parts is not None and len(parts) == 3 and all(parts):
@@ -2192,6 +2232,36 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         formulas.append(unsurfaced_entry)
 
     for entry in model_payload.get(MODEL_STASH_UNATTRIBUTED_FORMULAS) or []:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("name", ""), str)
+            or not isinstance(entry.get("expr") or "", str)
+            or not isinstance(entry.get(FIELD_STASH_FORMULA_NAME) or "", str)
+        ):
+            # `_formula_id_from` normalises the display name and raises a bare
+            # TypeError on anything that is not a string. A hand-written
+            # object-form payload gets its scalars typed by the YAML loader,
+            # so an unquoted name like `2024` arrives as an int. Report and
+            # skip rather than abort the whole model for one entry.
+            #
+            # All three texts, not just the name: each reaches a string-only
+            # operation further down this loop, and each was measured doing it
+            # bare (christianeu-db's review on PR #137). `expr` ends in
+            # `TypeError: 'int' object is not iterable` and the stashed
+            # formula name in `AttributeError: 'int' object has no attribute
+            # 'strip'` -- both escape the CLI's handler and print a traceback,
+            # which is the one thing this reader promises not to do.
+            log.add(
+                code="TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    "a stashed unattributed formula is not a mapping whose "
+                    "name, expression and stashed formula name are all text, "
+                    "so it is skipped; the formula it described is not restored"
+                ),
+                object_ref=object_ref,
+            )
+            continue
         # A formula spanning two or more Ossie datasets has no single
         # dataset to belong to, which is exactly why the forward direction
         # could not turn it into an ordinary Ossie field -- but a TML
@@ -2244,7 +2314,10 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
             formula_name = allocator.allocate(
                 formula_name_raw, log, object_ref=f"formula:{formula_name_raw}"
             )
-        expr = entry.get("expr", "")
+        # `or ""`, not `.get("expr", "")`: an explicit `expr: null` is a
+        # present key, so the two-argument default never fires and None would
+        # reach the same non-iterable failure an int does.
+        expr = entry.get("expr") or ""
         formula_id = _formula_id_from(formula_name)
         # Raw, unwrapped `expr` -- see the matching comment in _build_field.
         unattributed_entry = {"id": formula_id, "name": formula_name, "expr": expr}
