@@ -1,0 +1,4 @@
+.hypothesis/
+__pycache__/
+.DS_Store
+tpch_semantic_model.live.tds

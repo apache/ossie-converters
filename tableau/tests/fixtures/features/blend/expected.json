@@ -1,0 +1,51 @@
+{
+  "fail": null,
+  "outputs": 3,
+  "loss_kinds": [
+    "blend",
+    "source_qualified",
+    "unknown_warehouse"
+  ],
+  "datasources": {
+    "pg": {
+      "datasets": 1,
+      "fields": 1,
+      "relationships": 0,
+      "metrics": 0,
+      "converted": true,
+      "losses": [
+        "blend",
+        "source_qualified",
+        "unknown_warehouse"
+      ]
+    },
+    "pg2": {
+      "datasets": 1,
+      "fields": 1,
+      "relationships": 0,
+      "metrics": 0,
+      "converted": true,
+      "losses": [
+        "blend",
+        "source_qualified",
+        "unknown_warehouse"
+      ]
+    },
+    "pg3": {
+      "datasets": 1,
+      "fields": 1,
+      "relationships": 0,
+      "metrics": 0,
+      "converted": true,
+      "losses": [
+        "source_qualified",
+        "unknown_warehouse"
+      ]
+    }
+  },
+  "loss_counts": {
+    "blend": 2,
+    "source_qualified": 3,
+    "unknown_warehouse": 3
+  }
+}

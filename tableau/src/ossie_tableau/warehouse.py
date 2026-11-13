@@ -1,0 +1,120 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+"""Warehouse descriptors: everything the converter needs to know about a target SQL warehouse.
+
+Add a warehouse by adding a `Warehouse` entry to `WAREHOUSES`. `DEFAULT` is used wherever no warehouse is chosen.
+"""
+from __future__ import annotations
+
+import re
+
+from dataclasses import dataclass, field
+
+ANSI_SQL = "ANSI_SQL"
+
+
+@dataclass(frozen=True)
+class Warehouse:
+    name: str
+    tableau_class: str
+    sqlglot_dialect: str
+    ossie_dialect: str
+    extra_attributes: tuple[str, ...] = ()
+    omit_attributes: tuple[str, ...] = ()  # default connection attributes this warehouse does not use
+    fixed_attributes: tuple[tuple[str, str], ...] = ()  # constant connection attributes (override the defaults)
+    database_attribute: str = "dbname"  # connection attribute that carries Connection.database
+    quote: str = '"'  # identifier quote character
+    default_server: str = ""  # used when no server is given (BigQuery has a single endpoint)
+    fold: str | None = None  # "upper" when the warehouse folds unquoted identifiers to upper case
+
+    @property
+    def dialect_preference(self) -> tuple[str, str]:
+        return (self.ossie_dialect, ANSI_SQL)
+
+
+# Fallback for connection classes that are not registered: generic sqlglot dialect, ANSI_SQL expressions. Not in WAREHOUSES (not selectable).
+GENERIC = Warehouse(name="generic", tableau_class="", sqlglot_dialect="", ossie_dialect="ANSI_SQL")
+
+SNOWFLAKE = Warehouse(
+    name="snowflake",
+    tableau_class="snowflake",
+    sqlglot_dialect="snowflake",
+    ossie_dialect="SNOWFLAKE",
+    extra_attributes=("warehouse",),
+    fold="upper",
+)
+
+# Attribute set read from a Tableau-saved BigQuery connection (corpus: reviews.twb). `authentication="oauth"` is not confirmed
+# against a fresh Tableau export; see LIMITATIONS.md.
+BIGQUERY = Warehouse(
+    name="bigquery",
+    tableau_class="bigquery",
+    sqlglot_dialect="bigquery",
+    ossie_dialect="BIGQUERY",
+    extra_attributes=("project", "EXECCATALOG"),
+    omit_attributes=("dbname", "odbc-connect-string-extras", "one-time-sql", "service"),
+    fixed_attributes=(("authentication", "oauth"), ("connection-dialect", "google-sql")),
+    database_attribute="CATALOG",
+    quote="`",
+    default_server="googleapis.com/bigquery",
+)
+
+WAREHOUSES: dict[str, Warehouse] = {w.name: w for w in (SNOWFLAKE, BIGQUERY)}
+DEFAULT = SNOWFLAKE
+
+
+def get(name: str) -> Warehouse:
+    try:
+        return WAREHOUSES[name]
+    except KeyError:
+        raise ValueError(f"unknown warehouse {name!r}; known: {', '.join(sorted(WAREHOUSES))}") from None
+
+
+def by_tableau_class(tableau_class: str) -> Warehouse | None:
+    return next((w for w in WAREHOUSES.values() if w.tableau_class == tableau_class), None)
+
+
+@dataclass(frozen=True)
+class Connection:
+    warehouse: Warehouse
+    server: str
+    database: str = ""
+    schema: str = ""
+    role: str = ""
+    username: str = ""
+    extra: dict[str, str] = field(default_factory=dict)
+
+
+# Words reserved by ANSI SQL, Snowflake or BigQuery, plus words sqlglot parses as an operator, statement or niladic
+# function (CURRENT_DATE, XOR, ...); a column or table with one of these names must be quoted.
+RESERVED = frozenset("""account all alter and any array as asc between by case cast check collate column connect connection
+constraint contains create cross cube current current_catalog current_date current_time current_timestamp current_user
+database default define delete desc distinct drop else end enum escape except exclude exists extract false fetch following
+for from full glob grant group grouping groups gscluster hash having if ignore ilike in increment inner insert intersect
+interval into is issue join lateral left like limit localtime localtimestamp lookup merge minus natural new no not notnull
+null nulls of on or order organization outer over partition partitioned_by preceding proto qualify range recursive regexp
+respect returning revoke right rlike rollback rollup row rows sample schema select session_user set some start
+straight_join struct table tablesample then to treat trigger true try_cast unbounded uncache union unique unnest update
+using values view when whenever where window with within xor""".split())
+
+
+def needs_quote(name: str, wh: Warehouse | None = None) -> bool:
+    """True when `name` must be quoted to keep its exact spelling; with `wh`, also when the warehouse would fold its case."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) or name.lower() in RESERVED:
+        return True
+    return wh is not None and wh.fold == "upper" and name != name.upper()
