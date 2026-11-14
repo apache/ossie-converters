@@ -297,7 +297,7 @@ date-only, time-only or timezone-aware member: every temporal value is stored as
 |------|--------------|------|
 | `string` | `String` | |
 | `int64` | `Integer` | 64-bit in the model, but report visuals are only exact to 2^53 − 1 |
-| `decimal` | `Decimal` | "Fixed Decimal Number": exact, 19 digits, 4 after the point |
+| `decimal` | `Decimal` | "Fixed Decimal Number": exact, 19 digits, 4 after the point; narrowed, and reported unless the column was imported from Power BI |
 | `double` | `Float` | "Decimal Number": 64-bit floating point, approximate |
 | `boolean` | `Boolean` | |
 | `dateTime` | `DateTime`, or `Date` when the format string has no time part | |
@@ -314,6 +314,11 @@ Consequences worth knowing:
   follows an hour token, which is why minutes are written `n`.
 - **`Time` and `DateTimeTz` do not survive export.** They collapse onto `dateTime`,
   gaining a date part or losing a UTC offset respectively. Both cases are reported.
+- **`Decimal` does not survive export beyond 4 decimal places.** Power BI's "Fixed
+  Decimal Number" is exact to 19 digits with exactly 4 after the point, while an Apache
+  Ossie `Decimal` leaves precision and scale unspecified, so the converter cannot prove a
+  column fits. The export is reported. A column that was itself imported from Power BI
+  already fits, and the import stashes its TMSL type, so that round trip stays silent.
 - **`double` is not `Decimal`.** Mapping Power BI's approximate "Decimal Number" onto an
   exact decimal type would overstate its precision.
 - Values outside years 1900–9999 are outside the Power BI `dateTime` range, and time is

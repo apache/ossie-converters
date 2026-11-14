@@ -510,6 +510,19 @@ def test_temporal_types_power_bi_lacks_are_reported(datatype, expected):
     assert _column(_table(bim, "T"), "C")["dataType"] == "dateTime"
 
 
+def test_decimal_precision_power_bi_cannot_guarantee_is_reported():
+    """Power BI keeps 4 decimal places; the Ossie `Decimal` leaves scale unspecified.
+
+    The converter cannot prove a column fits, so exporting one is a lossy step and
+    must report itself like every other branch that cannot be represented.
+    """
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["fields"][0]["datatype"] = "Decimal"
+    with pytest.warns(UserWarning, match="4 decimal places"):
+        bim = _convert(semantic_model)
+    assert _column(_table(bim, "T"), "C")["dataType"] == "decimal"
+
+
 def test_an_opaque_field_leaves_the_data_type_unspecified():
     semantic_model = _minimal()
     semantic_model["datasets"][0]["fields"][0]["datatype"] = "Opaque"

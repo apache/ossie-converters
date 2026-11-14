@@ -470,6 +470,13 @@ def _is_reversible_datatype(tmsl_type, datatype):
     if datatype == "Date" and tmsl_type == "dateTime":
         # Date is re-exported as dateTime plus a date-only format string.
         return True
+    if tmsl_type == "decimal":
+        # The type survives, but the scale does not: Power BI keeps exactly 4 decimal
+        # places while an Apache Ossie `Decimal` leaves precision and scale
+        # unspecified. Stashing the type is what lets the export tell a column that
+        # already fits (this one, imported from Power BI) from an authored `Decimal`
+        # it cannot prove fit.
+        return False
     return OSSIE_TO_TMSL_DATATYPE.get(datatype) == tmsl_type
 
 
