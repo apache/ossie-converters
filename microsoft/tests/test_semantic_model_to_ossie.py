@@ -1107,6 +1107,33 @@ def test_data_types_map_to_the_portable_equivalent(tmsl_type, expected):
     assert _single_field_datatype(tmsl_type) == expected
 
 
+def test_the_decimal_type_is_stashed_because_the_scale_does_not_survive():
+    """Power BI keeps exactly 4 decimal places; the portable type cannot record that.
+
+    Stashing the TMSL type is what lets the export tell a column that already fits
+    (this one, imported from Power BI) from an authored `Decimal` it cannot prove fits.
+    """
+    column = {"name": "C", "dataType": "decimal", "sourceColumn": "C"}
+    bim = {"name": "m", "model": {"tables": [{"name": "T", "columns": [column]}]}}
+    osi = yaml.safe_load(convert_semantic_model_to_ossie(bim))
+    field = osi["datasets"][0]["fields"][0]
+    assert read_stash(field).get("dataType") == "decimal"
+
+
+def test_a_decimal_column_round_trips_without_reporting_precision_loss():
+    """A column that came from Power BI already fits, so nothing is reported."""
+    column = {"name": "C", "dataType": "decimal", "sourceColumn": "C"}
+    bim = {"name": "m", "model": {"tables": [{"name": "T", "columns": [column]}]}}
+    osi = yaml.safe_load(convert_semantic_model_to_ossie(bim))
+    with warnings.catch_warnings():
+        # The round trip is lossless, so any warning at all is a failure.
+        warnings.simplefilter("error")
+        result = convert_ossie_to_semantic_model(
+            osi, source={"workspaceId": "w", "itemId": "i"}
+        )
+    assert result["model"]["tables"][0]["columns"][0]["dataType"] == "decimal"
+
+
 @pytest.mark.parametrize("tmsl_type", ["binary", "variant"])
 def test_types_without_a_portable_equivalent_become_opaque(tmsl_type):
     with pytest.warns(UserWarning, match="no portable equivalent"):
