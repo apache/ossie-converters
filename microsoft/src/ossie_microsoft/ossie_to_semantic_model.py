@@ -113,7 +113,7 @@ _LOSSY_DATATYPE = {
     "Decimal": (
         "Power BI 'Fixed Decimal Number' keeps only 4 decimal places (19 significant "
         "digits) and the Apache Ossie 'Decimal' leaves precision and scale "
-        "unspecified; values with more decimal places are rounded"
+        "unspecified; values with more decimal places are not kept"
     ),
 }
 
