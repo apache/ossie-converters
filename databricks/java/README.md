@@ -89,9 +89,18 @@ only) sets the Apache Ossie model name (default: the source's last identifier). 
 its counterpart's flag is an error rather than a silent reinterpretation. Conversion notices
 (features dropped on export) are written to stderr; a non-convertible input exits non-zero.
 
+For a known fact-table primary key, pass one `--primary-key` flag per physical
+source column, in key order. The import writes the key on the fact dataset.
+
+```bash
+java -jar target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar import view.yaml -o model.yaml \
+  --primary-key ss_item_sk --primary-key ss_ticket_number
+```
+
 ### Java API
 
 ```java
+import java.util.List;
 import org.apache.ossie.converter.databricks.OssieConverter;
 
 // export: Apache Ossie -> Metric View (optionally choose the fact/grain; default: the FK-sink
@@ -100,6 +109,10 @@ OssieConverter.Result view = OssieConverter.convertOssieToMetricView(ossieYaml, 
 
 // import: Metric View -> Apache Ossie (optionally name the model; default: the source's last part)
 OssieConverter.Result ossie = OssieConverter.convertMetricViewToOssie(metricViewYaml, "sales");
+
+// import with a known fact-table primary key
+OssieConverter.Result keyed = OssieConverter.convertMetricViewToOssie(
+    metricViewYaml, "sales", List.of("ss_item_sk", "ss_ticket_number"));
 ```
 
 Each `Result` carries the output YAML (`result.yaml`) and any notices raised (`result.notices`,

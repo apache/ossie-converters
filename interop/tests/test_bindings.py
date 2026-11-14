@@ -493,3 +493,62 @@ def test_real_cube_databricks_cube_preserves_native_aggregate_bindings(tmp_path,
     assert result["returned_bindings"]["grade"] == "OK"
     assert len(result["returned_bindings"]["metrics"]) == len(regression.metrics)
     assert result["commands"]  # includes the final source-native export
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.environ.get("OSSIE_INTEROP_INTEGRATION") != "1"
+    or not os.environ.get("OSSIE_CUBE_REPO"),
+    reason="requires prepared Cube and Databricks converters and OSSIE_CUBE_REPO",
+)
+def test_declared_databricks_fact_key_compiles_joined_tpcds_cube(tmp_path):
+    from sqlglot import exp, parse_one
+
+    manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
+    databricks = manifest.converters["databricks"]
+    cube = manifest.converters["cube"]
+    columns = ["ss_item_sk", "ss_ticket_number"]
+    databricks = replace(
+        databricks,
+        import_command=[
+            *databricks.import_command,
+            "--primary-key",
+            columns[0],
+            "--primary-key",
+            columns[1],
+        ],
+    )
+    runner = Runner(
+        ROOT,
+        Manifest({"databricks": databricks, "cube": cube}, {}),
+        tmp_path,
+        prepare=False,
+        native=True,
+    )
+    for converter in (databricks, cube):
+        preparation = runner.prepare(converter)
+        assert preparation["grade"] == "OK", preparation
+        runner.report["preparations"][converter.name] = preparation
+
+    source, data = runner.source("databricks", "tpcds", databricks.fixtures["tpcds"])
+    assert data is not None, source
+    fact = next(
+        dataset for dataset in data["datasets"] if dataset["name"] == "store_sales"
+    )
+    assert fact["primary_key"] == columns
+
+    exported = runner.acceptance(source, data, cube)
+    assert exported["grade"] in ("OK", "LOSSY"), exported
+    model_path = Path(exported["output"]) / "model/cubes/store_sales.yml"
+    native = yaml.safe_load(model_path.read_text())["cubes"][0]
+    assert native["joins"]
+    assert (native.get("sql") or native.get("sql_table")) == fact["source"]
+    source_sql = native.get("sql") or f"SELECT * FROM {native['sql_table']}"
+    tables = parse_one(source_sql, read="databricks").find_all(exp.Table)
+    assert [table.sql(dialect="databricks") for table in tables] == [
+        "tpcds.public.store_sales"
+    ]
+    assert {
+        dim["sql"] for dim in native["dimensions"] if dim.get("primary_key")
+    } == set(columns)
+    assert exported["native_gate"]["grade"] == "OK", exported["native_gate"]

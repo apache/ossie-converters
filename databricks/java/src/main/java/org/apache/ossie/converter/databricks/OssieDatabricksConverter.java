@@ -22,6 +22,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -30,6 +31,7 @@ import java.util.List;
  * <pre>{@code
  *   ossie-databricks export <model.yaml> [-o <view.yaml>] [--source <dataset>]
  *   ossie-databricks import <view.yaml>  [-o <model.yaml>] [--name <model>]
+ *                          [--primary-key <column>]...
  * }</pre>
  *
  * <p>The directions are named from the Apache Ossie model's point of view, matching
@@ -80,7 +82,8 @@ public final class OssieDatabricksConverter {
           // `--source` picks the fact/grain (optional).
           case EXPORT -> OssieConverter.convertOssieToMetricView(input, parsed.option);
           // `--name` sets the model name (optional).
-          case IMPORT -> OssieConverter.convertMetricViewToOssie(input, parsed.option);
+          case IMPORT -> OssieConverter.convertMetricViewToOssie(
+              input, parsed.option, parsed.factPrimaryKey);
         };
 
     write(parsed.outputPath, result.yaml, out);
@@ -119,13 +122,12 @@ public final class OssieDatabricksConverter {
   private static String usage() {
     return "Usage:\n"
         + "  ossie-databricks export <model.yaml> [-o <view.yaml>] [--source <dataset>]\n"
-        + "  ossie-databricks import <view.yaml>  [-o <model.yaml>] [--name <model>]";
+        + "  ossie-databricks import <view.yaml>  [-o <model.yaml>] [--name <model>]\n"
+        + "                           [--primary-key <column>]...";
   }
 
   /**
-   * The two conversion directions, named from the Apache Ossie model's point of view. Each command
-   * accepts exactly one selector flag, so passing the other one is an error rather than a silent
-   * reinterpretation.
+   * The two conversion directions, named from the Apache Ossie model's point of view.
    */
   private enum Command {
     /** Apache Ossie -&gt; Metric View. */
@@ -151,22 +153,25 @@ public final class OssieDatabricksConverter {
     }
   }
 
-  /** Parsed command-line arguments: the input file, an optional output file, and the option. */
+  /** Parsed command-line arguments for one conversion. */
   private static final class Args {
     final String inputPath;
     final String outputPath;
     final String option;
+    final List<String> factPrimaryKey;
 
-    private Args(String inputPath, String outputPath, String option) {
+    private Args(String inputPath, String outputPath, String option, List<String> factPrimaryKey) {
       this.inputPath = inputPath;
       this.outputPath = outputPath;
       this.option = option;
+      this.factPrimaryKey = factPrimaryKey;
     }
 
     static Args parse(String[] args, Command command) {
       String inputPath = null;
       String outputPath = null;
       String option = null;
+      List<String> factPrimaryKey = new ArrayList<>();
       for (int i = 1; i < args.length; i++) {
         String arg = args[i];
         switch (arg) {
@@ -190,6 +195,13 @@ public final class OssieDatabricksConverter {
             }
             option = requireValue(args, ++i, arg);
             break;
+          case "--primary-key":
+            if (command != Command.IMPORT) {
+              throw new ExitException(2, "Option '--primary-key' is only valid for 'import'.\n"
+                  + usage());
+            }
+            factPrimaryKey.add(requireValue(args, ++i, arg));
+            break;
           default:
             if (arg.startsWith("-")) {
               throw new ExitException(2, "Unknown option '" + arg + "'.\n" + usage());
@@ -203,7 +215,7 @@ public final class OssieDatabricksConverter {
       if (inputPath == null) {
         throw new ExitException(2, "Missing input file.\n" + usage());
       }
-      return new Args(inputPath, outputPath, option);
+      return new Args(inputPath, outputPath, option, factPrimaryKey);
     }
 
     private static String requireValue(String[] args, int index, String flag) {
