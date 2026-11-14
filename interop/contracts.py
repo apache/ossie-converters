@@ -33,6 +33,7 @@ _DIALECTS = {
     "OSSIE_SQL_2026": None,
     "DATABRICKS": "databricks",
     "SNOWFLAKE": "snowflake",
+    "CLICKHOUSE": "clickhouse",
 }
 
 
