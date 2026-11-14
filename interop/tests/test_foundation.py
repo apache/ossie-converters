@@ -42,7 +42,7 @@ def test_evidence_link_escapes_table_cell_and_markdown_delimiters(tmp_path):
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "orders",
     "datasets": [
         {
@@ -187,7 +187,7 @@ def test_validator_checks_schema_and_semantic_constraints(tmp_path):
     assert result[
         "errors"
     ]  # Duplicate fields are schema-shaped but semantically invalid.
-    path.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    path.write_text("version: '0.3.0.dev0'\nsemantic_model: []\n")
     _, result = validator.validate(path)
     assert any("Schema" in error for error in result["errors"])
 

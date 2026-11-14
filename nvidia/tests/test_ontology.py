@@ -246,7 +246,7 @@ def test_cli_requires_the_ontology_and_mapping_outputs_together(
 
 def test_mapping_expressions_quote_only_names_sql_cannot_read_bare() -> None:
     semantic_model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "shop",
         "datasets": [
             {

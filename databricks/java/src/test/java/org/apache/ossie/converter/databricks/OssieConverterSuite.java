@@ -81,7 +81,7 @@ public class OssieConverterSuite {
   @Test
   public void fixtureAStarSchemaExportsToExpectedMetricView() {
     String osi =
-        "version: \"0.2.0.dev0\"\n"
+        "version: \"0.3.0.dev0\"\n"
         + "name: sales\n"
         + "description: Sales orders with customer attributes\n"
         + "datasets:\n"
@@ -210,7 +210,7 @@ public class OssieConverterSuite {
   @Test
   public void multipleCandidateFactsWithoutSourceIsRejected() {
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- {name: orders, source: c.s.orders}\n"
@@ -228,7 +228,7 @@ public class OssieConverterSuite {
   @SuppressWarnings("unchecked")
   public void oneToManyEmitsCardinality() {
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: orders\n"
@@ -255,7 +255,7 @@ public class OssieConverterSuite {
     // `d`; `f -> d` points at d (many-to-one from d's perspective), and `g -> f` points away from
     // f (one-to-many), which would nest one_to_many inside the many-to-one branch.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: d\n"
@@ -285,7 +285,7 @@ public class OssieConverterSuite {
     // root. Without a real acyclicity check this expanded into duplicate join paths (`d` under
     // both `c` and `e`), fabricating a tree from a cyclic model.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: a\n"
@@ -318,7 +318,7 @@ public class OssieConverterSuite {
     // A diamond (`a -> b -> d` plus `a -> c -> d`) is an UNDIRECTED cycle but directed-acyclic, and
     // is supported via the fan-out aliases. The cycle check must not reject it.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: a\n"
@@ -356,7 +356,7 @@ public class OssieConverterSuite {
     // split per fan-out path the way the dimension on `d` is; it is dropped with a notice rather
     // than silently bound to one arbitrary branch.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: a\n"
@@ -397,7 +397,7 @@ public class OssieConverterSuite {
     // parameter, so the measure must be re-qualified -- and identically to the dimension path,
     // which already emits `customer.nation.population` for the same column.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: orders\n"
@@ -484,7 +484,7 @@ public class OssieConverterSuite {
   @SuppressWarnings("unchecked")
   public void joinedIntegerSumDeduplicatesByPrimaryKeyAndRoundTrips() throws Exception {
     String osi = """
-        version: 0.2.0.dev0
+        version: 0.3.0.dev0
         name: sales
         datasets:
         - name: sales
@@ -565,7 +565,7 @@ public class OssieConverterSuite {
     // A Metric View requires at least one dimension or measure, so emitting a version+source-only
     // view would just fail at CREATE. Fail at conversion time instead.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: d\n"
@@ -582,7 +582,7 @@ public class OssieConverterSuite {
     // dialect. The error must name the dropped column so the cause is actionable, since after the
     // cascade the emptiness is a consequence of the drop rather than an empty input.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: d\n"
@@ -600,7 +600,7 @@ public class OssieConverterSuite {
   @Test
   public void duplicateDimensionNameIsRejected() {
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: orders\n"
@@ -621,7 +621,7 @@ public class OssieConverterSuite {
   @Test
   public void foreignVendorExtensionDroppedWithNotice() {
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "custom_extensions:\n"
         + "- {vendor_name: SNOWFLAKE, data: '{}'}\n"
@@ -641,7 +641,7 @@ public class OssieConverterSuite {
     // `datatype` (a logical type on a field or metric) has no Metric View slot, where a column's
     // type is inferred from its expression, so it is dropped with a notice on both.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: f\n"
@@ -664,7 +664,7 @@ public class OssieConverterSuite {
     // A foreign-vendor custom_extensions on a relationship has no Metric View slot, so it is
     // dropped with a notice, matching the model/dataset/field levels.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: o\n"
@@ -687,7 +687,7 @@ public class OssieConverterSuite {
     // from_columns/to_columns given as a scalar (not a list) raise a clear "must be lists" error
     // rather than the misleading "are required" (empty-list) or a character-count length error.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- {name: a, source: c.s.a, fields: "
@@ -706,7 +706,7 @@ public class OssieConverterSuite {
     // the fact heuristic, not taken as a real override (which would fail as "requested source ''
     // is not a dataset").
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: orders\n"
@@ -1036,7 +1036,7 @@ public class OssieConverterSuite {
     // An empty DATABRICKS dialect must fall through to ANSI_SQL,
     // not be selected as the (empty) expression.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: f\n"
@@ -1062,7 +1062,7 @@ public class OssieConverterSuite {
     // A dimension expressed only in OSSIE_SQL_2026 (Apache Ossie's portable, ANSI-compatible
     // dialect) must be exported, not dropped (apache/ossie#442).
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: f\n"
@@ -1084,7 +1084,7 @@ public class OssieConverterSuite {
   public void ossieSql2026MeasureExportedNotDropped() {
     // A measure expressed only in OSSIE_SQL_2026 must be exported, not dropped (apache/ossie#442).
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: f\n"
@@ -1106,7 +1106,7 @@ public class OssieConverterSuite {
   public void databricksDialectPreferredOverOssieSql2026() {
     // DATABRICKS wins over OSSIE_SQL_2026 when both are present.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: f\n"
@@ -1132,7 +1132,7 @@ public class OssieConverterSuite {
     // A field whose only dialect is unsupported (here SNOWFLAKE) is dropped and warns, guarding
     // the allowlist against silently accepting any dialect (apache/ossie#442).
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: f\n"
@@ -1153,7 +1153,7 @@ public class OssieConverterSuite {
   public void pickExpressionRejectsNonStringExpression() {
     // A non-string dialect expression (e.g. a YAML number) must raise, not be coerced.
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: f\n"
@@ -1325,7 +1325,7 @@ public class OssieConverterSuite {
 
   /** A fact with `customer` joined to it and `region` nested under `customer`, plus one metric. */
   private static String nestedJoinModel(String metricExpr) {
-    return "version: \"0.2.0.dev0\"\n"
+    return "version: \"0.3.0.dev0\"\n"
         + "name: sales\n"
         + "datasets:\n"
         + "  - name: lineitem\n"
@@ -1415,7 +1415,7 @@ public class OssieConverterSuite {
     // A field dropped for lacking a usable dialect must not take an unrelated measure with it just
     // because its name appears in a string literal: `'us'` is not a reference to a column `us`.
     String osi =
-        "version: \"0.2.0.dev0\"\n"
+        "version: \"0.3.0.dev0\"\n"
         + "name: sales\n"
         + "datasets:\n"
         + "  - name: orders\n"
@@ -1449,7 +1449,7 @@ public class OssieConverterSuite {
     // different case (COUNT(DISTINCT REGION_NAME) over a dropped region_name) must cascade-drop
     // rather than survive as a dangling reference.
     String osi =
-        "version: \"0.2.0.dev0\"\n"
+        "version: \"0.3.0.dev0\"\n"
         + "name: m\n"
         + "datasets:\n"
         + "  - name: d\n"
@@ -1483,7 +1483,7 @@ public class OssieConverterSuite {
     // not cascade-drop it: COUNT_IF(YEAR(order_date) = 2026) calls the YEAR function, it is not a
     // reference to a dropped `year` field. The reference match excludes a NAME(...) function call.
     String osi =
-        "version: \"0.2.0.dev0\"\n"
+        "version: \"0.3.0.dev0\"\n"
         + "name: m\n"
         + "datasets:\n"
         + "  - name: d\n"
@@ -1514,7 +1514,7 @@ public class OssieConverterSuite {
     // survivor's bare self-reference (`region`) is its own name, not a reference to the dropped
     // `REGION`, so the self-guard is case-folded and the survivor is kept.
     String osi =
-        "version: \"0.2.0.dev0\"\n"
+        "version: \"0.3.0.dev0\"\n"
         + "name: m\n"
         + "datasets:\n"
         + "  - name: d\n"
@@ -1542,7 +1542,7 @@ public class OssieConverterSuite {
     // dangling. The same-case clash is what pins the kind-scoping: a case-only difference already
     // cascade-drops without it (the pre-fix guard was case-sensitive), so this must match case.
     String osi =
-        "version: \"0.2.0.dev0\"\n"
+        "version: \"0.3.0.dev0\"\n"
         + "name: m\n"
         + "datasets:\n"
         + "  - name: d\n"
@@ -1592,7 +1592,7 @@ public class OssieConverterSuite {
     // the other members are dropped -- and the README promises a notice when that happens. The
     // same goes for foreign-vendor extensions on a metric.
     String osi =
-        "version: \"0.2.0.dev0\"\n"
+        "version: \"0.3.0.dev0\"\n"
         + "name: sales\n"
         + "datasets:\n"
         + "  - name: orders\n"
@@ -1977,7 +1977,7 @@ public class OssieConverterSuite {
 
   /** A single sales dataset and one SUM metric, written in {@code dialect}. */
   private static String helloWorldModel(String dialect) {
-    return "version: 0.2.0.dev0\n"
+    return "version: 0.3.0.dev0\n"
         + "name: hello_world\n"
         + "datasets:\n"
         + "- name: sales\n"
@@ -2271,7 +2271,7 @@ public class OssieConverterSuite {
   @Test
   public void cascadeDropPreservesDimensionThenMeasurePhaseOrder() {
     String osi =
-        "version: 0.2.0.dev0\n"
+        "version: 0.3.0.dev0\n"
         + "name: m\n"
         + "datasets:\n"
         + "- name: d\n"

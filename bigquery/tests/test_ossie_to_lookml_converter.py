@@ -83,7 +83,7 @@ def _metric(name, expr, dialect="ANSI_SQL", **extra):
 
 
 def _model(datasets, relationships=None, metrics=None, **extra):
-    model = {"version": "0.2.0.dev0", "name": "test_model", "datasets": datasets}
+    model = {"version": "0.3.0.dev0", "name": "test_model", "datasets": datasets}
     if relationships is not None:
         model["relationships"] = relationships
     if metrics is not None:
@@ -102,7 +102,7 @@ def _minimal_model(**overrides):
 
 
 def _wrap_ossie(model_dict):
-    return yaml.dump({"version": "0.2.0.dev0", **model_dict}, default_flow_style=False)
+    return yaml.dump({"version": "0.3.0.dev0", **model_dict}, default_flow_style=False)
 
 
 def _convert(yaml_str):
@@ -151,12 +151,12 @@ class TestEnvelope:
             convert_ossie_to_lookml("- just\n- a\n- list\n")
 
     def test_rejects_legacy_semantic_model_wrapper(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "semantic_model": [_minimal_model()]})
+        bad = yaml.dump({"version": "0.3.0.dev0", "semantic_model": [_minimal_model()]})
         with pytest.raises(OssieConversionError, match="Legacy 'semantic_model'"):
             convert_ossie_to_lookml(bad)
 
     def test_rejects_root_dialects(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "dialects": ["ANSI_SQL"], **_minimal_model()})
+        bad = yaml.dump({"version": "0.3.0.dev0", "dialects": ["ANSI_SQL"], **_minimal_model()})
         with pytest.raises(OssieConversionError, match="Root dialects"):
             convert_ossie_to_lookml(bad)
 
@@ -837,7 +837,7 @@ class TestInputValidation:
         ],
     )
     def test_wrongly_typed_containers_are_conversion_errors(self, model, message):
-        doc = yaml.dump({"version": "0.2.0.dev0", "name": "m", **model})
+        doc = yaml.dump({"version": "0.3.0.dev0", "name": "m", **model})
         with pytest.raises(OssieConversionError, match=message):
             convert_ossie_to_lookml(doc)
 

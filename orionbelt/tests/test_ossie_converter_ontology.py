@@ -85,7 +85,7 @@ class TestOntologyStructure:
     def test_entities_and_relationships(self) -> None:
         doc = conv.OBMLtoOssieOntology(_OBML, model_name="sales").convert()
 
-        assert doc["version"] == "0.2.0.dev0"
+        assert doc["version"] == "0.3.0.dev0"
         assert doc["name"] == "sales"
 
         names = {c["concept"]["name"] for c in doc["ontology"]}
@@ -104,7 +104,7 @@ class TestOntologyStructure:
         omap = doc["ontology_mappings"][0]
         assert omap["name"] == "sales_map"
         assert "semantic_model" in omap
-        assert omap["semantic_model"]["version"] == "0.2.0.dev0"
+        assert omap["semantic_model"]["version"] == "0.3.0.dev0"
         assert not {"dialects", "vendors"} & set(omap["semantic_model"])
         assert omap["semantic_model"]["name"] == "sales"
         assert {d["name"] for d in omap["semantic_model"]["datasets"]} == {

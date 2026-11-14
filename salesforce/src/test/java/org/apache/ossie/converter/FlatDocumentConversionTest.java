@@ -61,7 +61,7 @@ class FlatDocumentConversionTest {
         Map<String, Object> model = Map.of("name", "legacy", "datasets", List.of());
         for (Object wrapper : List.of(model, List.of(model), List.of())) {
             String input = yamlMapper.writeValueAsString(Map.of(
-                    "version", "0.2.0.dev0", "semantic_model", wrapper));
+                    "version", "0.3.0.dev0", "semantic_model", wrapper));
             assertThrows(ValidationException.class, () -> converter.convert(input));
         }
     }
@@ -73,7 +73,7 @@ class FlatDocumentConversionTest {
         List<String> results = converter.convert(input);
         assertEquals(1, results.size());
         Map<String, Object> document = yamlMapper.readValue(results.get(0), new TypeReference<>() {});
-        assertEquals("0.2.0.dev0", document.get("version"));
+        assertEquals("0.3.0.dev0", document.get("version"));
         assertEquals("Customer_Orders_Model", document.get("name"));
         assertEquals(3, ((List<?>) document.get("datasets")).size());
         assertFalse(document.containsKey("semantic_model"));

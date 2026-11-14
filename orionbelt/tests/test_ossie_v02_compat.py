@@ -167,7 +167,7 @@ class TestEmittedVersion:
     def test_top_level_version_is_v02(self) -> None:
         ossie = conv.OBMLtoOssie(_OBML_WITH_PK_AND_LABEL).convert()
         assert ossie["version"] == conv._OSSIE_VERSION
-        assert ossie["version"].startswith("0.2")
+        assert ossie["version"].startswith("0.3")
 
     def test_no_root_dialects_or_vendors(self) -> None:
         # Root advertisements are optional; the converter emits dialects and
@@ -219,7 +219,7 @@ class TestPrimaryKey:
 
     def test_unknown_pk_column_emits_warning(self) -> None:
         bad = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "x",
             "datasets": [
                 {
@@ -305,7 +305,7 @@ class TestLegacyShim:
     def test_v02_input_not_normalized(self) -> None:
         # v0.2 input declaring primary_key directly — shim must be a no-op
         v02 = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "x",
             "datasets": [
                 {
@@ -377,7 +377,7 @@ class TestSchemaValidation:
 class TestMAQLDialect:
     def test_maql_only_metric_does_not_raise(self) -> None:
         ossie_in: dict[str, Any] = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "gd",
             "datasets": [
                 {
@@ -420,7 +420,7 @@ class TestMAQLDialect:
     [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
 )
 def test_legacy_model_wrappers_are_rejected(wrapper):
-    document = {"version": "0.2.0.dev0", "semantic_model": wrapper}
+    document = {"version": "0.3.0.dev0", "semantic_model": wrapper}
     assert not conv.validate_ossie(document).valid
     with pytest.raises(ValueError, match="Legacy 'semantic_model'"):
         conv.OssietoOBML(document).convert()

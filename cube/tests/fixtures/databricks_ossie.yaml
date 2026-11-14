@@ -26,7 +26,7 @@
 # a `unique_keys` added to the fact table, which is what a metric-view author has to
 # supply for the model to reach Cube at all.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: orders
 description: Sales orders with customer attributes
 datasets:
@@ -39,6 +39,11 @@ datasets:
       - dialect: DATABRICKS
         expression: o_orderkey
     description: Order identifier
+  - name: o_custkey
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: o_custkey
   - name: o_orderdate
     expression:
       dialects:
@@ -56,6 +61,11 @@ datasets:
   unique_keys:
   - - c_custkey
   fields:
+  - name: c_custkey
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: c_custkey
   - name: c_name
     expression:
       dialects:

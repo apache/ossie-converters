@@ -45,7 +45,7 @@ import yaml
 from sqlglot import exp
 
 
-SUPPORTED_VERSION = "0.2.0.dev0"
+SUPPORTED_VERSION = "0.3.0.dev0"
 
 # Dialects the converter can emit, in order of preference.
 _DIALECT_PREFERENCE = ("BIGQUERY", "ANSI_SQL", "OSSIE_SQL_2026")
@@ -105,7 +105,7 @@ def convert_ossie_to_lookml(ossie_yaml_str):
 
     Expects the standard Ossie document format::
 
-        version: "0.2.0.dev0"
+        version: "0.3.0.dev0"
         name: ...
         datasets: [...]
 
@@ -648,7 +648,14 @@ def _extract_expression(expression, context):
         raise OssieConversionError(f"Missing or malformed expression for {context}")
 
     dialects = _require_list(expression, "dialects", context)
+    # A portable `sql` expression carries no dialect; treat it as ANSI SQL, which
+    # LookML reads the same way. It is also the fallback when no dialect matches.
+    portable_sql = expression.get("sql")
+    if not isinstance(portable_sql, str) or not portable_sql:
+        portable_sql = None
     if not dialects:
+        if portable_sql is not None:
+            return portable_sql, "ANSI_SQL"
         raise OssieConversionError(f"Missing expression for {context}")
 
     available = {}
@@ -670,6 +677,9 @@ def _extract_expression(expression, context):
     for dialect_name in _DIALECT_PREFERENCE:
         if dialect_name in available:
             return available[dialect_name], dialect_name
+
+    if portable_sql is not None:
+        return portable_sql, "ANSI_SQL"
 
     dialect_names = [str(d.get("dialect", "")) for d in dialects]
     warnings.warn(

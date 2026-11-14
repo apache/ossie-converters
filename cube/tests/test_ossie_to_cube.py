@@ -1300,7 +1300,8 @@ def test_a_model_with_only_a_warehouse_dialect_still_converts():
     Cube compiles, so nothing downstream noticed either."""
     files, issues = convert_ossie_to_cube(_databricks_ossie())
     cube = _cubes(files)["orders"]
-    assert [d["name"] for d in cube["dimensions"]] == ["o_orderkey", "o_orderdate"]
+    assert [d["name"] for d in cube["dimensions"]] == [
+        "o_orderkey", "o_custkey", "o_orderdate"]
     assert [m["name"] for m in cube["measures"]] == ["total_revenue", "order_count"]
     # Reported, because Cube will pass that SQL to whatever the data source is.
     assert any("first warehouse dialect on offer" in i.detail

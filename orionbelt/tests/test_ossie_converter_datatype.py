@@ -42,7 +42,7 @@ def _ossie_field(name: str, **extra: Any) -> dict[str, Any]:
 
 def _ossie_model(fields: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [{"name": "Orders", "source": "ANALYTICS.PUBLIC.ORDERS", "fields": fields}],
     }
@@ -162,7 +162,7 @@ class TestRoundtripLossless:
 
 def _ossie_model_with_metric(datatype: str) -> dict[str, Any]:
     return {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [
             {"name": "Orders", "source": "A.P.ORDERS", "fields": [_ossie_field("amount")]}

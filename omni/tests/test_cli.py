@@ -26,7 +26,7 @@ from ossie_omni._common import contained_output_path, dump_yaml
 from ossie_omni.cli import main
 
 MINIMAL = dump_yaml({
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "m",
     "datasets": [{"name": "orders", "source": "db.sch.orders", "fields": [
         {"name": "amount", "expression": {"dialects": [

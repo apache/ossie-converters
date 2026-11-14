@@ -38,7 +38,7 @@ def dataset(name, metrics):
 
 
 def export(*datasets, metrics=None, **options):
-    return convert_ossie_to_omni(dump_yaml({"version": "0.2.0.dev0", "name": "sales",
+    return convert_ossie_to_omni(dump_yaml({"version": "0.3.0.dev0", "name": "sales",
         "datasets": list(datasets), "metrics": metrics or []}), **options)
 
 

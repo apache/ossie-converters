@@ -73,11 +73,13 @@ def test_ossie_roundtrip_up_to_documented_normalizations(path, dataset_metric_pr
     for owner, name, local_sql, qualified_sql in dataset_metric_projection:
         ds = next(ds for ds in original_model["datasets"] if ds["name"] == owner)
         metric = next(m for m in ds["metrics"] if m["name"] == name)
-        assert metric["expression"] == {"dialects": [{"dialect": "ANSI_SQL", "expression": local_sql}]}
+        assert metric["expression"] == {"sql": local_sql}
         ds["metrics"].remove(metric)
         if not ds["metrics"]:
             ds.pop("metrics")
-        metric["expression"]["dialects"][0]["expression"] = qualified_sql
+        # Import reads the portable `sql` form; export re-emits it as an explicit
+        # ANSI_SQL dialect entry with the dataset qualifier added.
+        metric["expression"] = {"dialects": [{"dialect": "ANSI_SQL", "expression": qualified_sql}]}
         original_model.setdefault("metrics", []).append(metric)
     original = strip_normalized(original_model)
     # Foreign-vendor extensions are dropped on export (documented); Ossie-side

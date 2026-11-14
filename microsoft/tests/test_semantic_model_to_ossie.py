@@ -100,7 +100,7 @@ def test_cli_reports_errors_without_traceback(tmp_path, capsys):
 
 
 def test_document_header(osi):
-    assert osi["version"] == "0.2.0.dev0"
+    assert osi["version"] == "0.3.0.dev0"
     assert "semantic_model" not in osi
     assert osi["name"] == "sales_model"
 

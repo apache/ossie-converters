@@ -599,9 +599,11 @@ def test_mixed_dialects_warn_only_for_nonportable_fallbacks(tmp_path: Path) -> N
     )
 
 
-def test_sql_only_expressions_are_dropped_with_an_error(tmp_path: Path) -> None:
+def test_sql_only_expressions_are_converted(tmp_path: Path) -> None:
+    """A portable ``sql`` expression carries no dialect entry; it is read as
+    OSSIE_SQL_2026, the dialect the portable form is written in."""
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sql_only",
         "datasets": [
             {
@@ -639,12 +641,9 @@ def test_sql_only_expressions_are_dropped_with_an_error(tmp_path: Path) -> None:
     assert project is not None
     resource = project.resources[0]
     assert isinstance(resource, HexModel)
-    assert [dimension.expr_sql for dimension in resource.dimensions] == ["foo"]
-    assert not resource.measures
-    assert problems_snapshot(problems, include_causes=True) == snapshot("""\
-[ERROR] No dialect expression found; `sql` is not supported
-Cause: ['datasets', 'things', 'fields', 'bar', 'expression', 'dialects']
-
-[ERROR] No dialect expression found; `sql` is not supported
-Cause: ['metrics', 'total', 'expression', 'dialects']\
-""")
+    assert [dimension.expr_sql for dimension in resource.dimensions] == [
+        "foo",
+        "foo * 2",
+    ]
+    assert [measure.name for measure in resource.measures] == ["Total"]
+    assert problems_snapshot(problems, include_causes=True) == snapshot("")
