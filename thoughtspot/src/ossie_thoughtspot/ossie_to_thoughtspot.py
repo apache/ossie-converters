@@ -67,7 +67,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from . import datatypes, formula, identifiers, stash
 from .constants import (
@@ -1788,7 +1788,9 @@ def _restore_relationship_condition(
     )
 
 
-def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, dict | None]:
+def _join_entry_for_relationship(
+    rel: dict, log: IssueLog, physical_by_prefix: Mapping[str, str] | None = None,
+) -> tuple[str, dict, dict | None]:
     """One Ossie relationship -> `(from_prefix, model join entry,
     Table joins_with[] entry or None)`.
 
@@ -1872,6 +1874,16 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
         from_prefix, to_prefix = live_from, live_to
         from_columns, to_columns = live_from_columns, live_to_columns
 
+    # The MODEL namespace (the dataset names above) is what `model_tables[]`
+    # and `joins[].with` use. The PHYSICAL namespace is the table each
+    # dataset sits on, and it is what a Table's `joins_with[]` uses -- its
+    # `destination`, and every prefix inside its `on`. They differ exactly
+    # when the model aliases a table, and ThoughtSpot refuses an alias name
+    # in either place ("Invalid srcTable or destTable in join expression").
+    physical = physical_by_prefix or {}
+    from_physical = physical.get(from_prefix, from_prefix)
+    to_physical = physical.get(to_prefix, to_prefix)
+
     had_stashed_on_expression = RELATIONSHIP_STASH_ON_EXPRESSION in payload
     on_expression = stash.restore(
         payload, RELATIONSHIP_STASH_ON_EXPRESSION, None,
@@ -1898,7 +1910,9 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
                 ),
                 object_ref=f"relationship:{rel.get('name')}",
             )
-        on_expression = _restore_relationship_condition(from_prefix, to_prefix, from_columns, to_columns)
+        on_expression = _restore_relationship_condition(
+            from_physical, to_physical, from_columns, to_columns
+        )
     join_type = _normalise_join_type(payload.get(RELATIONSHIP_STASH_TYPE) or "INNER")
     # Gated on the SAME witness as the endpoint swap, because it states the same
     # fact. An Ossie relationship carries no cardinality field: `from` is the many
@@ -1921,6 +1935,29 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
         "MANY_TO_ONE" if stashed_swap_is_stale
         else (payload.get(RELATIONSHIP_STASH_CARDINALITY) or "MANY_TO_ONE")
     )
+
+    if from_physical == to_physical and from_prefix != to_prefix:
+        # Two datasets over ONE table. Ossie allows it; ThoughtSpot has no
+        # self-join in any spelling (13125 for a table against an alias of
+        # itself, 14565 for a table against itself), so there is no TML to
+        # write. Emitting it anyway produced a Model the target platform
+        # refuses to import, with nothing said here about why.
+        log.add(
+            code="TS-JOIN-SELF-UNWRITABLE",
+            severity=Severity.ERROR,
+            message=(
+                f"relationship {rel.get('name')!r} runs between datasets "
+                f"{from_prefix!r} and {to_prefix!r}, which share the table "
+                f"{from_physical!r}; ThoughtSpot does not support a self-join in "
+                f"any form, so no join is written for it"
+            ),
+            object_ref=f"relationship:{rel.get('name')}",
+            remedy=(
+                "Model the hierarchy with one table per level, each joined to a "
+                "distinct table, or keep the relationship outside ThoughtSpot."
+            ),
+        )
+        return from_prefix, None, None
 
     live_name = rel.get("name")
     stashed_referencing_join = payload.get(RELATIONSHIP_STASH_REFERENCING_JOIN)
@@ -1959,7 +1996,10 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
             model_join_entry["cardinality"] = cardinality
         joins_with_entry = {
             "name": stashed_referencing_join,
-            "destination": {"name": to_prefix},
+            # PHYSICAL, not the dataset name. A `joins_with[]` entry lives on
+            # the Table, which has no knowledge of the aliases a model gives
+            # it; naming an alias here is rejected by ThoughtSpot.
+            "destination": {"name": to_physical},
             "on": on_expression,
             "type": join_type,
             "cardinality": cardinality,
@@ -2290,9 +2330,21 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         entry["expr"] = _maybe_block_scalar(rewritten)
 
     covered_columns_by_dataset: dict[str, list[set]] = {}
+    # Dataset name -> the table it sits on. They differ only where the model
+    # aliases a table; `table_doc_by_prefix` already holds one Table document
+    # per PHYSICAL table, shared by every alias of it.
+    physical_by_prefix = {
+        prefix: (doc.body.get("name") or prefix)
+        for prefix, doc in table_doc_by_prefix.items()
+        if doc is not None
+    }
 
     for rel in semantic_model.get("relationships") or []:
-        from_prefix, join_entry, joins_with_entry = _join_entry_for_relationship(rel, log)
+        from_prefix, join_entry, joins_with_entry = _join_entry_for_relationship(
+            rel, log, physical_by_prefix,
+        )
+        if join_entry is None:
+            continue
         target = model_tables_by_prefix.get(from_prefix)
         if target is None:
             log.add(

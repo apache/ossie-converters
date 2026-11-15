@@ -81,7 +81,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 from . import datatypes, formula, identifiers, keys, stash
 from .constants import (
@@ -2064,7 +2064,7 @@ def _strip_wrapping_parens(text: str) -> str:
 
 
 def _parse_join_condition(
-    on_expression: str, from_prefix: str, to_prefix: str
+    on_expression: str, from_physical: str, to_physical: str
 ) -> tuple[list[tuple[str, str]], list[str]]:
     """Split a join condition into equality pairs and residual predicates.
 
@@ -2098,9 +2098,14 @@ def _parse_join_condition(
             continue
         left_table, left_column = identifiers.split_column_ref(match.group(1))
         right_table, right_column = identifiers.split_column_ref(match.group(2))
-        if left_table == from_prefix and right_table == to_prefix:
+        # Matched against the PHYSICAL names. A join condition lives on the
+        # Table, which knows nothing about the aliases a model gives it, and
+        # ThoughtSpot rejects an alias name here outright ("Invalid srcTable
+        # or destTable in join expression"). Where nothing is aliased the two
+        # namespaces coincide and this is the comparison it always was.
+        if left_table == from_physical and right_table == to_physical:
             equality_pairs.append((left_column, right_column))
-        elif left_table == to_prefix and right_table == from_prefix:
+        elif left_table == to_physical and right_table == from_physical:
             equality_pairs.append((right_column, left_column))
         else:
             # An equality pair, but not one naming both sides of *this* join --
@@ -2174,6 +2179,8 @@ def _relationship_from_join(
     name: str,
     from_prefix: str,
     to_prefix: str,
+    from_physical: str,
+    to_physical: str,
     on_expression: str | None,
     join_type: str | None,
     cardinality: str | None,
@@ -2235,7 +2242,9 @@ def _relationship_from_join(
         return None, None, False
 
     try:
-        equality_pairs, residuals = _parse_join_condition(on_expression, from_prefix, to_prefix)
+        equality_pairs, residuals = _parse_join_condition(
+            on_expression, from_physical, to_physical
+        )
     except ValueError as exc:
         log.add(
             code="TS-JOIN-MALFORMED",
@@ -2368,6 +2377,7 @@ def _relationship_from_join(
 def _convert_join(
     from_prefix: str, join: dict, from_table_body: dict, known_datasets: frozenset[str],
     table_lookup: Callable[[str], dict | None], log: IssueLog,
+    physical_by_prefix: Mapping[str, str] | None = None,
 ) -> tuple[dict | None, dict | None, keys.Relationship | None]:
     """One `model_tables[].joins[]` entry -> `(relationship,
     unrepresentable_entry, key_candidate)`.
@@ -2441,7 +2451,15 @@ def _convert_join(
                 object_ref=f"relationship:{referencing_join}",
             )
             return None, None, None
-        to_prefix = (destination or {}).get("name")
+        # `with` names the model_tables[] entry, so it is the MODEL namespace
+        # and the only thing that can name a dataset. `destination.name` is
+        # the table's own name -- the PHYSICAL namespace -- which is what the
+        # condition is written in and is no dataset at all once the target is
+        # aliased. Reading the target from `destination` dropped every
+        # relationship in an aliased model. It is kept as the physical name,
+        # with `with` falling back to it for TML that omits `with`.
+        to_prefix = join.get("with") or (destination or {}).get("name")
+        to_physical = (destination or {}).get("name") or to_prefix
         on_expression = matched.get("on")
         join_type = join.get("type", matched.get("type"))
         cardinality = join.get("cardinality", matched.get("cardinality"))
@@ -2453,6 +2471,7 @@ def _convert_join(
         name = referencing_join
     else:
         to_prefix = join.get("with")
+        to_physical = (physical_by_prefix or {}).get(to_prefix, to_prefix)
         on_expression = join.get("on")
         join_type = join.get("type")
         cardinality = join.get("cardinality")
@@ -2465,6 +2484,33 @@ def _convert_join(
             severity=Severity.WARNING,
             message=f"join {name!r} from {from_prefix!r} names no target dataset; it is skipped",
             object_ref=f"relationship:{name}",
+        )
+        return None, None, None
+
+    from_physical = from_table_body.get("name") or from_prefix
+
+    if from_physical == to_physical and from_prefix != to_prefix:
+        # Both ends are aliases of ONE table, so a condition written in
+        # physical names says the same word on both sides and cannot say
+        # which end is which. ThoughtSpot never produces this -- every
+        # self-join is rejected (13125, and 14565 for a table against
+        # itself) -- so it reaches us only from hand-written TML. Guessing an
+        # orientation there would silently reverse a join, which is worse
+        # than declining to convert it.
+        log.add(
+            code="TS-JOIN-AMBIGUOUS-PREFIX",
+            severity=Severity.WARNING,
+            message=(
+                f"join {name!r} runs between {from_prefix!r} and {to_prefix!r}, "
+                f"which are both aliases of table {from_physical!r}; its condition "
+                f"names that table on both sides, so which end each column belongs "
+                f"to cannot be determined and the relationship is dropped"
+            ),
+            object_ref=f"relationship:{name}",
+            remedy=(
+                "ThoughtSpot does not support a self-join; a hierarchy needs one "
+                "alias per level, each joined to a distinct table."
+            ),
         )
         return None, None, None
 
@@ -2486,6 +2532,8 @@ def _convert_join(
         name=name,
         from_prefix=from_prefix,
         to_prefix=to_prefix,
+        from_physical=from_physical,
+        to_physical=to_physical,
         on_expression=on_expression,
         join_type=join_type,
         cardinality=cardinality,
@@ -3000,6 +3048,12 @@ def convert(document_set: DocumentSet) -> OssieConversion:
     relationships: list[dict] = []
     key_candidates: list[keys.Relationship] = []
     known_datasets = frozenset(dataset_bodies)
+    # Model namespace -> physical table name, for the inline join form, whose
+    # `on` is also written in physical names but which carries no
+    # `destination` to read one from.
+    physical_by_prefix = {
+        prefix: (body.get("name") or prefix) for prefix, body in table_docs.items()
+    }
 
     for entry in model_tables:
         table_ref = entry.get("name")
@@ -3009,7 +3063,7 @@ def convert(document_set: DocumentSet) -> OssieConversion:
         for join in entry.get("joins") or []:
             relationship, unrepresentable, candidate = _convert_join(
                 from_prefix, join, table_docs.get(from_prefix) or {}, known_datasets,
-                table_lookup, log,
+                table_lookup, log, physical_by_prefix,
             )
             if relationship is not None:
                 # `Relationship.name` is unique across the model's flat
