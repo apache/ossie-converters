@@ -118,6 +118,7 @@ from .constants import (
     RELATIONSHIP_STASH_ON_EXPRESSION_WITNESS,
     RELATIONSHIP_STASH_REFERENCING_JOIN,
     RELATIONSHIP_STASH_TYPE,
+    ASSUMED_JOIN_TYPE,
     STASH_TML_NAME,
 )
 from .errors import ConversionError
@@ -1759,6 +1760,45 @@ def _normalise_join_type(value: str) -> str:
     return value
 
 
+def _join_type_for(
+    stashed: object, log: IssueLog, *, name: object, object_ref: str
+) -> str:
+    """The join type to write for one relationship.
+
+    A stashed type is recovered fact -- the author's own choice, carried out of
+    a ThoughtSpot export and back in -- so it is used as it stands (modulo the
+    `FULL OUTER` rename `_normalise_join_type` performs) and nothing is logged.
+
+    Absent one, nothing in the document declares a join type, because an Ossie
+    relationship has no field for it. See `ASSUMED_JOIN_TYPE` for why the
+    assumption is the row-preserving one. It is logged at WARNING, not INFO:
+    the chosen type decides which rows reach every measure in the model, and an
+    author who knows their source joined differently has to be told to change
+    it. Nothing else in the conversion will fail on their behalf.
+    """
+    if stashed:
+        return _normalise_join_type(str(stashed))
+    log.add(
+        code="TS-JOIN-TYPE-ASSUMED",
+        severity=Severity.WARNING,
+        message=(
+            f"relationship {name!r} declares no join type -- an Ossie "
+            f"relationship has no field for one -- but ThoughtSpot requires "
+            f"`type` on every join, so {ASSUMED_JOIN_TYPE} is assumed; it keeps "
+            f"every row of the many side, where INNER would drop those that "
+            f"match nothing on the one side and lower every measure computed "
+            f"over them without saying so"
+        ),
+        object_ref=object_ref,
+        remedy=(
+            f"If the source joined these tables more narrowly, set `type` on "
+            f"this join in the generated Model TML (one of INNER, LEFT_OUTER, "
+            f"RIGHT_OUTER, OUTER)."
+        ),
+    )
+    return ASSUMED_JOIN_TYPE
+
+
 def _restore_relationship_condition(
     from_prefix: str, to_prefix: str, from_columns: list[str], to_columns: list[str]
 ) -> str:
@@ -1913,7 +1953,10 @@ def _join_entry_for_relationship(
         on_expression = _restore_relationship_condition(
             from_physical, to_physical, from_columns, to_columns
         )
-    join_type = _normalise_join_type(payload.get(RELATIONSHIP_STASH_TYPE) or "INNER")
+    join_type = _join_type_for(
+        payload.get(RELATIONSHIP_STASH_TYPE), log,
+        name=rel.get("name"), object_ref=f"relationship:{rel.get('name')}",
+    )
     # Gated on the SAME witness as the endpoint swap, because it states the same
     # fact. An Ossie relationship carries no cardinality field: `from` is the many
     # side and `to` is the one side, so direction IS cardinality. When the witness
@@ -2011,7 +2054,7 @@ def _join_entry_for_relationship(
     }, None
 
 
-def _join_entry_for_unrepresentable(entry: dict) -> tuple[str, dict]:
+def _join_entry_for_unrepresentable(entry: dict, log: IssueLog) -> tuple[str, dict]:
     """One `unrepresentable_joins[]` stash entry -> `(from_prefix, inline join
     entry)` -- these carry the verbatim `on_expression` unconditionally (they
     exist only because their condition has no equality pair at all), so the
@@ -2019,7 +2062,11 @@ def _join_entry_for_unrepresentable(entry: dict) -> tuple[str, dict]:
     from_prefix = entry.get("from") or ""
     to_prefix = entry.get("to") or ""
     on_expression = entry.get(RELATIONSHIP_STASH_ON_EXPRESSION) or ""
-    join_type = _normalise_join_type(entry.get(RELATIONSHIP_STASH_TYPE) or "INNER")
+    join_type = _join_type_for(
+        entry.get(RELATIONSHIP_STASH_TYPE), log,
+        name=f"{from_prefix} -> {to_prefix}",
+        object_ref=f"relationship:{from_prefix}_to_{to_prefix}",
+    )
     cardinality = entry.get(RELATIONSHIP_STASH_CARDINALITY) or "MANY_TO_ONE"
     return from_prefix, {
         "with": to_prefix, "on": on_expression, "type": join_type, "cardinality": cardinality,
@@ -2374,7 +2421,7 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
             covered_columns_by_dataset.setdefault(to_prefix, []).append(set(to_columns))
 
     for entry in model_payload.get(MODEL_STASH_UNREPRESENTABLE_JOINS) or []:
-        from_prefix, join_entry = _join_entry_for_unrepresentable(entry)
+        from_prefix, join_entry = _join_entry_for_unrepresentable(entry, log)
         target = model_tables_by_prefix.get(from_prefix)
         if target is None:
             log.add(

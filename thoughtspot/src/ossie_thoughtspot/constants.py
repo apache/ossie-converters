@@ -384,6 +384,29 @@ RELATIONSHIP_STASH_TYPE = "type"
 #: witnessed question.
 RELATIONSHIP_STASH_CARDINALITY = "cardinality"
 
+#: The join type written when nothing in the document declares one.
+#:
+#: An Ossie `Relationship` carries no join type at all, so a document this
+#: converter did not write has none to recover -- only `RELATIONSHIP_STASH_TYPE`
+#: ever supplies one, and that exists solely on a document that came from
+#: ThoughtSpot in the first place. ThoughtSpot, for its part, REQUIRES `type` on
+#: an inline join; there is no "omit it and let the platform decide". So a value
+#: has to be invented, and every value in the vocabulary imports -- which makes a
+#: bad choice a wrong number rather than a failed conversion.
+#:
+#: `LEFT_OUTER`, not `INNER`. Per core-spec/spec.yaml `from` is the many side and
+#: `to` is the one side, so an inner join drops every `from` row whose key matches
+#: nothing on the `to` side -- in a star schema, every fact row with an unmatched
+#: or NULL foreign key -- and a dropped fact row lowers every measure computed over
+#: it with nothing on screen to say so. A left outer join keeps them.
+#:
+#: It is also what the one vendor in this repository that fixes the semantics
+#: means. Databricks offers no `type:` field on a metric-view join because it
+#: joins the fact `source` to every dimension with a LEFT OUTER JOIN; a converter
+#: reading that into a format which DOES carry a type must emit the left-outer
+#: equivalent, because anything narrower silently drops rows.
+ASSUMED_JOIN_TYPE = "LEFT_OUTER"
+
 #: Whether this relationship's `from`/`to`/`from_columns`/`to_columns` were
 #: swapped relative to TML's own declared join direction. core-spec/spec.yaml
 #: requires a Relationship's `from` to name the many side and `to` the one
