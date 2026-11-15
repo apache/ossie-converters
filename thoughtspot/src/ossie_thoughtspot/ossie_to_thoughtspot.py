@@ -110,6 +110,7 @@ from .constants import (
     MODEL_STASH_UNATTRIBUTED_FORMULAS,
     MODEL_STASH_UNREPRESENTABLE_JOINS,
     PORTABLE_DIALECTS_ACCEPTED,
+    VENDOR_KEY,
     RELATIONSHIP_STASH_CARDINALITY,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS,
@@ -1464,6 +1465,26 @@ def _build_field(
     display_name = field.get("label") or field.get("name") or "<unnamed>"
     object_ref = f"field:{display_name}"
     name = allocator.allocate(display_name, log, object_ref=object_ref)
+
+    if (field.get("dimension") or {}).get("is_time"):
+        # The specification is explicit that `is_time` is a ROLE flag,
+        # "independent of the field's data type". ThoughtSpot has no such
+        # flag: it derives the temporal role from the column's own data type,
+        # so a DATE column needs nothing and a field marked `is_time` over
+        # anything else has no way to say so. Reported, not approximated --
+        # coercing the column to a date type would change what the warehouse
+        # is asked for.
+        log.add(
+            code="TS-FIELD-IS-TIME-DROPPED",
+            severity=Severity.INFO,
+            message=(
+                f"field {display_name!r} is marked `dimension.is_time`, a "
+                f"temporal role independent of its datatype; ThoughtSpot "
+                f"derives that role from the column's own data type and has "
+                f"no separate flag, so the marker is not carried"
+            ),
+            object_ref=object_ref,
+        )
     properties: dict = {"column_type": "ATTRIBUTE"}
     formulas_entry: dict | None = None
 
@@ -1880,6 +1901,22 @@ def _join_entry_for_relationship(
     all would be) and an issue records it.
     """
     payload = stash.read_stash(rel)
+    if rel.get("ai_context"):
+        # The one `ai_context` scope with no issue of its own. A ThoughtSpot
+        # join -- inline or `joins_with[]` -- carries no description,
+        # synonyms or instructions in any spelling, so there is nowhere for
+        # this to go. Reported before the self-join guard below, which
+        # returns early: the context is lost either way.
+        log.add(
+            code="TS-JOIN-AI-CONTEXT-UNSUPPORTED",
+            severity=Severity.WARNING,
+            message=(
+                f"relationship {rel.get('name')!r} carries ai_context; a "
+                f"ThoughtSpot join has no description, synonym or instruction "
+                f"field in any form, so it is not carried into the model"
+            ),
+            object_ref=f"relationship:{rel.get('name')}",
+        )
     live_from = rel.get("from") or ""
     live_to = rel.get("to") or ""
     live_from_columns = rel.get("from_columns") or []
@@ -2248,6 +2285,29 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
                     and stash.read_stash(field).get(FIELD_STASH_FORMULA_ID) == formulas_entry["id"],
                 )
                 formulas.append(formulas_entry)
+
+    for dataset in datasets:
+        dataset_metrics = dataset.get("metrics") or []
+        if not dataset_metrics:
+            continue
+        # Only `SemanticModel.metrics` is read above. A dataset-scoped metric
+        # resolves its operands within its own dataset by single-part name
+        # (core-spec "Metric Scoping"), a namespace this converter's
+        # `resolve_field` does not implement -- see
+        # apache/ossie-converters#101. Until it does, the metric cannot be
+        # built, and a measure vanishing from a model is worth a WARNING.
+        names = ", ".join(repr(m.get("name") or "<unnamed>") for m in dataset_metrics)
+        log.add(
+            code="TS-DATASET-METRICS-DROPPED",
+            severity=Severity.WARNING,
+            message=(
+                f"dataset {dataset.get('name') or '<unnamed>'!r} declares the "
+                f"dataset-scoped metric(s) {names}, whose expressions resolve "
+                f"against its own fields by single-part name; this converter "
+                f"reads only model-scoped metrics, so they are not built"
+            ),
+            object_ref=f"dataset:{dataset.get('name') or '<unnamed>'}",
+        )
 
     for metric in semantic_model.get("metrics") or []:
         built = _build_metric(metric, allocator, resolve_field, log)
@@ -2710,6 +2770,61 @@ def _deduplicate_table_documents(
     return [by_name[key] for key in order]
 
 
+def _report_foreign_extensions(ossie_document: dict, log: IssueLog) -> None:
+    """Report every vendor, other than this one, whose extensions are lost.
+
+    The forward leg deliberately keeps other vendors' entries alongside its
+    own (`stash.write_stash` splices rather than replaces), so a document
+    that passed through here still carries whatever the converter before it
+    stashed. The return leg has nowhere to put them: a TML document has no
+    vendor-extension field in any spelling, so they end at this boundary.
+
+    Reported once per vendor for the whole document, not once per object. A
+    foreign converter typically stashes on every field it writes, and one
+    issue per field would bury the rest of the log in a restatement of a
+    single fact. The vendor name is what an author needs -- it says which
+    tool's information will not survive the next hop.
+    """
+    vendors: dict[str, None] = {}
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            extensions = node.get("custom_extensions")
+            if isinstance(extensions, list):
+                for entry in extensions:
+                    if not isinstance(entry, dict):
+                        continue
+                    vendor = entry.get("vendor_name")
+                    if isinstance(vendor, str) and vendor != VENDOR_KEY:
+                        vendors[vendor] = None
+            for key, value in node.items():
+                # Skipping the extensions list is an optimisation, not a
+                # rule: an entry is `{vendor_name, data}` with `data` a JSON
+                # *string*, so descending into it can never find a nested
+                # custom_extensions. Removing this line leaves every test
+                # green, deliberately -- it is an equivalent mutation.
+                if key != "custom_extensions":
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(ossie_document)
+    if not vendors:
+        return
+    log.add(
+        code="TS-VENDOR-EXTENSIONS-DROPPED",
+        severity=Severity.INFO,
+        message=(
+            f"the document carries custom_extensions owned by "
+            f"{', '.join(sorted(vendors))}; ThoughtSpot TML has no vendor "
+            f"extension field, so those entries are not carried into the "
+            f"model and will not survive a conversion back to Ossie"
+        ),
+        object_ref=f"model:{ossie_document.get('name') or '<unnamed>'}",
+    )
+
+
 def convert(ossie_document: dict) -> TmlConversion:
     """Convert one Ossie document into one ThoughtSpot TML document set.
 
@@ -2758,6 +2873,7 @@ def convert(ossie_document: dict) -> TmlConversion:
         raise ConversionError("the Ossie document has no datasets to convert")
 
     log = IssueLog()
+    _report_foreign_extensions(semantic_model, log)
     tables = _deduplicate_table_documents(
         [build_table(dataset, log) for dataset in semantic_model.get("datasets") or []], log
     )
