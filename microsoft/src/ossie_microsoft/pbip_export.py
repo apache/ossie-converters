@@ -42,6 +42,7 @@ PBISM = {
 # to every clone. A device name is reserved with any extension too, so `NUL.sales` is.
 _INVALID_NAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_NAME_RE = re.compile(r"CON|PRN|AUX|NUL|(COM|LPT)[0-9¹²³]", re.IGNORECASE)
+_SEMANTIC_MODEL_SUFFIX = ".semanticmodel"
 
 
 def export_powerbi_project(
@@ -52,7 +53,9 @@ def export_powerbi_project(
     Args:
         ossie_yaml_str: The Apache Ossie document as YAML text or a parsed mapping.
         output_dir: The directory that receives the semantic model folder, usually the
-            root of a Power BI project or of a Fabric Git workspace.
+            root of a Power BI project or of a Fabric Git workspace. A directory that is
+            itself a ``.SemanticModel`` folder, the form :func:`import_powerbi_project`
+            reads, is written into directly, whatever the model is called.
         source: Optional OneLake location for generated Direct Lake partitions, as for
             :func:`convert_ossie_to_semantic_model`.
         force: Replace ``definition.pbism`` and ``definition/`` in an existing, non-empty
@@ -64,12 +67,20 @@ def export_powerbi_project(
         The path of the written ``.SemanticModel`` folder.
 
     Raises:
-        ConversionError: if the model name cannot name a folder, the folder already
-            holds a model and ``force`` is not set, or TOM rejects the model.
+        ConversionError: if ``output_dir`` is a ``definition`` folder or a ``.pbip`` file,
+            the model name cannot name a folder, the folder already holds a model and
+            ``force`` is not set, or TOM rejects the model.
         TomUnavailableError: if the optional TOM setup is missing.
     """
     semantic_model = convert_ossie_to_semantic_model(ossie_yaml_str, source=source)
-    folder = Path(output_dir) / f"{_folder_name(semantic_model['name'])}.SemanticModel"
+    output = Path(output_dir)
+    if output.name.casefold().endswith(_SEMANTIC_MODEL_SUFFIX):
+        # Nesting <name>.SemanticModel inside it would leave the report's byPath on the
+        # outer folder, so the project would silently keep its old model.
+        folder = output
+    else:
+        _check_project_folder(output)
+        folder = output / f"{_folder_name(semantic_model['name'])}.SemanticModel"
     _check_target(folder, force)
 
     definition = folder / "definition"
@@ -99,6 +110,19 @@ def _folder_name(name):
             "Apache Ossie model"
         )
     return name
+
+
+def _check_project_folder(output):
+    # Import also accepts these two, but neither can hold a <name>.SemanticModel folder.
+    if output.suffix.casefold() == ".pbip":
+        raise ConversionError(
+            f"{output} is a .pbip file; pass the project folder or its .SemanticModel folder"
+        )
+    if output.name.casefold() == "definition" or (output / "database.tmdl").is_file():
+        raise ConversionError(
+            f"{output} is the definition folder of a semantic model; pass its "
+            ".SemanticModel folder instead"
+        )
 
 
 def _check_target(folder, force):

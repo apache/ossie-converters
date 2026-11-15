@@ -196,3 +196,74 @@ def test_cli_rejects_conflicting_export_targets(osi, tmp_path, capsys, extra):
     with pytest.raises(SystemExit) as exit_info:
         main(["export", "-i", source, *extra])
     assert exit_info.value.code == 2
+
+
+@pytest.mark.parametrize("name", ["Sales.SemanticModel", "Sales.semanticmodel"])
+def test_export_writes_into_a_semantic_model_folder(osi, tmp_path, written, name):
+    # The folder is named after the project, not the model, as Desktop names it.
+    target = tmp_path / name
+    folder = export_powerbi_project(osi, target)
+
+    assert folder == target
+    [(_document, path, _assembly_dir)] = written
+    assert path == target / "definition"
+    assert (target / "definition.pbism").is_file()
+    assert not (target / "sales_model.SemanticModel").exists()
+
+
+def test_a_semantic_model_folder_keeps_the_overwrite_rules(osi, tmp_path, written):
+    target = tmp_path / "Sales.SemanticModel"
+    target.mkdir()
+    (target / "diagramLayout.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ConversionError, match="already exists and is not empty"):
+        export_powerbi_project(osi, target)
+    assert export_powerbi_project(osi, target, force=True) == target
+    assert (target / "diagramLayout.json").is_file()
+
+    (target / "model.bim").write_text("{}", encoding="utf-8")
+    with pytest.raises(ConversionError, match=r"TMSL \(model.bim\)"):
+        export_powerbi_project(osi, target, force=True)
+
+
+def test_a_semantic_model_folder_does_not_need_a_portable_model_name(osi, tmp_path, written):
+    folder = export_powerbi_project({**osi, "name": "CON"}, tmp_path / "Sales.SemanticModel")
+    assert folder.name == "Sales.SemanticModel"
+
+
+@pytest.mark.parametrize(
+    ("make_target", "message"),
+    [
+        (lambda root: root / "Sales.pbip", "is a .pbip file"),
+        (lambda root: root / "Sales.SemanticModel" / "definition", "is the definition folder"),
+        (lambda root: root / "Definition", "is the definition folder"),
+    ],
+    ids=["pbip-file", "definition-folder", "definition-name-any-case"],
+)
+def test_export_refuses_a_target_that_cannot_hold_the_model(
+    osi, tmp_path, written, make_target, message
+):
+    with pytest.raises(ConversionError, match=message):
+        export_powerbi_project(osi, make_target(tmp_path))
+    assert not written
+
+
+def test_export_refuses_a_folder_that_already_holds_database_tmdl(osi, tmp_path, written):
+    definition = tmp_path / "copied-definition"
+    definition.mkdir()
+    (definition / "database.tmdl").write_text("database x\n", encoding="utf-8")
+    with pytest.raises(ConversionError, match="is the definition folder"):
+        export_powerbi_project(osi, definition, force=True)
+    assert not written
+
+
+def test_cli_writes_into_the_semantic_model_folder_it_is_given(osi, tmp_path, written, capsys):
+    # The scenario from the #76 review: this used to nest a second model, with exit 0.
+    source = _ossie_file(osi, tmp_path)
+    target = tmp_path / "sales_model.SemanticModel"
+
+    assert main(["export", "-i", source, "--pbip", str(target)]) == 0
+
+    assert f"Wrote {target}\n" in capsys.readouterr().err
+    assert (target / "definition" / "database.tmdl").is_file()
+    assert not (target / "sales_model.SemanticModel").exists()

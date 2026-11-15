@@ -211,6 +211,16 @@ out/<name>.SemanticModel/
     roles/  cultures/  perspectives/
 ```
 
+To update the model of an existing project, pass its `.SemanticModel` folder, the same
+folder `import` reads. It is written into directly, whatever the model is called, so the
+report's `byPath` keeps pointing at it:
+
+```bash
+ossie-microsoft export -i model.yaml --pbip "Sales.SemanticModel" --force
+```
+
+A `.pbip` file or a `definition` folder is refused, because neither can hold the model.
+
 `<name>` is the Apache Ossie model name, and the written folder is reported on stderr
 (`Wrote out/<name>.SemanticModel`) unless `-q` is given. A name Windows cannot use for a
 folder, including a device name such as `CON` or `NUL`, is rejected so the project can

@@ -23,7 +23,8 @@
     ossie-microsoft export -i model.yaml  --pbip out/ [--force]
 
 With no ``-o``, the result is written to stdout. ``--pbip`` writes the semantic model
-folder of a Power BI project instead, as split TMDL under ``out/<name>.SemanticModel/``.
+folder of a Power BI project instead, as split TMDL under ``out/<name>.SemanticModel/``,
+or into ``out/`` itself when it is a ``.SemanticModel`` folder.
 
 Every construct the converter cannot carry across faithfully is reported on stderr, so
 the log is a complete account of what a conversion changed, skipped or could not
@@ -137,7 +138,8 @@ def _build_parser():
         "--pbip",
         metavar="DIR",
         help="write a Power BI project semantic model folder, DIR/<name>.SemanticModel/, "
-        "as split TMDL (requires the optional TOM setup)",
+        "as split TMDL, or write into DIR itself when it is a .SemanticModel folder "
+        "(requires the optional TOM setup)",
     )
     exp.add_argument(
         "--force",

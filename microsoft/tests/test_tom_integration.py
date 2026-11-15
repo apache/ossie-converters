@@ -261,3 +261,51 @@ def test_pbip_export_with_force_drops_documents_of_removed_tables(tmp_path):
     tables = {t["name"] for t in _read_definition_folder(folder / "definition")["model"]["tables"]}
     assert "Customer" not in tables
     assert "Sales" in tables
+
+
+def test_pbip_export_round_trips_through_project_import(tmp_path):
+    original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
+    ossie = convert_semantic_model_to_ossie(original)
+
+    folder = export_powerbi_project(ossie, tmp_path, assembly_dir=ASSEMBLIES)
+    from_project = yaml.safe_load(import_powerbi_project(folder))
+
+    from_document = convert_semantic_model_to_ossie(
+        convert_ossie_to_semantic_model(ossie, output_format="TMDL")
+    )
+    assert from_project == yaml.safe_load(from_document)
+    # TMDL omits TMSL defaults (relationship cardinalities, the implicit RowNumber
+    # column), so only the Power BI stash differs from importing model.bim directly.
+    assert _without_nonportable_extensions(from_project) == _without_nonportable_extensions(
+        yaml.safe_load(convert_semantic_model_to_ossie(original))
+    )
+
+
+def _without_nonportable_extensions(node):
+    if isinstance(node, dict):
+        return {
+            key: _without_nonportable_extensions(value)
+            for key, value in node.items()
+            if key != "nonportable_extensions"
+        }
+    if isinstance(node, list):
+        return [_without_nonportable_extensions(v) for v in node]
+    return node
+
+
+def test_pbip_export_into_a_project_semantic_model_updates_what_the_report_uses(tmp_path):
+    # The #76 review scenario: --pbip given the .SemanticModel folder the .pbip points at.
+    project = tmp_path / "project"
+    shutil.copytree(HERE / "fixtures" / "mini-pbip", project)
+    ossie = convert_semantic_model_to_ossie(json.loads(FIXTURE.read_text(encoding="utf-8-sig")))
+
+    folder = export_powerbi_project(
+        ossie, project / "mini.SemanticModel", force=True, assembly_dir=ASSEMBLIES
+    )
+
+    assert folder == project / "mini.SemanticModel"
+    assert not (folder / "sales_model.SemanticModel").exists()
+    assert (folder / "diagramLayout.json").is_file()
+    through_report = yaml.safe_load(import_powerbi_project(project / "mini.pbip"))
+    assert through_report["name"] == "sales_model"
+    assert {d["name"] for d in through_report["datasets"]} >= {"Sales", "Customer"}
