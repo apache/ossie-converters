@@ -35,7 +35,6 @@ _SQLGLOT_DIALECTS = {
     "BIGQUERY": "bigquery",
     "SNOWFLAKE": "snowflake",
     "DATABRICKS": "databricks",
-    "CLICKHOUSE": "clickhouse",
 }
 
 _REFERENCE_RE = re.compile(r"\$\{([^}]+)\}")

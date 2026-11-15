@@ -92,11 +92,3 @@ def test_percentile_fraction_is_free_of_float_noise():
     parsed = parse_aggregation("PERCENTILE_CONT(0.07) WITHIN GROUP (ORDER BY x)")
     assert parsed.percentile == 7
     assert isinstance(parsed.percentile, int)
-
-def test_clickhouse_dialect_rewrites_dataset_references():
-    from ossie_lightdash.expression_utils import _SQLGLOT_DIALECTS
-
-    assert _SQLGLOT_DIALECTS["CLICKHOUSE"] == "clickhouse"
-    expr = "toStartOfMonth(orders.created_at) + nullIf(customers.discount, 0)"
-    expected = "toStartOfMonth(${TABLE}.created_at) + nullIf(${customers.discount}, 0)"
-    assert ossie_sql_to_lightdash(expr, "orders", {"customers": "customers"}) == expected
