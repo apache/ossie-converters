@@ -27,6 +27,7 @@ datasets:
   - name: order_id
     label: order_id
     expression:
+      sql: order_id
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[orders::order_id]'
@@ -50,6 +51,7 @@ datasets:
   - name: customer_name
     label: customer_name
     expression:
+      sql: customer_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customers::customer_name]'
