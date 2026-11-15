@@ -163,3 +163,106 @@ class TestDerivedKeysDoNotAliasEachOther:
         assert not re.search(r"(?:^|\s)[&*]id\d+\b", text), (
             f"generated YAML contains an anchor/alias:\n{text}"
         )
+
+
+class TestAKeyIsTheSetOfColumnsItNames:
+    """A key is the set of fields its entries name, not the list as written.
+
+    `derive_keys` builds each candidate from a relationship's `to_columns`
+    verbatim and compares candidates by exact list equality. Neither holds up:
+
+    * `to_columns` corresponds POSITIONALLY to `from_columns`, so one column
+      of the `to` dataset may legitimately be compared with two of the `from`
+      dataset -- apache/ossie#705 says so explicitly, and leaves `to_columns`
+      alone for that reason. Copied into a key, that repeat claims a column
+      the dataset does not have.
+    * Two relationships naming the same columns in a different order, or in a
+      different case, are one key written twice. Read as two, the dataset is
+      judged to disagree with itself and loses its primary key.
+
+    Regular identifiers are case-insensitive (`expression_language.md`), which
+    is what makes the case axis part of the same rule rather than a second one.
+    """
+
+    def test_a_column_named_twice_in_one_relationship_is_one_column(self):
+        log = IssueLog()
+        pk, uniques = derive_keys("customers", [rel("r", ["customer_id", "customer_id"])], log)
+        assert pk == ["customer_id"]
+        assert uniques == [["customer_id"]]
+
+    def test_the_same_two_columns_in_a_different_order_are_one_key(self):
+        # Two fact tables on one composite-key dimension, the AND written the
+        # other way round. The order is the author's choice, so reading it as
+        # a second key costs the dimension its primary key.
+        log = IssueLog()
+        pk, uniques = derive_keys(
+            "customers",
+            [rel("from_orders", ["store_id", "date_id"]),
+             rel("from_returns", ["date_id", "store_id"])],
+            log,
+        )
+        assert pk == ["store_id", "date_id"]
+        assert uniques == [["store_id", "date_id"]]
+
+    def test_spellings_differing_only_in_case_are_one_key(self):
+        log = IssueLog()
+        pk, uniques = derive_keys(
+            "customers",
+            [rel("from_orders", ["customer_id"]), rel("from_returns", ["CUSTOMER_ID"])],
+            log,
+        )
+        assert pk == ["customer_id"]
+        assert uniques == [["customer_id"]]
+
+    def test_a_disqualified_sibling_spelling_the_key_differently_still_covers_it(self):
+        # The regression the fold itself could cause. The coverage claim is
+        # only reached for a DISQUALIFIED relationship, so the two
+        # relationships here cannot both qualify or the branch never runs --
+        # an earlier version of this test made that mistake and passed under
+        # a mutation that reverted the fold.
+        #
+        # `scd2_asof` covers the derived key: `CUSTOMER_ID` and
+        # `customer_id` are one field. Comparing the spellings as written
+        # would predict an upstream coverage warning that will not fire.
+        log = IssueLog()
+        pk, _ = derive_keys(
+            "customers",
+            [rel("by_id", ["customer_id"]),
+             rel("scd2_asof", ["CUSTOMER_ID"], residual=True)],
+            log,
+        )
+        assert pk == ["customer_id"]
+        issues = log.as_dicts()
+        assert len(issues) == 1
+        assert "scd2_asof" in issues[0]["message"]
+        assert "coverage warning" not in issues[0]["message"]
+
+    def test_the_first_spelling_seen_is_the_one_emitted(self):
+        # Folding decides what counts as the same key; it must not rewrite the
+        # column names, which have to match the fields the dataset declares.
+        log = IssueLog()
+        pk, _ = derive_keys(
+            "customers",
+            [rel("from_orders", ["CustomerId"]), rel("from_returns", ["customerid"])],
+            log,
+        )
+        assert pk == ["CustomerId"]
+
+    def test_genuinely_different_keys_still_disagree(self):
+        # The guard on over-folding: these name different fields, so the
+        # dataset really does have two candidates and no primary key.
+        log = IssueLog()
+        pk, uniques = derive_keys(
+            "customers", [rel("by_id", ["customer_id"]), rel("by_email", ["email"])], log
+        )
+        assert pk is None
+        assert sorted(uniques) == [["customer_id"], ["email"]]
+
+    def test_a_subset_is_not_the_same_key(self):
+        # [a] and [a, b] fold to different sets, so they stay two candidates.
+        log = IssueLog()
+        pk, uniques = derive_keys(
+            "customers", [rel("one", ["a"]), rel("two", ["a", "b"])], log
+        )
+        assert pk is None
+        assert len(uniques) == 2

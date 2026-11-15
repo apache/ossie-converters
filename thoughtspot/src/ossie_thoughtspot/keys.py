@@ -30,6 +30,7 @@ silently — when the *from* side covers a key and the *to* side does not,
 carrying any `custom_extensions` payload onto the reversed relationship.
 """
 from dataclasses import dataclass
+from typing import Sequence
 
 from .issues import IssueLog, Severity
 
@@ -51,6 +52,36 @@ class Relationship:
     to_columns: tuple[str, ...] | list[str]
     cardinality: str
     has_residual_predicates: bool
+
+
+def _fold(column: str) -> str:
+    """The form two spellings of one regular identifier share.
+
+    `expression_language.md` makes an unquoted identifier case-insensitive, so
+    `customer_id` and `CUSTOMER_ID` name one field. Folding is used to decide
+    what counts as the same column; the spelling a key EMITS is always the one
+    the document used, because that is what the dataset declares as a field.
+    """
+    return column.casefold()
+
+
+def _key_columns(to_columns: Sequence[str]) -> list[str]:
+    """The columns of `to_columns`, each named once, in the order first seen.
+
+    A key is the set of fields it names. `to_columns` is not a set: it
+    corresponds POSITIONALLY to `from_columns`, so one column of the `to`
+    dataset may legitimately be compared with two of the `from` dataset, and
+    apache/ossie#705 leaves it alone for exactly that reason. Copied into a
+    key verbatim, that repeat declares a column the dataset does not have.
+    """
+    seen: set[str] = set()
+    columns: list[str] = []
+    for column in to_columns:
+        folded = _fold(column)
+        if folded not in seen:
+            seen.add(folded)
+            columns.append(column)
+    return columns
 
 
 def _qualifies(rel: Relationship) -> bool:
@@ -75,10 +106,17 @@ def derive_keys(
     inbound = [r for r in relationships if r.to_dataset == dataset_name]
     qualifying = [r for r in inbound if _qualifies(r)]
 
+    # Candidates are compared as SETS of folded names, not as lists as
+    # written: the same columns in a different order, or in a different case,
+    # are one key written twice. Read as two, a dataset is judged to disagree
+    # with itself and loses the primary key it actually has.
     seen: list[list[str]] = []
+    folded_seen: list[frozenset[str]] = []
     for rel in qualifying:
-        cols = list(rel.to_columns)
-        if cols not in seen:
+        cols = _key_columns(rel.to_columns)
+        folded = frozenset(_fold(c) for c in cols)
+        if folded not in folded_seen:
+            folded_seen.append(folded)
             seen.append(cols)
 
     # Explain every disqualified relationship's non-key status.
@@ -134,8 +172,13 @@ def derive_keys(
             f"Relationship {rel.name!r} targets {dataset_name!r} on columns that are "
             f"not a declared key, because {reason}."
         )
-        to_column_set = set(rel.to_columns)
-        if seen and not any(set(key) <= to_column_set for key in seen):
+        # Folded on both sides, for the same reason the candidates are: a
+        # relationship spelling the key's column another way covers it, and
+        # saying otherwise would predict a warning upstream will not raise.
+        to_column_set = {_fold(c) for c in rel.to_columns}
+        if seen and not any(
+            {_fold(c) for c in key} <= to_column_set for key in seen
+        ):
             message += (
                 " Ossie validation will report a to_columns coverage warning for it."
             )
