@@ -30,5 +30,7 @@ Layout
 | Path | Language | Role |
 |------|----------|------|
 | [`java/`](java/) | Java | The maintained implementation; also ships a command-line tool (`OssieDatabricksConverter`). |
+| [`python/`](python/) | Python | A faithful port of the Java implementation (same mapping, notices, and errors); ships the `ossie-databricks` command-line tool. |
 
-See [`java/README.md`](java/README.md) for building and using it.
+See [`java/README.md`](java/README.md) and [`python/README.md`](python/README.md) for building and
+using each.
