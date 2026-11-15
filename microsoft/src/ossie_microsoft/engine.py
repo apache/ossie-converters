@@ -438,9 +438,23 @@ def evaluate(workspace, dataset, token, query):
         token,
         {"queries": [{"query": query}], "serializerSettings": {"includeNulls": True}},
     )
-    if status == 200:
-        return body["results"][0]["tables"][0].get("rows", []), None
-    return None, _engine_message(body)
+    if status != 200:
+        return None, _request_failure(status, body)
+    try:
+        if body.get("error"):
+            return None, _engine_message(body)
+        result, = body["results"]
+        if result.get("error"):
+            return None, _engine_message(result)
+        table, = result["tables"]
+        if table.get("error"):
+            return None, _engine_message(table)
+        rows = table.get("rows", [])
+        if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+            return rows, None
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
+    return None, "unexpected executeQueries response; expected one result table"
 
 
 def _expression_text(expression):

@@ -644,7 +644,51 @@ def test_evaluate_returns_the_engine_error(monkeypatch):
     )
     rows, error = engine.evaluate("w", "d", "t", "EVALUATE 1")
     assert rows is None
-    assert error == "bad dax"
+    assert error == "HTTP 400: bad dax"
+
+
+def test_evaluate_preserves_transport_errors(monkeypatch):
+    message = "transport error (TimeoutError): timed out"
+    _stub_request(monkeypatch, lambda *a, **k: (None, message, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (None, message)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"message": "query failed"}},
+        {"results": [{"error": {"message": "query failed"}}]},
+        {"results": [{"tables": [{"error": {"message": "query failed"}, "rows": [{"[v]": 1}]}]}]},
+    ],
+)
+def test_evaluate_rejects_errors_inside_successful_http_responses(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (None, "query failed")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        {"results": []},
+        {"results": [{}, {}]},
+        {"results": [{"tables": [{}, {}]}]},
+        {"results": [{"tables": [{"rows": {}}]}]},
+        {"results": [{"tables": [{"rows": [1]}]}]},
+    ],
+)
+def test_evaluate_rejects_malformed_results(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (
+        None, "unexpected executeQueries response; expected one result table",
+    )
+
+
+@pytest.mark.parametrize("table", [{}, {"rows": []}])
+def test_evaluate_accepts_empty_tables(monkeypatch, table):
+    body = {"results": [{"tables": [table]}]}
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == ([], None)
 
 
 # --- orchestration ---------------------------------------------------------
