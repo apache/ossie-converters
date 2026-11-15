@@ -1277,9 +1277,18 @@ class TestKeyDerivationEdgeCasesCommitted:
         both counts (`--policy VALIDATE_ONLY`, 2026-11-16):
 
         * **the alias names.** `[Emp::Manager Id] = [Mgr::Id]` ->
-          `Invalid srcTable or destTable in join expression`. A join condition
-          lives on the Table, so it may name only PHYSICAL tables -- and that
-          is true of a join between two different tables too, not just here.
+          `Invalid srcTable or destTable in join expression`.
+
+          Read this narrowly. The document is invalid on the second count as
+          well, so the refusal cannot be attributed to the alias names ALONE,
+          and no probe has been run on an alias-spelled condition between two
+          DIFFERENT tables. What is structural rather than empirical is the
+          Table leg: a `joins_with[]` entry lives on the table, which has no
+          knowledge of the aliases a model gives it, so its `destination` and
+          its `on` prefixes can only be physical. That is why the writer
+          emits physical names. The reader accepts either spelling, because
+          being strict about an unproven rule would drop joins that convert
+          perfectly well -- see `test_alias_joins.py`.
         * **the self-join.** Written in physical names instead, the same
           model gives `Schema validation failed`. A hierarchy needs one alias
           per level, each joined to a distinct table.

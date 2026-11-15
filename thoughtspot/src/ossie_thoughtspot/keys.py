@@ -58,11 +58,22 @@ def _fold(column: str) -> str:
     """The form two spellings of one regular identifier share.
 
     `expression_language.md` makes an unquoted identifier case-insensitive, so
-    `customer_id` and `CUSTOMER_ID` name one field. Folding is used to decide
-    what counts as the same column; the spelling a key EMITS is always the one
-    the document used, because that is what the dataset declares as a field.
+    `customer_id` and `CUSTOMER_ID` name one field. Folding decides only what
+    counts as the SAME column; the spelling a key emits is always one the
+    document used.
+
+    `.lower()`, not `.casefold()`. Casefolding is for caseless matching of
+    natural language and is more aggressive than SQL case-insensitivity: it
+    maps the German sharp s onto a two-character form and changes the length
+    of the dotted capital I, so two genuinely distinct identifiers would be
+    read as one key.
+
+    Upstream does not fold at all -- `validate.py` compares key columns as
+    exact strings -- so folding here can MERGE two spellings into one key that
+    upstream will then find uncovered. `derive_keys` reports that rather than
+    leaving it to be discovered at validation time.
     """
-    return column.casefold()
+    return column.lower()
 
 
 def _key_columns(to_columns: Sequence[str]) -> list[str]:
@@ -119,6 +130,37 @@ def derive_keys(
             folded_seen.append(folded)
             seen.append(cols)
 
+    # A qualifying relationship whose spelling is not the one emitted.
+    #
+    # Only reachable once `_fold` has merged two spellings of one key: the
+    # emitted key carries the first spelling seen, and upstream compares
+    # exactly, so every other spelling is uncovered by its rule and earns a
+    # to_columns coverage warning. The deduplication is still right -- two
+    # unique keys that are one key in two cases assert a uniqueness the data
+    # does not have, and only silenced upstream by accident -- but staying
+    # quiet about the consequence was not.
+    emitted_exact = [set(key) for key in seen]
+    for rel in qualifying:
+        columns = set(_key_columns(rel.to_columns))
+        if any(key <= columns for key in emitted_exact):
+            continue
+        log.add(
+            code="TS_KEY_COVERAGE",
+            severity=Severity.WARNING,
+            message=(
+                f"Relationship {rel.name!r} targets {dataset_name!r} on "
+                f"{sorted(columns)}, which names the same key as the one "
+                f"declared but spells it differently. Ossie validation compares "
+                f"key columns exactly, so it will report a to_columns coverage "
+                f"warning for this relationship."
+            ),
+            object_ref=f"relationship:{rel.name}",
+            remedy=(
+                "Spell the column the same way in every relationship that "
+                "targets this dataset, and in the dataset's own fields."
+            ),
+        )
+
     # Explain every disqualified relationship's non-key status.
     #
     # An empty to_columns is a hard schema failure, not a coverage warning:
@@ -172,13 +214,14 @@ def derive_keys(
             f"Relationship {rel.name!r} targets {dataset_name!r} on columns that are "
             f"not a declared key, because {reason}."
         )
-        # Folded on both sides, for the same reason the candidates are: a
-        # relationship spelling the key's column another way covers it, and
-        # saying otherwise would predict a warning upstream will not raise.
-        to_column_set = {_fold(c) for c in rel.to_columns}
-        if seen and not any(
-            {_fold(c) for c in key} <= to_column_set for key in seen
-        ):
+        # EXACT, deliberately -- this predicts what upstream will say, and
+        # upstream does not fold: `validate.py` builds `set(to_columns)` and
+        # tests `set(key) <= …` on the strings as written. Folding here was
+        # backwards; it made the converter fail to foresee a warning upstream
+        # does raise, on precisely the case-divergent documents the folding
+        # above creates.
+        to_column_set = set(rel.to_columns)
+        if seen and not any(set(key) <= to_column_set for key in seen):
             message += (
                 " Ossie validation will report a to_columns coverage warning for it."
             )

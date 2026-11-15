@@ -400,12 +400,27 @@ RELATIONSHIP_STASH_CARDINALITY = "cardinality"
 #: or NULL foreign key -- and a dropped fact row lowers every measure computed over
 #: it with nothing on screen to say so. A left outer join keeps them.
 #:
-#: It is also what the one vendor in this repository that fixes the semantics
-#: means. Databricks offers no `type:` field on a metric-view join because it
+#: It is also what the one vendor that fixes the semantics outright means. Databricks offers no `type:` field on a metric-view join because it
 #: joins the fact `source` to every dimension with a LEFT OUTER JOIN; a converter
 #: reading that into a format which DOES carry a type must emit the left-outer
 #: equivalent, because anything narrower silently drops rows.
-ASSUMED_JOIN_TYPE = "LEFT_OUTER"
+#: Keyed by the join's cardinality, because `from` is not always the many
+#: side. Ossie has no cardinality field -- direction IS cardinality -- but a
+#: document that came from ThoughtSpot carries the original in its stash, and
+#: the type and cardinality stash keys are written independently, so a
+#: relationship can arrive with a cardinality and no type. `ONE_TO_MANY`
+#: inverts the sides: `from` is then the ONE side, and LEFT_OUTER would keep
+#: unmatched DIMENSION rows and NULL-extend every measure grouped by them --
+#: the same wrong-number failure, pointing the other way.
+ASSUMED_JOIN_TYPE_BY_CARDINALITY = {
+    "MANY_TO_ONE": "LEFT_OUTER",
+    "ONE_TO_ONE": "LEFT_OUTER",
+    "ONE_TO_MANY": "RIGHT_OUTER",
+}
+
+#: The assumption for the ordinary case, and the fallback for a cardinality
+#: outside the vocabulary above.
+ASSUMED_JOIN_TYPE = ASSUMED_JOIN_TYPE_BY_CARDINALITY["MANY_TO_ONE"]
 
 #: Whether this relationship's `from`/`to`/`from_columns`/`to_columns` were
 #: swapped relative to TML's own declared join direction. core-spec/spec.yaml

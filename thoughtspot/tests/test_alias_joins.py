@@ -30,10 +30,21 @@ every `column_id` then uses that alias as its prefix.
   prefix inside its `on` condition are physical -- the table knows nothing
   about the aliases a model gives it.
 
-ThoughtSpot enforces that split: a join condition "may name ONLY the two
-joined entries, by PHYSICAL name", and an alias name inside `on` is rejected
-with "Invalid srcTable or destTable in join expression" (live-probed on a
-2026-10-21 cluster; re-confirmed 2026-11-16 by importing every shape below).
+A Table's `joins_with[]` is unambiguously physical: it lives on the table,
+which has no knowledge of the aliases a model gives it. Every shape written
+in physical names was imported on a 2026-11-16 cluster with status OK.
+
+The MODEL's own inline `joins[]` is where the two namespaces meet, and the
+evidence there is thinner than it first looked. An alias-spelled condition
+was refused with "Invalid srcTable or destTable in join expression" -- but
+on a document that was independently invalid (it was also a self-join), so
+the refusal cannot be pinned on the alias names alone, and the
+two-different-tables case has not been probed.
+
+So the converter is strict in what it sends and liberal in what it accepts:
+the writer emits physical names, which are known to import; the reader takes
+either spelling, because real documents use both and refusing one on an
+unproven rule costs a relationship that would have converted.
 
 Reading one namespace as the other costs every join in an aliased model:
 
@@ -48,6 +59,8 @@ Measured on a document exported from a real cluster: three datasets, zero
 relationships. Role-playing is the ordinary way to model a dimension used
 twice, so this was every join in every such model.
 """
+import json
+
 import pytest
 
 from ossie_thoughtspot import ossie_to_thoughtspot, tml_to_ossie
@@ -109,6 +122,10 @@ def relationships(result):
 
 def codes(result):
     return [i.get("code") for i in result.issues.as_dicts()]
+
+
+def codes_of(conversion):
+    return [i.get("code") for i in conversion.issues.as_dicts()]
 
 
 class TestAnAliasedJoinSurvives:
@@ -348,3 +365,232 @@ class TestASelfRelationshipIsDeclaredUnwritable:
         back = ossie_to_thoughtspot.convert(self._document_with_a_self_relationship())
         for doc in back.documents.tables:
             assert not doc.body.get("joins_with")
+
+    def test_a_stashed_referencing_join_is_dropped_too(self):
+        # The sibling above cannot fail on its own: with no stash there is
+        # no `referencing_join` pointer, so the joins_with[] branch is never
+        # reached and the assertion holds however the guard behaves. This
+        # one takes that branch -- a stashed pointer is exactly what makes
+        # the converter try to write a Table join -- so it fails if the
+        # guard stops dropping the relationship.
+        doc = self._document_with_a_self_relationship()
+        doc["relationships"][0]["custom_extensions"] = [{
+            "vendor_name": "THOUGHTSPOT",
+            "data": json.dumps({"_v": 1, "referencing_join": "d_a_to_d_b",
+                                "join_shape": "referencing"}),
+        }]
+        back = ossie_to_thoughtspot.convert(doc)
+        for table_doc in back.documents.tables:
+            assert not table_doc.body.get("joins_with")
+        assert "TS-JOIN-SELF-UNWRITABLE" in codes_of(back)
+
+    def test_a_self_relationship_assumes_no_join_type(self):
+        # The assumption is reported before the guard runs, so a WARNING
+        # arrived for a join that is never written, carrying a remedy
+        # ("set `type` on this join in the generated Model TML") pointing at
+        # something not in the output.
+        back = ossie_to_thoughtspot.convert(self._document_with_a_self_relationship())
+        assert "TS-JOIN-TYPE-ASSUMED" not in codes_of(back)
+
+
+class TestEitherNamespaceIsAcceptedInAnInlineCondition:
+    """Strict in what we send, liberal in what we accept.
+
+    The WRITE leg emits physical names, because that is what a Table's
+    `joins_with[]` requires and what a cluster accepted. The READ leg must
+    not mirror that strictness: an inline `joins[]` entry lives on the
+    MODEL, whose every other reference (`with`, each `column_id` prefix) is
+    in the alias namespace, and real documents write its `on` that way --
+    the two-role fixture in this project's own audit corpus does.
+
+    Matching only one namespace does not fix the class, it moves it. Before
+    the alias work this function matched the model namespace alone, so an
+    alias-spelled condition converted and a physical-spelled one was demoted
+    to an unrepresentable stash entry. Matching the physical namespace alone
+    simply swapped which half was broken, and the swap is invisible to every
+    round-trip test: the verbatim `on_expression` is stashed and replayed,
+    so TML -> Ossie -> TML still comes back byte-identical. What is lost is
+    the RELATIONSHIP in the Ossie document -- the thing every other
+    converter in this repository reads, and the thing the alias work exists
+    to deliver.
+
+    The two names cannot collide: a prefix is either the physical name of
+    one endpoint or the model name of one endpoint, and `with` already had
+    to name a model_tables entry for the join to be parsed at all.
+    """
+
+    ALIASED = [
+        {"name": "FACT", "joins": [{
+            "with": "EMP_A",
+            "on": "[{f}::ACCOUNTID] = [{t}::ACCOUNTID]",
+            "type": "INNER", "cardinality": "MANY_TO_ONE"}]},
+        {"name": "DIM", "alias": "EMP_A"},
+    ]
+
+    def _convert(self, from_prefix, to_prefix):
+        import copy
+        tables = copy.deepcopy(self.ALIASED)
+        tables[0]["joins"][0]["on"] = (
+            tables[0]["joins"][0]["on"].format(f=from_prefix, t=to_prefix)
+        )
+        return convert(model(tables), [fact(), dim()])
+
+    def test_the_condition_may_name_the_alias(self):
+        result = self._convert("FACT", "EMP_A")
+        rels = relationships(result)
+        assert len(rels) == 1, codes(result)
+        assert (rels[0]["from"], rels[0]["to"]) == ("FACT", "EMP_A")
+        assert rels[0]["to_columns"] == ["ACCOUNTID"]
+        assert "TS-JOIN-UNREPRESENTABLE" not in codes(result)
+
+    def test_the_condition_may_name_the_physical_table(self):
+        result = self._convert("FACT", "DIM")
+        rels = relationships(result)
+        assert len(rels) == 1, codes(result)
+        assert (rels[0]["from"], rels[0]["to"]) == ("FACT", "EMP_A")
+        assert rels[0]["to_columns"] == ["ACCOUNTID"]
+        assert "TS-JOIN-UNREPRESENTABLE" not in codes(result)
+
+    def test_an_aliased_from_side_is_accepted_either_way(self):
+        for from_prefix in ("FACT_A", "FACT"):
+            result = convert(
+                model([
+                    {"name": "FACT", "alias": "FACT_A", "joins": [{
+                        "with": "DIM",
+                        "on": f"[{from_prefix}::ACCOUNTID] = [DIM::ACCOUNTID]",
+                        "type": "INNER", "cardinality": "MANY_TO_ONE"}]},
+                    {"name": "DIM"},
+                ]),
+                [fact(), dim()],
+            )
+            rels = relationships(result)
+            assert len(rels) == 1, (from_prefix, codes(result))
+            assert rels[0]["from"] == "FACT_A"
+
+    def test_a_condition_naming_neither_endpoint_is_still_residual(self):
+        # The widening must not turn an unrelated prefix into a match.
+        result = self._convert("FACT", "SOMEWHERE_ELSE")
+        assert "TS-JOIN-UNREPRESENTABLE" in codes(result)
+        assert relationships(result) == []
+
+
+class TestADatasetJoinedToItselfIsUnwritableToo:
+    """The plainest self-join of all, and the guard let it through.
+
+    `TS-JOIN-SELF-UNWRITABLE` was conditioned on the two datasets having
+    DIFFERENT names -- two aliases over one table. A relationship whose
+    `from` and `to` are the SAME dataset is the more obvious self-join and
+    skipped the guard entirely, emitting `[EMPLOYEE::MGR_ID] =
+    [EMPLOYEE::ID]`, which ThoughtSpot refuses outright (14565, a table
+    against itself; 13125 against an alias of itself). The two share one
+    cause -- one physical table on both ends -- so they share the guard.
+    """
+
+    def _convert(self):
+        forward = convert(
+            model([{"name": "DIM"}],
+                  columns=[{"name": "Name", "column_id": "DIM::EMP_NAME",
+                            "properties": {"column_type": "ATTRIBUTE"}}]),
+            [dim()],
+        )
+        doc = forward.model
+        doc["relationships"] = [{
+            "name": "dim_to_dim", "from": "DIM", "to": "DIM",
+            "from_columns": ["ACCOUNTID"], "to_columns": ["ACCOUNTID"],
+        }]
+        return ossie_to_thoughtspot.convert(doc)
+
+    def test_no_join_is_written(self):
+        back = self._convert()
+        assert all(not e.get("joins") for e in back.documents.model.body["model_tables"])
+
+    def test_the_loss_is_reported(self):
+        back = self._convert()
+        [issue] = [i for i in back.issues.as_dicts()
+                   if i["code"] == "TS-JOIN-SELF-UNWRITABLE"]
+        assert issue["severity"] == "ERROR"
+        assert "dim_to_dim" in issue["message"]
+
+    def test_no_join_type_is_assumed_for_it(self):
+        assert "TS-JOIN-TYPE-ASSUMED" not in codes_of(self._convert())
+
+
+class TestTMLJoiningAnEntryToItselfIsNotGuessedAtEither:
+    """The same widening on the forward leg.
+
+    ThoughtSpot never exports this -- it refuses to import it -- so it
+    reaches the converter only from hand-written TML. The condition names
+    one table on both sides, so which end each column belongs to cannot be
+    determined, and guessing would silently reverse the join. Reported and
+    dropped, exactly as two aliases of one table are.
+    """
+
+    def _convert(self):
+        return convert(
+            model([{"name": "DIM", "joins": [{
+                "with": "DIM",
+                "on": "[DIM::ACCOUNTID] = [DIM::EMP_NAME]",
+                "type": "INNER", "cardinality": "MANY_TO_ONE"}]}],
+                  columns=[{"name": "Name", "column_id": "DIM::EMP_NAME",
+                            "properties": {"column_type": "ATTRIBUTE"}}]),
+            [dim()],
+        )
+
+    def test_no_relationship_is_emitted(self):
+        assert relationships(self._convert()) == []
+
+    def test_the_ambiguity_is_reported(self):
+        result = self._convert()
+        [issue] = [i for i in result.issues.as_dicts()
+                   if i["code"] == "TS-JOIN-AMBIGUOUS-PREFIX"]
+        assert "itself" in issue["message"]
+
+
+class TestTwoRolesCitingOneTableJoinChangeShapeNotMeaning:
+    """A known, reported shape change on the return leg.
+
+    Two roles of one dimension may both cite the SAME Table join. Ossie
+    relationship names are unique, so the second gets `_2` appended -- and
+    that new name no longer matches its own stashed `referencing_join`
+    pointer, which is the stale-stash condition. The relationship is
+    therefore rebuilt in the inline form instead of the referencing one.
+
+    Nothing is lost and nothing is silent: `TS-JOIN-REFERENCING-JOIN-STALE`
+    reports it, the Table keeps its single `joins_with[]` entry (the input
+    had one, cited twice), the inline join carries the same condition, and
+    a second round trip is stable. Recorded here so the shape change is
+    read as known rather than as an accident.
+    """
+
+    def _round_trip(self):
+        src = model([
+            {"name": "FACT", "joins": [
+                {"with": "EMP_A", "referencing_join": FACT_JOIN},
+                {"with": "EMP_B", "referencing_join": FACT_JOIN}]},
+            {"name": "DIM", "alias": "EMP_A"},
+            {"name": "DIM", "alias": "EMP_B"},
+        ])
+        forward = convert(src, [fact(physical_joins_with()), dim()])
+        return forward, ossie_to_thoughtspot.convert(forward.model)
+
+    def test_both_roles_survive_as_relationships(self):
+        forward, _back = self._round_trip()
+        assert [(r["from"], r["to"]) for r in relationships(forward)] == [
+            ("FACT", "EMP_A"), ("FACT", "EMP_B"),
+        ]
+
+    def test_the_second_role_returns_inline_and_says_so(self):
+        _forward, back = self._round_trip()
+        entry = next(t for t in back.documents.model.body["model_tables"]
+                     if t["name"] == "FACT")
+        first, second = entry["joins"]
+        assert first == {"with": "EMP_A", "referencing_join": FACT_JOIN}
+        assert second["with"] == "EMP_B"
+        assert second["on"] == "[FACT::ACCOUNTID] = [DIM::ACCOUNTID]"
+        assert "TS-JOIN-REFERENCING-JOIN-STALE" in codes_of(back)
+
+    def test_the_table_keeps_the_one_join_it_started_with(self):
+        _forward, back = self._round_trip()
+        names = [j.get("name") for d in back.documents.tables
+                 for j in (d.body.get("joins_with") or [])]
+        assert names == [FACT_JOIN]

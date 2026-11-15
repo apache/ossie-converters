@@ -123,25 +123,65 @@ class TestADatasetScopedMetricIsReported:
 
 
 class TestATemporalRoleFlagIsReported:
-    """`is_time` is a role, deliberately independent of `datatype`."""
+    """`is_time` is a ROLE, and the spec defaults it FROM the datatype.
 
-    def _log(self, is_time):
-        return _build(_model([_dataset(
-            "ORDERS", [],
-            fields=[_field("ORDER_DATE", "ORDERS", dimension={"is_time": is_time})],
-        )]), [_table("ORDERS", ["ORDER_DATE"])])
+    "When `is_time` is not set explicitly, it defaults to `true` if
+    `datatype` is one of Date, Time, DateTime, DateTimeTz, and `false`
+    otherwise. Explicit `is_time` always wins." ThoughtSpot derives exactly
+    that default from the column's own type and has no flag to override it,
+    so what is lost is not `is_time` -- it is any DISAGREEMENT between the
+    resolved role and the one the datatype implies.
 
-    def test_the_drop_is_reported(self):
-        [issue] = _issues(self._log(True), "TS-FIELD-IS-TIME-DROPPED")
+    That cuts both ways, and the first version of this reported only half
+    of it:
+
+    * `is_time: true` on a non-temporal datatype -- an integer year grain,
+      a quarter-name string -- says "put this on the time axis" and
+      ThoughtSpot cannot be told.
+    * `is_time: false` on a temporal datatype -- the spec's own example is
+      an audit `created_at` -- says "keep this OFF the time axis", and
+      ThoughtSpot will put it there anyway. Reporting only the `true` case
+      missed this one entirely.
+    * Either flag AGREEING with its datatype is redundant, and reporting a
+      loss there names one that did not happen.
+    """
+
+    def _log(self, is_time, datatype="Integer"):
+        field = _field("ORDER_DATE", "ORDERS", dimension={"is_time": is_time})
+        field["datatype"] = datatype
+        return _build(_model([_dataset("ORDERS", [], fields=[field])]),
+                      [_table("ORDERS", ["ORDER_DATE"])])
+
+    def _reported(self, is_time, datatype="Integer"):
+        return _issues(self._log(is_time, datatype), "TS-FIELD-IS-TIME-DROPPED")
+
+    def test_a_time_role_on_a_non_temporal_type_is_reported(self):
+        [issue] = self._reported(True, "Integer")
         assert issue["severity"] == Severity.INFO.value
         assert issue["object_ref"] == "field:ORDER_DATE"
 
-    def test_is_time_false_asserts_nothing_so_nothing_is_lost(self):
-        assert _issues(self._log(False), "TS-FIELD-IS-TIME-DROPPED") == []
+    def test_opting_a_temporal_column_out_is_reported_too(self):
+        [issue] = self._reported(False, "DateTime")
+        assert "ORDER_DATE" in issue["message"]
+
+    def test_a_time_role_agreeing_with_a_temporal_type_is_quiet(self):
+        for datatype in ("Date", "Time", "DateTime", "DateTimeTz"):
+            assert self._reported(True, datatype) == [], datatype
+
+    def test_no_time_role_agreeing_with_a_non_temporal_type_is_quiet(self):
+        assert self._reported(False, "String") == []
 
     def test_a_field_with_no_dimension_block_is_quiet(self):
         log = _build(_model([_dataset("ORDERS", ["AMOUNT"])]))
         assert _issues(log, "TS-FIELD-IS-TIME-DROPPED") == []
+
+    def test_an_untyped_field_falls_back_to_non_temporal(self):
+        # No datatype is no evidence of a temporal type, so `is_time: true`
+        # is still a claim ThoughtSpot cannot carry.
+        field = _field("GRAIN", "ORDERS", dimension={"is_time": True})
+        log = _build(_model([_dataset("ORDERS", [], fields=[field])]),
+                     [_table("ORDERS", ["GRAIN"])])
+        assert len(_issues(log, "TS-FIELD-IS-TIME-DROPPED")) == 1
 
 
 class TestARelationshipsAiContextIsReported:
@@ -214,3 +254,45 @@ class TestAnotherVendorsExtensionsAreReported:
 
     def test_a_document_with_no_extensions_is_quiet(self):
         assert _issues(convert(_model()).issues, "TS-VENDOR-EXTENSIONS-DROPPED") == []
+
+
+class TestTheExtensionWalkSurvivesTheDocumentItWalks:
+    """A reporting pass must never be the thing that fails the conversion.
+
+    The scan added for TS-VENDOR-EXTENSIONS-DROPPED runs over the whole
+    document at the top of every `convert()`. Written as plain recursion it
+    turned two documents that previously converted into a bare traceback:
+    one carrying a cyclic structure, which a YAML alias can produce and the
+    safe loader really does build, and one merely nested deeply. `cli.py`
+    catches ConversionError, OSError and UnicodeDecodeError, so a
+    RecursionError escapes as a traceback -- breaking the contract
+    `stash.py` states and the rest of the module keeps.
+
+    Walked iteratively with a visited set instead: no stack to exhaust, and
+    a structure that points at itself is visited once.
+    """
+
+    def _cyclic(self):
+        model = _model()
+        model["datasets"][0]["self"] = model
+        return model
+
+    def test_a_cyclic_document_still_converts(self):
+        assert convert(self._cyclic()).documents.model is not None
+
+    def test_a_cyclic_document_does_not_hide_a_foreign_vendor(self):
+        model = self._cyclic()
+        model["datasets"][0]["custom_extensions"] = [
+            {"vendor_name": "DATABRICKS", "data": json.dumps({"k": 1})},
+        ]
+        assert len(_issues(convert(model).issues, "TS-VENDOR-EXTENSIONS-DROPPED")) == 1
+
+    def test_a_deeply_nested_document_still_converts(self):
+        model = _model()
+        node: dict = {}
+        model["datasets"][0]["deep"] = node
+        for _ in range(10_000):
+            child: dict = {}
+            node["next"] = child
+            node = child
+        assert convert(model).documents.model is not None

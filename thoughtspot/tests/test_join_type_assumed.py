@@ -149,3 +149,98 @@ class TestAStashedTypeIsRecoveredFactNotAnAssumption:
         join, log = _build({"type": "FULL_OUTER"})
         assert join["type"] == "OUTER"
         assert _issues(log, "TS-JOIN-TYPE-ASSUMED") == []
+
+
+class TestTheAssumptionFollowsTheCardinality:
+    """"Keep the many side" is the rule; `from` is not always the many side.
+
+    An Ossie relationship has no cardinality field -- direction IS
+    cardinality, `from` many and `to` one -- but a document that came from
+    ThoughtSpot carries the original in its stash, and the two stash keys
+    are written independently. A relationship can therefore arrive with a
+    cardinality and no type, and `ONE_TO_MANY` inverts the sides: `from` is
+    then the ONE side, so LEFT_OUTER keeps unmatched DIMENSION rows and
+    NULL-extends every measure grouped by them. That is the same
+    wrong-number failure this assumption exists to prevent, pointing the
+    other way.
+
+    The rule is not "LEFT_OUTER", it is "keep whichever side the measures
+    are on", so the spelling follows the cardinality.
+    """
+
+    def _assume(self, cardinality):
+        join, log = _build({"cardinality": cardinality})
+        return join["type"], _issues(log, "TS-JOIN-TYPE-ASSUMED")
+
+    def test_many_to_one_keeps_the_from_side(self):
+        join_type, [issue] = self._assume("MANY_TO_ONE")
+        assert join_type == "LEFT_OUTER"
+        assert "many side" in issue["message"]
+
+    def test_one_to_one_keeps_the_from_side_too(self):
+        # Nothing is duplicated either way; LEFT_OUTER is still the choice
+        # that cannot drop a row.
+        assert self._assume("ONE_TO_ONE")[0] == "LEFT_OUTER"
+
+    def test_one_to_many_keeps_the_to_side(self):
+        join_type, [issue] = self._assume("ONE_TO_MANY")
+        assert join_type == "RIGHT_OUTER"
+        assert "many side" in issue["message"]
+
+    def test_the_message_never_claims_the_wrong_side(self):
+        _type, [one_to_many] = self._assume("ONE_TO_MANY")
+        _type, [many_to_one] = self._assume("MANY_TO_ONE")
+        assert one_to_many["message"] != many_to_one["message"]
+
+
+
+class TestAnUnrepresentableJoinAssumesTheSameType:
+    """The second call site, which had no test of its own.
+
+    A join whose condition has no equality pair at all is stashed verbatim
+    under `unrepresentable_joins[]` and rebuilt from that entry, by a
+    different function. It takes the same fallback, so it had the same
+    silent INNER -- and reverting that one call site left the whole suite
+    green, which is to say the defect was still live there and nothing
+    noticed.
+
+    The entry reuses the RELATIONSHIP_STASH_* vocabulary, so a stashed type
+    is honoured here exactly as it is for a real relationship.
+    """
+
+    def _rebuild(self, **entry):
+        model = _model()
+        model["relationships"] = []
+        model["custom_extensions"] = _stash_ext(unrepresentable_joins=[{
+            "from": "ORDERS", "to": "CUSTOMERS",
+            "on_expression": "[ORDERS::AMOUNT] > [CUSTOMERS::CUSTOMER_ID]",
+            "join_shape": "inline", **entry,
+        }])
+        log = IssueLog()
+        doc = build_model(model, [_table("ORDERS", ["CUSTOMER_ID", "AMOUNT"]),
+                                  _table("CUSTOMERS", ["CUSTOMER_ID", "NAME"])], log)
+        orders = next(t for t in doc.body["model_tables"] if t["name"] == "ORDERS")
+        [join] = orders["joins"]
+        return join, log
+
+    def test_an_undeclared_type_is_assumed_not_silently_inner(self):
+        join, log = self._rebuild()
+        assert join["type"] == "LEFT_OUTER"
+        assert len(_issues(log, "TS-JOIN-TYPE-ASSUMED")) == 1
+
+    def test_the_assumption_follows_the_cardinality_here_too(self):
+        join, _log = self._rebuild(cardinality="ONE_TO_MANY")
+        assert join["type"] == "RIGHT_OUTER"
+
+    def test_a_stashed_type_is_still_honoured(self):
+        join, log = self._rebuild(type="INNER")
+        assert join["type"] == "INNER"
+        assert _issues(log, "TS-JOIN-TYPE-ASSUMED") == []
+
+    def test_its_issue_does_not_collide_with_a_real_relationships(self):
+        # Both are named `<from>_to_<to>`; without a distinct prefix an
+        # unrepresentable join and a real relationship for the same pair
+        # report under one object_ref and read as one object.
+        _join, log = self._rebuild()
+        [issue] = _issues(log, "TS-JOIN-TYPE-ASSUMED")
+        assert issue["object_ref"] == "unrepresentable_join:ORDERS_to_CUSTOMERS"

@@ -67,7 +67,8 @@ def test_many_to_many_is_not_key_evidence():
 
 def test_a_disqualified_sibling_raises_an_issue_naming_it():
     # "ccy" does not cover the derived key ("customer_id"), so
-    # upstream's to_columns coverage check (validate.py:159-165) genuinely
+    # upstream's to_columns coverage check -- `validate_references`'s
+    # `set(key) <= set(to_columns)` test -- genuinely
     # will warn here — the claim is correct and must be present.
     log = IssueLog()
     pk, uniques = derive_keys(
@@ -84,7 +85,7 @@ def test_a_disqualified_sibling_raises_an_issue_naming_it():
 def test_residual_join_whose_columns_cover_the_key_has_no_upstream_warning_claim():
     # The canonical SCD-2 shape — a residual (as-of) join whose
     # to_columns exactly covers the derived key. Upstream's coverage check
-    # (validate.py:159-165) passes clean here, so the message must not
+    # (`validate_references`) passes clean here, so the message must not
     # predict a warning that will not fire.
     log = IssueLog()
     pk, uniques = derive_keys(
@@ -214,16 +215,18 @@ class TestAKeyIsTheSetOfColumnsItNames:
         assert pk == ["customer_id"]
         assert uniques == [["customer_id"]]
 
-    def test_a_disqualified_sibling_spelling_the_key_differently_still_covers_it(self):
-        # The regression the fold itself could cause. The coverage claim is
-        # only reached for a DISQUALIFIED relationship, so the two
-        # relationships here cannot both qualify or the branch never runs --
-        # an earlier version of this test made that mistake and passed under
-        # a mutation that reverted the fold.
+    def test_a_disqualified_sibling_spelling_the_key_differently_is_predicted_uncovered(self):
+        # The coverage claim is only reached for a DISQUALIFIED relationship,
+        # so the two here cannot both qualify or the branch never runs -- an
+        # earlier version of this test made that mistake and passed under a
+        # mutation that reverted the fold.
         #
-        # `scd2_asof` covers the derived key: `CUSTOMER_ID` and
-        # `customer_id` are one field. Comparing the spellings as written
-        # would predict an upstream coverage warning that will not fire.
+        # This converter reads `CUSTOMER_ID` and `customer_id` as one field,
+        # and emits one key. Upstream does NOT: `validate.py` compares key
+        # columns as exact strings. So the prediction has to be made on the
+        # spellings as written, or it foresees the opposite of what upstream
+        # reports. An earlier version of this file folded both sides and
+        # asserted the reverse of the line below.
         log = IssueLog()
         pk, _ = derive_keys(
             "customers",
@@ -235,7 +238,7 @@ class TestAKeyIsTheSetOfColumnsItNames:
         issues = log.as_dicts()
         assert len(issues) == 1
         assert "scd2_asof" in issues[0]["message"]
-        assert "coverage warning" not in issues[0]["message"]
+        assert "coverage warning" in issues[0]["message"]
 
     def test_the_first_spelling_seen_is_the_one_emitted(self):
         # Folding decides what counts as the same key; it must not rewrite the
@@ -266,3 +269,109 @@ class TestAKeyIsTheSetOfColumnsItNames:
         )
         assert pk is None
         assert len(uniques) == 2
+
+
+class TestASpellingUpstreamWillNotMatchIsReported:
+    """Folding decides what is ONE key. Upstream does not fold at all.
+
+    `validate.py` does `set(to_columns)` then `any(set(key) <= …)` -- exact
+    strings, no case handling. So the moment two qualifying relationships
+    spell one key column differently, whichever spelling is emitted leaves
+    the others uncovered BY UPSTREAM'S RULE, and upstream raises a
+    to_columns coverage warning for them.
+
+    That warning is correct and the deduplication is still right: declaring
+    two unique keys that are one key in two cases asserts something about
+    the data that is not true, and it only silenced upstream by accident.
+    What was wrong was this converter saying nothing. The prediction folded
+    both sides, so it could never foresee a warning upstream raises on an
+    exact comparison -- a comment in the source claimed the opposite.
+
+    Nothing fires in the ordinary case, where every relationship spells the
+    key the same way.
+    """
+
+    def _derive(self, *column_sets):
+        log = IssueLog()
+        pk, uniques = derive_keys(
+            "customers",
+            [rel(f"r{i}", cols) for i, cols in enumerate(column_sets)],
+            log,
+        )
+        return pk, uniques, [i for i in log.as_dicts() if i["code"] == "TS_KEY_COVERAGE"]
+
+    def test_one_key_is_still_emitted(self):
+        pk, uniques, _ = self._derive(["CUSTOMER_ID"], ["customer_id"])
+        assert pk == ["CUSTOMER_ID"]
+        assert uniques == [["CUSTOMER_ID"]]
+
+    def test_the_divergent_relationship_is_reported(self):
+        _pk, _uniques, issues = self._derive(["CUSTOMER_ID"], ["customer_id"])
+        assert len(issues) == 1
+        assert issues[0]["object_ref"] == "relationship:r1"
+        assert "customer_id" in issues[0]["message"]
+
+    def test_the_relationship_whose_spelling_was_emitted_is_not_reported(self):
+        _pk, _uniques, issues = self._derive(["CUSTOMER_ID"], ["customer_id"])
+        assert "relationship:r0" not in [i["object_ref"] for i in issues]
+
+    def test_agreeing_spellings_report_nothing(self):
+        _pk, _uniques, issues = self._derive(["customer_id"], ["customer_id"])
+        assert issues == []
+
+    def test_a_single_relationship_reports_nothing(self):
+        _pk, _uniques, issues = self._derive(["customer_id"])
+        assert issues == []
+
+
+def test_folding_is_ascii_case_not_unicode_casefold():
+    # `.casefold()` is for caseless MATCHING of natural language: it maps the
+    # German sharp s to a two-character form and changes the length of the
+    # dotted capital I. SQL identifier case-insensitivity is neither of those,
+    # so two genuinely distinct identifiers were being read as one key.
+    log = IssueLog()
+    _pk, uniques = derive_keys(
+        "customers", [rel("a", ["strasse"]), rel("b", ["straße"])], log
+    )
+    assert sorted(uniques) == [["strasse"], ["straße"]]
+
+
+class TestThePredictionMatchesUpstreamsRuleExactly:
+    """This prediction's only job is to say what upstream will say.
+
+    Both halves of upstream's test were unpinned, and a mutation of either
+    left the suite green. `validate_references` is:
+
+        if declared_keys and not any(set(key) <= to_column_set …)
+
+    -- so it is silent when the dataset declares NO key, and it asks whether
+    the key is a SUBSET of to_columns, not whether the two are equal.
+    """
+
+    def test_a_keyless_dataset_is_predicted_clean(self):
+        # Nothing qualifies, so no key is declared, so upstream has nothing
+        # to compare against and raises nothing. Predicting a warning here
+        # would be a warning about every residual join in every model that
+        # happens to have no key at all.
+        log = IssueLog()
+        pk, uniques = derive_keys(
+            "customers", [rel("asof", ["ccy"], residual=True)], log
+        )
+        assert (pk, uniques) == (None, [])
+        [issue] = log.as_dicts()
+        assert "coverage warning" not in issue["message"]
+
+    def test_a_key_that_is_a_subset_of_to_columns_is_predicted_covered(self):
+        # `scd2` joins on the key PLUS an extra column. Upstream's `<=` says
+        # that covers the key; `==` would say it does not.
+        log = IssueLog()
+        pk, _ = derive_keys(
+            "customers",
+            [rel("by_id", ["customer_id"]),
+             rel("scd2", ["customer_id", "valid_from"], residual=True)],
+            log,
+        )
+        assert pk == ["customer_id"]
+        [issue] = log.as_dicts()
+        assert "scd2" in issue["message"]
+        assert "coverage warning" not in issue["message"]

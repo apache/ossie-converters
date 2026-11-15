@@ -2064,7 +2064,11 @@ def _strip_wrapping_parens(text: str) -> str:
 
 
 def _parse_join_condition(
-    on_expression: str, from_physical: str, to_physical: str
+    on_expression: str,
+    from_physical: str,
+    to_physical: str,
+    from_prefix: str | None = None,
+    to_prefix: str | None = None,
 ) -> tuple[list[tuple[str, str]], list[str]]:
     """Split a join condition into equality pairs and residual predicates.
 
@@ -2098,14 +2102,36 @@ def _parse_join_condition(
             continue
         left_table, left_column = identifiers.split_column_ref(match.group(1))
         right_table, right_column = identifiers.split_column_ref(match.group(2))
-        # Matched against the PHYSICAL names. A join condition lives on the
-        # Table, which knows nothing about the aliases a model gives it, and
-        # ThoughtSpot rejects an alias name here outright ("Invalid srcTable
-        # or destTable in join expression"). Where nothing is aliased the two
-        # namespaces coincide and this is the comparison it always was.
-        if left_table == from_physical and right_table == to_physical:
+        # EITHER namespace names an endpoint here: strict in what we send,
+        # liberal in what we accept.
+        #
+        # The write leg emits PHYSICAL names, because a Table's joins_with[]
+        # lives on the table, which has no knowledge of the aliases a model
+        # gives it -- structural, not a probe result. This is the read leg,
+        # and it must not mirror that strictness. An inline `joins[]` entry
+        # lives on the MODEL, where every other reference -- `with`, every
+        # `column_id` prefix -- is in the alias namespace, and real documents
+        # write its `on` that way too.
+        #
+        # Matching one namespace alone does not fix the class, it moves it.
+        # Before this function took physical names it matched the model ones,
+        # so an alias-spelled condition parsed and a physical-spelled one was
+        # demoted to an unrepresentable stash entry; matching only physical
+        # names simply swapped which half broke. Neither failure is visible
+        # to a round trip -- the verbatim condition is stashed and replayed,
+        # so the TML returns byte-identical -- and both cost the Ossie
+        # document its relationship, which is what every other converter
+        # reads.
+        #
+        # The two spellings cannot collide: a prefix is either an endpoint's
+        # physical name or its model name, and `with` already had to name a
+        # model_tables entry for this join to be parsed at all. Where nothing
+        # is aliased they coincide and this is the comparison it always was.
+        from_names = {from_physical, from_prefix or from_physical}
+        to_names = {to_physical, to_prefix or to_physical}
+        if left_table in from_names and right_table in to_names:
             equality_pairs.append((left_column, right_column))
-        elif left_table == to_physical and right_table == from_physical:
+        elif left_table in to_names and right_table in from_names:
             equality_pairs.append((right_column, left_column))
         else:
             # An equality pair, but not one naming both sides of *this* join --
@@ -2243,7 +2269,7 @@ def _relationship_from_join(
 
     try:
         equality_pairs, residuals = _parse_join_condition(
-            on_expression, from_physical, to_physical
+            on_expression, from_physical, to_physical, from_prefix, to_prefix
         )
     except ValueError as exc:
         log.add(
@@ -2489,8 +2515,9 @@ def _convert_join(
 
     from_physical = from_table_body.get("name") or from_prefix
 
-    if from_physical == to_physical and from_prefix != to_prefix:
-        # Both ends are aliases of ONE table, so a condition written in
+    if from_physical == to_physical:
+        # ONE table on both ends -- two aliases of it, or one entry joined to
+        # itself. Either way a condition written in
         # physical names says the same word on both sides and cannot say
         # which end is which. ThoughtSpot never produces this -- every
         # self-join is rejected (13125, and 14565 for a table against
@@ -2501,10 +2528,14 @@ def _convert_join(
             code="TS-JOIN-AMBIGUOUS-PREFIX",
             severity=Severity.WARNING,
             message=(
-                f"join {name!r} runs between {from_prefix!r} and {to_prefix!r}, "
-                f"which are both aliases of table {from_physical!r}; its condition "
-                f"names that table on both sides, so which end each column belongs "
-                f"to cannot be determined and the relationship is dropped"
+                f"join {name!r} runs "
+                + (f"from {from_prefix!r} to itself over table {from_physical!r}"
+                   if from_prefix == to_prefix
+                   else f"between {from_prefix!r} and {to_prefix!r}, which are "
+                        f"both aliases of table {from_physical!r}")
+                + f"; its condition names that table on both sides, so which end "
+                  f"each column belongs to cannot be determined and the "
+                  f"relationship is dropped"
             ),
             object_ref=f"relationship:{name}",
             remedy=(
