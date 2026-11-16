@@ -36,6 +36,6 @@ def test_dialect_is_registered_upstream():
 
 
 def test_spec_series_is_major_minor_not_an_exact_version():
-    # Upstream's first release is proposed as 0.3.0; an exact pin on 0.2.0.dev0 would break.
-    assert constants.SPEC_SERIES == "0.2"
+    # Upstream's first release is proposed as 0.3.0; an exact pin on 0.3.0.dev0 would break.
+    assert constants.SPEC_SERIES == "0.3"
     assert constants.STASH_VERSION == 1

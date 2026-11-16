@@ -20,7 +20,7 @@
 # OBML → Ossie Ontology Mapping Analysis
 
 This pins the rules used by `OBMLtoOssieOntology` to derive an **Ossie ontology
-document** (Ossie ontology format, version `0.2.0.dev0`) from an OBML semantic
+document** (Ossie ontology format, version `0.3.0.dev0`) from an OBML semantic
 model.
 
 The Ossie ontology is a **separate document** from the Ossie core-spec semantic
@@ -33,7 +33,7 @@ the export endpoints.
 ## Document shape produced
 
 ```yaml
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: <model name>                 # required
 description: <model description>   # optional
 ai_context: { instructions: ... }  # optional, from ai_instructions / model
@@ -95,7 +95,7 @@ unique concept names; relationship `roles` reference defined concepts;
 
 ## Stability note
 
-Ossie ontology is `0.2.0.dev0` (pre-1.0). This exporter is the supported,
+Ossie ontology is `0.3.0.dev0` (pre-1.0). This exporter is the supported,
 schema-validated direction. An ontology **importer** (Ossie ontology → OBML) is
 intentionally deferred until Ossie drops the `dev` pre-release suffix, because the
 gaps above make the reverse direction lossy. Import the Ossie **core spec**

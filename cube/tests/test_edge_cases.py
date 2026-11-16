@@ -3212,3 +3212,32 @@ def test_a_geo_dimension_carries_its_labels_onto_both_halves():
         assert field["ai_context"] == {"instructions": "the drop-off"}
     # Native now, so not duplicated in the stash -- and still byte-identical back.
     assert parse_files(back) == parse_files(files)
+
+
+def test_key_field_declaration_matches_existing_fields_case_insensitively():
+    """`validate.py` checks declared field names case-insensitively, and export
+    deduplicates dimension names case-insensitively. A join or key column whose name
+    differs only in case from an existing dimension must not synthesize a second
+    key-only field of that name."""
+    files = _files(m=(
+        "cubes:\n"
+        "  - name: orders\n"
+        "    sql_table: public.orders\n"
+        "    joins:\n"
+        "      - name: users\n"
+        "        sql: \"{CUBE}.user_id = {users}.id\"\n"
+        "        relationship: many_to_one\n"
+        "    dimensions:\n"
+        "      - name: id\n        sql: id\n        type: number\n"
+        "        primary_key: true\n"
+        "      - name: USER_ID\n        sql: user_id\n        type: number\n"
+        "  - name: users\n"
+        "    sql_table: public.users\n"
+        "    dimensions:\n"
+        "      - name: ID\n        sql: id\n        type: number\n"
+        "        primary_key: true\n"))
+    ossie, back, _ = _roundtrip(files)
+    datasets = by_name(model_of(ossie)["datasets"])
+    assert [f["name"] for f in datasets["orders"]["fields"]] == ["id", "USER_ID"]
+    assert [f["name"] for f in datasets["users"]["fields"]] == ["ID"]
+    assert parse_files(back) == parse_files(files)
