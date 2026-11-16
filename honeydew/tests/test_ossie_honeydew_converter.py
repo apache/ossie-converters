@@ -46,7 +46,7 @@ from ossie_honeydew.converter import (
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
 
 def _ossie(model_dict):

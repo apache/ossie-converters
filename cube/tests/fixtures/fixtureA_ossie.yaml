@@ -18,7 +18,7 @@
 # unintended change anywhere in the output shows up as a readable diff.
 # Regenerate with: uv run ossie-cube import -i tests/fixtures/fixtureA_cube
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: sales
 description: Sales overview
 ai_context:

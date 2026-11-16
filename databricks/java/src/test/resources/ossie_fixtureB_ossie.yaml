@@ -24,7 +24,7 @@
 # dialect it fits (OSSIE_SQL_2026); the metrics stay DATABRICKS because the view `filter`, and
 # the `partition` on `order_count`, change their values and live only in the DATABRICKS stash.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 
 name: lineitem
 description: Line item shipping metrics

@@ -440,7 +440,7 @@ def _dataset_field(name: str) -> dict:
 # Gadget's `ref` is an ordinary property mapped by a link; Gizmo's `ref` is its
 # identifier. `ref` is a method on every PyRel Concept, so both are skipped.
 _RESERVED_NAME_SPEC = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "Reserved",
     "ontology": [
         {"concept": "GadgetId", "type": "ValueType", "extends": ["Integer"]},
@@ -469,7 +469,7 @@ _RESERVED_NAME_SPEC = {
         {
             "name": "reserved_mapping",
             "semantic_model": {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "Reserved semantic model",
                 "datasets": [
                     {
@@ -545,7 +545,7 @@ def test_mappings_over_a_reserved_relationship_are_skipped_with_a_warning(tmp_pa
 # column. Both mappings use `owner` at the top level and differ only in the
 # nested referent below it.
 _NESTED_REFERENTS_SPEC = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "Nested",
     "ontology": [
         {"concept": "EmpNr", "type": "ValueType", "extends": ["Integer"]},
@@ -570,7 +570,7 @@ _NESTED_REFERENTS_SPEC = {
         {
             "name": "nested_mapping",
             "semantic_model": {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "Nested semantic model",
                 "datasets": [
                     {
