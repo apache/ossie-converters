@@ -368,8 +368,10 @@ the pinned submodule; see [#24](https://github.com/apache/ossie-converters/issue
 The grader compares normalized SQLGlot trees, so a rewritten metric whose trees
 differ can only be marked for review. For each metric the grader marks
 `REWRITTEN`, this check runs the authored and the returned expression in DuckDB
-on the same small edge-case data and compares the results. Rewrites that SQLGlot
-already proves equal are skipped unless `--all-rewrites` is given.
+on the same small edge-case data and compares the results. Rewrites the grader
+already finds cosmetic (its finding reads `cosmetic`) are skipped unless
+`--all-rewrites` is given; the check takes that verdict from the grader instead of
+comparing the trees again.
 
 | Outcome | Meaning |
 |---|---|
@@ -382,12 +384,14 @@ The portability step (`Runner.portability_case`) calls
 after the grader, once per graded round trip, so both read the same findings,
 and stores the result as `execution` next to `grading` in the case's
 `result.json` and in `results.json`. A skipped case is not executed, and a
-rejected return has nothing to execute. Without DuckDB every check is `NOT_RUN`
-with the reason. Like the scores, these findings never change the exit status.
+rejected return has nothing to execute. DuckDB is in the optional `execution`
+dependency group (`uv sync --project interop --group execution`), so the base
+install does not pull it in; CI installs it. Without DuckDB every check is
+`NOT_RUN` with the reason. Like the scores, these findings never change the exit status.
 A single pair can also be checked directly:
 
 ```sh
-uv run --project interop --locked python -m interop.portability_execution \
+uv run --project interop --locked --group execution python -m interop.portability_execution \
   --input ossie/compliance/portability/m2/m2_aggregates_qualified.ossie.yaml \
   --returned path/to/returned.yaml --converter dbt --json
 ```
@@ -409,7 +413,9 @@ loading off and its configuration locked. Division by zero is NULL
 DuckDB 2), so a rewrite that only adds a `NULLIF(..., 0)` guard agrees. `/` stays
 floating-point division.
 
-**Scope.** Top-level metrics over one dataset in `ANSI_SQL` or `OSSIE_SQL_2026`.
+**Scope.** Top-level metrics over one dataset, in the portable `sql` form or under
+`ANSI_SQL` or `OSSIE_SQL_2026`. The `sql` form is read as `OSSIE_SQL_2026` and
+shadows an `OSSIE_SQL_2026` dialect entry, as the grader reads it.
 An expression must be a single expression with no subquery or statement. Field
 rewrites, metrics over several datasets or over other metrics, dataset-scoped
 metrics, window functions, the `DateTimeTz` and `Opaque` datatypes, numeric

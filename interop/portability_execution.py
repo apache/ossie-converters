@@ -32,14 +32,15 @@ DuckDB on the same small edge-case data and compares the results:
                      and the two results on it
 * NOT_RUN            the check could not run, with the reason
 
-Scope: metrics in the top-level ``metrics`` list over a single dataset, tagged
-ANSI_SQL or OSSIE_SQL_2026. See interop/README.md for how the test data is built.
+Scope: metrics in the top-level ``metrics`` list over a single dataset, written
+in the portable ``sql`` form or tagged ANSI_SQL or OSSIE_SQL_2026. See interop/README.md for how the test data is built.
 
 DuckDB runs with ``ieee_floating_point_ops = false``, so ``x / 0`` is NULL rather
 than ``inf``; ``/`` stays floating-point division. The runner's portability step
 (``Runner.portability_case``) calls ``check()`` once per graded round trip, passing
-the grader's report, and stores the result next to the grading. ``duckdb`` and ``sqlglot`` are optional: without them every check is
-NOT_RUN.
+the grader's report, and stores the result next to the grading. ``duckdb`` comes
+from the optional ``execution`` dependency group, and ``sqlglot`` is optional too:
+without either one every check is NOT_RUN.
 """
 
 from __future__ import annotations
@@ -157,17 +158,28 @@ def _first_line(exc):
 
 
 def _portable_text(expression_obj, prefer=None):
-    """Return (tag, raw expression) under a portable tag, preferring ``prefer``."""
-    dialects = {}
-    for entry in (expression_obj or {}).get("dialects") or []:
+    """Return (tag, raw expression) under a portable tag, preferring ``prefer``.
+
+    Read the way the grader reads it (apache/ossie#642): the portable ``sql`` form
+    is OSSIE_SQL_2026 and shadows an OSSIE_SQL_2026 entry in ``dialects``, and the
+    OSSIE_SQL_2026 form comes ahead of an ANSI_SQL entry listed before it."""
+    if not isinstance(expression_obj, dict):
+        return None, None
+    portable = {}
+    sql = expression_obj.get("sql")
+    if isinstance(sql, str) and sql.strip():
+        portable["OSSIE_SQL_2026"] = sql
+    for entry in expression_obj.get("dialects") or []:
         if (
             isinstance(entry, dict)
             and entry.get("dialect") in grader().PORTABLE_DIALECTS
         ):
-            dialects.setdefault(entry["dialect"], entry.get("expression"))
-    if prefer in dialects:
-        return prefer, dialects[prefer]
-    return next(iter(dialects.items()), (None, None))
+            portable.setdefault(entry["dialect"], entry.get("expression"))
+    if prefer in portable:
+        return prefer, portable[prefer]
+    if "OSSIE_SQL_2026" in portable:
+        return "OSSIE_SQL_2026", portable["OSSIE_SQL_2026"]
+    return next(iter(portable.items()), (None, None))
 
 
 def _parse(text, what):
@@ -636,26 +648,18 @@ def _check_metric(name, input_document, returned_document):
         )
 
 
-def _proved_cosmetic(name, input_document, returned_document):
-    """True when sqlglot proves the two expressions equal, so running them adds nothing."""
-    authored = _find_metric(input_document, name)
-    returned = _find_metric(returned_document, name)
-    if authored is None or returned is None:
-        return (
-            True  # paired by the grader under another name, by an equivalent expression
-        )
-    tag, authored_text = _portable_text(authored.get("expression"))
-    _, returned_text = _portable_text(returned.get("expression"), tag)
-    if authored_text is None or returned_text is None:
-        return False
-    return grader()._equivalent_tree(str(authored_text), str(returned_text)) is True
+def _graded_cosmetic(finding):
+    """The grader's own verdict that a REWRITTEN is only spelling. Read from its
+    finding rather than compared again here, so the two cannot drift apart when
+    the grader's comparison takes more context (a dataset qualifier, a dialect)."""
+    return str(finding.detail or "").startswith("cosmetic")
 
 
 def check(
     input_document, returned_document, all_rewrites=False, converter="", graded=None
 ):
-    """Execute the metrics the grader marks REWRITTEN, skipping those sqlglot proves
-    equal unless ``all_rewrites``. A metric returned in a vendor dialect only is
+    """Execute the metrics the grader marks REWRITTEN, skipping those the grader
+    finds cosmetic unless ``all_rewrites``. A metric returned in a vendor dialect only is
     listed as NOT_RUN so the gap stays visible.
 
     ``graded`` is the grader's report for this same pair of documents. A step that
@@ -672,8 +676,7 @@ def check(
                 Check(finding.name, NOT_RUN, f"vendor dialect: {finding.detail}")
             )
         elif finding.outcome == grader().REWRITTEN and (
-            all_rewrites
-            or not _proved_cosmetic(finding.name, input_document, returned_document)
+            all_rewrites or not _graded_cosmetic(finding)
         ):
             report.findings.append(
                 _check_metric(finding.name, input_document, returned_document)

@@ -171,6 +171,54 @@ def test_rewrite_proved_cosmetic_is_run_only_on_request():
 
 
 @requires_engine
+def test_the_graders_verdict_decides_what_is_skipped():
+    # "cosmetic" is read from the grader's finding, not compared again here, so a
+    # grader that compares with more context (a dataset qualifier, a dialect) and
+    # calls an equal-looking pair a review gets that pair executed.
+    src = _fixture("m0/m0_sum_bare.ossie.yaml")
+    returned = _fixture("m0/m0_ansi_qualified.ossie.yaml")
+    graded = grade.grade(src, returned)
+    (rewritten,) = [
+        f for f in graded.findings if f.kind == "metric" and f.outcome == grade.REWRITTEN
+    ]
+    assert rewritten.detail.startswith("cosmetic")
+    assert execute.check(src, returned, graded=graded).findings == []
+    rewritten.detail = "review: normalized trees differ; returned 'SUM(sales.amount)'"
+    (finding,) = execute.check(src, returned, graded=graded).findings
+    assert finding.outcome == execute.SAME_ON_TEST_DATA
+
+
+def _sql_form(document, text):
+    """A copy of a ``_sales`` document whose metric is written in the ``sql`` form."""
+    returned = copy.deepcopy(document)
+    returned["metrics"][0]["expression"] = {"sql": text}
+    return returned
+
+
+@requires_engine
+def test_the_portable_sql_form_is_executed():
+    src = _sql_form(_sales(AMOUNT_STATUS, ELSE_ZERO), ELSE_ZERO)
+    finding = execute._check_metric("m", src, _sql_form(src, NO_ELSE))
+    assert finding.outcome == execute.DIFFERENT
+    assert (finding.authored_result, finding.returned_result) == (0, None)
+
+
+def test_the_sql_form_is_ossie_sql_2026_and_shadows_that_entry():
+    expression = {
+        "dialects": [
+            {"dialect": "ANSI_SQL", "expression": "SUM(a)"},
+            {"dialect": "OSSIE_SQL_2026", "expression": "SUM(b)"},
+        ],
+        "sql": "SUM(c)",
+    }
+    assert execute._portable_text(expression) == ("OSSIE_SQL_2026", "SUM(c)")
+    assert execute._portable_text(expression, "ANSI_SQL") == ("ANSI_SQL", "SUM(a)")
+    del expression["sql"]
+    assert execute._portable_text(expression) == ("OSSIE_SQL_2026", "SUM(b)")
+    assert execute._portable_text({"sql": "  "}) == (None, None)
+
+
+@requires_engine
 def test_nullif_on_a_zero_count_agrees_because_division_by_zero_is_null():
     # The check runs with ieee_floating_point_ops = false, so 1 / 0 is NULL and
     # the NULLIF guard changes nothing. Under DuckDB defaults (checked on 1.5.5)
