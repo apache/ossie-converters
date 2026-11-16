@@ -41,9 +41,7 @@ def test_output_file_reports_dump_error(
     output = tmp_path / "out"
     output.write_text("existing file", encoding="utf-8")
 
-    hex_project, problems = convert_ossie_to_hex(
-        minimal_ossie_input, output, dialect="ANSI_SQL"
-    )
+    hex_project, problems = convert_ossie_to_hex(minimal_ossie_input, output)
 
     assert hex_project is not None
     assert hex_project.resources
@@ -70,9 +68,7 @@ def test_output_permission_failure_reports_dump_error(
 
     monkeypatch.setattr(Path, "mkdir", deny_mkdir)
 
-    hex_project, problems = convert_ossie_to_hex(
-        minimal_ossie_input, output, dialect="ANSI_SQL"
-    )
+    hex_project, problems = convert_ossie_to_hex(minimal_ossie_input, output)
 
     assert hex_project is not None
     assert hex_project.resources
@@ -86,7 +82,7 @@ def test_missing_input_does_not_create_output(tmp_path: Path) -> None:
     output = tmp_path / "nested" / "out"
     missing = tmp_path / "missing.yml"
 
-    hex_project, problems = convert_ossie_to_hex(missing, output, dialect="ANSI_SQL")
+    hex_project, problems = convert_ossie_to_hex(missing, output)
 
     assert hex_project is None
     message = problems_snapshot(problems, include_causes=True)
@@ -97,7 +93,7 @@ Cause: []""")
     assert not output.parent.exists()
 
 
-@pytest.mark.parametrize("dialect", [None, "ANSI_SQL", "SNOWFLAKE"])
+@pytest.mark.parametrize("dialect", [None, "OSSIE_SQL_2026", "SNOWFLAKE"])
 def test_selected_dialect_is_used_when_loading_and_converting(
     tmp_path: Path, dialect: str | None
 ) -> None:
@@ -110,7 +106,7 @@ def test_selected_dialect_is_used_when_loading_and_converting(
                 "Integer",
                 [
                     ("DAX", "IF(bar[amount] > 0, bar[amount], 0)"),
-                    ("ANSI_SQL", "CASE WHEN amount > 0 THEN amount ELSE 0 END"),
+                    ("OSSIE_SQL_2026", "CASE WHEN amount > 0 THEN amount ELSE 0 END"),
                     ("SNOWFLAKE", "IFF(amount > 0, amount, 0)"),
                 ],
             )
@@ -122,7 +118,7 @@ def test_selected_dialect_is_used_when_loading_and_converting(
         [
             ("DAX", "SUMX(bar, IF(bar[amount] > 0, bar[amount], 0))"),
             (
-                "ANSI_SQL",
+                "OSSIE_SQL_2026",
                 "SUM(CASE WHEN bar.amount > 0 THEN bar.amount ELSE 0 END)",
             ),
             ("SNOWFLAKE", "SUM(IFF(bar.amount > 0, bar.amount, 0))"),
@@ -151,12 +147,7 @@ def test_selected_dialect_is_used_when_loading_and_converting(
                 "SUM(CASE WHEN ${amount} > 0 THEN ${amount} ELSE 0 END)",
             )
         )
-    if dialect is None:
-        assert problems_snapshot(problems) == snapshot(
-            "[INFO] No Ossie dialect specified; using ANSI_SQL"
-        )
-    else:
-        assert problems_snapshot(problems) == snapshot("")
+    assert problems_snapshot(problems) == snapshot("")
 
 
 def test_convert_tpcds() -> None:
@@ -168,7 +159,7 @@ def test_convert_tpcds() -> None:
     assert hex_project is not None
     assert hex_project_snapshot(hex_project) == snapshot("""\
 name: tpcds_retail_model
-dialect: duckdb
+dialect: snowflake
 resources:
 - id: store_sales
   description: Fact table containing all store sales transactions
@@ -373,9 +364,6 @@ resources:
     expr_sql: s_number_employees
 """)
     assert problems_snapshot(problems, include_causes=True) == snapshot("""\
-[INFO] No Ossie dialect specified; using ANSI_SQL
-Cause: []
-
 [WARNING] Missing. Hex requires a datatype. Using default 'String'.
 Cause: ['datasets', 'date_dim', 'fields', 'd_quarter_name', 'datatype']
 
@@ -531,4 +519,132 @@ Cause: ['ai_context']
 
 [WARNING] Not supported
 Cause: ['custom_extensions']\
+""")
+
+
+def test_mixed_dialects_without_preference_produce_no_warnings(tmp_path: Path) -> None:
+    dataset = Quick.dataset(
+        "things",
+        "public.things",
+        [
+            ("foo", "Integer", [("OSSIE_SQL_2026", "foo")]),
+            ("bar", "Integer", [("ANSI_SQL", "bar")]),
+            ("quo", "Integer", [("SNOWFLAKE", "quo")]),
+        ],
+    )
+    metric = Quick.metric("total", "Integer", [("OSSIE_SQL_2026", "SUM(things.foo)")])
+    model = Quick.semantic_model("mixed", [dataset], [metric], [])
+    source = tmp_path / "model.yml"
+    source.write_text(
+        dump_yaml(model.model_dump(mode="json", exclude_none=True)), encoding="utf-8"
+    )
+
+    project, problems = convert_ossie_to_hex(source)
+
+    assert project is not None
+    resource = project.resources[0]
+    assert isinstance(resource, HexModel)
+    assert [dimension.expr_sql for dimension in resource.dimensions] == [
+        "foo",
+        "bar",
+        "quo",
+    ]
+    assert resource.measures[0].func_sql == "SUM(${foo})"
+    assert not problems
+
+
+def test_mixed_dialects_warn_only_for_nonportable_fallbacks(tmp_path: Path) -> None:
+    dataset = Quick.dataset(
+        "things",
+        "public.things",
+        [
+            ("foo", "Integer", [("OSSIE_SQL_2026", "foo")]),
+            ("bar", "Integer", [("ANSI_SQL", "bar")]),
+            ("quo", "Integer", [("SNOWFLAKE", "quo")]),
+            ("qat", "Integer", [("BIGQUERY", "qat")]),
+        ],
+    )
+    metric = Quick.metric("total", "Integer", [("OSSIE_SQL_2026", "SUM(things.foo)")])
+    model = Quick.semantic_model("mixed", [dataset], [metric], [])
+    source = tmp_path / "model.yml"
+    source.write_text(
+        dump_yaml(model.model_dump(mode="json", exclude_none=True)), encoding="utf-8"
+    )
+
+    project, problems = convert_ossie_to_hex(source, dialect="BIGQUERY")
+
+    assert project is not None
+    resource = project.resources[0]
+    assert isinstance(resource, HexModel)
+    assert [dimension.expr_sql for dimension in resource.dimensions] == [
+        "foo",
+        "bar",
+        "quo",
+        "qat",
+    ]
+    assert resource.measures[0].func_sql == "SUM(${foo})"
+    assert len(problems) == 1
+    assert problems[0].severity == "warning"
+    assert problems[0].cause_path == [
+        "datasets",
+        "things",
+        "fields",
+        "quo",
+        "expression",
+        "dialects",
+    ]
+    assert problems[0].message == (
+        "Preferred dialect BIGQUERY not found for expression; "
+        "using fallback dialect SNOWFLAKE"
+    )
+
+
+def test_sql_only_expressions_are_dropped_with_an_error(tmp_path: Path) -> None:
+    model = {
+        "version": "0.2.0.dev0",
+        "name": "sql_only",
+        "datasets": [
+            {
+                "name": "things",
+                "source": "public.things",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "datatype": "Integer",
+                        "expression": {
+                            "dialects": [{"dialect": "ANSI_SQL", "expression": "foo"}]
+                        },
+                    },
+                    {
+                        "name": "bar",
+                        "datatype": "Integer",
+                        "expression": {"sql": "foo * 2"},
+                    },
+                ],
+            }
+        ],
+        "metrics": [
+            {
+                "name": "total",
+                "datatype": "Integer",
+                "expression": {"sql": "SUM(things.foo)"},
+            }
+        ],
+    }
+    source = tmp_path / "model.yml"
+    source.write_text(dump_yaml(model), encoding="utf-8")
+
+    project, problems = convert_ossie_to_hex(source)
+
+    assert project is not None
+    resource = project.resources[0]
+    assert isinstance(resource, HexModel)
+    assert [dimension.expr_sql for dimension in resource.dimensions] == ["foo"]
+    assert not resource.measures
+    assert problems_snapshot(problems, include_causes=True) == snapshot("""\
+[ERROR] No dialect expression found; `sql` is not supported
+Cause: ['datasets', 'things', 'fields', 'bar', 'expression', 'dialects']
+
+[ERROR] No dialect expression found; `sql` is not supported
+Cause: ['metrics', 'total', 'expression', 'dialects']\
 """)

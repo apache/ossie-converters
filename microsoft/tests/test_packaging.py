@@ -54,11 +54,14 @@ PACKAGE_DIR = SRC / PACKAGE
 MODULES = frozenset(
     {
         "_common",
+        "_dax_catalog",
+        "_dax_parser",
         "_dax_to_sql",
         "_sql_to_dax",
         "cli",
         "engine",
         "ossie_to_semantic_model",
+        "pbip",
         "semantic_model_to_ossie",
         "tom",
     }

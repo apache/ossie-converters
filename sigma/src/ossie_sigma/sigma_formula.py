@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import sqlglot
-from sqlglot import expressions as exp
+from sqlglot import Dialect, expressions as exp
 
 
 class FormulaParseError(Exception):
@@ -391,7 +391,7 @@ _PRECEDENCE: tuple[tuple[tuple[type, ...], int], ...] = (
     ((exp.Or,), 1),
     ((exp.And,), 2),
     ((exp.Not,), 3),
-    ((exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.Is, exp.Like), 4),
+    ((exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.Is, exp.Like, exp.In), 4),
     ((exp.DPipe,), 5),
     ((exp.Add, exp.Sub), 6),
     ((exp.Mul, exp.Div, exp.Mod), 7),
@@ -554,6 +554,27 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
         return exp.Nullif(this=built[0], expression=built[1])
     if name == "ifnull" and len(args) == 2:
         return exp.Coalesce(this=built[0], expressions=[built[1]])
+    if name == "text" and len(args) == 1:
+        # The value is the same, but the text can differ: Sigma's Text() and the
+        # engine's CAST may format numbers and dates differently.
+        return exp.Cast(this=built[0], to=exp.DataType.build("VARCHAR"))
+    if name == "in" and len(args) >= 2:
+        # Only a list of non-null literals: a NULL candidate makes SQL IN return
+        # NULL on a miss where Sigma's In() returns False.
+        if not all(
+            isinstance(a, Literal)
+            or (isinstance(a, UnaryOp) and a.op == "-" and isinstance(a.operand, Literal) and a.operand.kind == "number")
+            for a in args[1:]
+        ):
+            raise _NotTranslatable("In() candidates must be literals")
+        # IN binds like a comparison, so `[A] Or [B]` must keep its parentheses.
+        this = _maybe_paren(built[0], _binding_power(exp.In()), tighter=True)
+        return exp.In(this=this, expressions=built[1:])
+    if name == "number" and len(args) == 1:
+        return exp.Cast(this=built[0], to=exp.DataType.build("DOUBLE"))
+    if name == "int" and len(args) == 1:
+        # Sigma's Int() rounds down (Int(-3.2) = -4), which is FLOOR, not CAST AS INT.
+        return exp.Floor(this=built[0])
     if name == "isnull" and len(args) == 1:
         return exp.Is(this=built[0], expression=exp.Null())
     if name == "isnotnull" and len(args) == 1:
@@ -622,15 +643,16 @@ _REVERSE_AGG_FUNCTIONS = {
     "CEIL": "Ceiling",
     "FLOOR": "Floor",
     "SQRT": "Sqrt",
-    "COALESCE": "IfNull",
     "POWER": "Power",
 }
 
 _REVERSE_EXTRACT_PARTS = {v: k.capitalize() for k, v in _EXTRACT_PARTS.items()}
 
 
-def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optional[str]:
-    """Best-effort reverse translation of an ANSI SQL expression into Sigma formula syntax.
+def sql_to_sigma_formula(
+    sql: str, dataset_alias: Optional[str] = None, *, dialect: str | type[Dialect] | None = Dialect
+) -> Optional[str]:
+    """Best-effort translation from the given SQL dialect into Sigma formula syntax.
 
     Used only for fields/metrics that did not originate in Sigma (i.e. carry no
     ``SIGMA``-dialect expression to reuse verbatim). Returns ``None`` if *sql* cannot
@@ -638,7 +660,7 @@ def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optio
     callers should treat that as "not translatable", not fail the conversion.
     """
     try:
-        tree = sqlglot.parse_one(sql)
+        tree = sqlglot.parse_one(sql, read=dialect)
     except Exception:  # noqa: BLE001 - sqlglot raises several internal error types
         return None
 
@@ -718,6 +740,20 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Not):
         return f"NOT ({_render_sql_node(node.this, dataset_alias)})"
 
+    if isinstance(node, exp.In):
+        candidates = node.expressions
+        if node.args.get("query") or node.args.get("unnest") or node.args.get("field") or not candidates:
+            raise _NotTranslatable("IN over a subquery has no Sigma equivalent")
+        # sqlglot keeps TRUE/FALSE as exp.Boolean and -1 as exp.Neg(Literal).
+        if not all(
+            isinstance(c, (exp.Literal, exp.Boolean))
+            or (isinstance(c, exp.Neg) and isinstance(c.this, exp.Literal) and not c.this.is_string)
+            for c in candidates
+        ):
+            raise _NotTranslatable("IN candidates other than non-null literals are not mapped")
+        rendered = [_render_sql_node(c, dataset_alias) for c in [node.this, *candidates]]
+        return f"In({', '.join(rendered)})"
+
     if isinstance(node, exp.Is):
         inner = _render_sql_node(node.this, dataset_alias)
         if isinstance(node.expression, exp.Null):
@@ -748,6 +784,17 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Coalesce) and len(node.expressions) == 1:
         return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"
 
+    if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast):
+        # Only a cast to an unsized text type has a Sigma equivalent (Text()). A
+        # length such as CHAR(1) truncates, which Text() would not; that and other
+        # target types fall through to the not-translatable error below.
+        if node.to.is_type(*exp.DataType.TEXT_TYPES) and not node.to.expressions:
+            return f"Text({_render_sql_node(node.this, dataset_alias)})"
+        # An unsized floating-point cast is Number(). Integer and DECIMAL/NUMBER casts
+        # round to a scale (DECIMAL and NUMBER default to scale 0), so they are not.
+        if node.to.is_type(*exp.DataType.FLOAT_TYPES) and not node.to.expressions:
+            return f"Number({_render_sql_node(node.this, dataset_alias)})"
+
     if isinstance(node, exp.CurrentDate):
         return "Today()"
     if isinstance(node, exp.CurrentTimestamp):
@@ -762,6 +809,9 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
 
     func_name = node.__class__.__name__.upper()
     if func_name in _REVERSE_AGG_FUNCTIONS and hasattr(node, "this"):
+        if any(value is not None for key, value in node.args.items()
+               if key not in ("this", "expressions")):
+            raise _NotTranslatable(f"Unsupported SQL arguments for {func_name}")
         sigma_name = _REVERSE_AGG_FUNCTIONS[func_name]
         args = [node.this] + list(getattr(node, "expressions", []) or [])
         rendered = [_render_sql_node(a, dataset_alias) for a in args if a is not None]

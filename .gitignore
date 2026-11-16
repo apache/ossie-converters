@@ -30,3 +30,6 @@
 
 # Apache RAT (downloaded by dev/check-license)
 dev/lib/
+
+# Local cross-converter reports and intermediate artifacts
+interop/.runs/

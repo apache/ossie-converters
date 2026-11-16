@@ -24,7 +24,6 @@ from typing import Any, Optional, Union
 from uuid import NAMESPACE_URL, uuid5
 
 from ossie import (
-    OssieCustomExtension,
     OssieDataset,
     OssieDocument,
     OssieField,
@@ -34,7 +33,12 @@ from ossie import (
 )
 
 from ossie_sigma.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_sigma.expression_utils import ansi_sql_text, infer_single_dataset_qualifier, sigma_dialect_text
+from ossie_sigma.expression_utils import (
+    SQL_DIALECT_READERS,
+    infer_single_dataset_qualifier,
+    preferred_sql_expression,
+    sigma_dialect_text,
+)
 from ossie_sigma.sigma_formula import sql_to_sigma_formula
 from ossie_sigma.spec_keys import MODEL_LEVEL_SPEC_KEYS
 
@@ -46,19 +50,23 @@ _ID_NAMESPACE = uuid5(NAMESPACE_URL, "ossie.apache.org/converters/sigma")
 # The only value the data model spec endpoints currently accept.
 _SCHEMA_VERSION = 1
 
-# A Sigma column `format` is a *display* format, and the spec defines exactly two
-# variants: `{"kind": "number", ...}` and `{"kind": "date", ...}`. Emitting any other
-# `kind` produces a spec the data model API rejects, so the datatypes with no display
-# format of their own (String, Boolean, Time, Opaque) deliberately map to nothing and
-# the column is written without a `format` key at all — which is also what Sigma's own
-# specs look like for those columns.
-_DATATYPE_TO_FORMAT = {
+# A column's `format` tells Sigma how to show a value (for example, how many decimals).
+#
+# What was broken: for date columns we used to write `format.kind = "date"`. Sigma does
+# not know a kind called "date" (it only knows "number" and "datetime"). When Sigma sees
+# a kind it does not know, it rejects the whole model, not just that column.
+#
+# This is a small, safe fix. Only number columns get a `format.kind` from us. Date,
+# DateTime and DateTimeTz columns now get no `format`, so Sigma shows them its own
+# default way. That always works. Whether we should pick a date format ourselves (for
+# example "2026-11-10") is a separate decision for later; see apache/ossie-converters#147.
+#
+# If the model already carries a format of its own (kept in custom_extensions), that one
+# is still used.
+_NUMERIC_DATATYPE_TO_FORMAT_KIND = {
     "Integer": "number",
     "Decimal": "number",
     "Float": "number",
-    "Date": "date",
-    "DateTime": "date",
-    "DateTimeTz": "date",
 }
 
 
@@ -103,7 +111,7 @@ def _emit_name(name: Optional[str], ext: dict[str, Any]) -> bool:
 def _resolve_formula(
     expression, dataset_alias: str, element_name: str, issues: list[ConverterIssue]
 ) -> Optional[str]:
-    """Prefer the native Sigma formula text; otherwise best-effort translate ANSI SQL.
+    """Prefer native Sigma formula text, then translate the preferred SQL dialect.
 
     Returns ``None`` when no valid Sigma formula can be produced. `formula` is a
     required property of every Sigma column and metric, and the data model API
@@ -115,15 +123,17 @@ def _resolve_formula(
     if native is not None:
         return native
 
-    sql = ansi_sql_text(expression)
+    sql = preferred_sql_expression(expression)
     if sql is not None:
-        translated = sql_to_sigma_formula(sql, dataset_alias=dataset_alias)
+        translated = sql_to_sigma_formula(
+            sql.expression, dataset_alias=dataset_alias, dialect=SQL_DIALECT_READERS[sql.dialect]
+        )
         if translated is not None:
             return translated
-        detail = f"ANSI SQL expression {sql!r} has no Sigma formula equivalent"
+        detail = f"{sql.dialect} expression {sql.expression!r} has no Sigma formula equivalent"
     else:
-        dialects = ", ".join(d.dialect.value for d in expression.dialects) or "none"
-        detail = f"no SIGMA or ANSI_SQL dialect expression to translate from (have: {dialects})"
+        dialects = ", ".join(d.dialect for d in expression.dialects or []) or "none"
+        detail = f"no supported SQL dialect expression to translate from (have: {dialects})"
 
     issues.append(
         ConverterIssue(
@@ -179,8 +189,14 @@ class OssieToSigmaConverter:
             ext = _sigma_ext(metric) or {}
             element_id = ext.get("element_id")
             if element_id is None:
-                sql = ansi_sql_text(metric.expression)
-                owning_dataset = infer_single_dataset_qualifier(sql, dataset_names) if sql else None
+                sql = preferred_sql_expression(metric.expression)
+                owning_dataset = (
+                    infer_single_dataset_qualifier(
+                        sql.expression, dataset_names, dialect=SQL_DIALECT_READERS[sql.dialect]
+                    )
+                    if sql is not None
+                    else None
+                )
                 element_id = dataset_element_id.get(owning_dataset) if owning_dataset else None
                 if element_id is None:
                     issues.append(
@@ -202,13 +218,31 @@ class OssieToSigmaConverter:
             element_id = ext.get("element_id") or dataset_element_id.get(rel.from_dataset, "")
             relationships_by_element.setdefault(element_id, []).append(rel)
 
+        # A relationship key names a column on each side, so every dataset's column ids
+        # have to exist before any relationship is built.
+        field_ids_by_dataset: dict[str, dict[str, str]] = {}
+        built_elements: list[tuple[OssieDataset, dict[str, Any]]] = []
         for dataset in model.datasets:
             element = self._build_element(
-                dataset, dataset_element_id, metrics_by_element, relationships_by_element, issues
+                dataset, dataset_element_id, metrics_by_element, field_ids_by_dataset, issues
             )
+            built_elements.append((dataset, element))
             ext = _sigma_ext(dataset) or {}
             page = _page(ext.get("page_id"), ext.get("page_name"))
             page["elements"].append(element)
+
+        declared_fields = {d.name: {f.name for f in d.fields or []} for d in model.datasets}
+        for dataset, element in built_elements:
+            relationships = relationships_by_element.get(dataset_element_id[dataset.name], [])
+            built = [
+                self._build_relationship(
+                    r, dataset.name, dataset_element_id, field_ids_by_dataset, declared_fields, issues
+                )
+                for r in relationships
+            ]
+            built = [r for r in built if r is not None]
+            if built:
+                element["relationships"] = built
 
         for entry in model_ext.get("non_table_elements", []):
             page = _page(entry.get("page_id"), entry.get("page_name"))
@@ -223,7 +257,7 @@ class OssieToSigmaConverter:
         dataset: OssieDataset,
         dataset_element_id: dict[str, str],
         metrics_by_element: dict[str, list[OssieMetric]],
-        relationships_by_element: dict[str, list[OssieRelationship]],
+        field_ids_by_dataset: dict[str, dict[str, str]],
         issues: list[ConverterIssue],
     ) -> dict[str, Any]:
         ext = _sigma_ext(dataset) or {}
@@ -240,7 +274,7 @@ class OssieToSigmaConverter:
             # the preserved original. The other kinds have no such portable field.
             source["path"] = dataset.source.split(".")
 
-        field_ids: dict[str, str] = {}
+        field_ids: dict[str, str] = field_ids_by_dataset.setdefault(dataset.name, {})
         columns = []
         for field in dataset.fields or []:
             field_ext = _sigma_ext(field) or {}
@@ -277,12 +311,6 @@ class OssieToSigmaConverter:
         if metrics:
             element["metrics"] = metrics
 
-        relationships = relationships_by_element.get(element_id, [])
-        if relationships:
-            element["relationships"] = [
-                self._build_relationship(r, dataset.name, dataset_element_id, field_ids, issues) for r in relationships
-            ]
-
         return element
 
     def _build_column(
@@ -308,8 +336,8 @@ class OssieToSigmaConverter:
         # currencySymbol, ...) that the coarse datatype mapping cannot reconstruct.
         if "format" in field_ext:
             column["format"] = field_ext["format"]
-        elif field.datatype in _DATATYPE_TO_FORMAT:
-            column["format"] = {"kind": _DATATYPE_TO_FORMAT[field.datatype]}
+        elif field.datatype in _NUMERIC_DATATYPE_TO_FORMAT_KIND:
+            column["format"] = {"kind": _NUMERIC_DATATYPE_TO_FORMAT_KIND[field.datatype]}
         elif field.datatype == "Opaque":
             issues.append(
                 ConverterIssue(
@@ -346,10 +374,13 @@ class OssieToSigmaConverter:
         rel: OssieRelationship,
         dataset_name: str,
         dataset_element_id: dict[str, str],
-        field_ids: dict[str, str],
+        field_ids_by_dataset: dict[str, dict[str, str]],
+        declared_fields: dict[str, set[str]],
         issues: list[ConverterIssue],
-    ) -> dict[str, Any]:
+    ) -> Optional[dict[str, Any]]:
         ext = _sigma_ext(rel) or {}
+        source_ids = field_ids_by_dataset.get(dataset_name, {})
+        target_ids = field_ids_by_dataset.get(rel.to, {})
         target_element_id = dataset_element_id.get(rel.to, rel.to)
         result: dict[str, Any] = {
             # Scoped by owning dataset, like column ids (dataset+field) and metric ids
@@ -379,12 +410,43 @@ class OssieToSigmaConverter:
                         "key column(s) were dropped from the Sigma relationship.",
                     )
                 )
-            result["keys"] = [
-                {
-                    "sourceColumnId": field_ids.get(from_col, from_col),
-                    "targetColumnId": field_ids.get(to_col, to_col),
-                }
-                for from_col, to_col in zip(rel.from_columns, rel.to_columns)
-            ]
+            keys = []
+            omitted = False
+            for from_col, to_col in zip(rel.from_columns, rel.to_columns):
+                # Each side is a column of its own dataset: the target key must carry the
+                # target element's column id, not a lookup in the source element.
+                for side, column, ids in ((dataset_name, from_col, source_ids), (rel.to, to_col, target_ids)):
+                    if column not in ids and column in declared_fields.get(side, set()):
+                        # A declared field with no usable expression gets no Sigma column, so
+                        # no key can point at it and Sigma would reject the whole spec.
+                        omitted = True
+                        issues.append(
+                            ConverterIssue(
+                                ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED,
+                                f"{dataset_name}.{rel.name}",
+                                f"Join column '{column}' of dataset '{side}' was omitted from the "
+                                "Sigma output (no usable expression), so the relationship was dropped.",
+                            )
+                        )
+                    elif column not in ids:
+                        issues.append(
+                            ConverterIssue(
+                                ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED,
+                                f"{dataset_name}.{rel.name}",
+                                f"Join column '{column}' is not a modeled field of dataset '{side}'; "
+                                "it was written unchanged as the Sigma column id. That is only valid "
+                                "if it is a raw warehouse reference (inode-<file>/<COLUMN>), so "
+                                "check it.",
+                            )
+                        )
+                keys.append(
+                    {
+                        "sourceColumnId": source_ids.get(from_col, from_col),
+                        "targetColumnId": target_ids.get(to_col, to_col),
+                    }
+                )
+            if omitted:
+                return None
+            result["keys"] = keys
         result.update(ext.get("native") or {})
         return result

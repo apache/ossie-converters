@@ -1316,6 +1316,37 @@ def test_a_plain_ossie_model_resolves_field_named_keys_to_columns() -> None:
     ]
 
 
+def test_a_key_field_with_only_sql_resolves_to_the_column_it_reads() -> None:
+    """Skipped, the field left the key and the join naming `customer_number`,
+    a column the table does not have."""
+    model = yaml.safe_load(_ossie_yaml())
+    customers = next(
+        dataset for dataset in model["datasets"] if dataset["name"] == "customers"
+    )
+    key_field = next(
+        item for item in customers["fields"] if item["name"] == "customer_id"
+    )
+    key_field["name"] = "customer_number"
+    key_field["expression"] = {"sql": "customer_id"}
+    customers["primary_key"] = ["customer_number"]
+    model["relationships"][0]["to_columns"] = ["customer_number"]
+
+    native = yaml.safe_load(convert_ossie_to_auto_ontology(yaml.safe_dump(model)))
+
+    tables = {
+        table["name"]: table
+        for table in native["data_layer"]["databases"][0]["schemas"][0]["tables"]
+    }
+    assert tables["customers"]["pk"] == ["customer_id"]
+    assert [column["name"] for column in tables["customers"]["columns"]] == [
+        "customer_id",
+        "name",
+    ]
+    assert native["data_layer"]["joins"][0]["join_columns"] == [
+        {"source": "customer_id", "target": "customer_id"}
+    ]
+
+
 def test_an_export_from_before_identifier_names_keeps_its_identifiers() -> None:
     native = _display_named_native()
     _term(native, "Customer Orders")["name"] = (
@@ -1446,6 +1477,19 @@ def test_duplicate_auto_ontology_field_names_across_attribute_kinds_are_rejected
 
     with pytest.raises(AutoOntologyConversionError, match="Duplicate field name"):
         convert_auto_ontology_to_ossie(yaml.safe_dump(native))
+
+
+def test_sql_only_field_and_metric_are_read_from_their_sql() -> None:
+    ossie = yaml.safe_load(_ossie_yaml())
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    net_total = next(field for field in orders["fields"] if field["name"] == "net_total")
+    net_total["expression"] = {"sql": "orders.net_total * 1.1"}
+    ossie["metrics"][0]["expression"] = {"sql": "SUM(orders.net_total)"}
+
+    converted = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie))
+
+    assert "orders.net_total * 1.1" in converted
+    assert "SUM(orders.net_total)" in converted
 
 
 def test_catalog_only_auto_ontology_has_no_representable_terms() -> None:

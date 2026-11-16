@@ -26,8 +26,13 @@ Ossie expressions use.
 
 import datetime
 import json
+import os
 import re
+import warnings
 
+import sqlglot
+from sqlglot import Dialect, exp
+from sqlglot.errors import ErrorLevel, SqlglotError
 import yaml
 
 # Ossie semantic model spec version this converter targets (see core-spec).
@@ -37,10 +42,19 @@ OSSIE_VERSION = "0.2.0.dev0"
 VENDOR = "OMNI"
 
 # Omni SQL is the SQL of the model's database connection, so there is no OMNI
-# entry in the Ossie dialect enum. Import emits ANSI_SQL; export prefers ANSI_SQL
-# and lets the caller prepend a warehouse dialect (e.g. SNOWFLAKE) that the
-# actual connection would accept.
+# entry in the Ossie dialect enum. Import emits ANSI_SQL. SQLGlot has no ANSI
+# dialect, so explicitly use its generic Dialect for portable SQL.
 DIALECT_ANSI = "ANSI_SQL"
+_PORTABLE_SQL_DIALECTS = (DIALECT_ANSI, "OSSIE_SQL_2026")
+_WAREHOUSE_SQL_DIALECTS = {
+    "DATABRICKS": "databricks",
+    "SNOWFLAKE": "snowflake",
+    "BIGQUERY": "bigquery",
+}
+_SQL_DIALECT_READERS = {
+    **dict.fromkeys(_PORTABLE_SQL_DIALECTS, Dialect),
+    **_WAREHOUSE_SQL_DIALECTS,
+}
 
 # Bump when the shape of a stashed `data` blob changes.
 STASH_VERSION = 1
@@ -76,6 +90,65 @@ _OMNI_REF_RE = re.compile(r"\$\{\s*([^}]*?)\s*\}")
 
 class ConversionError(Exception):
     """Raised when an input cannot be converted."""
+
+
+def safe_relative_path(path, what):
+    """Validate a stashed file path before it is used as an output filename.
+
+    The stash is part of the input document, so a path in it is untrusted: an entry
+    like `../../x.yaml` in `extra_files` would make export write outside the
+    directory the caller named. Refuses anything that is not a plain relative path
+    inside the output root.
+    """
+    if not isinstance(path, str):
+        raise ConversionError(
+            f"{what}: stashed file path must be a string, got {type(path).__name__}")
+    if "\x00" in path:
+        raise ConversionError(f"{what}: stashed file path contains a NUL byte")
+    if not path.strip():
+        raise ConversionError(f"{what}: stashed file path is empty")
+    if path.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", path):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' is absolute; expected a path "
+            f"relative to the output directory")
+    parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".")]
+    # A drive on any component makes ntpath.join reset to it, so check each one.
+    if any(re.match(r"^[A-Za-z]:", p) for p in parts):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' is absolute; expected a path "
+            f"relative to the output directory")
+    if any(p == ".." for p in parts):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' escapes the output directory")
+    # Windows strips trailing spaces and dots from each component when it opens a
+    # file, so `.. ` would turn into `..` there. No Omni file name ends that way.
+    if any(p.endswith((" ", ".")) for p in parts):
+        raise ConversionError(
+            f"{what}: stashed file path '{path}' has a component ending in a "
+            f"space or dot")
+    if not parts:
+        raise ConversionError(f"{what}: stashed file path '{path}' names no file")
+    return "/".join(parts)
+
+
+def contained_output_path(root, rel):
+    """Join an exported file's `/`-separated relative path onto the output
+    directory, refusing a result that resolves outside it.
+
+    safe_relative_path() checks the string; this checks what the OS will actually
+    open, after Windows path normalization and any symlinks already inside the
+    output directory.
+    """
+    dest = os.path.join(root, *rel.split("/"))
+    real_root = os.path.realpath(root)
+    try:
+        contained = os.path.commonpath(
+            [real_root, os.path.realpath(dest)]) == real_root
+    except ValueError:  # different drives on Windows
+        contained = False
+    if not contained:
+        raise ConversionError(f"output path '{rel}' escapes the output directory")
+    return dest
 
 
 def require(obj, key, what):
@@ -266,27 +339,62 @@ def foreign_vendor_extensions(obj):
     ]
 
 
-def pick_expression(ossie_expression, preferred=None):
+def pick_expression(ossie_expression, preferred=None, *, scope="expression"):
     """Choose the SQL string for an Ossie expression.
 
-    Preference order: the caller-chosen warehouse dialect (Omni passes SQL through
-    to the connection's database, so e.g. SNOWFLAKE SQL is valid on a Snowflake-
-    backed Omni model), then ANSI_SQL. Returns None if neither is present (the
-    caller warns and skips).
+    Preserve a matching preferred or ANSI_SQL expression verbatim. Otherwise
+    translate a supported SQL alternative into the requested warehouse dialect
+    or generic SQL.
     """
+    ossie_expression = ossie_expression or {}
     dialects = {
         d.get("dialect"): d.get("expression")
-        for d in (ossie_expression or {}).get("dialects") or []
+        for d in ossie_expression.get("dialects") or []
     }
-    expr = None
-    if preferred:
-        expr = dialects.get(preferred)
+    primary = ossie_expression.get("sql")
+    if primary is not None:
+        dialects["OSSIE_SQL_2026"] = primary
+    expr = dialects.get(preferred) if preferred else primary
     if expr is None:
         expr = dialects.get(DIALECT_ANSI)
-    if expr is not None and not isinstance(expr, str):
-        raise ConversionError(
-            f"expression must be a string, got {type(expr).__name__}")
-    return expr
+    if expr is not None:
+        if not isinstance(expr, str):
+            raise ConversionError(
+                f"expression must be a string, got {type(expr).__name__}")
+        return expr
+
+    writer = (Dialect if not preferred or preferred in _PORTABLE_SQL_DIALECTS
+              else _WAREHOUSE_SQL_DIALECTS.get(preferred))
+    if writer is None:
+        return None
+    for dialect, reader in _SQL_DIALECT_READERS.items():
+        candidate = dialects.get(dialect)
+        if candidate is None:
+            continue
+        if not isinstance(candidate, str):
+            raise ConversionError(
+                f"expression must be a string, got {type(candidate).__name__}")
+        try:
+            statements = sqlglot.parse(candidate, read=reader)
+            if len(statements) != 1 or statements[0] is None:
+                continue
+            tree = statements[0]
+            # Unknown functions can carry warehouse-specific semantics. SQLGlot
+            # passes them through without detecting a translation failure.
+            if tree.find(exp.Anonymous, exp.Query, exp.Command, exp.DDL, exp.DML):
+                continue
+            rendered = tree.sql(dialect=writer, unsupported_level=ErrorLevel.RAISE)
+            if not preferred and dialect in _WAREHOUSE_SQL_DIALECTS:
+                warnings.warn(
+                    f"[{scope}] translated {dialect} to generic SQL without a target "
+                    "warehouse. Pass --dialect for the Omni connection before using "
+                    "this expression.",
+                    stacklevel=2,
+                )
+            return rendered
+        except SqlglotError:
+            continue
+    return None
 
 
 def synonyms_of(ai_context):

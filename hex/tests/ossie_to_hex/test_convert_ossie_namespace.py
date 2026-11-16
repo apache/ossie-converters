@@ -31,14 +31,14 @@ from ossie_hex.ossie_to_hex.convert_ossie_namespace import (
 )
 from tests.ossie_to_hex.utils import Quick
 
-AMOUNT = Quick.field("amount", "Integer", [("ANSI_SQL", "amount")])
+AMOUNT = Quick.field("amount", "Integer", [("OSSIE_SQL_2026", "amount")])
 ORDERS = Quick.dataset(
-    "orders", "public.orders", [("amount", "Integer", [("ANSI_SQL", "amount")])]
+    "orders", "public.orders", [("amount", "Integer", [("OSSIE_SQL_2026", "amount")])]
 )
 CUSTOMERS = Quick.dataset(
-    "customers", "public.customers", [("id", "Integer", [("ANSI_SQL", "id")])]
+    "customers", "public.customers", [("id", "Integer", [("OSSIE_SQL_2026", "id")])]
 )
-TOTAL = Quick.metric("total", "Integer", [("ANSI_SQL", "SUM(orders.amount)")])
+TOTAL = Quick.metric("total", "Integer", [("OSSIE_SQL_2026", "SUM(orders.amount)")])
 ORDERS_CUSTOMERS = Quick.relationship(
     "orders_customers", "orders", "customers", ["customer_id"], ["id"]
 )

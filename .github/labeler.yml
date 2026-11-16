@@ -16,6 +16,10 @@
 # under the License.
 
 # One label per converter
+converter/bigquery:
+  - changed-files:
+      - any-glob-to-any-file: 'bigquery/**'
+
 converter/cube:
   - changed-files:
       - any-glob-to-any-file: 'cube/**'
@@ -43,6 +47,10 @@ converter/holistics:
 converter/honeydew:
   - changed-files:
       - any-glob-to-any-file: 'honeydew/**'
+
+converter/lightdash:
+  - changed-files:
+      - any-glob-to-any-file: 'lightdash/**'
 
 converter/microsoft:
   - changed-files:

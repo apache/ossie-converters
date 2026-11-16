@@ -21,7 +21,9 @@ from __future__ import annotations
 
 from typing import Optional
 
+import sqlglot
 from ossie import OssieDialect, OssieDialectExpression, OssieExpression
+from sqlglot import Dialect, expressions as exp
 
 from ossie_sigma.sigma_formula import (
     BinOp,
@@ -74,21 +76,36 @@ def build_expression(formula: str, dataset_alias: Optional[str] = None) -> Ossie
 
 def sigma_dialect_text(expression: OssieExpression) -> Optional[str]:
     """Return the raw Sigma formula text from *expression*, if a ``SIGMA`` dialect entry exists."""
-    for dialect_expr in expression.dialects:
+    for dialect_expr in expression.dialects or []:
         if dialect_expr.dialect == OssieDialect.SIGMA:
             return dialect_expr.expression
     return None
 
 
-def ansi_sql_text(expression: OssieExpression) -> Optional[str]:
-    """Return the ``ANSI_SQL`` dialect entry from *expression*, if present."""
-    for dialect_expr in expression.dialects:
-        if dialect_expr.dialect == OssieDialect.ANSI_SQL:
-            return dialect_expr.expression
+# SQLGlot has no ANSI dialect. Select the generic reader explicitly for portable SQL.
+SQL_DIALECT_READERS = {
+    OssieDialect.ANSI_SQL: Dialect,
+    OssieDialect.OSSIE_SQL_2026: Dialect,
+    OssieDialect.DATABRICKS: "databricks",
+    OssieDialect.SNOWFLAKE: "snowflake",
+    OssieDialect.BIGQUERY: "bigquery",
+}
+
+
+def preferred_sql_expression(expression: OssieExpression) -> Optional[OssieDialectExpression]:
+    """Select SQL for both metric ownership and formula translation."""
+    if expression.sql is not None:
+        return OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression=expression.sql)
+    for dialect in SQL_DIALECT_READERS:
+        for candidate in expression.dialects or []:
+            if candidate.dialect == dialect:
+                return candidate
     return None
 
 
-def infer_single_dataset_qualifier(sql: str, dataset_names: set) -> Optional[str]:
+def infer_single_dataset_qualifier(
+    sql: str, dataset_names: set[str], *, dialect: str | type[Dialect] | None = Dialect
+) -> Optional[str]:
     """Return the sole known dataset referenced by *sql*'s qualified columns, if unambiguous.
 
     Used to place a model-level metric with no preserved Sigma ``element_id`` (i.e. one
@@ -96,17 +113,10 @@ def infer_single_dataset_qualifier(sql: str, dataset_names: set) -> Optional[str
     element — Sigma metrics are always scoped to one element, unlike Ossie metrics,
     which may span datasets via relationships.
     """
-    import sqlglot
-    from sqlglot import expressions as exp
-
     try:
-        tree = sqlglot.parse_one(sql)
+        tree = sqlglot.parse_one(sql, read=dialect)
     except Exception:  # noqa: BLE001
         return None
 
-    qualifiers = {
-        column.parts[0].name
-        for column in tree.find_all(exp.Column)
-        if len(column.parts) > 1 and column.parts[0].name in dataset_names
-    }
-    return qualifiers.pop() if len(qualifiers) == 1 else None
+    qualifiers = {column.table for column in tree.find_all(exp.Column) if column.table}
+    return qualifiers.pop() if len(qualifiers) == 1 and qualifiers <= dataset_names else None

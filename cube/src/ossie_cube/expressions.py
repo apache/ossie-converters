@@ -621,6 +621,8 @@ def _split_bigquery_quoted_paths(text):
     BigQuery interprets both as a path. SQLGlot splits the first into generated
     identifiers without source positions, preventing safe column qualification.
     Only identifier tokens are rewritten; dots in string literals stay intact.
+    On SQLGlot upgrades, recheck those positions; remove this workaround if each
+    parsed path part retains its source span.
     """
     for token in reversed(native_tokens(text, "BIGQUERY")):
         raw = text[token.start:token.end + 1]
