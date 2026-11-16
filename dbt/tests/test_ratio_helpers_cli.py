@@ -51,8 +51,18 @@ EXPRESSIONS = [
     "SUM(orders.amount) / COUNT(orders.*)",
     "(SUM(orders.amount) / COUNT(DISTINCT orders.order_id)) / SUM(orders.amount)",
     "(SUM(orders.amount) / COUNT(*)) / SUM(orders.amount)",
+    "SUM(orders.amount) / NULLIF(COUNT(orders.order_id), 0)",
+    "SUM(orders.amount) / NULLIF(COUNT(DISTINCT orders.order_id), 0)",
+    "SUM(orders.amount) / NULLIF(COUNT(*), 0)",
+    "SUM(orders.amount) / NULLIF(SUM(orders.amount), 0)",
+    "(SUM(orders.amount) / NULLIF(COUNT(orders.order_id), 0)) / NULLIF(SUM(orders.amount), 0)",
 ]
-IDS = ["count_column", "count_distinct", "count_star", "nested_count", "count_one", "qualified_star", "nested_distinct", "nested_star"]
+IDS = [
+    "count_column", "count_distinct", "count_star", "nested_count",
+    "count_one", "qualified_star", "nested_distinct", "nested_star",
+    "nullif_count_column", "nullif_count_distinct", "nullif_count_star",
+    "nullif_sum", "nested_nullif_count",
+]
 
 
 def _document(expression=EXPRESSIONS[0], collision=False):
@@ -97,7 +107,13 @@ def test_real_cli_three_round_trips_do_not_grow_helpers(tmp_path, expression):
     source = tmp_path / "input.yaml"
     source.write_text(_document(expression).to_ossie_yaml(), encoding="utf-8")
     observed = []
-    row_sets = [[(12.0, 1), (7.0, 1), (3.0, None), (2.0, 2)], [(2.0, None), (3.0, None)], []]
+    row_sets = [
+        [(12.0, 1), (7.0, 1), (3.0, None), (2.0, 2)],
+        [(2.0, None), (3.0, None)],
+        [],
+        [(0.0, 1), (0.0, None)],
+        [(-2.0, 1), (2.0, 2)],
+    ]
     for round_number in range(3):
         manifest_path = tmp_path / f"manifest-{round_number}.json"
         target = tmp_path / f"round-{round_number}.yaml"
@@ -116,6 +132,9 @@ def test_real_cli_three_round_trips_do_not_grow_helpers(tmp_path, expression):
         assert meta["team"] == USER_META["team"]
         assert meta["ossie"]["owner"] == USER_META["ossie"]["owner"]
         sql = metric["expression"]["dialects"][0]["expression"]
+        # SQLite returns NULL for a raw division by zero too, so numeric
+        # equivalence alone does not prove upstream #163 was preserved.
+        assert "NULLIF(" in sql.upper(), sql
         for rows in row_sets:
             expected = _evaluate(expression, rows)
             actual = _evaluate(sql, rows)

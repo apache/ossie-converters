@@ -47,6 +47,7 @@ import pytest
 
 import snapshots
 from ossie_holistics import _yaml, aml_to_ossie, aql, ossie_to_aml
+from ossie_holistics.cli import main
 from ossie_holistics.errors import ConversionError
 from ossie_holistics.issues import Severity
 
@@ -114,6 +115,30 @@ def test_the_forward_direction_reports_the_losses_it_declares():
         aml_to_ossie.ISSUE_RELATIONSHIP_FILTER,
         aml_to_ossie.ISSUE_UNSUPPORTED_RELATIONSHIP,
     }
+
+
+def test_cli_reports_unresolved_ecommerce_query_as_an_error(tmp_path):
+    issues_path = tmp_path / "issues.yaml"
+    status = main(
+        [
+            "to-ossie",
+            str(snapshots.ECOMMERCE_COMPILED),
+            "-o",
+            str(tmp_path / "model.yaml"),
+            "--sql-dialect",
+            snapshots.SQL_DIALECT,
+            "--issues",
+            str(issues_path),
+        ]
+    )
+    assert status == 1
+    issues = _yaml.load(issues_path.read_text(encoding="utf-8"))
+    assert isinstance(issues, list) and all(isinstance(issue, dict) for issue in issues)
+    assert any(
+        issue["code"] == aml_to_ossie.ISSUE_UNRESOLVED_QUERY
+        and issue["severity"] == "ERROR"
+        for issue in issues
+    )
 
 
 def test_every_qualified_reference_resolves():

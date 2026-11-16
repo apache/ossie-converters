@@ -113,6 +113,15 @@ displayed text may not be: Sigma's `Text()` and a warehouse's `CAST` can format 
 and dates differently. A cast to a sized text type such as `CHAR(1)` is not mapped,
 because it truncates and `Text()` does not.
 
+`In(x, a, b)` translates to `x IN (a, b)` and back, only when every candidate is a
+non-null literal. With a `NULL` candidate, SQL `IN` returns `NULL` instead of `FALSE`
+on a miss, while Sigma's `In()` is documented as returning `True` or `False`; a column
+candidate can be `NULL` at run time, so column lists, `NULL` candidates and `IN`
+over a subquery are not mapped. `NOT IN` translates as `NOT (In(...))`.
+When the tested value is `NULL`, SQL `IN` returns `NULL`, so `NOT IN` excludes the row.
+Sigma's `In()` behaves the same way: it compiles to the warehouse's `IN`, so `In(Null, ...)`
+and `Not In(Null, ...)` are both `Null`, and a filter on either drops the row.
+
 `Number(x)` translates to `CAST(x AS DOUBLE)`, and an unsized `FLOAT`, `REAL` or `DOUBLE`
 cast reads back as `Number(x)`. An integer or `DECIMAL`/`NUMBER` cast is not mapped,
 because it rounds to a scale (`DECIMAL` and `NUMBER` default to scale 0). `Int(x)`
@@ -138,10 +147,14 @@ qualifies. A metric that references several datasets or none is dropped with
 
 ## Column formats carry only a coarse datatype
 
-The spec has no column datatype — only a display `format`, with two documented kinds,
-`number` and `date`. So Sigma → Ossie can infer no more than `Decimal`/`DateTime`, any
+The spec has no column datatype — only a display `format`, and Sigma accepts two kinds,
+`number` and `datetime`. So Sigma → Ossie can infer no more than `Decimal`/`DateTime`, any
 other kind becomes `Opaque` (`OPAQUE_DATATYPE`), and a column with no format correctly
-gets no `datatype` at all. Ossie → Sigma emits only those two kinds; `String`,
+gets no `datatype` at all. Ossie → Sigma emits only `number`, and only for numeric
+columns (`Integer`, `Decimal`, `Float`). Sigma rejects the whole model for a kind it does
+not know, and writing `datetime` ourselves would mean choosing a default date format, so
+`Date`, `DateTime` and `DateTimeTz` get no `format` and Sigma shows its own default.
+A format kept in `custom_extensions` is still written back. `String`,
 `Boolean`, `Time`, and `Opaque` produce no `format` key, because an invented `kind`
 would be rejected for the whole document. The full native format object is always
 preserved, so display detail (`formatString`, `currencySymbol`, ...) survives.

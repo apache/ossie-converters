@@ -116,6 +116,9 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 
 ### Conversion notes
 
+A RATIO metric becomes `(numerator) / NULLIF(denominator, 0)`: MetricFlow returns NULL for a group whose
+denominator is 0, and the Ossie expression does the same rather than leave division by zero to the engine.
+
 **MSI → Ossie** is lossy in the following ways, each recorded as a `ConverterIssue` in the result:
 
 | Issue type | Reason |
@@ -145,7 +148,7 @@ dates, are written as strings.
 - `COUNT(*)` / `COUNT(<dataset>.*)` → `count` SIMPLE metric with `expr: '1'`, because MetricFlow cannot render a bare `*` inside a count. The counted dataset comes from the qualifier, so with more than one dataset write `COUNT(orders.*)`; a bare `COUNT(*)`, or a qualifier that matches no dataset, is skipped with a `ROW_COUNT_METRIC_DROPPED` warning
 - `SUM(<constant>)` (e.g. `SUM(1)`) keeps its constant, but has no column to place it in a dataset: with more than one dataset it is skipped with `ROW_COUNT_METRIC_DROPPED`
 - `COUNT(DISTINCT *)`, `COUNT(DISTINCT 1)` and the like, anywhere in an expression, are skipped with `ROW_COUNT_METRIC_DROPPED`: they count whether any row exists, not how many
-- `(expr_a) / (expr_b)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended. Generated helpers remain public and directly queryable, preserving compatibility with existing MetricFlow queries and saved queries. The owning ratio carries versioned `config.meta.ossie.generated_ratio_helpers` provenance (helper names and a signature of the complete generated definitions). Reverse conversion folds away helpers only when that family is unchanged, has no external metric or saved-query references, and exports without conversion issues. Missing, malformed, stale, or stripped provenance conservatively retains helpers; names alone never identify generated metrics. Legacy unmarked projects therefore retain their existing output. Private metrics always report `PRIVATE_METRIC_DROPPED`; inlining cannot preserve their visibility contract.
+- `(expr_a) / (expr_b)` or `(expr_a) / NULLIF(expr_b, 0)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended. Generated helpers remain public and directly queryable, preserving compatibility with existing MetricFlow queries and saved queries. The owning ratio carries versioned `config.meta.ossie.generated_ratio_helpers` provenance (helper names and a signature of the complete generated definitions). Reverse conversion folds away helpers only when that family is unchanged, has no external metric or saved-query references, and exports without conversion issues. Missing, malformed, stale, or stripped provenance conservatively retains helpers; names alone never identify generated metrics. Legacy unmarked projects therefore retain their existing output. Private metrics always report `PRIVATE_METRIC_DROPPED`; inlining cannot preserve their visibility contract.
 - A root aggregate over a scalar SQL expression (for example,
   `SUM(CASE WHEN ... THEN amount ELSE 0 END)`) → SIMPLE metric with the
   scalar expression in `expr` and the root function in `agg`

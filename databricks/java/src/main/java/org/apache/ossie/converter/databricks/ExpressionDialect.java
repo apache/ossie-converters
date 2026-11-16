@@ -46,7 +46,8 @@ import java.util.regex.Pattern;
  * backslash escapes in strings, {@code TIMESTAMP} carrying the session time zone, and same-named
  * functions with other Databricks meanings. It does not check behavior the spec leaves open, such
  * as integer division, NULL handling in CONCAT or GREATEST, rounding of ties, or the timestamp
- * type DATE_TRUNC and DATEADD return.
+ * type DATE_TRUNC and DATEADD return. The export also uses these token positions to qualify
+ * source columns in joined dimensions.
  */
 final class ExpressionDialect {
 
@@ -169,16 +170,39 @@ final class ExpressionDialect {
     if (tokens == null || tokens.isEmpty()) {
       return DIALECT_DATABRICKS;
     }
-    Scan scan = new Scan(tokens, datasets, opaqueNames, measure);
+    Scan scan = new Scan(tokens, datasets, opaqueNames, measure, null, null);
     if (!scan.run()) {
       return DIALECT_DATABRICKS;
     }
     return scan.ossie ? DIALECT_OSSIE_SQL : scan.ansi ? DIALECT_ANSI : DIALECT_DATABRICKS;
   }
 
+  /**
+   * Qualifies source columns in a scalar field expression. Returns null if the scanner cannot
+   * identify all column positions. Columns already qualified with this join path are preserved.
+   */
+  static String qualifyFieldColumns(String expr, String joinPath) {
+    List<Token> tokens = tokenize(expr);
+    if (tokens == null || tokens.isEmpty()) {
+      return null;
+    }
+    List<Integer> columns = new ArrayList<>();
+    Scan scan = new Scan(tokens, Set.of(), Set.of(), false, columns, joinPath);
+    if (!scan.run()) {
+      return null;
+    }
+    StringBuilder qualified = new StringBuilder(expr.length());
+    int start = 0;
+    for (int column : columns) {
+      qualified.append(expr, start, column).append(joinPath).append('.');
+      start = column;
+    }
+    return qualified.append(expr, start, expr.length()).toString();
+  }
+
   private enum Kind { IDENT, NUMBER, STRING, SYMBOL }
 
-  private record Token(Kind kind, String text) {
+  private record Token(Kind kind, String text, int start) {
     boolean is(String symbol) {
       return kind == Kind.SYMBOL && text.equals(symbol);
     }
@@ -213,14 +237,14 @@ final class ExpressionDialect {
         if (body.indexOf('\\') >= 0 || (end + 1 < n && s.charAt(end + 1) == '\'')) {
           return null;
         }
-        out.add(new Token(Kind.STRING, body));
+        out.add(new Token(Kind.STRING, body, i));
         i = end + 1;
       } else if (Character.isLetter(c) || c == '_') {
         int j = i + 1;
         while (j < n && isIdentPart(s.charAt(j))) {
           j++;
         }
-        out.add(new Token(Kind.IDENT, s.substring(i, j)));
+        out.add(new Token(Kind.IDENT, s.substring(i, j), i));
         i = j;
       } else if (Character.isDigit(c)
           || (c == '.' && i + 1 < n && Character.isDigit(s.charAt(i + 1)))) {
@@ -233,14 +257,14 @@ final class ExpressionDialect {
         if (j < n && isIdentPart(s.charAt(j))) {
           return null;
         }
-        out.add(new Token(Kind.NUMBER, s.substring(i, j)));
+        out.add(new Token(Kind.NUMBER, s.substring(i, j), i));
         i = j;
       } else {
         String sym = symbolAt(s, i);
         if (sym == null) {
           return null;
         }
-        out.add(new Token(Kind.SYMBOL, sym));
+        out.add(new Token(Kind.SYMBOL, sym, i));
         i += sym.length();
       }
     }
@@ -276,6 +300,8 @@ final class ExpressionDialect {
     private final Set<String> datasets;
     private final Set<String> opaqueNames;
     private final boolean measure;
+    private final List<Integer> columnStarts;
+    private final String fieldJoinPath;
     private final Deque<Frame> frames = new ArrayDeque<>();
     private String pendingOpener = "";
     boolean ossie = true;
@@ -295,11 +321,14 @@ final class ExpressionDialect {
       }
     }
 
-    Scan(List<Token> tokens, Set<String> datasets, Set<String> opaqueNames, boolean measure) {
+    Scan(List<Token> tokens, Set<String> datasets, Set<String> opaqueNames, boolean measure,
+        List<Integer> columnStarts, String fieldJoinPath) {
       this.tokens = tokens;
       this.datasets = datasets;
       this.opaqueNames = opaqueNames;
       this.measure = measure;
+      this.columnStarts = columnStarts;
+      this.fieldJoinPath = fieldJoinPath;
     }
 
     boolean run() {
@@ -404,7 +433,7 @@ final class ExpressionDialect {
       }
       String u = t.upper();
       if (next != null && next.is(".")) {
-        return qualifiedName(i, t);
+        return fieldJoinPath == null ? qualifiedName(i, t) : belongsToJoinPath(i);
       }
       if (top != null && isCast(top) && prev != null && prev.isWord("AS")) {
         return castType(u, next);
@@ -416,6 +445,18 @@ final class ExpressionDialect {
         return typedLiteral(u);
       }
       return word(t, u, prev, next, top);
+    }
+
+    private boolean belongsToJoinPath(int i) {
+      int part = i;
+      StringBuilder path = new StringBuilder();
+      while (part + 2 < tokens.size() && tokens.get(part + 1).is(".")
+          && tokens.get(part + 2).kind == Kind.IDENT) {
+        path.append(tokens.get(part).text).append('.');
+        part += 2;
+      }
+      boolean call = part + 1 < tokens.size() && tokens.get(part + 1).is("(");
+      return !call && (fieldJoinPath + ".").equalsIgnoreCase(path.toString());
     }
 
     /** {@code dataset.field} is portable; any other head, deeper paths, or calls are not. */
@@ -542,11 +583,25 @@ final class ExpressionDialect {
           if (REJECTED_WORDS.contains(u)) {
             return false;
           }
-          // Any other identifier is a column, field, or date-part reference, unless its meaning
-          // comes from the Metric View itself.
-          return isKeyword(u)
-              || (isColumnPosition() && !opaqueNames.contains(t.text.toLowerCase(Locale.ROOT)));
+          if (isKeyword(u)) {
+            return true;
+          }
+          if (!isColumnPosition() || opaqueNames.contains(t.text.toLowerCase(Locale.ROOT))) {
+            return false;
+          }
+          if (columnStarts != null && !isNonColumnWord(u, top)) {
+            columnStarts.add(t.start);
+          }
+          return true;
       }
+    }
+
+    private static boolean isNonColumnWord(String word, Frame frame) {
+      if (word.equals("CURRENT_DATE") || word.equals("CURRENT_TIMESTAMP")) {
+        return true;
+      }
+      return frame != null && ((frame.opener.equals("EXTRACT") && !frame.keywordForm)
+          || (frame.opener.equals("DATEADD") && frame.commas == 0));
     }
 
     /** FROM / FOR / BOTH inside SUBSTRING or TRIM: standard SQL, not the Ossie language. */
