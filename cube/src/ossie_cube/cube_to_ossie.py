@@ -724,7 +724,8 @@ def _declare_key_fields(cubes, fields_by_ds, keys_by_ds, relationships, source_d
     join can read a raw column no dimension exposes. Each such column becomes a bare
     key-only field named after the column, typed like the dimension that reads it and
     marked in the stash so export does not turn it into a dimension. A field already
-    carrying the column's name, such as a computed key dimension, stands for it as is.
+    carrying the column's name (compared case-insensitively, matching `validate.py`),
+    such as a computed key dimension, stands for it as is.
 
     `fields_by_ds` maps each dataset name to its field list, which is extended in place.
     """
@@ -734,9 +735,9 @@ def _declare_key_fields(cubes, fields_by_ds, keys_by_ds, relationships, source_d
         needed.setdefault(rel["to"], []).extend(rel["to_columns"])
     for name, columns in needed.items():
         fields = fields_by_ds[name]
-        have = {f["name"] for f in fields}
+        have = {f["name"].casefold() for f in fields}
         for column in dict.fromkeys(columns):
-            if column in have:
+            if column.casefold() in have:
                 continue
             field = {"name": column, "expression": {"dialects": [{
                 "dialect": source_dialect or DIALECT_ANSI, "expression": column}]}}
@@ -745,7 +746,7 @@ def _declare_key_fields(cubes, fields_by_ds, keys_by_ds, relationships, source_d
                 field["datatype"] = datatype
             write_stash(field, {"key_only": True})
             fields.append(field)
-            have.add(column)
+            have.add(column.casefold())
 
 
 def _column_datatype(cubes, cname, column):
