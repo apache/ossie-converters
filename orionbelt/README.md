@@ -186,7 +186,7 @@ OBML, but are not interpreted by other Ossie consumers:
   `ANSI_SQL`, `OSSIE_SQL_2026`, `SNOWFLAKE`, and `DATABRICKS` dialects are all read on import.
 
 Ossie v0.1.x inputs are accepted on read via a legacy normalization shim; output
-targets Ossie **v0.2.0.dev0**.
+targets Ossie **v0.3.0.dev0**.
 
 See [`ossie_obml_mapping_analysis.md`](./ossie_obml_mapping_analysis.md) for the
 full OBML <-> Ossie core-spec mapping and

@@ -648,17 +648,19 @@ def _extract_expression(expression, context):
         raise OssieConversionError(f"Missing or malformed expression for {context}")
 
     dialects = _require_list(expression, "dialects", context)
-    # A portable `sql` expression carries no dialect; treat it as ANSI SQL, which
-    # LookML reads the same way. It is also the fallback when no dialect matches.
+    # The top-level `sql` is the primary portable OSSIE_SQL_2026 form and is
+    # authoritative over an OSSIE_SQL_2026 entry in `dialects` (core-spec).
     portable_sql = expression.get("sql")
     if not isinstance(portable_sql, str) or not portable_sql:
         portable_sql = None
     if not dialects:
         if portable_sql is not None:
-            return portable_sql, "ANSI_SQL"
+            return portable_sql, "OSSIE_SQL_2026"
         raise OssieConversionError(f"Missing expression for {context}")
 
     available = {}
+    if portable_sql is not None:
+        available["OSSIE_SQL_2026"] = portable_sql
     for index, d in enumerate(dialects, 1):
         _require_mapping(d, f"{context}: dialect #{index}")
         dialect_name = d.get("dialect") or ""
@@ -677,9 +679,6 @@ def _extract_expression(expression, context):
     for dialect_name in _DIALECT_PREFERENCE:
         if dialect_name in available:
             return available[dialect_name], dialect_name
-
-    if portable_sql is not None:
-        return portable_sql, "ANSI_SQL"
 
     dialect_names = [str(d.get("dialect", "")) for d in dialects]
     warnings.warn(

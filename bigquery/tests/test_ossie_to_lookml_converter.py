@@ -241,6 +241,29 @@ class TestExtractExpression:
         }
         assert _extract_expression(expression, "f") == ("ossie_expr", "OSSIE_SQL_2026")
 
+    def test_sql_only_expression_reads_as_ossie_sql_2026(self):
+        assert _extract_expression({"sql": "portable_expr"}, "f") == (
+            "portable_expr",
+            "OSSIE_SQL_2026",
+        )
+
+    def test_top_level_sql_is_authoritative_over_ossie_sql_2026_dialect_entry(self):
+        expression = {
+            "sql": "authoritative_expr",
+            "dialects": [
+                {"dialect": "OSSIE_SQL_2026", "expression": "stale_expr"},
+                {"dialect": "SNOWFLAKE", "expression": "snow_expr"},
+            ],
+        }
+        assert _extract_expression(expression, "f") == ("authoritative_expr", "OSSIE_SQL_2026")
+
+    def test_bigquery_and_ansi_still_win_over_top_level_sql(self):
+        expression = {
+            "sql": "portable_expr",
+            "dialects": [{"dialect": "BIGQUERY", "expression": "bq_expr"}],
+        }
+        assert _extract_expression(expression, "f") == ("bq_expr", "BIGQUERY")
+
     def test_unsupported_only_warns_and_skips(self):
         expression = {"dialects": [{"dialect": "SNOWFLAKE", "expression": "x"}]}
         with pytest.warns(UserWarning, match="Skipping"):

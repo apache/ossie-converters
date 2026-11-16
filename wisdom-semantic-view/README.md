@@ -75,7 +75,7 @@ ossie-wisdom-semantic-view to-wisdom <view.yaml> -o <domain.json> [--enrich <enr
 ossie-wisdom-semantic-view to-semantic-view <domain.json> -o <view.yaml>
 ```
 
-`to-wisdom` reads a semantic view, builds one Ossie document (`version` `0.2.0.dev0`),
+`to-wisdom` reads a semantic view, builds one Ossie document (`version` `0.3.0.dev0`),
 and writes the domain export. `--enrich` is the only step that adds a name the view
 did not already have. On this fixture it adds the `revenue` metric, three synonyms,
 and the February fiscal-year instruction.
