@@ -20,6 +20,9 @@ canonical:
   tpcds: ossie/examples/tpcds_semantic_model.yaml
   flights: ossie/examples/flights.semantic_model.yaml
 converters:
+  ataccama:
+    cwd: ataccama
+    skip: Requires a live Ataccama ONE REST catalog and is import-only; outside the file runner.
   bigquery:
     cwd: bigquery
     toolchain: uv

@@ -17,7 +17,7 @@
 # under the License.
 # name: TestMetricConversion.test_derived_metric_nested
   '''
-  version: 0.2.0.dev0
+  version: 0.3.0.dev0
   name: semantic_model
   datasets:
   - name: orders
@@ -69,7 +69,7 @@
 # ---
 # name: TestMetricConversion.test_ratio_metric_inlines_sub_expressions
   '''
-  version: 0.2.0.dev0
+  version: 0.3.0.dev0
   name: semantic_model
   datasets:
   - name: orders
@@ -107,7 +107,7 @@
 # ---
 # name: TestMetricFilterFlattening.test_metric_and_measure_filters_combined_with_and
   '''
-  version: 0.2.0.dev0
+  version: 0.3.0.dev0
   name: semantic_model
   datasets:
   - name: orders
@@ -130,7 +130,7 @@
 # ---
 # name: TestRelationshipConversion.test_three_datasets_produce_all_pairs
   '''
-  version: 0.2.0.dev0
+  version: 0.3.0.dev0
   name: semantic_model
   datasets:
   - name: users_a

@@ -24,7 +24,7 @@
 # about an entity nothing ever created. No other fixture in either repo pairs
 # `identify_by` with `derived_by`, so without this one the identifier branch has
 # no coverage at all.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: DerivedIdentifier
 ontology:
 - concept: Code

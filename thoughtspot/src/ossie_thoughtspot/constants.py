@@ -70,6 +70,14 @@ PORTABLE_DIALECT = "ANSI_SQL"
 #: either way; see apache/ossie-converters#101.
 PORTABLE_DIALECTS_ACCEPTED = (PORTABLE_DIALECT, "OSSIE_SQL_2026")
 
+#: The dialect a top-level `expression.sql` is, by definition. apache/ossie#617
+#: moved the portable expression there and the specification names it
+#: `OSSIE_SQL_2026`, so a `sql` string needs no dialect tag to be read -- see
+#: `ossie_to_thoughtspot.portable_expression_entries`, which folds it in as one
+#: entry so every reader downstream sees a single shape.
+PORTABLE_SQL_DIALECT = "OSSIE_SQL_2026"
+
+
 #: Ossie spec series this converter targets, matched on major.minor. Not an exact
 #: version: upstream's first release is proposed as 0.3.0, not 0.2.0.
 SPEC_SERIES = "0.2"
@@ -82,7 +90,7 @@ SPEC_SERIES = "0.2"
 #: fails schema validation outright. Bump in lockstep with core-spec/'s own
 #: `version` if it ever moves -- the same discipline databricks'
 #: `OSSIE_VERSION` constant documents.
-DOCUMENT_VERSION = "0.2.0.dev0"
+DOCUMENT_VERSION = "0.3.0.dev0"
 
 #: ThoughtSpot's grouped-aggregation calls, mapped to the plain aggregate each
 #: is shorthand for. `group_aggregate` is the general form and has no single
@@ -412,6 +420,20 @@ RELATIONSHIP_STASH_CARDINALITY = "cardinality"
 #: inverts the sides: `from` is then the ONE side, and LEFT_OUTER would keep
 #: unmatched DIMENSION rows and NULL-extend every measure grouped by them --
 #: the same wrong-number failure, pointing the other way.
+#: The cardinalities ThoughtSpot will accept on a join. Live-probed
+#: 2026-11-17 with `--policy VALIDATE_ONLY`: a Model whose inline join
+#: declares `MANY_TO_MANY` is refused with
+#:
+#:   Invalid value MANY_TO_MANY of field
+#:   worksheet->model_tables(1st)->joins(1st)->cardinality.
+#:   Allowed values are MANY_TO_ONE, ONE_TO_MANY, ONE_TO_ONE.
+#:
+#: So many-to-many is not a join whose type we have to choose; it is not a
+#: join this platform can hold at all. (This repository's own Table TML
+#: reference listed a four-value enum including MANY_TO_MANY; the probe says
+#: otherwise.)
+WRITABLE_CARDINALITIES = frozenset({"MANY_TO_ONE", "ONE_TO_MANY", "ONE_TO_ONE"})
+
 ASSUMED_JOIN_TYPE_BY_CARDINALITY = {
     "MANY_TO_ONE": "LEFT_OUTER",
     "ONE_TO_ONE": "LEFT_OUTER",

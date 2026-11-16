@@ -25,7 +25,7 @@
 # store_returns_sv_to_store -- a ONE_TO_MANY join declared from store's own
 # side, whose emitted endpoints are swapped so store lands on `to`) joins on
 # s_store_sk.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: tpcds_retail_model
 datasets:
 - name: store_sales

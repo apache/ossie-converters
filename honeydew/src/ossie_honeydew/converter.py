@@ -38,7 +38,7 @@ from typing import Any
 
 import yaml
 
-SUPPORTED_OSSIE_VERSION = "0.2.0.dev0"
+SUPPORTED_OSSIE_VERSION = "0.3.0.dev0"
 HONEYDEW_VENDOR = "HONEYDEW"
 _OSSIE_METADATA_SECTION = "ossie"
 # Workspaces written before the Ossie rebrand named the section "osi". Still

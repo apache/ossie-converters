@@ -244,3 +244,59 @@ class TestAnUnrepresentableJoinAssumesTheSameType:
         _join, log = self._rebuild()
         [issue] = _issues(log, "TS-JOIN-TYPE-ASSUMED")
         assert issue["object_ref"] == "unrepresentable_join:ORDERS_to_CUSTOMERS"
+
+
+class TestManyToManyIsNotWritableAtAll:
+    """ThoughtSpot has no many-to-many join, so there is no type to assume.
+
+    Live-probed 2026-11-17 (`--policy VALIDATE_ONLY`). Submitting a Model
+    whose inline join declares it is refused outright:
+
+        Invalid value MANY_TO_MANY of field
+        worksheet->model_tables(1st)->joins(1st)->cardinality.
+        Allowed values are MANY_TO_ONE, ONE_TO_MANY, ONE_TO_ONE.
+
+    So the question `_join_type_for` was answering -- which join type keeps
+    the safe side -- does not arise. There is no join to give a type to.
+    Choosing one (LEFT_OUTER by fallback, or the OUTER suggested in review)
+    writes a Model the platform will not import, which is the failure
+    `TS-JOIN-SELF-UNWRITABLE` already exists to prevent for self-joins.
+
+    Only reachable from a hand-edited stash: the cardinality stash is
+    written from a real TML export, and an export cannot carry a value
+    import refuses. Raised by @christianeu-db reviewing
+    apache/ossie-converters#208.
+    """
+
+    def _build(self):
+        log = IssueLog()
+        doc = build_model(
+            _model({"cardinality": "MANY_TO_MANY"}),
+            [_table("ORDERS", ["CUSTOMER_ID", "AMOUNT"]),
+             _table("CUSTOMERS", ["CUSTOMER_ID", "NAME"])],
+            log,
+        )
+        orders = next(t for t in doc.body["model_tables"] if t["name"] == "ORDERS")
+        return orders.get("joins"), log
+
+    def test_no_join_is_written(self):
+        joins, _log = self._build()
+        assert not joins
+
+    def test_the_loss_is_reported_as_an_error(self):
+        _joins, log = self._build()
+        [issue] = _issues(log, "TS-JOIN-CARDINALITY-UNWRITABLE")
+        assert issue["severity"] == Severity.ERROR.value
+        assert "orders_to_customers" in issue["message"]
+        assert "MANY_TO_MANY" in issue["message"]
+
+    def test_no_join_type_is_assumed_for_it(self):
+        # The assumption would name a "one side" that does not exist.
+        _joins, log = self._build()
+        assert _issues(log, "TS-JOIN-TYPE-ASSUMED") == []
+
+    def test_the_three_writable_cardinalities_are_unaffected(self):
+        for cardinality in ("MANY_TO_ONE", "ONE_TO_ONE", "ONE_TO_MANY"):
+            join, log = _build({"cardinality": cardinality})
+            assert join["cardinality"] == cardinality
+            assert _issues(log, "TS-JOIN-CARDINALITY-UNWRITABLE") == [], cardinality
