@@ -1,0 +1,42 @@
+CREATE OR REPLACE ASSOCIATION dw_dim_customers_dw_fact_sales REFERENTIAL CONSTRAINT
+    ENDPOINT dw_fact_sales dw_dim_customers PRINCIPAL (1)
+    ENDPOINT dw_dim_customers dw_fact_sales (1)
+    ADD MAPPING round(customer_key)=customer_key;
+
+CREATE OR REPLACE ASSOCIATION dw_dim_products_dw_fact_sales REFERENTIAL CONSTRAINT
+    ENDPOINT dw_fact_sales dw_dim_products PRINCIPAL (1)
+    ENDPOINT dw_dim_products dw_fact_sales (1)
+    ADD MAPPING product_key=product_key;
+
+CREATE OR REPLACE ASSOCIATION dw_dim_date_dw_fact_sales REFERENTIAL CONSTRAINT
+    ENDPOINT dw_fact_sales dw_dim_date PRINCIPAL (1)
+    ENDPOINT dw_dim_date dw_fact_sales (1)
+    ADD MAPPING date_key=date_key;
+
+CREATE OR REPLACE METRIC VIEW products_view_example_1
+    SOURCES (
+        products AS dw_dim_products,
+        customers AS dw_dim_customers,
+        dates AS dw_dim_date,
+        sales AS dw_fact_sales
+    )
+    ASSOCIATIONS (
+        sales customers dw_dim_customers_dw_fact_sales,
+        sales products dw_dim_products_dw_fact_sales,
+        sales dates dw_dim_date_dw_fact_sales
+    )
+    DIMENSIONS (
+        product_name AS products.product_name,
+        product_sku AS products.sku,
+        customer_name AS concat(customers.last_name, ', ', customers.first_name),
+        customer_email AS customers.email,
+        customer_id AS customers.customer_key,
+        date_full AS dates.full_date,
+        year AS getyear(dates.full_date),
+        unit_price_sales AS sales.unit_price
+    )
+    METRICS (
+        total_quantity AS sum(sales.quantity),
+        avg_quantity AS avg(sales.quantity),
+        number_sales AS count(sales.sale_id)
+    );

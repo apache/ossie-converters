@@ -1,0 +1,21 @@
+CREATE OR REPLACE ASSOCIATION dw_dim_products_dw_fact_sales REFERENTIAL CONSTRAINT
+FOLDER = '/99. assoc'
+    ENDPOINT dw_fact_sales dw_dim_products PRINCIPAL (0,1)
+    ENDPOINT dw_dim_products dw_fact_sales (0,*)
+    ADD MAPPING product_key=product_key;
+
+CREATE OR REPLACE METRIC VIEW products_view_example_14
+    SOURCES (
+        products AS dw_dim_products,
+        sales AS dw_fact_sales
+    )
+    ASSOCIATIONS (
+        sales products dw_dim_products_dw_fact_sales
+    )
+    DIMENSIONS (
+        product_name AS products.product_name,
+        unit_price_sales AS sales.unit_price
+    )
+    METRICS (
+        total_quantity AS sum(sales.quantity)
+    );

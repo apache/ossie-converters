@@ -1,0 +1,86 @@
+version: 0.2.0.dev0
+name: ecommerce_analytics
+description: E-commerce sales and customer analytics
+ai_context:
+  instructions: Use this model for analyzing sales trends, customer behavior, and
+    product performance
+datasets:
+- name: orders
+  source: sales.public.orders
+  primary_key: [order_id]
+  description: Customer orders
+  fields:
+  - name: order_id
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: order_id
+    description: Order identifier
+  - name: customer_id
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: customer_id
+    description: Customer identifier
+  - name: order_date
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: order_date
+    datatype: Date
+    dimension:
+      is_time: true
+    description: Order date
+  - name: amount
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: amount
+    description: Order amount
+- name: customers
+  source: sales.public.customers
+  primary_key: [id]
+  description: Customer information
+  fields:
+  - name: id
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: id
+    description: Customer identifier
+  - name: email
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: email
+    description: Customer email
+relationships:
+- name: orders_to_customers
+  from: orders
+  to: customers
+  from_columns: [customer_id]
+  to_columns: [id]
+metrics:
+- name: total_revenue
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: SUM(orders.amount)
+  description: Total revenue from all orders
+  ai_context:
+    synonyms:
+    - total sales
+    - revenue
+- name: customer_count
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: COUNT(DISTINCT customers.id)
+  description: Total number of customers
+  ai_context:
+    synonyms:
+    - total customers
+    - customer base
+custom_extensions:
+- vendor_name: SNOWFLAKE
+  data: '{"warehouse": "ANALYTICS_WH"}'
