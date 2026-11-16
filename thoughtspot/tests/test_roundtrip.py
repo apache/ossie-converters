@@ -510,7 +510,7 @@ def test_tpcds_physical_fields_translate_to_their_warehouse_column_even_when_the
     assert _dialects(return_amt)[PORTABLE_DIALECT] == "RETURN_AMT"
 
 
-def test_tpcds_known_unportable_metrics_have_no_portable_sibling_and_an_issue():
+def test_tpcds_metrics_are_portable_exactly_when_their_shape_allows():
     _, ossie_result, _ = _tml_roundtrip("tpcds")
     model = ossie_result.model
 
@@ -526,12 +526,15 @@ def test_tpcds_known_unportable_metrics_have_no_portable_sibling_and_an_issue():
     assert PORTABLE_DIALECT not in _dialects(total_sales)
     assert "metric:total_sales" in _issue_refs(ossie_result.issues, "TS-EXPR-THOUGHTSPOT-ONLY")
 
-    # A physical column reference the model never surfaces as a field
-    # resolves to nothing at all, which is a different unportable reason
-    # (and a different code) from the two above.
+    # NOT here any more. `total_return_quantity` aggregates a column no
+    # ATTRIBUTE surfaces, which used to resolve to nothing; its operand is
+    # now declared as a field, so the metric composes. Asserted positively
+    # so this cannot pass by the metric quietly disappearing.
     total_return_quantity = _metric(model, "total_return_quantity")
-    assert PORTABLE_DIALECT not in _dialects(total_return_quantity)
-    assert "metric:total_return_quantity" in _issue_refs(ossie_result.issues, "TS-EXPR-UNRESOLVED")
+    assert PORTABLE_DIALECT in _dialects(total_return_quantity)
+    assert "metric:total_return_quantity" not in _issue_refs(
+        ossie_result.issues, "TS-EXPR-UNRESOLVED"
+    )
 
 
 def test_a_metrics_portable_expression_carries_its_column_level_aggregation():

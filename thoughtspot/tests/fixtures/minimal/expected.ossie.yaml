@@ -24,6 +24,18 @@ datasets:
 - name: orders
   source: MINIMAL.PUBLIC.ORDERS
   fields:
+  - name: order_total
+    label: order_total
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[orders::order_total]'
+      - dialect: ANSI_SQL
+        expression: order_total
+    datatype: Decimal
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   - name: order_id
     label: order_id
     expression:

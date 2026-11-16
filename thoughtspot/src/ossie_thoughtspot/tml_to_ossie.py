@@ -2170,6 +2170,217 @@ def _resolved_join_column(
     return column
 
 
+def _declare_field_for_physical_column(
+    prefix: str,
+    physical: dict,
+    columns: list[dict],
+    *,
+    fields_by_dataset: dict[str, list[dict]],
+    built_field_names: dict[tuple[str, str], str],
+    allocator: identifiers.Allocator,
+    log: IssueLog,
+    object_ref: str,
+) -> str | None:
+    """Declare one field for one already-located physical column, and return
+    its Ossie identifier.
+
+    The declaration half of `_declare_referenced_columns`, lifted out so a
+    second caller can reuse it. The two callers differ only in how they FIND
+    the column, and the difference matters: a key or relationship names it by
+    `db_column_name` (the warehouse name), while a metric's `column_id` names
+    it by display name. Sharing the lookup would mean relaxing a guard that
+    exists to stop one column's warehouse name matching another's display
+    name, so each caller keeps its own and they share only what follows.
+    """
+    display_name = physical.get("name")
+    if not isinstance(display_name, str) or not display_name:
+        return None
+
+    existing = built_field_names.get((prefix, display_name))
+    if existing is not None:
+        return existing
+
+    field_name = _field_or_metric_identifier(
+        display_name, physical.get("db_column_name"), allocator, log,
+        kind="field", object_ref=object_ref,
+    )
+    field: dict = {"name": field_name, "label": display_name}
+    # Built here rather than through `expression_entries` because that
+    # routes the portable sibling through `resolve`, which answers only
+    # for columns a Model ATTRIBUTE surfaces -- precisely the columns
+    # this function exists to handle. What follows is the pair `resolve`
+    # would have produced had it answered: the bracket reference, plus
+    # the bare warehouse column.
+    dialects: list[dict[str, str]] = [
+        {
+            "dialect": DIALECT,
+            "expression": identifiers.format_column_ref(prefix, display_name),
+        }
+    ]
+    db_column_name = physical.get("db_column_name")
+    if isinstance(db_column_name, str) and db_column_name:
+        dialects.append(
+            {"dialect": PORTABLE_DIALECT, "expression": _sql_identifier(db_column_name)}
+        )
+    # No portable sibling without one, matching `resolve`, which returns
+    # None for a column with no `db_column_name`. A SQL View column is
+    # the case that reaches here: its warehouse-side name is the query's
+    # `sql_output_column`, carried in the dataset stash just below and
+    # read back by `_physical_identity`, not written into an expression.
+    field["expression"] = {"dialects": dialects}
+    datatype = _physical_datatype(
+        prefix, display_name,
+        lambda _table, _columns=columns: {"columns": _columns},
+        log, object_ref=object_ref,
+    )
+    if datatype is not None:
+        field["datatype"] = datatype
+    field = _write_stash_safely(
+        field, {FIELD_STASH_NOT_MODEL_SURFACED: True}, log, object_ref
+    )
+
+    # `built_field_names` is keyed by (prefix, display name), so it
+    # catches the same column twice but not two DIFFERENT columns whose
+    # display names normalise to one identifier -- which the fields
+    # `convert()` builds are protected from and these were not. Raised
+    # by @jbonofre reviewing apache/ossie-converters#99.
+    field = _resolve_name_collision(
+        field, fields_by_dataset.get(prefix, []), log,
+        kind="field", display_name=display_name, scope=f"dataset {prefix!r}",
+    )
+    field_name = field["name"]
+    fields_by_dataset.setdefault(prefix, []).append(field)
+    built_field_names[(prefix, display_name)] = field_name
+
+    # No DATASET_STASH_SQL_OUTPUT_COLUMNS entry either, for the same
+    # reason: this field emits no SQL View column, so there is no output
+    # alias to record for it. The verbatim entry left in
+    # DATASET_STASH_UNSURFACED_COLUMNS already carries the real one.
+
+    # DATASET_STASH_UNSURFACED_COLUMNS is deliberately left alone. An
+    # earlier revision dropped this column's entry from it, reasoning
+    # that a declared field now covers the column -- but a field only
+    # carries name, warehouse name and datatype, so rebuilding the Table
+    # column from it lost `properties`, `description` and the exact
+    # `data_type` spelling, and `_physical_identity` fell back to the
+    # display name as `db_column_name` (silently: the ASSUMED warning is
+    # skipped for a field that has any stash at all). The warehouse has
+    # no column called `Customer Id`. Raised by @jbonofre reviewing
+    # apache/ossie-converters#99.
+    #
+    # So the field produces no TML at all -- no Model column and no
+    # Table column -- and exists purely so a key or relationship has a
+    # declared name to point at. The verbatim entry stays where it
+    # already was and still rebuilds the column byte for byte.
+    return field_name
+
+
+def _measure_operand_references(
+    model_columns: list[dict], formulas: dict[str, dict]
+):
+    """`(column entry, (prefix, physical column display name))` for every
+    warehouse column a MEASURE references, however it is spelled.
+
+    Both spellings, deliberately, because the two legs do not agree on one.
+    A ThoughtSpot export writes a bare aggregate as `column_id` plus an
+    `aggregation` property; this converter's own return leg writes the same
+    metric as a `formulas[]` entry with a `formula_id`. Keying on either
+    shape alone makes the pass asymmetric -- the field is declared on the
+    first conversion and not on the second, and a round trip then loses it.
+    Found by `test_every_declared_field_datatype_returns_exactly`.
+
+    A formula's references are taken whole, including a compound
+    expression's. That declares a field for an operand no portable
+    expression names yet, which is the deliberate trade: the alternative is
+    to match the shapes that happen to be translatable today, and a rule
+    about what we can currently translate would need revisiting every time
+    that set grows.
+    """
+    for column in model_columns:
+        properties = column.get("properties")
+        if not isinstance(properties, dict) or properties.get("column_type") != "MEASURE":
+            continue
+        column_id = column.get("column_id")
+        if isinstance(column_id, str):
+            try:
+                # Same spelling `_index_attribute_columns` uses: a `column_id`
+                # is a bracketed reference without its brackets.
+                yield column, identifiers.split_column_ref(f"[{column_id}]")
+            except ValueError:
+                # Already reported where the metric itself is built; naming
+                # it again here would report one cause twice.
+                pass
+            continue
+        formula_id = column.get("formula_id")
+        entry = formulas.get(formula_id) if isinstance(formula_id, str) else None
+        expr = (entry or {}).get("expr")
+        if isinstance(expr, str):
+            for reference in formula.find_column_refs(expr):
+                yield column, reference
+
+
+def _declare_metric_operand_fields(
+    model_columns: list[dict],
+    formulas: dict[str, dict],
+    attribute_index: set[tuple[str, str]],
+    *,
+    dataset_bodies: dict[str, dict],
+    physical_columns_by_prefix: dict[str, list[dict]],
+    fields_by_dataset: dict[str, list[dict]],
+    built_field_names: dict[tuple[str, str], str],
+    allocator: identifiers.Allocator,
+    log: IssueLog,
+) -> set[tuple[str, str]]:
+    """Declare a field for every warehouse column a metric AGGREGATES, and
+    return the `(prefix, display name)` pairs declared.
+
+    The same rule as keys and relationships, from a third source. A metric
+    over a column the Model does not ALSO surface as an ATTRIBUTE had nothing
+    to name: `resolve` answers only for surfaced columns, so no portable
+    sibling was composed and the metric came out THOUGHTSPOT-only. That is
+    the ordinary shape of a ThoughtSpot model -- a measure is surfaced once,
+    as a MEASURE, and surfacing the same column again as an ATTRIBUTE is a
+    modelling choice rather than the norm.
+
+    **Runs BEFORE phase 3, unlike `_declare_referenced_columns`.** Those
+    columns are declared in phase 5.5 because it is the relationships and
+    keys built in phases 4 and 5 that decide which are needed. A metric's
+    operands are knowable from the Model's own `columns[]` with nothing built
+    yet, and they have to be: the metric that references them is composed in
+    phase 3, so a field declared afterwards arrives too late to be named.
+
+    The returned set widens what `resolve` answers for, and nothing else.
+    `attribute_index` itself is left alone deliberately: phase 3.5 derives
+    `DATASET_STASH_UNSURFACED_COLUMNS` from it, and these columns must stay
+    in that stash. A field carries only name, warehouse name and datatype, so
+    the verbatim stash entry is still what rebuilds the Table column with its
+    `properties` and exact `data_type`.
+    """
+    declared: set[tuple[str, str]] = set()
+    for column, (prefix, physical_name) in _measure_operand_references(
+        model_columns, formulas
+    ):
+        if prefix not in dataset_bodies:
+            continue
+        if (prefix, physical_name) in attribute_index:
+            continue  # already a declared field; nothing to add
+        columns = physical_columns_by_prefix.get(prefix) or []
+        physical = next((c for c in columns if c.get("name") == physical_name), None)
+        if physical is None:
+            continue
+        name = _declare_field_for_physical_column(
+            prefix, physical, columns,
+            fields_by_dataset=fields_by_dataset,
+            built_field_names=built_field_names,
+            allocator=allocator,
+            log=log,
+            object_ref=f"metric:{column.get('name', '<unnamed>')}",
+        )
+        if name is not None:
+            declared.add((prefix, physical_name))
+    return declared
+
+
 def _declare_referenced_columns(
     *,
     relationships: list[dict],
@@ -2230,87 +2441,14 @@ def _declare_referenced_columns(
             # operand that produced this; reporting it again here would name
             # one cause twice.
             return None
-        display_name = physical.get("name")
-        if not isinstance(display_name, str) or not display_name:
-            return None
-
-        existing = built_field_names.get((prefix, display_name))
-        if existing is not None:
-            return existing
-
-        field_name = _field_or_metric_identifier(
-            display_name, physical.get("db_column_name"), allocator, log,
-            kind="field", object_ref=object_ref,
+        return _declare_field_for_physical_column(
+            prefix, physical, columns,
+            fields_by_dataset=fields_by_dataset,
+            built_field_names=built_field_names,
+            allocator=allocator,
+            log=log,
+            object_ref=object_ref,
         )
-        field: dict = {"name": field_name, "label": display_name}
-        # Built here rather than through `expression_entries` because that
-        # routes the portable sibling through `resolve`, which answers only
-        # for columns a Model ATTRIBUTE surfaces -- precisely the columns
-        # this function exists to handle. What follows is the pair `resolve`
-        # would have produced had it answered: the bracket reference, plus
-        # the bare warehouse column.
-        dialects: list[dict[str, str]] = [
-            {
-                "dialect": DIALECT,
-                "expression": identifiers.format_column_ref(prefix, display_name),
-            }
-        ]
-        db_column_name = physical.get("db_column_name")
-        if isinstance(db_column_name, str) and db_column_name:
-            dialects.append(
-                {"dialect": PORTABLE_DIALECT, "expression": _sql_identifier(db_column_name)}
-            )
-        # No portable sibling without one, matching `resolve`, which returns
-        # None for a column with no `db_column_name`. A SQL View column is
-        # the case that reaches here: its warehouse-side name is the query's
-        # `sql_output_column`, carried in the dataset stash just below and
-        # read back by `_physical_identity`, not written into an expression.
-        field["expression"] = {"dialects": dialects}
-        datatype = _physical_datatype(
-            prefix, display_name,
-            lambda _table, _columns=columns: {"columns": _columns},
-            log, object_ref=object_ref,
-        )
-        if datatype is not None:
-            field["datatype"] = datatype
-        field = _write_stash_safely(
-            field, {FIELD_STASH_NOT_MODEL_SURFACED: True}, log, object_ref
-        )
-
-        # `built_field_names` is keyed by (prefix, display name), so it
-        # catches the same column twice but not two DIFFERENT columns whose
-        # display names normalise to one identifier -- which the fields
-        # `convert()` builds are protected from and these were not. Raised
-        # by @jbonofre reviewing apache/ossie-converters#99.
-        field = _resolve_name_collision(
-            field, fields_by_dataset.get(prefix, []), log,
-            kind="field", display_name=display_name, scope=f"dataset {prefix!r}",
-        )
-        field_name = field["name"]
-        fields_by_dataset.setdefault(prefix, []).append(field)
-        built_field_names[(prefix, display_name)] = field_name
-
-        # No DATASET_STASH_SQL_OUTPUT_COLUMNS entry either, for the same
-        # reason: this field emits no SQL View column, so there is no output
-        # alias to record for it. The verbatim entry left in
-        # DATASET_STASH_UNSURFACED_COLUMNS already carries the real one.
-
-        # DATASET_STASH_UNSURFACED_COLUMNS is deliberately left alone. An
-        # earlier revision dropped this column's entry from it, reasoning
-        # that a declared field now covers the column -- but a field only
-        # carries name, warehouse name and datatype, so rebuilding the Table
-        # column from it lost `properties`, `description` and the exact
-        # `data_type` spelling, and `_physical_identity` fell back to the
-        # display name as `db_column_name` (silently: the ASSUMED warning is
-        # skipped for a field that has any stash at all). The warehouse has
-        # no column called `Customer Id`. Raised by @jbonofre reviewing
-        # apache/ossie-converters#99.
-        #
-        # So the field produces no TML at all -- no Model column and no
-        # Table column -- and exists purely so a key or relationship has a
-        # declared name to point at. The verbatim entry stays where it
-        # already was and still rebuilds the column byte for byte.
-        return field_name
 
     def repoint(prefix: str, names: list, object_ref: str) -> list:
         out = []
@@ -2890,6 +3028,12 @@ def convert(document_set: DocumentSet) -> OssieConversion:
     # -- Phase 2: the cross-model resolver -----------------------------------
     # `model_columns` is the validated list from the top of convert().
     attribute_index = _index_attribute_columns(model_columns, log)
+    #: Columns no ATTRIBUTE surfaces, declared as fields because a metric
+    #: aggregates them. Filled in phase 3's preamble, below -- `resolve` is a
+    #: closure, so it reads whatever this holds by the time it is CALLED, and
+    #: it is called no earlier than phase 3. Separate from `attribute_index`
+    #: on purpose; see `_declare_metric_operand_fields`.
+    declared_operand_index: set[tuple[str, str]] = set()
 
     def resolve(table: str, column: str) -> tuple[str, str] | None:
         """`(dataset name, warehouse column)` for a `[TABLE::Column]` reference.
@@ -2912,7 +3056,9 @@ def convert(document_set: DocumentSet) -> OssieConversion:
         """
         if table not in dataset_bodies:
             return None
-        if (table, column) not in attribute_index:
+        if (table, column) not in attribute_index and (
+            table, column
+        ) not in declared_operand_index:
             return None
         physical = next(
             (p for p in physical_columns_by_prefix.get(table, []) if p.get("name") == column),
@@ -2972,6 +3118,16 @@ def convert(document_set: DocumentSet) -> OssieConversion:
     # -- see `_index_attribute_columns` for why it is no longer read from
     # `attribute_index` itself.
     built_field_names: dict[tuple[str, str], str] = {}
+
+    declared_operand_index |= _declare_metric_operand_fields(
+        model_columns, formulas, attribute_index,
+        dataset_bodies=dataset_bodies,
+        physical_columns_by_prefix=physical_columns_by_prefix,
+        fields_by_dataset=fields_by_dataset,
+        built_field_names=built_field_names,
+        allocator=field_name_allocator,
+        log=log,
+    )
 
     for column in model_columns:
         display_name = column.get("name", "<unnamed>")
