@@ -47,15 +47,21 @@ expression whatsoever.
               dependence, a week-start-day or DAYOFWEEK-base assumption) without being lossy
               in the way PARTIAL is — the composition is exact, the caveat is about the
               *specification's* own portability, not about this construct's translation.
-    PARTIAL   a real Ossie expression is produced, but it is provably incomplete (the
-              `moving_*`/`cumulative_*` family: the frame and order translate exactly, the
-              partition does not — a ThoughtSpot window formula cannot declare its own
-              PARTITION BY, and the specification has no way to express that limitation).
-              Always logs a WARNING and the caller should pair the composed expression with a THOUGHTSPOT dialect
-              entry (`thoughtspot_dialect_entry`) carrying the verbatim original — and an
-              ANSI_SQL sibling (`portable_dialect_entry`) for the composed expression itself,
-              since it *is* portable, just incomplete: a consumer that does not implement the
-              THOUGHTSPOT dialect still gets something it can execute.
+    PARTIAL   defined, and deliberately UNUSED since 2026-11-16. It meant "a real Ossie
+              expression, provably incomplete", and the `moving_*`/`cumulative_*` family
+              was its only member: the frame and order translated exactly, the partition
+              did not. A live probe settled that this is not an approximation but a
+              different answer — ThoughtSpot injects the partition from the query, so an
+              OVER clause with none means one partition over everything, i.e. a running
+              total across every dimension value where ThoughtSpot computes one per
+              value. Those rows are STASH now.
+
+              The disposition is kept because the CONCEPT may recur, but adopting it
+              again needs an answer to the question that retired it: an Ossie
+              `Expression` has exactly two fields, `sql` and `dialects`, and no way to
+              mark either as approximate — so the caveat stays in our issue log while
+              the incomplete SQL travels to the consumer. Emit a partial expression only
+              where that asymmetry is acceptable.
     DIALECT   the construct's natural home is the Ossie `dialects[]` mechanism, not a
               portable expression — the eleven `sql_*_op` / `sql_*_aggregate_op` names. No
               ANSI_SQL sibling is ever emitted for these (the document is explicit: raw
@@ -424,66 +430,100 @@ def _frame_end_bound(num_forward: str) -> str:
     return f"{-n} PRECEDING"
 
 
-_PARTITION_LOST_ISSUE = (
-    "{name}'s emitted OVER clause has no PARTITION BY: ThoughtSpot completes the partition "
-    "dynamically from the query's own dimensions minus the order columns — a ThoughtSpot "
-    "window formula cannot declare its own PARTITION BY, and a static Ossie window has no "
-    "way to express that limitation. The composed expression is correct "
-    "only when the search returns exactly the grain this formula assumed. "
-    "Pair this with a THOUGHTSPOT dialect entry carrying the verbatim original."
+_DYNAMIC_PARTITION_ISSUE = (
+    "{name} has no portable expression: ThoughtSpot injects the PARTITION BY from the "
+    "query's own dimensions, minus the order columns, so the same formula means a "
+    "different thing in every search. Live-probed on a cluster 2026-11-16 -- one "
+    "`moving_sum(m, 1, 0, ts)` compiled to `partition by CATEGORY` when the query "
+    "grouped by Category and `partition by BRAND` when it grouped by Brand. "
+    "Preserved verbatim for roundtrip."
 )
 
 
-def _compose_moving(agg: str) -> ComposeFn:
-    def _compose(args: list[str]) -> str:
-        if len(args) < 4:
-            raise ValueError(
-                f"moving_{agg.lower()} expects at least 4 arguments (m, start, end, order...), "
-                f"got {len(args)}"
-            )
-        m, start, end, *order_cols = args
-        order_clause = ", ".join(order_cols)
-        return (
-            f"{agg}({m}) OVER (ORDER BY {order_clause} "
-            f"ROWS BETWEEN {_frame_start_bound(start)} AND {_frame_end_bound(end)})"
-        )
-    return _compose
+# The frame convention `moving_*` uses, kept as a record rather than as code.
+#
+# Nothing renders these frames any more (see the STASH registration below: the
+# partition is the query's, so the whole clause is refused), but the convention
+# cost a real bug to establish and the next implementer should not have to
+# rediscover it.
+#
+# **The two offsets count in OPPOSITE directions.** `moving_average(measure,
+# num_backward, num_forward, order...)` -- argument 2 counts rows BACKWARD, so a
+# positive value is PRECEDING; argument 3 counts rows FORWARD, so a positive
+# value is FOLLOWING. The argument names are the whole argument: a positive
+# value cannot mean PRECEDING in both.
+#
+# Until 2026-09 both bounds shared one "positive means PRECEDING" rule, which
+# made every window with a non-zero forward count read the wrong rows -- valid
+# SQL, wrong answer, and the test of the day asserted the misreading as fact.
+#
+# Worked examples under the corrected rule:
+#
+#     moving_average(m, 1, -1, ord) -> ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING
+#     moving_average(m, 3,  0, d)   -> ROWS BETWEEN 3 PRECEDING AND CURRENT ROW
+#     moving_average(m, 2,  3, d)   -> ROWS BETWEEN 2 PRECEDING AND 3 FOLLOWING
+#     moving_max(m, -1, 1, ord)     -> ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING
+#     moving_min(m, 0, 0, ord)      -> ROWS BETWEEN CURRENT ROW AND CURRENT ROW
 
 
-def _compose_cumulative(agg: str) -> ComposeFn:
-    def _compose(args: list[str]) -> str:
-        if len(args) < 2:
-            raise ValueError(
-                f"cumulative_{agg.lower()} expects at least 2 arguments (m, order...), got {len(args)}"
-            )
-        m, *order_cols = args
-        order_clause = ", ".join(order_cols)
-        return (
-            f"{agg}({m}) OVER (ORDER BY {order_clause} "
-            "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+def _make_cumulative_dispatch(agg: str, source_name: str):
+    """`cumulative_*` splits into an exact form and a refused one.
+
+    With NO order columns the window is `OVER ()` -- the whole result set, no
+    partition and no order -- which has one meaning and translates exactly.
+    Live-probed 2026-11-16: `cumulative_sum(m)` compiled to `sum(...) over ()`
+    whether the query grouped by Category alone or by Category and Date.
+
+    With order columns ThoughtSpot still injects the partition from the query,
+    so the composed expression would be a different number rather than an
+    approximate one. See `_DYNAMIC_PARTITION_ISSUE`.
+    """
+    def _dispatch(
+        args: list[str], log: IssueLog, object_ref: str, connection_dialect: str | None
+    ) -> str | None:
+        if not args:
+            raise ValueError(f"{source_name} expects at least 1 argument (m), got 0")
+        if len(args) == 1:
+            return f"{agg}({args[0]}) OVER ()"
+        log.add(
+            code="TS-EXPR-DYNAMIC-PARTITION",
+            severity=Severity.ERROR,
+            message=_DYNAMIC_PARTITION_ISSUE.format(name=source_name),
+            object_ref=object_ref,
         )
-    return _compose
+        return None
+    return _dispatch
 
 
 for _agg in ("SUM", "AVERAGE", "MAX", "MIN"):
     _ansi_agg = "AVG" if _agg == "AVERAGE" else _agg
+    # Refused, not approximated. Emitting the frame without the partition is
+    # not a partial answer, it is a different one: no PARTITION BY means one
+    # partition over the whole result, i.e. a running total across every
+    # dimension value where ThoughtSpot computes one per value. An Ossie
+    # `Expression` has exactly two fields, `sql` and `dialects`, with no way
+    # to mark either as approximate -- so a warning stays in our log while
+    # the wrong SQL travels to the consumer.
     REVERSE[f"moving_{_agg.lower()}"] = ReverseConstruct(
         thoughtspot_name=f"moving_{_agg.lower()}",
-        disposition=ReverseDisposition.PARTIAL,
-        compose_fn=_compose_moving(_ansi_agg),
-        issue_code="TS-EXPR-PARTIAL-PARTITION",
-        issue_severity=Severity.WARNING,
-        issue_message=_PARTITION_LOST_ISSUE,
-        note="Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation.",
+        disposition=ReverseDisposition.STASH,
+        issue_code="TS-EXPR-DYNAMIC-PARTITION",
+        issue_severity=Severity.ERROR,
+        issue_message=_DYNAMIC_PARTITION_ISSUE,
+        note=(
+            "The frame and order translate exactly; the partition is the query's "
+            "and cannot be known here. Live-probed 2026-11-16."
+        ),
     )
     REVERSE[f"cumulative_{_agg.lower()}"] = ReverseConstruct(
         thoughtspot_name=f"cumulative_{_agg.lower()}",
-        disposition=ReverseDisposition.PARTIAL,
-        compose_fn=_compose_cumulative(_ansi_agg),
-        issue_code="TS-EXPR-PARTIAL-PARTITION",
-        issue_severity=Severity.WARNING,
-        issue_message=_PARTITION_LOST_ISSUE,
-        note="Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation.",
+        disposition=ReverseDisposition.COMPOSE,
+        dispatch_fn=_make_cumulative_dispatch(_ansi_agg, f"cumulative_{_agg.lower()}"),
+        note=(
+            "Measure-only form composes exactly (`OVER ()`, live-probed 2026-11-16, "
+            "unchanged across two different query grains). Any form carrying order "
+            "columns is refused for the same reason as moving_*."
+        ),
     )
 
 
@@ -1006,8 +1046,7 @@ def portable_dialect_entry(expression: str) -> dict[str, str]:
     """Pair the THOUGHTSPOT dialect entry with a PORTABLE_DIALECT (ANSI_SQL) sibling
     wherever the expression alongside it is itself portable, so a consumer that does not
     implement the THOUGHTSPOT dialect still gets something it can execute. Applies to
-    PARTIAL rows (the frame/order composition is genuine, portable ANSI SQL, just an
-    incomplete window) — never to a pure STASH (there is no portable expression to pair)
+    any COMPOSE row — never to a pure STASH (there is no portable expression to pair)
     and never to the `sql_*_op` DIALECT family (the document is explicit: no ANSI_SQL
     sibling is emitted there, because that template's portability is exactly what is
     unknown).

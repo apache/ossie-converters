@@ -39,10 +39,10 @@ ThoughtSpot's own native functions with no counterpart in the Ossie specificatio
 
 | Disposition | Count | Share | Meaning |
 |---|---|---|---|
-| compose | 53 | 63% | A full, portable Ossie expression is produced. |
-| partial | 8 | 10% | A real Ossie expression is produced, but it is provably incomplete. |
+| compose | 57 | 68% | A full, portable Ossie expression is produced. |
+| partial | 0 | 0% | A real Ossie expression is produced, but it is provably incomplete. |
 | dialect | 11 | 13% | Resolves to the Ossie `dialects[]` mechanism, not a portable expression. |
-| stash | 12 | 14% | No Ossie expression exists at all; preserved verbatim for round-trip only. |
+| stash | 16 | 19% | No Ossie expression exists at all; preserved verbatim for round-trip only. |
 | **Total** | **84** | **100%** |  |
 
 ## Cross-cutting dispatch, not name-keyed
@@ -86,14 +86,14 @@ Two checks apply before an ordinary lookup by name into `REVERSE`, so they are n
 | `if` | compose | `CASE WHEN {0} THEN {1} ELSE {2} END` | — | if ( c ) then a else b -> CASE WHEN c THEN a ELSE b END, or IF(c, a, b). |
 | `rank` | compose | dynamic — see `_compose_rank` in `reverse.py` | — | Global, ORDER-BY-only shape only — rank's arity is fixed at exactly two (live-confirmed), so there is never a partition to lose in this direction. |
 | `rank_percentile` | compose | dynamic — see `_compose_rank_percentile` in `reverse.py` | — | Scale (0-100 -> 0-1) and inversion both reverse. |
-| `moving_sum` | partial | dynamic — see `_compose_moving.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
-| `cumulative_sum` | partial | dynamic — see `_compose_cumulative.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
-| `moving_average` | partial | dynamic — see `_compose_moving.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
-| `cumulative_average` | partial | dynamic — see `_compose_cumulative.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
-| `moving_max` | partial | dynamic — see `_compose_moving.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
-| `cumulative_max` | partial | dynamic — see `_compose_cumulative.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
-| `moving_min` | partial | dynamic — see `_compose_moving.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
-| `cumulative_min` | partial | dynamic — see `_compose_cumulative.<locals>._compose` in `reverse.py` | `TS-EXPR-PARTIAL-PARTITION` · WARNING | Frame and order translate exactly; the partition does not — a ThoughtSpot window formula cannot declare its own PARTITION BY, and the specification has no way to express that limitation. |
+| `moving_sum` | stash | — | `TS-EXPR-DYNAMIC-PARTITION` · ERROR | The frame and order translate exactly; the partition is the query's and cannot be known here. Live-probed 2026-11-16. |
+| `cumulative_sum` | compose | dynamic — see `_make_cumulative_dispatch.<locals>._dispatch` in `reverse.py` | — | Measure-only form composes exactly (`OVER ()`, live-probed 2026-11-16, unchanged across two different query grains). Any form carrying order columns is refused for the same reason as moving_*. |
+| `moving_average` | stash | — | `TS-EXPR-DYNAMIC-PARTITION` · ERROR | The frame and order translate exactly; the partition is the query's and cannot be known here. Live-probed 2026-11-16. |
+| `cumulative_average` | compose | dynamic — see `_make_cumulative_dispatch.<locals>._dispatch` in `reverse.py` | — | Measure-only form composes exactly (`OVER ()`, live-probed 2026-11-16, unchanged across two different query grains). Any form carrying order columns is refused for the same reason as moving_*. |
+| `moving_max` | stash | — | `TS-EXPR-DYNAMIC-PARTITION` · ERROR | The frame and order translate exactly; the partition is the query's and cannot be known here. Live-probed 2026-11-16. |
+| `cumulative_max` | compose | dynamic — see `_make_cumulative_dispatch.<locals>._dispatch` in `reverse.py` | — | Measure-only form composes exactly (`OVER ()`, live-probed 2026-11-16, unchanged across two different query grains). Any form carrying order columns is refused for the same reason as moving_*. |
+| `moving_min` | stash | — | `TS-EXPR-DYNAMIC-PARTITION` · ERROR | The frame and order translate exactly; the partition is the query's and cannot be known here. Live-probed 2026-11-16. |
+| `cumulative_min` | compose | dynamic — see `_make_cumulative_dispatch.<locals>._dispatch` in `reverse.py` | — | Measure-only form composes exactly (`OVER ()`, live-probed 2026-11-16, unchanged across two different query grains). Any form carrying order columns is refused for the same reason as moving_*. |
 | `group_aggregate` | compose | dynamic — see `_dispatch_group_aggregate` in `reverse.py` | — | Shape dispatch on the grouping/filter arguments — see _compose_grouped. |
 | `group_sum` | compose | dynamic — see `_make_group_shorthand_dispatch.<locals>._dispatch` in `reverse.py` | — | Shorthand for group_aggregate(sum(m), ...) — same shape dispatch. Judgment call: the (m, grouping, filter) 3-argument shape is assumed by analogy with group_aggregate's live-confirmed form; the shorthand family's own arity was not independently live-tested. |
 | `group_count` | compose | dynamic — see `_make_group_shorthand_dispatch.<locals>._dispatch` in `reverse.py` | — | Shorthand for group_aggregate(count(m), ...) — same shape dispatch. Judgment call: the (m, grouping, filter) 3-argument shape is assumed by analogy with group_aggregate's live-confirmed form; the shorthand family's own arity was not independently live-tested. |
