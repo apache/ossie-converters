@@ -1,0 +1,44 @@
+{
+  "$comment": "CDS scalar types fixture: one element per type the converter maps; see TestTypeFidelity.",
+  "csnInteropEffective": "1.0",
+  "definitions": {
+    "sap.types.Document": {
+      "kind": "entity",
+      "@EndUserText.label": "Document",
+      "elements": {
+        "DocumentNumber": {
+          "key": true,
+          "type": "cds.String",
+          "length": 10,
+          "@EndUserText.label": "Document Number"
+        },
+        "CreatedAt": {
+          "type": "cds.DateTime",
+          "@EndUserText.label": "Created At"
+        },
+        "ChangedAt": {
+          "type": "cds.Timestamp",
+          "@EndUserText.label": "Changed At"
+        },
+        "LongText": {
+          "type": "cds.LargeString",
+          "@EndUserText.label": "Long Text"
+        },
+        "NetAmount": {
+          "type": "cds.Decimal",
+          "precision": 15,
+          "scale": 2,
+          "@EndUserText.label": "Net Amount"
+        },
+        "PostingDate": {
+          "type": "cds.Date",
+          "@EndUserText.label": "Posting Date"
+        },
+        "ItemCount": {
+          "type": "cds.Integer",
+          "@EndUserText.label": "Item Count"
+        }
+      }
+    }
+  }
+}
