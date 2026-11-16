@@ -65,9 +65,12 @@ OSSIE_DATA_TYPES = {
     "INTEGER": OssieDataType.INTEGER,
     "LONG": OssieDataType.INTEGER,
     "FLOAT": OssieDataType.FLOAT,
+    "DOUBLE": OssieDataType.FLOAT,
     "BOOLEAN": OssieDataType.BOOLEAN,
     "DATE": OssieDataType.DATE,
     "DATETIME": OssieDataType.DATE_TIME,
+    "TIMESTAMP": OssieDataType.DATE_TIME,
+    "TIME": OssieDataType.TIME,
 }
 
 # A value safe to leave unquoted. This is the intersection of what the engines
@@ -376,7 +379,7 @@ def attribute_to_field(
             dialects=[
                 OssieDialectExpression(
                     dialect=OssieDialect.ANSI_SQL,
-                    expression=_sql_identifier(attr.name or name),
+                    expression=_sql_identifier(attr.name if attr.name.strip() else "column"),
                 )
             ]
         ),

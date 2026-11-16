@@ -251,3 +251,10 @@ def test_a_scope_without_a_tenant_needs_explicit_configuration(
 def test_max_items_below_one_is_rejected(client, tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         _run(tmp_path, "--source-urn", SOURCE_URN, "--max-items", "0")
+
+
+def test_dq_ai_warnings_with_no_dq_is_rejected(client, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        _run(tmp_path, "--source-urn", SOURCE_URN, "--no-dq", "--dq-ai-warnings")
+
+    assert "--dq-ai-warnings requires DQ results" in capsys.readouterr().err

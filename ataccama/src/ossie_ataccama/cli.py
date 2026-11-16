@@ -59,7 +59,9 @@ REQUIRED_VARS = ("ATACCAMA_BASE_URL", "ATACCAMA_CLIENT_ID", "ATACCAMA_CLIENT_SEC
 def _tenant_from_urn(urn: str) -> str | None:
     # urn:ata:<tenant>:<domain>:<type>:<id>
     parts = urn.split(":")
-    return parts[2] if len(parts) > 2 else None
+    if len(parts) > 2 and parts[0] == "urn" and parts[1] == "ata" and parts[2]:
+        return parts[2]
+    return None
 
 
 def _collect_urns(args: argparse.Namespace) -> list[str]:
@@ -157,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.env_file:
         load_dotenv(args.env_file, override=True)
+
+    if args.dq_ai_warnings and args.no_dq:
+        parser.error("--dq-ai-warnings requires DQ results and cannot be used with --no-dq")
 
     requested_urns = _collect_urns(args)
     if not (requested_urns or args.connection_urn or args.source_urn or args.location_urn):

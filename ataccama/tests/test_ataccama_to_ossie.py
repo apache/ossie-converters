@@ -156,7 +156,7 @@ def test_flat_ai_context_keeps_absent_context_absent(bundles: list[CatalogItemBu
 
 
 def test_document_stamps_the_converters_ossie_version(document: OssieDocument) -> None:
-    assert document.version == "0.2.0.dev0"
+    assert document.version == "0.3.0.dev0"
     assert not _schema_errors(document)
 
 
@@ -168,15 +168,15 @@ def test_ossie_version_override_warns_and_leaves_the_document_schema_invalid(
 
     assert document.version == "0.1.1"
     # The schema pins the version, so the override is knowingly out of spec.
-    assert any("0.2.0.dev0" in error for error in _schema_errors(document))
+    assert any("0.3.0.dev0" in error for error in _schema_errors(document))
 
 
 def test_ossie_version_matching_the_default_is_not_a_warning(bundles: list[CatalogItemBundle]) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        document = ataccama_to_ossie(bundles, ossie_version="0.2.0.dev0")
+        document = ataccama_to_ossie(bundles, ossie_version="0.3.0.dev0")
 
-    assert document.version == "0.2.0.dev0"
+    assert document.version == "0.3.0.dev0"
 
 
 def test_governance_metadata_preserved(document: OssieDocument) -> None:
@@ -560,15 +560,25 @@ def test_below_threshold_flag_true() -> None:
         ("INTEGER", OssieDataType.INTEGER),
         ("LONG", OssieDataType.INTEGER),  # Ossie has no wider integer
         ("FLOAT", OssieDataType.FLOAT),
+        ("DOUBLE", OssieDataType.FLOAT),
         ("BOOLEAN", OssieDataType.BOOLEAN),
         ("DATE", OssieDataType.DATE),
         ("DATETIME", OssieDataType.DATE_TIME),
+        ("TIMESTAMP", OssieDataType.DATE_TIME),
+        ("TIME", OssieDataType.TIME),
         (None, None),
     ],
 )
 def test_datatype_mapping(data_type, expected) -> None:
     attr = CatalogAttribute(urn="urn:ata:t:catalog:catalog-attribute:1", name="c", data_type=data_type)
     assert attribute_to_field(attr, terms={}, used=set()).datatype == expected
+
+
+def test_empty_attribute_name_falls_back_without_double_quoting_expression() -> None:
+    attr = CatalogAttribute(urn="urn:ata:t:catalog:catalog-attribute:1", name="")
+    field = attribute_to_field(attr, terms={}, used=set())
+    assert field.name == '"column"'
+    assert field.expression.dialects[0].expression == '"column"'
 
 
 def test_unrecognized_datatype_is_omitted_with_a_warning() -> None:
