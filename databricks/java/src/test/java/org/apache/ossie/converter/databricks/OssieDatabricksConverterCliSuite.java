@@ -28,6 +28,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -94,6 +96,7 @@ public class OssieDatabricksConverterCliSuite {
     String out = stdout("import", write("view.yaml", METRIC_VIEW).toString());
     assertTrue(out.contains("datasets:"), "expected an Apache Ossie model, got:\n" + out);
     assertTrue(out.contains("0.2.0.dev0"), "expected the Apache Ossie version, got:\n" + out);
+    assertFalse(out.contains("primary_key"), "the fact key is supplied by the caller");
   }
 
   @Test
@@ -102,6 +105,11 @@ public class OssieDatabricksConverterCliSuite {
     String query = "SELECT * FROM cat.sch.orders WHERE o_amount > 0";
     assertFalse(stdout("import", file.toString()).contains(query));
     assertTrue(stdout("import", file.toString(), "--push-down-source-filter").contains(query));
+    String withKey = stdout("import", file.toString(), "--primary-key", "order_id",
+        "--push-down-source-filter");
+    assertTrue(withKey.contains(query));
+    assertTrue(withKey.contains("primary_key:"));
+    assertTrue(withKey.contains("order_id"));
     assertEquals(2, exitFrom("export", file.toString(), "--push-down-source-filter").code);
   }
 
@@ -140,6 +148,51 @@ public class OssieDatabricksConverterCliSuite {
   public void importUsesNameForTheModelName() throws IOException {
     String out = stdout("import", write("view.yaml", METRIC_VIEW).toString(), "--name", "custom");
     assertTrue(out.contains("name: \"custom\""), "expected the named model, got:\n" + out);
+  }
+
+  @Test
+  public void importUsesRepeatedPrimaryKeyFlagsOnTheFactSource() throws IOException {
+    String joined = METRIC_VIEW
+        + "joins:\n"
+        + "- {name: customer, source: cat.sch.customer, "
+        + "on: source.customer_id = customer.customer_id}\n";
+    String out = stdout("import", write("view.yaml", joined).toString(),
+        "--primary-key", " item_id ", "--name", "sales", "--primary-key", "ticket_number");
+    Map<String, Object> model = OssieConverterCommon.asMap(OssieConverter.parseYaml(out));
+    List<Object> datasets = OssieConverterCommon.asList(model.get("datasets"));
+    Map<String, Object> fact = datasets.stream().map(OssieConverterCommon::asMap)
+        .filter(dataset -> "sales".equals(dataset.get("name"))).findFirst().orElseThrow();
+    assertEquals("cat.sch.orders", fact.get("source"));
+    assertEquals(List.of("item_id", "ticket_number"), fact.get("primary_key"));
+    assertTrue(datasets.size() > 1);
+    assertTrue(datasets.stream().map(OssieConverterCommon::asMap)
+        .filter(dataset -> dataset != fact).noneMatch(dataset -> dataset.containsKey("primary_key")));
+  }
+
+  @Test
+  public void exportRejectsPrimaryKeyFlag() throws IOException {
+    OssieDatabricksConverter.ExitException error =
+        exitFrom("export", write("model.yaml", OSSIE_MODEL).toString(), "--primary-key", "id");
+    assertEquals(2, error.code);
+    assertTrue(error.getMessage().contains("'--primary-key' is only valid for 'import'"));
+  }
+
+  @Test
+  public void importRejectsMissingPrimaryKeyValue() throws IOException {
+    OssieDatabricksConverter.ExitException error =
+        exitFrom("import", write("view.yaml", METRIC_VIEW).toString(), "--primary-key");
+    assertEquals(2, error.code);
+    assertTrue(error.getMessage().contains("'--primary-key' requires a value"));
+  }
+
+  @Test
+  public void importApiRejectsBlankAndDuplicatePrimaryKeyColumns() {
+    for (List<String> invalid : List.of(List.of(" "), List.of("order_id", " ORDER_ID "))) {
+      OssieConverter.ConversionException error = assertThrows(
+          OssieConverter.ConversionException.class,
+          () -> OssieConverter.convertMetricViewToOssie(METRIC_VIEW, null, invalid));
+      assertEquals(OssieConverter.ConversionException.Kind.INVALID_INPUT, error.getKind());
+    }
   }
 
   @Test

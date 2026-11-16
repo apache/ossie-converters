@@ -94,7 +94,8 @@ final class MetricViewToOssie {
   private MetricViewToOssie() {}
 
   static Result convertMetricViewToOssie(
-      String mvYamlStr, String modelName, boolean pushDownSourceFilter) {
+      String mvYamlStr, String modelName, List<String> factPrimaryKey,
+      boolean pushDownSourceFilter) {
     Notices notices = new Notices();
     if (mvYamlStr == null || mvYamlStr.trim().isEmpty()) {
       throw ConversionException.invalidInput(
@@ -128,7 +129,8 @@ final class MetricViewToOssie {
               + "'. This converter targets v" + MV_VERSION + " only.",
           version);
     }
-    Map<String, Object> model = convertView(view, modelName, notices, pushDownSourceFilter);
+    Map<String, Object> model = convertView(
+        view, modelName, factPrimaryKey, notices, pushDownSourceFilter);
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("version", OSSIE_VERSION);
     out.putAll(model);
@@ -145,7 +147,8 @@ final class MetricViewToOssie {
   }
 
   private static Map<String, Object> convertView(
-      Map<String, Object> view, String modelName, Notices notices, boolean pushDownSourceFilter) {
+      Map<String, Object> view, String modelName, List<String> factPrimaryKey,
+      Notices notices, boolean pushDownSourceFilter) {
     Object source = get(view, "source");
     if (source == null || source.toString().isEmpty()) {
       throw new ConversionException("Metric View is missing required 'source'");
@@ -167,6 +170,19 @@ final class MetricViewToOssie {
     Map<String, Object> factDs = new LinkedHashMap<>();
     factDs.put("name", factName);
     factDs.put("source", source);
+    if (factPrimaryKey != null && !factPrimaryKey.isEmpty()) {
+      Set<String> keyNames = new HashSet<>();
+      List<String> columns = new ArrayList<>();
+      for (String suppliedColumn : factPrimaryKey) {
+        String column = suppliedColumn == null ? "" : suppliedColumn.strip();
+        if (column.isEmpty() || !keyNames.add(column.toLowerCase(Locale.ROOT))) {
+          String message = "Fact primary key must contain distinct, non-blank column names";
+          throw ConversionException.invalidInput(message, message);
+        }
+        columns.add(column);
+      }
+      factDs.put("primary_key", columns);
+    }
     datasets.add(factDs);
     List<Map<String, Object>> relationships = new ArrayList<>();
     Map<String, String> aliasToDataset = new HashMap<>();

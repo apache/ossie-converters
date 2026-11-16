@@ -136,16 +136,33 @@ public final class OssieConverter {
 
   /** IMPORT: Metric View v1.1 YAML -&gt; Apache Ossie semantic model YAML. */
   public static Result convertMetricViewToOssie(String mvYamlStr, String modelName) {
-    return convertMetricViewToOssie(mvYamlStr, modelName, false);
+    return convertMetricViewToOssie(mvYamlStr, modelName, List.of(), false);
   }
 
   /**
-   * Import a Metric View, optionally turning supported filters into SQL dataset sources.
+   * IMPORT with a caller-declared primary key for the Metric View's fact source.
+   * The list names physical source columns in key order. An empty list supplies no key.
+   */
+  public static Result convertMetricViewToOssie(
+      String mvYamlStr, String modelName, List<String> factPrimaryKey) {
+    return convertMetricViewToOssie(mvYamlStr, modelName, factPrimaryKey, false);
+  }
+
+  /** Import a Metric View with optional source filter pushdown and no declared key. */
+  public static Result convertMetricViewToOssie(
+      String mvYamlStr, String modelName, boolean pushDownSourceFilter) {
+    return convertMetricViewToOssie(mvYamlStr, modelName, List.of(), pushDownSourceFilter);
+  }
+
+  /**
+   * Import with a caller-declared fact primary key and optional source filter pushdown.
    * Enable pushdown only when the downstream consumer supports SQL sources.
    */
   public static Result convertMetricViewToOssie(
-      String mvYamlStr, String modelName, boolean pushDownSourceFilter) {
-    return MetricViewToOssie.convertMetricViewToOssie(mvYamlStr, modelName, pushDownSourceFilter);
+      String mvYamlStr, String modelName, List<String> factPrimaryKey,
+      boolean pushDownSourceFilter) {
+    return MetricViewToOssie.convertMetricViewToOssie(
+        mvYamlStr, modelName, factPrimaryKey, pushDownSourceFilter);
   }
 
   /** Parse YAML text into a plain value (YAML 1.2 booleans, matching the converter). */

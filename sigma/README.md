@@ -110,7 +110,7 @@ Path("data_model.json").write_text(json.dumps(result.output, indent=2))
 | Element `metrics[]` | `OssieMetric` | Promoted to model level (Ossie metrics are not dataset-scoped); the formula is re-qualified with the owning dataset name |
 | `relationships[]` (join keys) | `OssieRelationship` | See [Relationship resolution](#relationship-resolution) |
 | Column/element/relationship native `id` | *(preserved, not surfaced)* | Stashed in `custom_extensions` (`vendor_name: SIGMA`) so re-export can reuse Sigma's own stable ids rather than minting new ones — see [Stable ids](#stable-ids) |
-| Column `format` | `datatype` (coarse) + `custom_extensions` | Sigma has no column datatype, only a display format with two kinds (`number`, `date`); anything else becomes `Opaque`. The native format object is always preserved |
+| Column `format` | `datatype` (coarse) + `custom_extensions` | Sigma has no column datatype, only a display format with two kinds (`number`, `datetime`); anything else becomes `Opaque`. Ossie → Sigma writes a `number` kind for numeric columns only; date columns get no `format`, so Sigma uses its own default. The native format object is always preserved |
 | `filters`, `folders`, `order`, `sort`, `summary`, `groupings`, `columnSecurities`, `visibleAsSource`, `hidden`, metric `timeline`/`isHighlighted`/`format`, `relationshipType` | *not modeled* | Presentation/governance state with no Ossie equivalent, preserved verbatim under a `native` key in `custom_extensions`. Captured by subtraction, so fields added by a future `schemaVersion` round-trip too |
 
 ### Expression translation

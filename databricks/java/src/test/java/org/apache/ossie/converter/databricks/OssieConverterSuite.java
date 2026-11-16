@@ -1005,6 +1005,24 @@ public class OssieConverterSuite {
   }
 
   @Test
+  public void tpcdsFilterPushdownKeepsTheDeclaredFactKey() {
+    String view = loadFixture("tpcds_metric_view.yaml").replace(
+        "filter: ss_net_profit > 0", "filter: source.ss_net_profit > 0");
+    List<String> key = List.of("ss_item_sk", "ss_ticket_number");
+    String imported = OssieConverter.convertMetricViewToOssie(view, null, key, true).yaml;
+    Map<String, Object> model = OssieConverterCommon.asMap(OssieConverter.parseYaml(imported));
+    Map<String, Object> fact = OssieConverterCommon.asMap(
+        OssieConverterCommon.asList(model.get("datasets")).get(0));
+    assertEquals(key, fact.get("primary_key"));
+    assertEquals("SELECT * FROM tpcds.public.store_sales WHERE ss_net_profit > 0",
+        fact.get("source"));
+    Map<String, Object> returned = OssieConverterCommon.asMap(OssieConverter.parseYaml(
+        OssieConverter.convertOssieToMetricView(imported, null).yaml));
+    assertEquals("tpcds.public.store_sales", returned.get("source"));
+    assertEquals("source.ss_net_profit > 0", returned.get("filter"));
+  }
+
+  @Test
   public void joinedBareColumnAndNestedOneToManyKeepFiltersInMetadata() {
     String view = """
         version: '1.1'

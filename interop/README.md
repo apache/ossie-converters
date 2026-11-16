@@ -21,7 +21,6 @@
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
 The registry includes **all 23 converter projects**, with explicit capability skips.
-Cube, Databricks, and dbt remain the targets of the focused semantic regressions.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -91,10 +90,12 @@ Its selected import/export dialect is BIGQUERY and exports use the placeholder
 connection `interop_warehouse`; no live connection is created.
 BigQuery (LookML export only) checks `dimension`, `dimension_group` and `measure`
 declarations in the single exported file; LookML validation needs a Looker instance.
-Existing vendor fixtures are reused, plus a small independently authored Honeydew
-workspace. OrionBelt installs its locked `obml-validation` extra so its native
-semantic validation is available during export checks. Missing directions never
-run a dummy successful command. The report includes a capabilities table even for registrations with no native fixture.
+Source fixtures include a small Honeydew workspace and an orders dataset
+compiled with Holistics CLI 2.3.32. The Holistics converter suite checks the
+ecommerce fixture's unresolved query template separately. OrionBelt installs
+its locked `obml-validation` extra for native semantic validation during
+export checks. The capabilities table includes registrations with no native
+fixture, and unsupported directions appear as skips.
 `import_requires_files` records repository-relative prerequisites that may be absent.
 A missing prerequisite skips imports and target re-imports while leaving export
 checks available. Salesforce needs
@@ -103,9 +104,6 @@ its README describes how to obtain it. Rebuild its JAR after supplying the schem
 `import: null` requires an `import_skip` reason; `roundtrip_skip` names a format
 bridge that is not available, and a `cwd`/`skip` entry disables an entire
 registration with an explicit reason.
-
-Focused dialect/key/source oracles remain scoped to their original three targets;
-other formats currently receive native-content, schema, and inventory checks.
 
 ## Coverage and grading
 
@@ -140,10 +138,11 @@ routes are Cube -> Ossie -> Databricks -> Ossie -> Cube for TPC-DS and a focused
 two-table sales/customer fixture. These checks are reported separately from
 the acceptance matrix and its degradation warnings.
 
-Ten independent Ossie **document regression fixtures** continue to run against
-Cube, Databricks, and dbt: three dialect-only cases, four key cases, and three source cases.
-Their 30 results and the two native binding results remain separate from
-the broad acceptance matrix. Each fixture has an independently authored, versioned assertion file.
+Ten independent Ossie **document regression fixtures** cover three dialect-only
+cases, four key cases, and three source cases. All ten run against Cube,
+Databricks, and dbt. The dialect cases also run against Omni and Sigma. Document
+regressions and the two native binding regressions are reported separately from
+the broad acceptance matrix. Each fixture has a versioned assertion file.
 
 | Grade | Meaning |
 |---|---|
