@@ -248,7 +248,7 @@ def test_without_generated_direct_lake_partitions_compatibility_behavior_is_pres
 
     assert _convert(semantic_model)["compatibilityLevel"] == 1500
 
-    semantic_model["custom_extensions"] = []
+    semantic_model["nonportable_extensions"] = []
     assert (
         _convert(semantic_model)["compatibilityLevel"]
         == DEFAULT_COMPATIBILITY_LEVEL
@@ -1014,59 +1014,40 @@ def test_dax_is_preferred_over_ossie_sql():
 
 
 def _core_schema():
-    repo_root = Path(__file__).resolve().parents[2] / "ossie"
     return json.loads(
-        (repo_root / "core-spec" / "ossie-schema.json").read_text(encoding="utf-8")
+        (FIXTURES / "ossie-schema-0.3.0.dev0.json").read_text(encoding="utf-8")
     )
 
 
-def test_the_tpcds_example_in_the_sql_form_is_valid_against_the_spec():
+def test_the_tpcds_example_in_the_sql_form_is_valid_against_the_spec(tpcds_osi):
     schema = _core_schema()
-    if "sql" not in schema["$defs"]["Expression"].get("properties", {}):
-        pytest.skip("the pinned ossie submodule predates the portable `sql` form")
-    repo_root = Path(__file__).resolve().parents[2] / "ossie"
-    ossie = yaml.safe_load(
-        (repo_root / "examples" / "tpcds_semantic_model.yaml").read_text(encoding="utf-8")
-    )
+    ossie = tpcds_osi
     for element in [f for d in ossie["datasets"] for f in d["fields"]] + ossie["metrics"]:
-        element["expression"] = _ansi_to_sql_form(element["expression"])
+        element["expression"] = _sql_form(element["expression"])
     jsonschema.validate(ossie, schema)
 
 
-def _ansi_to_sql_form(expression):
-    """Rewrite an expression's ANSI_SQL entry as the portable ``sql`` form."""
+def _sql_form(expression):
+    """Use portable SQL directly, or rewrite a legacy example's ANSI_SQL entry."""
+    if "sql" in expression:
+        return {"sql": expression["sql"]}
     text = next(e["expression"] for e in expression["dialects"] if e["dialect"] == "ANSI_SQL")
     return {"sql": text}
 
 
 @pytest.mark.parametrize("form", ["ANSI_SQL", "OSSIE_SQL_2026", "sql"])
-def test_all_tpcds_example_metrics_translate_to_dax(form):
-    repo_root = Path(__file__).resolve().parents[2] / "ossie"
-    ossie = yaml.safe_load(
-        (repo_root / "examples" / "tpcds_semantic_model.yaml").read_text(encoding="utf-8")
-    )
+def test_all_tpcds_example_metrics_translate_to_dax(form, tpcds_osi):
+    ossie = tpcds_osi
     elements = [field for dataset in ossie["datasets"] for field in dataset["fields"]]
     elements += ossie["metrics"]
-    if form == "OSSIE_SQL_2026":
-        for element in elements:
-            for entry in element["expression"]["dialects"]:
-                if entry["dialect"] == "ANSI_SQL":
-                    entry["dialect"] = form
-    elif form == "sql":
-        for element in elements:
-            element["expression"] = _ansi_to_sql_form(element["expression"])
+    for element in elements:
+        expression = _sql_form(element["expression"])
+        element["expression"] = (
+            expression if form == "sql" else make_expression(expression["sql"], form)
+        )
     # The portable `sql` form reads as OSSIE_SQL_2026.
     dialect = "OSSIE_SQL_2026" if form == "sql" else form
-    full_name = next(
-        f for d in ossie["datasets"] for f in d["fields"] if f["name"] == "customer_full_name"
-    )
-    # Newer spec examples carry `sql` next to the ANSI_SQL copy; `sql` then wins.
-    column_dialect = "OSSIE_SQL_2026" if "sql" in full_name["expression"] else dialect
-
-    if form != "sql":
-        # The `sql` form is validated in its own test, which needs a pinned spec that
-        # defines it.
-        jsonschema.validate(ossie, _core_schema())
+    jsonschema.validate(ossie, _core_schema())
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -1076,7 +1057,7 @@ def test_all_tpcds_example_metrics_translate_to_dax(form):
     assert column["expression"] == (
         "'customer'[c_first_name] & \" \" & 'customer'[c_last_name]"
     )
-    assert _annotation(column, "OssieExpressionDialect") == column_dialect
+    assert _annotation(column, "OssieExpressionDialect") == dialect
 
     measures = {
         measure["name"]: measure
@@ -1280,13 +1261,15 @@ def test_a_legacy_relationship_stash_keeps_non_cardinality_metadata():
 def test_another_vendors_extensions_are_reported_as_dropped():
     semantic_model = _minimal()
     write_stash_for_other_vendor(semantic_model["datasets"][0])
-    with pytest.warns(UserWarning, match="vendor 'DATABRICKS'"):
+    with pytest.warns(
+        UserWarning, match="foreign nonportable_extensions for vendor 'DATABRICKS'"
+    ):
         _convert(semantic_model)
 
 
 def write_stash_for_other_vendor(obj):
-    obj.setdefault("custom_extensions", []).append(
-        {"vendor_name": "DATABRICKS", "data": "{}"}
+    obj.setdefault("nonportable_extensions", []).append(
+        {"vendor_name": "DATABRICKS", "data": {}}
     )
 
 
@@ -1337,16 +1320,18 @@ def test_cli_export_reports_errors_without_traceback(tmp_path, capsys):
     from ossie_microsoft.cli import main
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text("version: 0.2.0.dev0\n", encoding="utf-8")
+    bad.write_text("version: 0.3.0.dev0\n", encoding="utf-8")
     assert main(["export", "-i", str(bad)]) == 1
     assert "Error:" in capsys.readouterr().err
 
 
-def test_stash_data_that_is_not_json_is_rejected():
+def test_stash_data_that_is_a_json_string_is_rejected():
     from ossie_microsoft import ConversionError
 
     semantic_model = _minimal()
-    semantic_model["custom_extensions"] = [{"vendor_name": "POWER_BI", "data": "{oops"}]
+    semantic_model["nonportable_extensions"] = [
+        {"vendor_name": "POWER_BI", "data": '{"lineageTag": "abc"}'}
+    ]
     with pytest.raises(ConversionError):
         _convert(semantic_model)
 
@@ -1354,7 +1339,9 @@ def test_stash_data_that_is_not_json_is_rejected():
 def test_a_written_stash_round_trips():
     obj = {}
     write_stash(obj, {"a": 1})
-    assert yaml.safe_load(json.dumps(obj))["custom_extensions"][0]["vendor_name"] == "POWER_BI"
+    restored = yaml.safe_load(yaml.safe_dump(obj))
+    assert restored["nonportable_extensions"][0]["data"] == {"_v": 2, "a": 1}
+    assert read_stash(restored) == {"a": 1}
 
 
 def test_import_export_is_stable_across_two_passes(bim):
@@ -1624,8 +1611,8 @@ def test_a_stash_written_by_a_newer_converter_is_refused():
     from ossie_microsoft._common import STASH_VERSION, VENDOR, ConversionError
 
     obj = {
-        "custom_extensions": [
-            {"vendor_name": VENDOR, "data": json.dumps({"_v": STASH_VERSION + 1})}
+        "nonportable_extensions": [
+            {"vendor_name": VENDOR, "data": {"_v": STASH_VERSION + 1}}
         ]
     }
     with pytest.raises(ConversionError, match="newer converter"):
@@ -1636,8 +1623,8 @@ def test_a_stash_with_a_non_integer_version_is_refused():
     from ossie_microsoft._common import VENDOR, ConversionError
 
     obj = {
-        "custom_extensions": [
-            {"vendor_name": VENDOR, "data": json.dumps({"_v": "1"})}
+        "nonportable_extensions": [
+            {"vendor_name": VENDOR, "data": {"_v": "1"}}
         ]
     }
     with pytest.raises(ConversionError, match="non-integer version"):
@@ -1648,10 +1635,10 @@ def test_a_stash_this_converter_understands_is_replayed():
     from ossie_microsoft._common import STASH_VERSION, VENDOR
 
     obj = {
-        "custom_extensions": [
+        "nonportable_extensions": [
             {
                 "vendor_name": VENDOR,
-                "data": json.dumps({"_v": STASH_VERSION, "lineageTag": "abc"}),
+                "data": {"_v": STASH_VERSION, "lineageTag": "abc"},
             }
         ]
     }

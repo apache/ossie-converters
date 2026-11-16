@@ -21,7 +21,6 @@
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
 The registry includes **all 24 converter projects**, with explicit capability skips.
-Cube, Databricks, and dbt remain the targets of the focused semantic regressions.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -91,10 +90,12 @@ Its selected import/export dialect is BIGQUERY and exports use the placeholder
 connection `interop_warehouse`; no live connection is created.
 BigQuery (LookML export only) checks `dimension`, `dimension_group` and `measure`
 declarations in the single exported file; LookML validation needs a Looker instance.
-Existing vendor fixtures are reused, plus a small independently authored Honeydew
-workspace. OrionBelt installs its locked `obml-validation` extra so its native
-semantic validation is available during export checks. Missing directions never
-run a dummy successful command. The report includes a capabilities table even for registrations with no native fixture.
+Source fixtures include a small Honeydew workspace and an orders dataset
+compiled with Holistics CLI 2.3.32. The Holistics converter suite checks the
+ecommerce fixture's unresolved query template separately. OrionBelt installs
+its locked `obml-validation` extra for native semantic validation during
+export checks. The capabilities table includes registrations with no native
+fixture, and unsupported directions appear as skips.
 `import_requires_files` records repository-relative prerequisites that may be absent.
 A missing prerequisite skips imports and target re-imports while leaving export
 checks available. Salesforce needs
@@ -103,9 +104,6 @@ its README describes how to obtain it. Rebuild its JAR after supplying the schem
 `import: null` requires an `import_skip` reason; `roundtrip_skip` names a format
 bridge that is not available, and a `cwd`/`skip` entry disables an entire
 registration with an explicit reason.
-
-Focused dialect/key/source oracles remain scoped to their original three targets;
-other formats currently receive native-content, schema, and inventory checks.
 
 ## Coverage and grading
 
@@ -124,9 +122,9 @@ examples are intentionally outside this matrix.
   extensions are compared. Before/after counts and structural changes are saved.
   Extension comparisons include the owning model, dataset, field, metric, or
   relationship, so moving an unchanged payload between objects is reported as loss.
-  The full registry currently schedules 378 Tier A and 320 Tier B cases across
-  16 native fixtures and two canonical documents. Unsupported directions and
-  unavailable or invalid upstream sources remain visible as skips.
+  Case totals in the generated report reflect the selected converters and fixtures.
+  Unsupported directions and unavailable or invalid upstream sources appear as
+  skips. Each cell with a Tier B result links to its case evidence.
   For dbt targets, re-import exercises MetricFlow's manifest parser; Tier A
   alone checks JSON model content rather than MetricFlow compilation.
 - **Tier C:** optional native gates run on successful exports. Cube's existing
@@ -140,10 +138,11 @@ routes are Cube -> Ossie -> Databricks -> Ossie -> Cube for TPC-DS and a focused
 two-table sales/customer fixture. These checks are reported separately from
 the acceptance matrix and its degradation warnings.
 
-Ten independent Ossie **document regression fixtures** continue to run against
-Cube, Databricks, and dbt: three dialect-only cases, four key cases, and three source cases.
-Their 30 results and the two native binding results remain separate from
-the broad acceptance matrix. Each fixture has an independently authored, versioned assertion file.
+Ten independent Ossie **document regression fixtures** cover three dialect-only
+cases, four key cases, and three source cases. All ten run against Cube,
+Databricks, and dbt. The dialect cases also run against Omni and Sigma. Document
+regressions and the two native binding regressions are reported separately from
+the broad acceptance matrix. Each fixture has a versioned assertion file.
 
 | Grade | Meaning |
 |---|---|
@@ -208,7 +207,9 @@ Dialect fixtures have one dataset, a computed discount field, a computed upperca
 field, and an aggregate metric. Expression assertions compare SQLGlot-normalized
 syntax trees through a common rendering, allowing the dialect label to change
 and normalizing bare versus own-dataset-qualified columns. They check every
-returned dialect alternative. This deliberately bounded comparison is not an
+returned SQL alternative and require at least one. For Sigma returns, the native
+`SIGMA` formula accompanies the SQL and is outside this assertion. This
+deliberately bounded comparison is not an
 algebraic or SQL-value equivalence proof, and it does not run warehouse queries.
 An accidental ANSI fallback in a dialect-only input fails the fixture's baseline
 check before conversion.
@@ -330,24 +331,34 @@ code as the matrix, so preparation, timeouts, diagnostics and validation behave
 the same. The returned document is then graded against the fixture by the pinned
 core grader (`ossie/compliance/portability/grader/grade.py`), element by element:
 PORTABLE, RELABELED, REWRITTEN, SURVIVED_VENDOR_ONLY, PLACEHOLDER, DROPPED_DIAGNOSED,
-DROPPED_SILENT, ADDED, or REJECTED. The commands' stdout and stderr are the
-diagnostics that separate a diagnosed drop from a silent one. A failed export or
-re-import, or a return with nothing in it, is graded against an empty document,
-which the grader reports as REJECTED. A skip is not graded.
+DROPPED_SILENT, ADDED, or REJECTED. The diagnostics that separate a diagnosed
+drop from a silent one are the converter diagnostics the matrix reports (every
+key the converter wrote, such as ThoughtSpot's `object_ref`), not the raw command
+output, so success messages and file paths do not count. A failed export or
+re-import (including one that wrote a document and then exited non-zero), or a
+return with nothing in it, is graded against an empty document, which the grader
+reports as REJECTED. A skip is not graded. A case the grader cannot grade keeps
+its round-trip grade, shows the grader error in the report, and is not a harness
+error.
 
 A mode re-imports with a second command for the same converter (an opt-in flag
 such as Microsoft's `--translate-dax`). It shares the converter's preparation and
-export, and `--converters` keeps a mode only when its converter is selected.
+re-imports the export of the converter's own case, so the two rows grade the same
+export. `--converters` keeps a mode only when its converter is selected.
 
-The report's portability section totals the metric outcomes per converter or mode:
-`portable` (PORTABLE, RELABELED, and REWRITTEN the grader proves cosmetic),
-`review` (other REWRITTEN), `vendor`, `placeholder`, `dropped`, `rejected`, `added`
-(invented by the converter, not counted in `authored`), and `other` (an outcome a
-newer grader adds). Per-case results with every finding are saved under
-`portability/<variant>--to--<converter>/`. Scores are evidence about the round
-trip, not a pass: they never change the exit status, with or without `--strict`.
-The grader compares normalized sqlglot trees, so REWRITTEN can be cosmetic or a
-change in meaning; an execution check can take the same graded report per case.
+The report's portability section totals the outcomes per converter or mode, in
+one table for metrics and one for fields: `portable` (PORTABLE, a RELABELED to the
+other portable tag, and a REWRITTEN the grader proves cosmetic), `review` (a
+REWRITTEN the grader cannot prove cosmetic, or an element returned under another
+name), `vendor` (SURVIVED_VENDOR_ONLY, and a RELABELED to a vendor tag),
+`placeholder`, `dropped`, `rejected`, `added` (invented by the converter, not
+counted in `authored`), and `other` (an outcome, or a grader detail, this table
+cannot read, such as one a newer grader adds). Per-case results with every finding
+are saved under `portability/<variant>--to--<converter>/`. Scores are evidence
+about the round trip, not a pass: they never change the exit status, with or
+without `--strict`. The grader compares normalized sqlglot trees, so REWRITTEN can
+be cosmetic or a change in meaning; an execution check can take the same graded
+report per case.
 
 ## Manifest
 
@@ -405,8 +416,9 @@ a Holistics compiler, a Salesforce schema, or a live Polaris catalog.
 
 After the run, two steps use `always()` so a runner failure still allows evidence
 publication and a summary. The Actions job summary contains grade counts for
-each tier and regression group plus a link to the uploaded artifact. Missing or
-invalid results produce a diagnostic summary and a publication error. The summary
+each tier and regression group plus a link to the uploaded artifact. It separates
+declared capability skips from cases blocked by prerequisites or upstream failures.
+Missing or invalid results produce a diagnostic summary and a publication error. The summary
 does not render artifact-relative links that would break in the Actions UI.
 
 Download `interop-<run-id>-<attempt>` from that workflow run's artifacts. It is

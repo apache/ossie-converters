@@ -48,6 +48,7 @@ from metricflow_semantic_interfaces.implementations.elements.measure import (
 from metricflow_semantic_interfaces.implementations.metric import (
     PydanticMetric,
     PydanticMetricAggregationParams,
+    PydanticMetricInput,
     PydanticMetricTypeParams,
 )
 from metricflow_semantic_interfaces.test_utils import default_meta, semantic_model_with_guaranteed_meta
@@ -66,6 +67,7 @@ from tests.helpers import (
     _ossie_field,
     _ossie_metric,
     _ossie_relationship,
+    _simple_metric,
 )
 
 
@@ -564,6 +566,33 @@ class TestOssieToMSIMetricConversion:
         assert len(simple_metrics) == 2
         names = {m.name for m in simple_metrics}
         assert names == {"ratio_numerator", "ratio_denominator"}
+
+    def test_ratio_with_nullif_zero_denominator_produces_ratio_metric(self) -> None:
+        """MetricFlow adds NULLIF(denominator, 0) to a RATIO itself, so the denominator metric is the bare aggregate."""
+        doc = _ossie_doc(
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("order_id")])],
+            metrics=[_ossie_metric("arpu", "(SUM(amount)) / NULLIF((COUNT(order_id)), 0)")],
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        metrics = {m.name: m for m in result.output.metrics}
+        assert metrics["arpu"].type == MetricType.RATIO
+        denominator = metrics["arpu_denominator"].type_params
+        assert denominator.metric_aggregation_params is not None
+        assert denominator.metric_aggregation_params.agg == AggregationType.COUNT
+        assert denominator.expr == "order_id"
+
+    @pytest.mark.parametrize("denominator", ["NULLIF(COUNT(order_id), 1)", "NULLIF(COUNT(order_id), '0')"])
+    def test_ratio_denominator_nullif_other_than_zero_is_kept(self, denominator: str) -> None:
+        doc = _ossie_doc(
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("order_id")])],
+            metrics=[_ossie_metric("arpu", f"(SUM(amount)) / {denominator}")],
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert [i.element_name for i in result.issues] == ["arpu"]
 
     def test_ratio_sub_metric_names_pass_metricflow_validation(self) -> None:
         """MetricFlow rejects names containing a double underscore, so generated names must not use one."""
@@ -1714,6 +1743,42 @@ class TestOssieToMSIRoundTrip:
             "avg_order_value",
             "avg_order_value_denominator",
         }
+
+    def test_ratio_round_trips_with_nullif_denominator(self) -> None:
+        """MSI -> Ossie writes NULLIF(denominator, 0); Ossie -> MSI reads it back as the same RATIO."""
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[
+                _measure("revenue", agg=AggregationType.SUM, expr="amount"),
+                _measure("order_count", agg=AggregationType.COUNT, expr="order_id"),
+            ],
+        )
+        arpu = PydanticMetric(
+            name="arpu",
+            description=None,
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(name="revenue"),
+                denominator=PydanticMetricInput(name="order_count"),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+        ossie_doc = MSIToOssieConverter().convert(
+            _manifest(
+                semantic_models=[orders],
+                metrics=[_simple_metric("revenue", "revenue"), _simple_metric("order_count", "order_count"), arpu],
+            )
+        ).output
+
+        back = OssieToMSIConverter().convert(ossie_doc)
+
+        assert back.issues == []
+        metrics = {m.name: m for m in back.output.metrics}
+        assert metrics["arpu"].type == MetricType.RATIO
+        assert metrics["arpu_numerator"].type == MetricType.SIMPLE
+        assert metrics["arpu_denominator"].type == MetricType.SIMPLE
 
     def test_discrete_percentile_survives_round_trip(self) -> None:
         """A PERCENTILE_DISC metric keeps use_discrete_percentile through MSI -> Ossie -> MSI."""

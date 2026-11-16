@@ -109,7 +109,7 @@ from .constants import (
     MODEL_STASH_UNSURFACED_FORMULAS,
     MODEL_STASH_UNATTRIBUTED_FORMULAS,
     MODEL_STASH_UNREPRESENTABLE_JOINS,
-    PORTABLE_DIALECT,
+    PORTABLE_DIALECTS_ACCEPTED,
     RELATIONSHIP_STASH_CARDINALITY,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS,
@@ -1250,14 +1250,21 @@ def to_thoughtspot_expression(
     if isinstance(ts_expr, str) and ts_expr:
         return ts_expr
 
-    ansi_expr = by_dialect.get(PORTABLE_DIALECT)
-    if not isinstance(ansi_expr, str) or not ansi_expr:
+    # Any accepted portable dialect, in preference order -- see
+    # PORTABLE_DIALECTS_ACCEPTED for why this is wider than what is emitted.
+    ansi_expr = next(
+        (by_dialect[d] for d in PORTABLE_DIALECTS_ACCEPTED
+         if isinstance(by_dialect.get(d), str) and by_dialect[d]),
+        None,
+    )
+    if ansi_expr is None:
         log.add(
             code="TS-EXPR-NO-USABLE-DIALECT",
             severity=Severity.ERROR,
             message=(
-                "expression carries no THOUGHTSPOT entry and no ANSI_SQL entry this "
-                "converter can translate; no ThoughtSpot expression can be produced for it"
+                "expression carries no THOUGHTSPOT entry and none of "
+                f"{', '.join(PORTABLE_DIALECTS_ACCEPTED)} that this converter can "
+                "translate; no ThoughtSpot expression can be produced for it"
             ),
             object_ref=object_ref,
         )

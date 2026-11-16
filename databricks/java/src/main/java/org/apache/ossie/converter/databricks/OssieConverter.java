@@ -136,7 +136,16 @@ public final class OssieConverter {
 
   /** IMPORT: Metric View v1.1 YAML -&gt; Apache Ossie semantic model YAML. */
   public static Result convertMetricViewToOssie(String mvYamlStr, String modelName) {
-    return MetricViewToOssie.convertMetricViewToOssie(mvYamlStr, modelName);
+    return convertMetricViewToOssie(mvYamlStr, modelName, List.of());
+  }
+
+  /**
+   * IMPORT with a caller-declared primary key for the Metric View's fact source.
+   * The list names physical source columns in key order. An empty list supplies no key.
+   */
+  public static Result convertMetricViewToOssie(
+      String mvYamlStr, String modelName, List<String> factPrimaryKey) {
+    return MetricViewToOssie.convertMetricViewToOssie(mvYamlStr, modelName, factPrimaryKey);
   }
 
   /** Parse YAML text into a plain value (YAML 1.2 booleans, matching the converter). */

@@ -146,7 +146,7 @@ class _JoinTree:
 
 
 def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
-                              *, source_dialect=None):
+                              *, source_dialect=None, default_catalog=None, default_schema=None):
     """Convert one Cube view's public surface to Ossie YAML.
 
     `files` is a Cube model as {relative filename: YAML str}, the same input
@@ -164,6 +164,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
 
     `source_dialect` selects the warehouse SQL grammar and generated expression
     labels, and validates emitted SQL; None retains the legacy ANSI_SQL behavior.
+    `default_catalog` and `default_schema` qualify short table names as in
+    `convert_cube_to_ossie`.
     """
     if not isinstance(files, dict) or not files:
         raise ConversionError("expected a non-empty mapping of {filename: YAML}")
@@ -221,7 +223,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     # and checks each join alone rather than the whole tree.
     imported = IssueLog()
     model = _build_model(reduced, {}, {view: reduced_view}, {}, {}, None, view, imported,
-                         source_dialect, restore_dataset_metrics=False)
+                         source_dialect, restore_dataset_metrics=False,
+                         default_catalog=default_catalog, default_schema=default_schema)
     _refuse_unjoined(view, model, imported)
     for issue in imported:
         if issue.issue_type is not IssueType.FANOUT_UNSAFE_METRIC:

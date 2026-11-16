@@ -25,6 +25,7 @@ import sys
 
 
 GRADES = ("OK", "LOSSY", "EMPTY", "FAIL", "SKIP")
+COLUMNS = (*GRADES[:-1], "SKIP (declared)", "SKIP (blocked)")
 
 
 def _cell(value):
@@ -48,20 +49,25 @@ def render(report, artifact_url=""):
         "",
         "Converter findings are **report-only**. Harness, configuration, test, and publication errors fail this job.",
         "",
-        "| Check | " + " | ".join(GRADES) + " |",
-        "|---|" + "---:|" * len(GRADES),
+        "Declared skips reflect converter capabilities. Blocked skips include missing prerequisites and upstream failures.",
+        "",
+        "| Check | " + " | ".join(COLUMNS) + " |",
+        "|---|" + "---:|" * len(COLUMNS),
     ]
     for label, results in rows:
         counts = Counter(result["grade"] for result in results)
         if counts.keys() - set(GRADES):
             raise ValueError(f"unknown result grade in {label}")
-        lines.append(
-            "| "
-            + label
-            + " | "
-            + " | ".join(str(counts[grade]) for grade in GRADES)
-            + " |"
+        declared_skips = sum(
+            result["grade"] == "SKIP" and result.get("expected_skip") is True
+            for result in results
         )
+        values = (
+            *(counts[grade] for grade in GRADES[:-1]),
+            declared_skips,
+            counts["SKIP"] - declared_skips,
+        )
+        lines.append(f"| {label} | " + " | ".join(map(str, values)) + " |")
     metadata = report["metadata"]
     lines += [
         "",
