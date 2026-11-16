@@ -17,11 +17,10 @@
 
 """Collect object outcomes during one CLI conversion."""
 
-import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from ._common import VENDOR, extension_vendor
+from ._common import VENDOR
 
 _entries: ContextVar[list[dict] | None] = ContextVar("conversion_entries", default=None)
 
@@ -57,19 +56,14 @@ def record_items(kind, source_path, items, status, **details):
 def record_dropped_extensions(source, source_path):
     if _entries.get() is None:
         return
-    for index, extension in enumerate(source.get("custom_extensions") or []):
+    for index, extension in enumerate(source.get("nonportable_extensions") or []):
         if not isinstance(extension, dict):
             continue
-        vendor = extension_vendor(extension)
+        vendor = extension.get("vendor_name")
         if vendor == VENDOR:
             continue
-        path = f"{source_path}/custom_extensions/{index}"
-        payload = extension.get("data", extension.get("content"))
-        if isinstance(payload, str):
-            try:
-                payload = json.loads(payload)
-            except (ValueError, RecursionError):
-                payload = None
+        path = f"{source_path}/nonportable_extensions/{index}"
+        payload = extension.get("data")
         properties = sorted(map(str, payload)) if isinstance(payload, dict) else None
         record(
             "extension", path, extension, "dropped",

@@ -36,13 +36,13 @@ def test_export_reports_native_objects_placeholders_and_losses(tmp_path, capsys)
                 {},
             ],
             "metrics": [{"name": "per_order"}],
-            "custom_extensions": [
-                {"vendor_name": "POWER_BI", "data": "{}"},
+            "nonportable_extensions": [
+                {"vendor_name": "POWER_BI", "data": {}},
                 {
-                    "vendor": "SNOWFLAKE",
-                    "content": '{"metrics":[{"name":"local_revenue","expr":"SUM(amount)"}]}',
+                    "vendor_name": "SNOWFLAKE",
+                    "data": {"metrics": [{"name": "local_revenue", "expr": "SUM(amount)"}]},
                 },
-                {"vendor_name": "OTHER", "data": "not JSON"},
+                {"vendor_name": "OTHER", "data": {}},
             ],
         }],
         "metrics": [
@@ -92,8 +92,8 @@ def test_export_reports_native_objects_placeholders_and_losses(tmp_path, capsys)
         entry["source_path"]: entry for entry in report["entries"] if "payload_path" not in entry
     }
     assert {path: entry["status"] for path, entry in entries.items()} == {
-        "/datasets/0/custom_extensions/1": "dropped",
-        "/datasets/0/custom_extensions/2": "dropped",
+        "/datasets/0/nonportable_extensions/1": "dropped",
+        "/datasets/0/nonportable_extensions/2": "dropped",
         "/datasets/0/metrics/0": "dropped",
         "/datasets/0/fields/0": "translated",
         "/datasets/0/fields/1": "placeholder",
@@ -114,12 +114,12 @@ def test_export_reports_native_objects_placeholders_and_losses(tmp_path, capsys)
     ]
     assert entries["/metrics/2"]["target_dataset"] == "orders"
     assert entries["/metrics/3"]["reason"] == "missing_expression"
-    assert entries["/datasets/0/custom_extensions/1"]["vendor"] == "SNOWFLAKE"
-    assert entries["/datasets/0/custom_extensions/1"]["properties"] == ["metrics"]
-    assert entries["/datasets/0/custom_extensions/2"]["vendor"] == "OTHER"
+    assert entries["/datasets/0/nonportable_extensions/1"]["vendor"] == "SNOWFLAKE"
+    assert entries["/datasets/0/nonportable_extensions/1"]["properties"] == ["metrics"]
+    assert entries["/datasets/0/nonportable_extensions/2"]["vendor"] == "OTHER"
     assert [entry for entry in report["entries"] if "payload_path" in entry] == [{
         "kind": "metric",
-        "source_path": "/datasets/0/custom_extensions/1",
+        "source_path": "/datasets/0/nonportable_extensions/1",
         "payload_path": "/metrics/0",
         "name": "local_revenue",
         "status": "dropped",
@@ -129,15 +129,14 @@ def test_export_reports_native_objects_placeholders_and_losses(tmp_path, capsys)
     assert "SUM(amount)" not in report_path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("vendor_name", [{}, {"vendor_name": None}, {"vendor_name": ""}])
-def test_export_preserves_legacy_native_extensions(tmp_path, capsys, vendor_name):
+def test_export_preserves_native_extensions(tmp_path, capsys):
     ossie = {
         "name": "retail",
         "version": OSSIE_VERSION,
         "datasets": [{"name": "orders", "fields": [{"name": "id"}]}],
-        "custom_extensions": [
-            {**vendor_name, "vendor": "POWER_BI", "content": '{"culture": "fr-FR"}'},
-            {**vendor_name, "vendor": "SNOWFLAKE", "content": "{}"},
+        "nonportable_extensions": [
+            {"vendor_name": "POWER_BI", "data": {"culture": "fr-FR"}},
+            {"vendor_name": "SNOWFLAKE", "data": {}},
         ],
     }
     source = tmp_path / "model.yaml"
@@ -153,7 +152,7 @@ def test_export_preserves_legacy_native_extensions(tmp_path, capsys, vendor_name
     report = json.loads(report_path.read_text(encoding="utf-8"))
     extensions = [entry for entry in report["entries"] if entry["kind"] == "extension"]
     assert [(entry["source_path"], entry["vendor"]) for entry in extensions] == [
-        ("/custom_extensions/1", "SNOWFLAKE"),
+        ("/nonportable_extensions/1", "SNOWFLAKE"),
     ]
 
 
@@ -229,7 +228,7 @@ def test_import_reports_vendor_metadata_and_original_source_paths(tmp_path, proj
 
 def test_report_records_a_conversion_error(tmp_path, capsys):
     source = tmp_path / "model.yaml"
-    source.write_text("version: 0.2.0.dev0\n", encoding="utf-8")
+    source.write_text(f"version: {OSSIE_VERSION}\n", encoding="utf-8")
     report_path = tmp_path / "report.json"
     output = tmp_path / "model.bim"
 
