@@ -197,21 +197,6 @@ def test_group_aggregate_with_query_groups_alone_becomes_a_plain_aggregate():
     assert log.issues == []
 
 
-def test_group_aggregate_with_a_fixed_list_becomes_partition_by():
-    log = _log()
-    result = translate_thoughtspot(
-        "group_aggregate", ["SUM(m)", "{ a , b }", "query_filters ( )"], log, object_ref=OBJ
-    )
-    assert result == "SUM(m) OVER (PARTITION BY a , b)"
-    assert log.issues == []
-
-
-def test_group_aggregate_with_an_empty_list_becomes_over_with_no_partition():
-    log = _log()
-    result = translate_thoughtspot(
-        "group_aggregate", ["SUM(m)", "{ }", "query_filters ( )"], log, object_ref=OBJ
-    )
-    assert result == "SUM(m) OVER ()"
 
 
 def test_group_aggregate_with_a_dynamic_partition_stashes():
@@ -251,24 +236,6 @@ def test_group_aggregate_with_a_non_default_filter_stashes():
     assert "filter" in log.issues[0].message.lower()
 
 
-def test_group_sum_shorthand_composes_like_group_aggregate():
-    log = _log()
-    result = translate_thoughtspot("group_sum", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ)
-    assert result == "SUM(m) OVER (PARTITION BY a)"
-    assert log.issues == []
-
-
-def test_group_count_stddev_variance_shorthands_compose():
-    log = _log()
-    assert translate_thoughtspot(
-        "group_count", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
-    ) == "COUNT(m) OVER (PARTITION BY a)"
-    assert translate_thoughtspot(
-        "group_stddev", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
-    ) == "STDDEV(m) OVER (PARTITION BY a)"
-    assert translate_thoughtspot(
-        "group_variance", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
-    ) == "VARIANCE(m) OVER (PARTITION BY a)"
 
 
 def test_group_sum_shorthand_also_stashes_a_dynamic_partition():
@@ -684,3 +651,77 @@ class TestTheUnorderedCumulativeFormIsExactAndIsKept:
             log = _log()
             assert translate_thoughtspot(name, ["m"], log, object_ref=OBJ) == f"{agg}(m) OVER ()"
             assert log.issues == []
+
+
+class TestALevelOfDetailGrainIsNotAWindow:
+    """`group_aggregate` is a level-of-detail definition, not a window function.
+
+    That is why ThoughtSpot compiles it to a nested GROUP BY -- a derived
+    table at the finer grain with an outer re-aggregation -- and never to an
+    OVER clause. Live-probed 2026-11-16 on a cluster: the inner GROUP BY
+    tracked the query's own dimension, and no window function appeared in the
+    SQL for any `group_aggregate` form.
+
+    The two shapes do not even return the same thing. A derived table returns
+    one row per group; `OVER (PARTITION BY ...)` returns one row per input
+    row with the group total attached. Rendering an LOD as a window was the
+    wrong construct, not a lossy version of the right one.
+
+    Ossie has no level-of-detail concept to target instead, so there is no
+    portable expression to emit, and we do not emit one we cannot guarantee.
+    """
+
+    FIXED = ["SUM(m)", "{ a , b }", "query_filters ( )"]
+
+    def test_a_fixed_grain_emits_no_expression(self):
+        log = _log()
+        assert translate_thoughtspot(
+            "group_aggregate", self.FIXED, log, object_ref=OBJ
+        ) is None
+
+    def test_it_reports_why(self):
+        log = _log()
+        translate_thoughtspot("group_aggregate", self.FIXED, log, object_ref=OBJ)
+        [issue] = log.issues
+        assert issue.code == "TS-EXPR-LEVEL-OF-DETAIL"
+        assert issue.severity is Severity.ERROR
+        assert "group_aggregate" in issue.message
+
+    def test_an_empty_grain_is_refused_too(self):
+        log = _log()
+        assert translate_thoughtspot(
+            "group_aggregate", ["SUM(m)", "{ }", "query_filters ( )"], log, object_ref=OBJ
+        ) is None
+
+    def test_the_shorthand_family_follows(self):
+        # Replaces test_group_count_stddev_variance_shorthands_compose, which
+        # asserted the OVER (PARTITION BY ...) rendering for the same names.
+        for name in ("group_sum", "group_count", "group_stddev", "group_variance"):
+            log = _log()
+            assert translate_thoughtspot(
+                name, ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
+            ) is None, name
+            assert log.issues[0].code == "TS-EXPR-LEVEL-OF-DETAIL", name
+
+
+class TestTheQueryGrainFormIsStillTheOneExactCase:
+    """`query_groups ( )` alone asks for the query's OWN grain.
+
+    An aggregate evaluated at the query's grain is what a bare aggregate
+    already means, so this one needs no window and no derived table.
+    Live-probed 2026-11-16: it compiled to a plain GROUP BY on the query's
+    dimension, identical in shape to an ordinary SUM.
+
+    Note the reason, which an earlier docstring had backwards. This is NOT
+    "the partition is declared in the formula" -- `query_groups ( )` is
+    explicitly the dynamic one. It is exact *because* it is dynamic: it
+    always means whatever the query means.
+    """
+
+    def test_it_composes_a_bare_aggregate(self):
+        log = _log()
+        assert translate_thoughtspot(
+            "group_aggregate", ["SUM(m)", "query_groups ( )", "query_filters ( )"],
+            log, object_ref=OBJ,
+        ) == "SUM(m)"
+        assert log.issues == []

@@ -538,16 +538,27 @@ def _compose_grouped(
 ) -> str | None:
     """Shared shape dispatch for `group_aggregate` and its named shorthands.
 
-    Three dispositions live under one ThoughtSpot spelling, distinguished only by the
-    grouping/filter arguments' shape (all three shapes are live-confirmed real, per the
-    document's "Window rows live-confirmed" section):
+    `group_aggregate` is a LEVEL-OF-DETAIL definition, not a window function. ThoughtSpot
+    compiles it to a nested GROUP BY — a derived table at the finer grain with an outer
+    re-aggregation — and never to an OVER clause (live-probed 2026-11-16; no window
+    function appeared in the SQL for any form of it). The two shapes do not return the
+    same thing either: a derived table returns one row per group, while
+    `OVER (PARTITION BY ...)` returns one row per input row with the group total attached.
 
-    - a `query_filters ( )`-only filter and a fixed `{ ... }` grouping (or `query_groups ( )`
-      alone) composes cleanly — this is the one ThoughtSpot windowing form that is clean in
-      this direction, because its partition is declared in the formula rather than completed
-      from the query;
-    - a `query_groups ( ) ± { attr }` dynamic grouping has no expression (the largest
-      reverse-direction fidelity gap);
+    Ossie has no level-of-detail construct to target, so only one shape composes:
+
+    - `query_groups ( )` alone, with a `query_filters ( )` filter, is the query's OWN
+      grain — and an aggregate at the query's grain is what a bare aggregate already
+      means. Exact, and exact *because* it is dynamic: it always means whatever the
+      query means. (An earlier version of this docstring had the reason backwards,
+      claiming the partition was "declared in the formula". `query_groups ( )` is
+      explicitly the dynamic one.)
+    - a fixed `{ ... }` grouping names a grain other than the query's. That is the
+      level-of-detail case, it has no Ossie expression, and the `OVER (PARTITION BY ...)`
+      this used to emit was the wrong construct rather than a lossy version of the right
+      one.
+    - a `query_groups ( ) ± { attr }` grouping is a level-of-detail relative to the
+      query's grain — same answer, same reason.
     - any filter argument other than `query_filters ( )` has no expression either (filter
       scoping is excluded from Ossie expressions).
     """
@@ -565,24 +576,24 @@ def _compose_grouped(
             object_ref=object_ref,
         )
         return None
-    if "query_groups ( )" in grouping and ("-" in grouping or "+" in grouping):
+    if grouping == "query_groups ( )":
+        # The query's own grain. A bare aggregate already means exactly this.
+        return agg_call
+    if grouping.startswith("{") and grouping.endswith("}") or "query_groups ( )" in grouping:
         log.add(
-            code="TS-EXPR-GROUP-DYNAMIC-PARTITION",
+            code="TS-EXPR-LEVEL-OF-DETAIL",
             severity=Severity.ERROR,
             message=(
-                f"{source_name}'s grouping argument ({grouping_arg!r}) completes the "
-                "partition dynamically from the query's own dimensions, which the "
-                "specification cannot express — the largest reverse-direction "
-                "fidelity gap. Preserved verbatim for roundtrip."
+                f"{source_name}'s grouping argument ({grouping_arg!r}) defines a level "
+                "of detail — an aggregate at a grain other than the query's. "
+                "ThoughtSpot computes it as a nested GROUP BY, not a window function "
+                "(live-probed 2026-11-16), and the specification has no "
+                "level-of-detail construct to carry it. Preserved verbatim for "
+                "roundtrip."
             ),
             object_ref=object_ref,
         )
         return None
-    if grouping == "query_groups ( )":
-        return agg_call
-    if grouping.startswith("{") and grouping.endswith("}"):
-        cols = grouping[1:-1].strip()
-        return f"{agg_call} OVER ()" if not cols else f"{agg_call} OVER (PARTITION BY {cols})"
     raise ValueError(f"{source_name}: unrecognised grouping argument shape {grouping_arg!r}")
 
 
@@ -599,7 +610,13 @@ REVERSE["group_aggregate"] = ReverseConstruct(
     thoughtspot_name="group_aggregate",
     disposition=ReverseDisposition.COMPOSE,
     dispatch_fn=_dispatch_group_aggregate,
-    note="Shape dispatch on the grouping/filter arguments — see _compose_grouped.",
+    note=(
+        "Composes for ONE shape only: `query_groups ( )` with `query_filters ( )`, "
+        "the query's own grain, which a bare aggregate already means. Any other "
+        "grouping is a level of detail — ThoughtSpot computes it as a nested "
+        "GROUP BY, not a window (live-probed 2026-11-16), and the specification "
+        "has no level-of-detail construct — so it stashes."
+    ),
 )
 
 _GROUP_SHORTHAND_AGGREGATES = GROUP_SHORTHAND_AGGREGATES
@@ -620,10 +637,11 @@ for _name, _agg in _GROUP_SHORTHAND_AGGREGATES.items():
         disposition=ReverseDisposition.COMPOSE,
         dispatch_fn=_make_group_shorthand_dispatch(_agg, _name),
         note=(
-            f"Shorthand for group_aggregate({_agg.lower()}(m), ...) — same shape dispatch. "
-            "Judgment call: the (m, grouping, filter) 3-argument shape is assumed by analogy "
-            "with group_aggregate's live-confirmed form; the shorthand family's own arity "
-            "was not independently live-tested."
+            f"Shorthand for group_aggregate({_agg.lower()}(m), ...) — same shape dispatch, so "
+            "it composes only for the query-grain shape and stashes every level-of-detail "
+            "one. Judgment call: the (m, grouping, filter) 3-argument shape is assumed by "
+            "analogy with group_aggregate's live-confirmed form; the shorthand family's own "
+            "arity was not independently live-tested."
         ),
     )
 
