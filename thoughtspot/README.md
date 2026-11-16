@@ -109,6 +109,23 @@ for what gets declared and why.
 | `field`/`metric` `expression.dialects` | `formulas[].expr` or a physical `db_column_name` | See [Expression translation](#expression-translation-what-is-not-translated-and-why) |
 | `custom_extensions[THOUGHTSPOT]` | TML fields with no Ossie equivalent | See [The `custom_extensions[THOUGHTSPOT]` payload](#the-custom_extensionsthoughtspot-payload) below |
 
+
+### What a join type is assumed to be
+
+An Ossie relationship carries no join type. ThoughtSpot requires one on every
+join. So a document this converter did not write has none to recover, and a
+value has to be chosen.
+
+The choice keeps the many side, because measures live there. `from` is the many
+side and `to` is the one side, so a `MANY_TO_ONE` or `ONE_TO_ONE` relationship
+becomes `LEFT_OUTER` and a `ONE_TO_MANY` one becomes `RIGHT_OUTER`. An inner
+join would drop every many-side row matching nothing on the one side, and lower
+every measure computed over it with nothing on screen to say so.
+
+Each assumption is reported under `TS-JOIN-TYPE-ASSUMED`, naming the value and
+the cardinality it followed. A relationship whose original type is stashed —
+every document that came from ThoughtSpot — keeps that type and reports nothing.
+
 ## The `custom_extensions[THOUGHTSPOT]` payload
 
 TML carries properties Ossie's core specification has no field for — a Connection name,
