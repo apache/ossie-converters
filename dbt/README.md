@@ -116,6 +116,9 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 
 ### Conversion notes
 
+A RATIO metric becomes `(numerator) / NULLIF(denominator, 0)`: MetricFlow returns NULL for a group whose
+denominator is 0, and the Ossie expression does the same rather than leave division by zero to the engine.
+
 **MSI → Ossie** is lossy in the following ways, each recorded as a `ConverterIssue` in the result:
 
 | Issue type | Reason |
@@ -133,14 +136,19 @@ falling back to `config.meta.ossie.datatype` annotations on dimensions, entities
 measures, and metrics in source dbt models, carried into `semantic_manifest.json`
 by `dbt parse`.
 
-**Ossie → MSI** reconstructs a best-effort MSI manifest from Ossie's simpler schema. Nothing is dropped for supported inputs, but Ossie carries less structural information than MSI, so the converter makes the following choices:
+A non-empty `config.meta` on a semantic model, dimension, entity, measure, or metric
+is carried as one `DBT` `custom_extensions` entry on the matching Ossie dataset, field,
+or metric, with `data` set to `{"meta": {...}}`. Values JSON cannot represent, such as
+dates, are written as strings.
+
+**Ossie → MSI** reconstructs a best-effort MSI manifest from Ossie's simpler schema. Nothing is dropped for supported inputs apart from the `custom_extensions` noted below, but Ossie carries less structural information than MSI, so the converter makes the following choices:
 
 - Composite primary and unique keys are rejected because MSI entities cannot preserve grouped key semantics
 - Single aggregations (`SUM(col)`, `COUNT(DISTINCT col)`, etc.) → SIMPLE metric with `metric_aggregation_params`
 - `COUNT(*)` / `COUNT(<dataset>.*)` → `count` SIMPLE metric with `expr: '1'`, because MetricFlow cannot render a bare `*` inside a count. The counted dataset comes from the qualifier, so with more than one dataset write `COUNT(orders.*)`; a bare `COUNT(*)`, or a qualifier that matches no dataset, is skipped with a `ROW_COUNT_METRIC_DROPPED` warning
 - `SUM(<constant>)` (e.g. `SUM(1)`) keeps its constant, but has no column to place it in a dataset: with more than one dataset it is skipped with `ROW_COUNT_METRIC_DROPPED`
 - `COUNT(DISTINCT *)`, `COUNT(DISTINCT 1)` and the like, anywhere in an expression, are skipped with `ROW_COUNT_METRIC_DROPPED`: they count whether any row exists, not how many
-- `(expr_a) / (expr_b)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended
+- `(expr_a) / (expr_b)` or `(expr_a) / NULLIF(expr_b, 0)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended
 - A root aggregate over a scalar SQL expression (for example,
   `SUM(CASE WHEN ... THEN amount ELSE 0 END)`) → SIMPLE metric with the
   scalar expression in `expr` and the root function in `agg`
@@ -148,8 +156,9 @@ by `dbt parse`.
   must identify one dataset; ambiguous unqualified or cross-dataset references
   are refused. A sole unknown qualifier is accepted as an alias only in a
   single-dataset document; multiple unknown qualifiers are never collapsed.
-- Metric dialect selection skips non-SQL entries, then prefers the configured
-  dialect, `OSSIE_SQL_2026`, and the first available SQLGlot-readable SQL entry.
+- Field and metric dialect selection skips non-SQL entries, then prefers the configured
+  dialect, the top-level `sql` (portable `OSSIE_SQL_2026`, which wins over an
+  `OSSIE_SQL_2026` entry), and the first available SQLGlot-readable SQL entry.
   Parsing and rendering retain that dialect through ratio decomposition.
   The ANSI/portable core uses SQLGlot's Snowflake reader for its unit-first
   `DATEADD`/`DATEDIFF` syntax; this is syntax handling, not Snowflake execution.
@@ -162,8 +171,10 @@ by `dbt parse`.
   and non-SQL measure expressions such as DAX, are dropped with an
   `UNSUPPORTED_METRIC_EXPRESSION` issue
 - Time dimensions always receive `TimeGranularity.DAY` (Ossie carries no granularity field)
-- A `DBT` `custom_extensions` entry whose `data` is not a JSON object is skipped with `INVALID_DBT_CUSTOM_EXTENSION`; the rest of the element still converts
-- A second valid `DBT` `custom_extensions` entry on the same element is ignored with `DUPLICATE_DBT_CUSTOM_EXTENSION`; the first object's `config.meta` is kept
+- A `DBT` `custom_extensions` entry whose `data` has a `meta` object is restored to `config.meta` on the matching semantic model, entity, dimension, or metric. When the element has an Ossie `datatype`, it replaces any `meta.ossie.datatype` in the entry, so an edited datatype is not undone on the next dbt → Ossie pass
+- `DBT` entries without a `meta` key (dbt config such as `materialized`), entries with an empty `meta`, other vendors' entries, and model- and relationship-level `custom_extensions` are not carried into the manifest
+- A `DBT` entry whose `data` is not a JSON object, or whose `meta` is not an object, is skipped with `INVALID_DBT_CUSTOM_EXTENSION`; the rest of the element still converts
+- When more than one `DBT` entry on the same element carries `meta`, the first is kept and the others are ignored with `DUPLICATE_DBT_CUSTOM_EXTENSION`
 
 ## Development
 

@@ -15,9 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import assert_never
+from collections.abc import Mapping
 
 from ossie import OssieDialect, OssieDialectExpression
+
+from ossie_hex.ossie import OssieDialectName
 
 from ..util.parse_sql import ParsedExpr, SQLGlotDialect, exp, parse_one
 from .context import ExportContext
@@ -86,36 +88,31 @@ def parse_ossie_dialect_expression(
     return ParsedExpr(expr=expr, dialect=dialect)
 
 
-def _to_sqlglot_dialect(ossie_dialect: OssieDialect) -> SQLGlotDialect | None:
-    """Translate an Ossie dialect to a sqlglot dialect.
+def _to_sqlglot_dialect(ossie_dialect: OssieDialectName) -> SQLGlotDialect | None:
+    """Return a specialized reader, or None to use SQLGlot's base parser."""
+    return _SQLGLOT_DIALECT_MAP.get(ossie_dialect.upper())
 
-    Returns a sqlglot dialect or None (signal for sqlglot base behavior).
-    """
 
-    if ossie_dialect == OssieDialect.BIGQUERY:
-        read = SQLGlotDialect.BIGQUERY
-    elif ossie_dialect == OssieDialect.DATABRICKS:
-        read = SQLGlotDialect.DATABRICKS
-    elif ossie_dialect == OssieDialect.SNOWFLAKE:
-        read = SQLGlotDialect.SNOWFLAKE
-    elif ossie_dialect == OssieDialect.OSSIE_SQL_2026:
-        # Approximate Ossie's SQL with Snowflake (e.g. DATEADD/DATEDIFF)
-        # until Ossie provides a parser for its portable expression language.
-        read = SQLGlotDialect.SNOWFLAKE
-    elif ossie_dialect == OssieDialect.TABLEAU:
-        read = SQLGlotDialect.TABLEAU
-    elif ossie_dialect in (
-        OssieDialect.ANSI_SQL,
-        OssieDialect.MDX,
-        OssieDialect.MAQL,
-        OssieDialect.THOUGHTSPOT,
-        OssieDialect.SIGMA,
-        OssieDialect.DAX,
-        OssieDialect.HOLISTICS_AQL,
-    ):
-        # There's no parallel for these
-        read = None
-    else:
-        assert_never(ossie_dialect)
-
-    return read
+_SQLGLOT_DIALECT_MAP: Mapping[OssieDialectName, SQLGlotDialect] = {
+    # Approximate portable Ossie SQL with Snowflake (e.g. DATEADD/DATEDIFF).
+    OssieDialect.OSSIE_SQL_2026.value: SQLGlotDialect.SNOWFLAKE,
+    "ALLOYDB": SQLGlotDialect.POSTGRES,
+    "ATHENA": SQLGlotDialect.ATHENA,
+    "BIGQUERY": SQLGlotDialect.BIGQUERY,
+    "CLICKHOUSE": SQLGlotDialect.CLICKHOUSE,
+    "DATABRICKS": SQLGlotDialect.DATABRICKS,
+    "DUCKDB": SQLGlotDialect.DUCKDB,
+    "MOTHERDUCK": SQLGlotDialect.DUCKDB,
+    "MSSQL": SQLGlotDialect.TSQL,
+    "MYSQL": SQLGlotDialect.MYSQL,
+    "POSTGRES": SQLGlotDialect.POSTGRES,
+    "PRESTODB": SQLGlotDialect.PRESTO,
+    "REDSHIFT": SQLGlotDialect.REDSHIFT,
+    "SNOWFLAKE": SQLGlotDialect.SNOWFLAKE,
+    "SPARK": SQLGlotDialect.SPARK,
+    "STARBURST": SQLGlotDialect.TRINO,
+    "TABLEAU": SQLGlotDialect.TABLEAU,
+    "TRINO": SQLGlotDialect.TRINO,
+    "TSQL": SQLGlotDialect.TSQL,
+}
+"""Reader mappings for recognized identifiers; other identifiers use the base parser."""

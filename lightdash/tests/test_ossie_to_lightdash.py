@@ -504,6 +504,27 @@ class TestOssieToLightdash:
             },
         ]
 
+    def test_self_join_gets_an_alias(self):
+        tampered = _document().model_copy(deep=True)
+        tampered.relationships.append(
+            OssieRelationship.model_validate(
+                {
+                    "name": "orders_to_parent",
+                    "from": "orders",
+                    "to": "orders",
+                    "from_columns": ["amount"],
+                    "to_columns": ["order_id"],
+                }
+            )
+        )
+        result = OssieToLightdashConverter().convert(tampered)
+        assert _model(result.output, "orders")["meta"]["joins"][-1] == {
+            "join": "orders",
+            "alias": "orders_to_parent",
+            "sql_on": "${orders.amount} = ${orders_to_parent.order_id}",
+            "relationship": "many-to-one",
+        }
+
     def test_join_alias_and_attributes_restore_from_extension(self):
         document = _document()
         tampered = document.model_copy(deep=True)

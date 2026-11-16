@@ -71,6 +71,9 @@ MALFORMED = {
             }
         ]
     ),
+    "sql is a number": document(
+        datasets=[{"name": "d", "source": "s", "fields": [{"name": "x", "expression": {"sql": 7}}]}]
+    ),
     "dialects is a string": document(
         datasets=[
             {
@@ -147,6 +150,53 @@ def test_a_dataset_sharing_the_model_name_is_moved_aside():
     text = next(t for name, t in result.files if name.endswith(".dataset.aml"))
     assert "Dataset orders_dataset {" in text
     assert "Model orders {" in next(t for name, t in result.files if name.endswith("orders.model.aml"))
+
+
+def test_an_expression_with_only_sql_is_rendered_from_its_sql():
+    """`sql` is `OSSIE_SQL_2026`, a portable body, so it is rendered like one.
+
+    Dropping the field instead would leave the key and the relationship naming
+    it pointing at a dimension that is not there.
+    """
+    payload = document(
+        datasets=[
+            {"name": "orders", "source": "db.orders", "fields": [
+                {"name": "a", "expression": EXPRESSION},
+                {"name": "customer_id", "expression": EXPRESSION},
+            ]},
+            {"name": "customers", "source": "db.customers", "primary_key": ["customer_id"],
+             "fields": [{"name": "customer_id", "expression": {"sql": "customer_id"}}]},
+        ],
+        relationships=[{
+            "name": "r", "from": "orders", "to": "customers",
+            "from_columns": ["customer_id"], "to_columns": ["customer_id"],
+        }],
+        metrics=[{"name": "total", "expression": {"sql": "SUM(orders.a)"}}],
+    )
+    result = ossie_to_aml.convert(payload, "ANSI_SQL", data_source_name="probe")
+
+    codes = {i.code for i in result.issues.issues}
+    assert ossie_to_aml.ISSUE_NO_USABLE_DIALECT not in codes
+    customers = next(t for name, t in result.files if name.endswith("customers.model.aml"))
+    assert "dimension customer_id" in customers
+    assert "primary_key: true" in customers
+    assert "measure total" in "".join(t for _, t in result.files)
+
+
+def test_sql_wins_over_an_ossie_sql_2026_entry():
+    payload = document(
+        datasets=[{"name": "orders", "source": "db.orders", "fields": [{
+            "name": "b",
+            "expression": {
+                "sql": "orders.b * 2",
+                "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "orders.b"}],
+            },
+        }]}],
+    )
+    result = ossie_to_aml.convert(payload, "ANSI_SQL", data_source_name="probe")
+
+    text = next(t for name, t in result.files if name.endswith("orders.model.aml"))
+    assert "* 2" in text
 
 
 def test_an_aggregation_that_does_not_wrap_the_whole_expression_is_kept_whole():

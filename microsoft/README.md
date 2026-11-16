@@ -113,9 +113,16 @@ ossie-microsoft export -i model.yaml -o model.bim    # Apache Ossie -> Power BI
 Power BI projects saved as split TMDL can be imported too. Pass a `.pbip` file, a
 semantic model folder that contains `definition/`, or that `definition` folder. The
 project root is not an input. A `.pbip` is followed through `datasetReference.byPath`.
-`byConnection` and a project stored as TMSL are outside this path. It needs the
+`byConnection` is not supported. It needs the
 [optional TOM setup](#optional-tom-validation-and-tmdl-serialization). Importing
-`model.bim` does not.
+`model.bim` does not, and a project stored as TMSL (a semantic model folder with
+`model.bim` instead of `definition/`, or a `.pbip` that points at one) is read through
+that `model.bim`. A folder with both is refused as ambiguous.
+
+Every `.tmdl` file under `definition/` (outside hidden folders such as `.pbi/`) is passed
+to TOM, which merges partial declarations of one object across files and reports real
+conflicts; the loaded files are logged at debug level on the `ossie_microsoft` logger.
+The report path in the `.pbip` and its `byPath` must stay inside the project folder.
 
 ```bash
 ossie-microsoft import -i "Report.pbip" -o model.yaml
@@ -430,8 +437,17 @@ names the reason.
 Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
 `Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
 `BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
-other measures; and `VAR` / `RETURN`. Every other DAX function is refused with a reason
-from a per-function registry, for example:
+other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
+`BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
+compares a BLANK number as 0, so `BLANK = 0` is TRUE; strict `==` does not); and math
+functions (`ABS`, `SQRT`, `POWER`, `LOG`, `INT`, `TRUNC`, `MOD`, `QUOTIENT`, trigonometry,
+...) when their argument can never be BLANK, for example `ABS(COALESCE([Sales], 0))`,
+since what they return for BLANK is not documented. Arithmetic, comparisons and conditions
+take only numbers: `SUM`, `AVERAGE`, `MIN` and `MAX` count as numbers when their column's
+`datatype` is numeric, so `MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate])` (dates) or a
+column without a datatype stays DAX. `ROUND` is not translated: DAX
+rounds ties half away from zero, which the spec's `ROUND` does not guarantee. Every other
+DAX function is refused with a reason from a per-function registry, for example:
 
 ```
 [table 'Sales' measure 'YTD'] DAX measure kept as-is; not translated to OSSIE_SQL_2026

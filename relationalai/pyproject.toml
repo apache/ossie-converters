@@ -51,7 +51,7 @@ dependencies = [
 # README.md, "The `relationalai` extra", before installing it.
 [project.optional-dependencies]
 relationalai = [
-    "relationalai==1.39.0",
+    "relationalai==2.0.1",
 ]
 
 [project.urls]

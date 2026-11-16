@@ -21,10 +21,9 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from ossie import OssieDialect
+from ossie_hex.ossie import OssieDialectName
 
 from ...hex import HexDialect, HexDialectName, HexEntityId, HexModel
-from ...ossie import OssieDialectName
 from ...util.context import Context
 from ..problem_code import ExportProblemCode
 from .analysis import ExportAnalysis
@@ -38,7 +37,7 @@ class ExportContext(Context[ExportProblemCode]):
     """Context for exporting from Ossie specification to Hex specification."""
 
     # global scope
-    ossie_dialect: OssieDialect
+    ossie_dialect: OssieDialectName | None
     hex_dialect: HexDialect
 
     # conversion state
@@ -58,17 +57,20 @@ class ExportContext(Context[ExportProblemCode]):
         self._assignment = ExportAssignment()
         self._hex_models = {}
 
-    def set_ossie_dialect(self, ossie_dialect: OssieDialect) -> None:
+        # do not init ossie_dialect to a default value (even None). always get
+        # an explicit value from the caller.
+
+    def set_ossie_dialect(self, ossie_dialect: OssieDialectName | None) -> None:
         self.ossie_dialect = ossie_dialect
 
     def set_hex_dialect(self, hex_dialect: HexDialect) -> None:
         self.hex_dialect = hex_dialect
 
     def _set_dialects(
-        self, ossie_dialect: OssieDialectName, hex_dialect: HexDialectName
+        self, ossie_dialect: OssieDialectName | None, hex_dialect: HexDialectName
     ) -> None:
         """Convenience method for tests to set the dialects."""
-        self.ossie_dialect = OssieDialect(ossie_dialect)
+        self.ossie_dialect = ossie_dialect
         self.hex_dialect = HexDialect(hex_dialect)
 
     @property

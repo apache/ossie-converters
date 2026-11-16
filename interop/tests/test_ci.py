@@ -37,7 +37,11 @@ def results():
         "schema_version": 1,
         "metadata": {"converters": ["alpha", "beta"]},
         "preparations": {"alpha": {"grade": "OK"}, "beta": {"grade": "FAIL"}},
-        "sources": [{"grade": "SKIP"}],
+        "sources": [
+            {"grade": "SKIP", "expected_skip": True},
+            {"grade": "SKIP", "expected_skip": False},
+            {"grade": "SKIP"},
+        ],
         "cases": [
             {"tier": "A", "grade": "EMPTY"},
             {"tier": "A", "grade": "FAIL"},
@@ -58,8 +62,10 @@ def test_summary_retains_findings_without_enabling_strict_mode(tmp_path, results
     text = summary.read_text()
     assert text.startswith("Existing summary\n")
     assert "report-only" in text and url in text
-    assert "| Tier A exports | 0 | 0 | 1 | 1 | 0 |" in text
-    assert "| Tier B returns | 0 | 1 | 0 | 0 | 0 |" in text
+    assert "| FAIL | SKIP (declared) | SKIP (blocked) |" in text
+    assert "| Source import / validation | 0 | 0 | 0 | 0 | 1 | 2 |" in text
+    assert "| Tier A exports | 0 | 0 | 1 | 1 | 0 | 0 |" in text
+    assert "| Tier B returns | 0 | 1 | 0 | 0 | 0 | 0 |" in text
     assert "| Preparation | 1 | 0 | 0 | 1 | 0 |" in text
     assert "Harness errors: 0" in text
     assert exit_code(results) == 0
@@ -74,6 +80,14 @@ def test_harness_failure_stays_blocking_even_when_summary_publishes(tmp_path, re
     assert "Harness errors: 1" in summary.read_text()
     assert "validator crashed \\| unexpected state" in summary.read_text()
     assert exit_code(results) == 2
+
+
+def test_only_boolean_true_marks_an_expected_skip(results):
+    results["sources"].extend([
+        {"grade": "SKIP", "expected_skip": "yes"},
+        {"grade": "SKIP", "expected_skip": 1},
+    ])
+    assert "| Source import / validation | 0 | 0 | 0 | 0 | 1 | 4 |" in render(results)
 
 
 @pytest.mark.parametrize(

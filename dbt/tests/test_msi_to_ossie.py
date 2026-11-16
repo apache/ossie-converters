@@ -296,7 +296,7 @@ class TestConfigMetaCustomExtensions:
         assert extensions is not None
         assert len(extensions) == 1
         assert extensions[0].vendor_name == "DBT"
-        assert json.loads(extensions[0].data) == {"looker_group_label": "Order Info"}
+        assert json.loads(extensions[0].data) == {"meta": {"looker_group_label": "Order Info"}}
 
     def test_entity_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -313,7 +313,7 @@ class TestConfigMetaCustomExtensions:
 
         extensions = _fields(result)[0].custom_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"hidden": True}
+        assert json.loads(extensions[0].data) == {"meta": {"hidden": True}}
 
     def test_measure_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -329,7 +329,7 @@ class TestConfigMetaCustomExtensions:
 
         extensions = _fields(result)[0].custom_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"value_format": "$#,##0.00"}
+        assert json.loads(extensions[0].data) == {"meta": {"value_format": "$#,##0.00"}}
 
     def test_metric_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -345,7 +345,7 @@ class TestConfigMetaCustomExtensions:
 
         extensions = _ossie_metrics(result)[0].custom_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"group_label": "Revenue"}
+        assert json.loads(extensions[0].data) == {"meta": {"group_label": "Revenue"}}
 
     def test_semantic_model_config_meta_becomes_dataset_custom_extension(self) -> None:
         sm = PydanticSemanticModel(
@@ -361,7 +361,7 @@ class TestConfigMetaCustomExtensions:
 
         extensions = result.datasets[0].custom_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"view_label": "Orders"}
+        assert json.loads(extensions[0].data) == {"meta": {"view_label": "Orders"}}
 
     def test_no_config_meta_omits_custom_extensions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -395,7 +395,7 @@ class TestConfigMetaCustomExtensions:
 
         extensions = _fields(result)[0].custom_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"launched": "2024-01-01"}
+        assert json.loads(extensions[0].data) == {"meta": {"launched": "2024-01-01"}}
 
 
 class TestEntityKeyExtraction:
@@ -859,7 +859,7 @@ class TestMetricConversion:
 
         arpu_ossie = next(m for m in _ossie_metrics(result) if m.name == "arpu")
         assert arpu_ossie.expression.dialects[0].expression == (
-            "(SUM(orders.amount)) / (SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END))"
+            "(SUM(orders.amount)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END), 0)"
         )
         assert result.to_ossie_yaml() == snapshot
 
@@ -1864,7 +1864,7 @@ class TestMetricFilterFlattening:
         assert paid_arpu.expression.dialects[0].expression == (
             "(SUM(CASE WHEN status = 'paid' THEN orders.amount END))"
             " / "
-            "(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END))"
+            "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
         )
 
     def test_derived_metric_filter_propagated_to_sub_expressions(self) -> None:

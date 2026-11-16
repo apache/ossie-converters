@@ -32,18 +32,36 @@
       "$ref": "#/$defs/SemanticModel/properties/custom_extensions"
     }
   },
-  "required": ["version", "name", "datasets"],
+  "required": [
+    "version",
+    "name",
+    "datasets"
+  ],
   "additionalProperties": false,
   "$defs": {
     "Dialect": {
       "type": "string",
-      "enum": ["ANSI_SQL", "SNOWFLAKE", "MDX", "TABLEAU", "DATABRICKS", "MAQL", "BIGQUERY", "SIGMA", "THOUGHTSPOT", "DAX", "HOLISTICS_AQL", "OSSIE_SQL_2026"],
-      "description": "Supported SQL and expression language dialects"
+      "minLength": 1,
+      "examples": [
+        "OSSIE_SQL_2026",
+        "ANSI_SQL",
+        "DB_DIALECT",
+        "BI_EXPRESSION",
+        "SEMANTIC_MODEL_EXPRESSION",
+        "PROGRAMMING_LANGUAGE"
+      ],
+      "description": "Expression language a metric or field expression is declared in. Any non-empty string is accepted. OSSIE_SQL_2026 is the only dialect this specification defines; others are opaque to Ossie. See extensions/dialects.md."
     },
     "Vendor": {
       "type": "string",
-      "examples": ["COMMON", "SNOWFLAKE", "SALESFORCE", "DBT", "DATABRICKS", "GOODDATA", "WISDOM", "POWER_BI", "HEX"],
-      "description": "Vendor name for custom extensions. Any string value is accepted."
+      "minLength": 1,
+      "examples": [
+        "COMMON",
+        "BI_TOOL",
+        "DB_VENDOR",
+        "SEMANTIC_LAYER"
+      ],
+      "description": "Vendor name for custom extensions. Any non-empty string is accepted. See extensions/vendors.md."
     },
     "AIContext": {
       "description": "Additional context for AI tools",
@@ -86,10 +104,13 @@
         },
         "data": {
           "type": "string",
-          "description": "JSON string containing vendor-specific data"
+          "description": "Opaque string of vendor-specific data that Ossie carries but does not interpret"
         }
       },
-      "required": ["vendor_name", "data"],
+      "required": [
+        "vendor_name",
+        "data"
+      ],
       "additionalProperties": false
     },
     "DialectExpression": {
@@ -101,16 +122,25 @@
         },
         "expression": {
           "type": "string",
+          "minLength": 1,
           "description": "SQL or dialect-specific expression"
         }
       },
-      "required": ["dialect", "expression"],
+      "required": [
+        "dialect",
+        "expression"
+      ],
       "additionalProperties": false
     },
     "Expression": {
       "type": "object",
       "description": "Expression definition with multi-dialect support",
       "properties": {
+        "sql": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Primary, portable expression written in OSSIE_SQL_2026. When both this field and an OSSIE_SQL_2026 entry in `dialects` are present, this field is authoritative."
+        },
         "dialects": {
           "type": "array",
           "items": {
@@ -119,7 +149,18 @@
           "minItems": 1
         }
       },
-      "required": ["dialects"],
+      "anyOf": [
+        {
+          "required": [
+            "sql"
+          ]
+        },
+        {
+          "required": [
+            "dialects"
+          ]
+        }
+      ],
       "additionalProperties": false
     },
     "DataType": {
@@ -185,7 +226,10 @@
           }
         }
       },
-      "required": ["name", "expression"],
+      "required": [
+        "name",
+        "expression"
+      ],
       "additionalProperties": false
     },
     "Dataset": {
@@ -250,7 +294,10 @@
           }
         }
       },
-      "required": ["name", "source"],
+      "required": [
+        "name",
+        "source"
+      ],
       "additionalProperties": false
     },
     "Relationship": {
@@ -298,7 +345,13 @@
           }
         }
       },
-      "required": ["name", "from", "to", "from_columns", "to_columns"],
+      "required": [
+        "name",
+        "from",
+        "to",
+        "from_columns",
+        "to_columns"
+      ],
       "additionalProperties": false
     },
     "Metric": {
@@ -330,7 +383,10 @@
           }
         }
       },
-      "required": ["name", "expression"],
+      "required": [
+        "name",
+        "expression"
+      ],
       "additionalProperties": false
     },
     "SemanticModel": {
@@ -378,7 +434,10 @@
           }
         }
       },
-      "required": ["name", "datasets"],
+      "required": [
+        "name",
+        "datasets"
+      ],
       "additionalProperties": false
     }
   }

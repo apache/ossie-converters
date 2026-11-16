@@ -90,6 +90,9 @@ public final class ConverterConstants {
     public static final String DIALECT = "dialect";
     public static final String DIALECT_TABLEAU = "TABLEAU";
     public static final String DIALECT_ANSI_SQL = "ANSI_SQL";
+    public static final String DIALECT_OSSIE_SQL_2026 = "OSSIE_SQL_2026";
+    // The portable form of an expression, written in OSSIE_SQL_2026.
+    public static final String SQL = "sql";
 
     // Expression syntax. "Tua" is the only syntax type the Salesforce semantic model API
     // accepts; the dialect names above say how an expression was authored, not its syntax.

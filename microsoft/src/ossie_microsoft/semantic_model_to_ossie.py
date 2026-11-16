@@ -507,15 +507,16 @@ def _map_datatype(tmsl_type, format_string, scope):
 
 
 def _build_field_resolver(datasets):
-    """Return a resolver mapping a DAX (table, column) to an Ossie (dataset, field).
+    """Return a resolver mapping a DAX (table, column) to an Ossie (dataset, field, datatype).
 
     A Power BI measure addresses a column as ``'Table'[Column]`` by the model names,
     which the converter uses verbatim as the dataset and field names. So a reference
     resolves exactly when that dataset carries that field; anything else (an unknown
     column, a measure table, a column that was not exported) does not resolve, and the
-    translator keeps the measure as DAX.
+    translator keeps the measure as DAX. The field's ``datatype`` (None when the model
+    gives none) tells the translator whether an aggregate over it is a number.
     """
-    known = set()
+    known = {}
     for dataset in datasets or []:
         dataset_name = dataset.get("name")
         if not dataset_name:
@@ -523,10 +524,12 @@ def _build_field_resolver(datasets):
         for field in dataset.get("fields") or []:
             field_name = field.get("name")
             if field_name:
-                known.add((dataset_name, field_name))
+                known[(dataset_name, field_name)] = field.get("datatype")
 
     def resolve(table, column):
-        return (table, column) if (table, column) in known else None
+        if (table, column) not in known:
+            return None
+        return table, column, known[(table, column)]
 
     return resolve
 

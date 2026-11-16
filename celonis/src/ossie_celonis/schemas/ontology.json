@@ -53,7 +53,11 @@
       }
     }
   },
-  "required": ["version", "name", "ontology"],
+  "required": [
+    "version",
+    "name",
+    "ontology"
+  ],
   "additionalProperties": false,
   "$defs": {
     "OntologyComponent": {
@@ -111,7 +115,10 @@
           "description": "Optional global identifier for this concept, expressed as a full IRI or as a QName (prefix:local) resolved against the ontology-level 'prefixes' map."
         }
       },
-      "required": ["concept", "type"],
+      "required": [
+        "concept",
+        "type"
+      ],
       "additionalProperties": false
     },
     "Expression": {
@@ -166,7 +173,10 @@
           "description": "Optional global identifier for this relationship, expressed as a full IRI or as a QName (prefix:local) resolved against the ontology-level 'prefixes' map."
         }
       },
-      "required": ["name", "verbalizes"],
+      "required": [
+        "name",
+        "verbalizes"
+      ],
       "additionalProperties": false
     },
     "ConceptMapping": {
@@ -194,13 +204,29 @@
           "description": "Mappings from logical model relationships to ontology relationships pertaining to the mapped concept"
         }
       },
-      "required": ["concept"],
-      "anyOf": [{ "required": ["object_mappings"] }, { "required": ["link_mappings"] }],
+      "required": [
+        "concept"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "object_mappings"
+          ]
+        },
+        {
+          "required": [
+            "link_mappings"
+          ]
+        }
+      ],
       "additionalProperties": false
     },
     "ConceptType": {
       "type": "string",
-      "enum": [ "EntityType", "ValueType" ],
+      "enum": [
+        "EntityType",
+        "ValueType"
+      ],
       "description": "A concept is either an entity type or a value type"
     },
     "ReferentMapping": {
@@ -222,8 +248,21 @@
           }
         }
       },
-      "required": ["relationship"],
-      "anyOf": [{ "required": ["expression"] }, { "required": ["referent_mappings"] }],
+      "required": [
+        "relationship"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "expression"
+          ]
+        },
+        {
+          "required": [
+            "referent_mappings"
+          ]
+        }
+      ],
       "additionalProperties": false
     },
     "Role": {
@@ -239,7 +278,9 @@
           "description": "Optional name of this role, used when the same concept plays multiple roles in the same relationship"
         }
       },
-      "required": ["concept"],
+      "required": [
+        "concept"
+      ],
       "additionalProperties": false
     },
     "ObjectMapping": {
@@ -262,7 +303,18 @@
           "$ref": "#/$defs/Expression"
         }
       },
-      "anyOf": [{ "required": ["expression"] }, { "required": ["referent_mappings"] }],
+      "anyOf": [
+        {
+          "required": [
+            "expression"
+          ]
+        },
+        {
+          "required": [
+            "referent_mappings"
+          ]
+        }
+      ],
       "additionalProperties": false
     },
     "LinkMapping": {
@@ -274,7 +326,7 @@
           "description": "Name of relationship being populated by this mapping node"
         },
         "object_mapping": {
-            "$ref": "#/$defs/ObjectMapping"
+          "$ref": "#/$defs/ObjectMapping"
         },
         "children": {
           "type": "array",
@@ -284,12 +336,17 @@
           "description": "Relationship maps at the next level in this hierarchy"
         }
       },
-      "required": ["object_mapping"],
+      "required": [
+        "object_mapping"
+      ],
       "additionalProperties": false
     },
     "Multiplicity": {
       "type": "string",
-      "enum": [ "ManyToOne", "OneToOne" ],
+      "enum": [
+        "ManyToOne",
+        "OneToOne"
+      ],
       "description": "Relationship multiplicity"
     },
     "OntologyMap": {
@@ -315,7 +372,10 @@
           "description": "Maps logical model constructs to some concept and its relationships in the ontology"
         }
       },
-      "required": ["semantic_model", "concept_mappings"],
+      "required": [
+        "semantic_model",
+        "concept_mappings"
+      ],
       "additionalProperties": false
     }
   }

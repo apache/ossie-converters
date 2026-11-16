@@ -320,7 +320,9 @@ class MSIToOssieConverter:
     ) -> Optional[List[OssieCustomExtension]]:
         """Carry a non-empty MSI `config.meta` dict across as one Ossie `custom_extensions` entry.
 
-        `config.meta` is otherwise silently dropped at this boundary (#42).
+        `config.meta` is otherwise silently dropped at this boundary (#42). It goes under a
+        `meta` key, mirroring dbt's own `config`, so Ossie -> dbt can tell it apart from
+        `DBT` entries that hold other dbt config, such as `materialized` or `tags`.
         """
         if config is None or not config.meta:
             return None
@@ -329,7 +331,7 @@ class MSIToOssieConverter:
         return [
             OssieCustomExtension(
                 vendor_name=OssieVendor.DBT.value,
-                data=json.dumps(config.meta, default=str),
+                data=json.dumps({"meta": config.meta}, default=str),
             )
         ]
 
@@ -471,7 +473,11 @@ class MSIToOssieConverter:
         cache: Dict[Tuple[str, Optional[str]], str],
         filter_sql: Optional[str] = None,
     ) -> str:
-        """Resolve a RATIO metric as (numerator) / (denominator), both fully inlined."""
+        """Resolve a RATIO metric as (numerator) / NULLIF(denominator, 0), both fully inlined.
+
+        MetricFlow divides by NULLIF(denominator, 0), so a group whose denominator is 0 gets NULL;
+        a plain division would make the whole query fail on engines that raise on division by zero.
+        """
         if metric.type_params.numerator is None or metric.type_params.denominator is None:
             raise ValueError(
                 f"RATIO metric is missing numerator or denominator: metric_name={metric.name!r}"
@@ -492,7 +498,7 @@ class MSIToOssieConverter:
             cache,
             den_filter,
         )
-        return f"({num_expr}) / ({den_expr})"
+        return f"({num_expr}) / NULLIF({den_expr}, 0)"
 
     def _resolve_derived(
         self,

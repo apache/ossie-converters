@@ -22,20 +22,25 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
-from .portability import COLUMNS
+from .portability import COLUMNS, KINDS
 
 
 def _cell(value):
     return str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
-def _link(path, output):
+def _link(path, output, label="evidence"):
     path = Path(path)
     try:
         relative = path.relative_to(output)
     except ValueError:
         return _cell(path)
-    return f"[evidence]({quote(relative.as_posix(), safe='/')})"
+    escaped_label = str(label).replace("\\", "\\\\").replace("[", r"\[").replace("]", r"\]")
+    return f"[{_cell(escaped_label)}]({quote(relative.as_posix(), safe='/')})"
+
+
+def _case_evidence(case):
+    return Path(case["output"]).parent / f"tier-{case['tier']}.json"
 
 
 def _portable(value, output, key=None):
@@ -91,9 +96,9 @@ def write_report(report, output):
             json.dumps(_portable(source, output), indent=2) + "\n", encoding="utf-8"
         )
     for case in report["cases"]:
-        directory = Path(case["output"]).parent
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"tier-{case['tier']}.json").write_text(
+        evidence = _case_evidence(case)
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text(
             json.dumps(_portable(case, output), indent=2) + "\n", encoding="utf-8"
         )
     for regression in report.get("regressions", []):
@@ -175,22 +180,17 @@ def write_report(report, output):
         "| Source fixture | " + " | ".join(names) + " |",
         "|---|" + "---|" * len(names),
     ]
+    pair_links = {
+        (case["source"], case["target"]): _link(
+            _case_evidence(case), output, label=case["grade"]
+        )
+        for case in report["cases"]
+        if case["tier"] == "B"
+    }
     for source in report["sources"]:
         if source["owner"] == "canonical":
             continue
-        cells = []
-        for name in names:
-            case = next(
-                (
-                    case
-                    for case in report["cases"]
-                    if case["tier"] == "B"
-                    and case["source"] == source["id"]
-                    and case["target"] == name
-                ),
-                None,
-            )
-            cells.append(case["grade"] if case else "—")
+        cells = [pair_links.get((source["id"], name), "—") for name in names]
         lines.append(f"| {source['id']} | " + " | ".join(cells) + " |")
     lines += [
         "",
@@ -202,9 +202,7 @@ def write_report(report, output):
     for case in report["cases"]:
         issues = case["diagnostics"]
         reason = _cell(case["reason"])
-        evidence = _link(
-            Path(case["output"]).parent / f"tier-{case['tier']}.json", output
-        )
+        evidence = _link(_case_evidence(case), output)
         lines.append(
             f"| {case['tier']} | {case['source']} | {case['target']} | {case['grade']} | "
             f"{len(issues)} | {sum(x['foreign_extension'] for x in issues)} | "
@@ -286,35 +284,51 @@ def write_report(report, output):
 
 
 def _portability_section(cases, output):
-    """Metric outcomes per converter, then per case. Report-only."""
+    """Metric and field outcomes per converter, then per case. Report-only."""
     lines = [
         "",
         "## Portability (report-only)",
         "",
         "Each fixture in `ossie/compliance/portability/` is exported and re-imported by every "
         "converter that can round-trip, then graded against its input by the core grader. "
-        "Counts are metrics; `portable` includes rewrites the grader proves cosmetic, `review` "
-        "the rewrites it cannot. These scores never change the exit status, with or without `--strict`.",
-        "",
-        "| Converter | Round trips | " + " | ".join(COLUMNS) + " | authored |",
-        "|---|---|" + "---:|" * (len(COLUMNS) + 1),
+        "Metrics and fields are totalled separately. `portable` includes rewrites the grader "
+        "proves cosmetic and relabels to another portable tag, `review` the rewrites it cannot "
+        "prove cosmetic, and `vendor` what came back only under a vendor tag. These scores "
+        "never change the exit status, with or without `--strict`.",
     ]
     totals = {}
     for case in cases:
         label = case["mode"] or case["target"]
-        entry = totals.setdefault(label, {"grades": Counter(), "metrics": Counter()})
+        entry = totals.setdefault(
+            label, {"grades": Counter(), **{kind: Counter() for kind in KINDS}}
+        )
         entry["grades"][case["grade"]] += 1
         if case["grading"]:
-            entry["metrics"].update(case["grading"]["metrics"])
-    for label, entry in totals.items():
-        grades = ", ".join(
-            f"{grade} {count}" for grade, count in sorted(entry["grades"].items())
-        )
-        lines.append(
-            f"| {label} | {grades} | "
-            + " | ".join(str(entry["metrics"][column]) for column in COLUMNS)
-            + f" | {entry['metrics']['authored']} |"
-        )
+            for kind in KINDS:
+                entry[kind].update(case["grading"].get(kind + "s", {}))
+    for kind in KINDS:
+        lines += [
+            "",
+            f"### {kind.capitalize()}s",
+            "",
+            "| Converter | Round trips | " + " | ".join(COLUMNS) + " | authored |",
+            "|---|---|" + "---:|" * (len(COLUMNS) + 1),
+        ]
+        for label, entry in totals.items():
+            grades = ", ".join(
+                f"{grade} {count}" for grade, count in sorted(entry["grades"].items())
+            )
+            lines.append(
+                f"| {label} | {grades} | "
+                + " | ".join(str(entry[kind][column]) for column in COLUMNS)
+                + f" | {entry[kind]['authored']} |"
+            )
+    errors = sum(1 for case in cases if case.get("grading_error"))
+    if errors:
+        lines += [
+            "",
+            f"{errors} round trip(s) could not be graded; the grader error is on each case below.",
+        ]
     lines += [
         "",
         "| Fixture | Converter | Round trip | Grader outcomes | Reason / evidence |",
@@ -327,7 +341,11 @@ def _portability_section(cases, output):
                 f"{name}={count}" for name, count in sorted(grading["summary"].items())
             )
             if grading
-            else "not graded"
+            else (
+                f"grader error: {case['grading_error']}"
+                if case.get("grading_error")
+                else "not graded"
+            )
         )
         evidence = _link(Path(case["input"]).parent / "result.json", output)
         lines.append(

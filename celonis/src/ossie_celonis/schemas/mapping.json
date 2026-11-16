@@ -38,7 +38,13 @@
       "$ref": "https://raw.githubusercontent.com/apache/ossie/main/core-spec/ossie-schema.json#/$defs/SemanticModel/properties/custom_extensions"
     }
   },
-  "required": ["version", "name", "ontology_ref", "semantic_model_ref", "concept_mappings"],
+  "required": [
+    "version",
+    "name",
+    "ontology_ref",
+    "semantic_model_ref",
+    "concept_mappings"
+  ],
   "additionalProperties": false,
   "$defs": {
     "DocumentReference": {
@@ -56,7 +62,9 @@
           "description": "Where to resolve the referenced document from: a relative reference resolved against the mapping document's own location or base IRI, or an absolute IRI"
         }
       },
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false
     }
   }
