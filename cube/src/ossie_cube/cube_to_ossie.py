@@ -647,6 +647,25 @@ def _fanned_out_datasets(relationships, extra_joins=None):
     return out
 
 
+def _fanned_out_by(relationships):
+    """{dataset: {from dataset: phrase}} -- which relationship fans a dataset out for
+    the rows of each dataset that joins it.
+
+    A dataset on the one side of several relationships is fanned out by each of them,
+    and `_fanned_out_datasets` can name only one. A metric declared on `orders` that
+    reads `stores` is multiplied by `orders -> stores`, not by whichever other fact
+    happens to join `stores` last, so the report names the join from the metric's cube
+    when there is one.
+    """
+    out = {}
+    for rel in relationships:
+        declared = read_stash(rel).get("relationship")
+        if declared and _RELATIONSHIP_ALIASES.get(snake(declared)) == "one_to_one":
+            continue
+        out.setdefault(rel["to"], {})[rel["from"]] = f"relationship '{rel['name']}'"
+    return out
+
+
 def _many_to_one_reach(relationships):
     """{dataset: the datasets reachable from it}, as the wide-table semantics define it.
 
@@ -1942,6 +1961,7 @@ class _MeasureContext:
 
     resolver: object
     fanned_out: dict
+    fanned_out_by: dict
     many_to_one_reach: dict
     integer_sum_grains: frozenset
     dataset_names: frozenset
@@ -2212,6 +2232,7 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
     context = _MeasureContext(
         resolver=resolver,
         fanned_out=fanned_out,
+        fanned_out_by=_fanned_out_by(relationships),
         many_to_one_reach=_many_to_one_reach(relationships),
         integer_sum_grains=frozenset(
             cname for cname in fanned_out if len(pk_by_cube.get(cname) or []) == 1
@@ -2305,7 +2326,9 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
                                     context.many_to_one_reach)):
         if dataset not in context.fanned_out:
             continue
-        _report_fanout(issues, scope, dataset, context.fanned_out[dataset])
+        cause = (context.fanned_out_by.get(dataset, {}).get(cname)
+                 or context.fanned_out[dataset])
+        _report_fanout(issues, scope, dataset, cause)
 
     metric = {
         "name": metric_name,

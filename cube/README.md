@@ -318,7 +318,8 @@ from every dataset the aggregate sums, in the sense of the wide-table semantics 
 from the many side to the one side of relationships), each summed row joins at most one
 store, so `stores` is not reported. A condition reached any other way is judged as
 before, since `orders -> stores <- shipments` can multiply the orders a `shipments`
-condition would select.
+condition would select. When a fanned-out dataset is reported, the cause named is the
+relationship from the measure's own cube where there is one.
 
 The TPC-DS fixture carries a real example: `store_productivity` is
 `SUM(store_sales.ss_ext_sales_price) / NULLIF(SUM(store.s_number_employees), 0)`, and

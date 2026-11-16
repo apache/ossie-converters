@@ -70,6 +70,7 @@ from .cube_to_ossie import (
     _column_of,
     _declare_key_fields,
     _decomposed_measure_names,
+    _fanned_out_by,
     _fanned_out_datasets,
     _fanout_unsafe_datasets,
     _is_generated_part,
@@ -894,6 +895,7 @@ def _report_fanout_of(resolver, tree, reduced, model, measures, issues):
     # The relationship itself is the cause a reader can act on, where there is one.
     relationships = model.get("relationships") or []
     fanned.update(_fanned_out_datasets(relationships))
+    fanned_by = _fanned_out_by(relationships)
     reach = _many_to_one_reach(relationships)
     names = frozenset(reduced)
     canonical = lookup_map(names)
@@ -910,7 +912,8 @@ def _report_fanout_of(resolver, tree, reduced, model, measures, issues):
             datasets = _unsafe_datasets_of_reads(reads, cname, canonical, reach)
         for dataset in sorted(datasets):
             if dataset in fanned:
-                _report_fanout(issues, f"{cname}.{mname}", dataset, fanned[dataset])
+                cause = fanned_by.get(dataset, {}).get(cname) or fanned[dataset]
+                _report_fanout(issues, f"{cname}.{mname}", dataset, cause)
 
 
 def _refuse_mixed_data_sources(vname, tree, cubes):

@@ -148,3 +148,12 @@ def test_a_condition_reached_through_a_shared_dimension_is_still_fanout_unsafe()
         "          - sql: \"{shipments}.status = 'DELAYED'\"\n")
     assert "orders.delayed_revenue" in flagged
 
+
+def test_the_reported_cause_is_the_join_from_the_measures_own_cube():
+    """`stores` is the one side of both `orders_to_stores` and `shipments_to_stores`;
+    a measure on `orders` is multiplied by the first, so that is the one named."""
+    _, flagged = _fanout_issues(
+        "      - name: store_headcount\n"
+        "        sql: \"{stores}.headcount\"\n"
+        "        type: sum\n")
+    assert "relationship 'orders_to_stores'" in flagged["orders.store_headcount"]
