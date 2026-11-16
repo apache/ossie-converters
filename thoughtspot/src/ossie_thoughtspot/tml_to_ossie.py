@@ -232,6 +232,56 @@ def _sql_identifier(name: str) -> str:
         return name
     return '"' + name.replace('"', '""') + '"'
 
+def _single_aggregate_portable(
+    expr: str,
+    resolve: Callable[[str, str], tuple[str, str] | None],
+    log: IssueLog,
+    *,
+    object_ref: str,
+) -> str | None:
+    """The portable expression for `AGG( <one declared column> )`, or `None`.
+
+    The narrowest shape worth translating, and the one that was being lost in
+    bulk. A metric built from a COLUMN plus an `aggregation` property already
+    composed a portable sibling via `_compose_aggregate_entries`; a metric built
+    from a FORMULA did not, because the only shape `expression_entries` made
+    portable was a BARE column reference and a formula is a call. So
+    `sum ( [T::x] )` -- one catalog aggregate over a column the document already
+    declares as a field -- came out THOUGHTSPOT-only alongside the genuinely
+    untranslatable ones (apache/ossie-converters#30).
+
+    Nothing is parsed that `formula.split_call` cannot already split: one outer
+    call, one argument. A nested call, a second argument, a compound expression
+    or a non-aggregate name all return `None` and fall through to the issue the
+    caller already raises. The operand is resolved by the SAME recursive
+    `expression_entries` call a bare reference uses, so a column the Model does
+    not surface stays unresolvable here exactly as it does there.
+
+    Issues from the operand are deliberately NOT logged twice. This runs before
+    the caller's own non-portability issue and only reports through it, so a
+    failure here is reported once, by the caller, as "no portable sibling".
+    """
+    call = formula.split_call(expr)
+    if call is None:
+        return None
+    name, args = call
+    aggregation = _AGGREGATION_BY_CALL_NAME.get(name.strip().lower())
+    if aggregation is None or len(args) != 1:
+        return None
+    # A throwaway log: the operand's own diagnosis is the caller's to report.
+    inner_entries = expression_entries(
+        args[0], resolve, IssueLog(), object_ref=object_ref, kind="metric"
+    )
+    inner = next(
+        (e["expression"] for e in inner_entries if e["dialect"] == PORTABLE_DIALECT), None
+    )
+    if inner is None:
+        return None
+    if aggregation == "COUNT_DISTINCT":
+        return f"COUNT(DISTINCT {inner})"
+    return f"{_AGGREGATION[aggregation]}({inner})"
+
+
 def expression_entries(
     expr: str,
     resolve: Callable[[str, str], tuple[str, str] | None],
@@ -356,6 +406,11 @@ def expression_entries(
     # portable sibling for one would need an expression tree this converter does not
     # build — see the module docstring — so the non-portability is recorded instead
     # of guessed at.
+    portable = _single_aggregate_portable(expr, resolve, log, object_ref=object_ref)
+    if portable is not None:
+        entries.append({"dialect": PORTABLE_DIALECT, "expression": portable})
+        return entries
+
     log.add(
         code="TS-EXPR-THOUGHTSPOT-ONLY",
         severity=Severity.INFO,
@@ -940,6 +995,19 @@ _SQL_AGGREGATE_OP_CALLS = frozenset(
 #: which also scans for these names at *any* nesting depth, not only as an
 #: expression's own outer call, because the catalog will always hold aggregate
 #: constructs beyond whatever a fixed enumeration lists.
+#: ThoughtSpot call name -> the TML `aggregation` enum value that renders it.
+#:
+#: The INVERSE of `_AGGREGATION_CATALOG_SPEC`, derived from the same catalog rows
+#: rather than hand-typed, for the reason given above it: "what do we render" and
+#: "what did we just read" cannot silently disagree when both read one source.
+#: Two-word names (`unique count`) come out whole, because `formula.split_call`
+#: returns the call name as one unit.
+_AGGREGATION_BY_CALL_NAME = {
+    formula.split_call(emit_direct(CATALOG[spec], ["x"]))[0].strip().lower(): aggregation
+    for aggregation, spec in _AGGREGATION_CATALOG_SPEC.items()
+}
+
+
 _AGGREGATE_CALL_NAMES = (
     frozenset(
         formula.split_call(emit_direct(CATALOG[spec], ["x"]))[0].lower()

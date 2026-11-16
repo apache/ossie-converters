@@ -42,7 +42,9 @@ class TestExpressionEntries:
         log = IssueLog()
         out = expression_entries("sum([ORDERS::Amount])", _resolve, log, object_ref="f")
         assert out[0] == {"dialect": "THOUGHTSPOT", "expression": "sum([ORDERS::Amount])"}
-        assert [e["dialect"] for e in out] == ["THOUGHTSPOT"]
+        # The portable sibling composed beside it is normalised; the verbatim
+        # entry is not, which is the whole point of this test.
+        assert out[1]["expression"] == "SUM(orders.amount)"
 
     def test_a_computed_expression_gets_a_thoughtspot_entry_and_an_issue(self):
         log = IssueLog()
@@ -166,7 +168,17 @@ class TestPortableSiblingTruthTable:
         "reference the resolver cannot resolve": ("[MISSING::Col]", False),
         "expression with a runtime parameter": ("[ORDERS::Amount] * [Growth Rate]", False),
         "expression with a formula cross-reference": ("sum ( [formula_Margin] )", False),
-        "single function call": ("sum([ORDERS::Amount])", False),
+        # One catalog aggregate over one resolvable reference: portable since
+        # apache/ossie-converters#30. Everything below it is a call too, and
+        # each is non-portable for a DIFFERENT reason, so they are listed
+        # separately rather than as one "function call" row.
+        "single aggregate over a resolvable reference": ("sum([ORDERS::Amount])", True),
+        "single aggregate, two arguments": (
+            "sum_if([ORDERS::Amount] > 1, [ORDERS::Amount])", False),
+        "single aggregate over an unresolvable reference": ("sum([MISSING::Col])", False),
+        "single aggregate wrapping another call": (
+            "sum ( round ( [ORDERS::Amount] , 2 ) )", False),
+        "single call that is not an aggregate": ("round([ORDERS::Amount], 2)", False),
         "compound expression": ("[ORDERS::Amount] + [ORDERS::Tax]", False),
     }
 
