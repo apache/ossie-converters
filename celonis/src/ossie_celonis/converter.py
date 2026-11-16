@@ -351,12 +351,14 @@ def celonis_to_ossie(pig, *, name=None):
 
 
 def _sql(expression):
+    if "sql" in expression:
+        return _text(expression["sql"], "field expression.sql")
     for dialect in ("OSSIE_SQL_2026", "ANSI_SQL"):
-        for entry in expression["dialects"]:
+        for entry in expression.get("dialects", []):
             if entry["dialect"] == dialect:
                 return _text(entry["expression"], "field expression")
     raise ConversionError(
-        "A field needs ANSI_SQL or OSSIE_SQL_2026 for Celonis SQL generation"
+        "A field needs sql, ANSI_SQL or OSSIE_SQL_2026 for Celonis SQL generation"
     )
 
 
@@ -477,6 +479,8 @@ def ossie_to_celonis(
                         "sql": _binding_sql(dataset),
                     }
                 ]
+                if not entity.get("primaryKeys") and dataset.get("primary_key"):
+                    bindings[0]["primaryKeyColumns"] = deepcopy(dataset["primary_key"])
             if keys_changed:
                 for binding in bindings:
                     binding.pop("primaryKeyColumns", None)
@@ -578,10 +582,6 @@ def ossie_to_celonis(
         pig["dataBindings"].sort(
             key=lambda b: binding_order.get(_binding_key(b), len(binding_order))
         )
-        # Preserve absent versus present-empty buckets in an unedited round trip.
-        for bucket in list(pig):
-            if bucket not in metadata["original_keys"] and not pig[bucket]:
-                del pig[bucket]
     model_extras = _extra_extensions(model, "model")
     if (
         not metadata
@@ -611,4 +611,9 @@ def ossie_to_celonis(
         pig = apply_ontology_documents(
             pig, model, ontology, mapping, namespace=namespace, package_key=package_key
         )
+    if metadata:
+        # Apply ontology edits before restoring absent versus present-empty buckets.
+        for bucket in list(pig):
+            if bucket not in metadata["original_keys"] and not pig[bucket]:
+                del pig[bucket]
     return pig

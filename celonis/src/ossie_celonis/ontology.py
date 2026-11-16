@@ -421,7 +421,10 @@ def build_ontology_documents(model, *, semantic_model_iri=None, ontology_iri=Non
         one_to_one = (
             native
             and native["entity"].get("cardinality") == "ONE_TO_ONE"
-            and _core(join) == native["projection"]
+            and all(
+                join[k] == native["projection"][k]
+                for k in ("from", "to", "from_columns", "to_columns")
+            )
         )
         relation = {
             "name": name,

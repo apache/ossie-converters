@@ -176,6 +176,38 @@ def test_multiple_bindings_and_legacy_keys(pig):
     assert ossie_to_celonis(model) == pig
 
 
+@pytest.mark.parametrize("with_dialects", [False, True])
+def test_authoritative_sql_export(pig, with_dialects):
+    model = convert(pig)
+    expression = {"sql": '"ID" || \'-authoritative\''}
+    if with_dialects:
+        expression["dialects"] = [
+            {"dialect": "OSSIE_SQL_2026", "expression": "wrong_expression"},
+            {"dialect": "ANSI_SQL", "expression": "another_wrong_expression"},
+        ]
+    model["datasets"][0]["fields"][0]["expression"] = expression
+    restored = ossie_to_celonis(model)
+    sql = restored["dataBindings"][0]["sql"]
+    assert '"ID" || \'-authoritative\' AS "ID"' in sql
+    assert "wrong_expression" not in sql
+
+
+@pytest.mark.parametrize("edit", ["source", "expression"])
+def test_regenerated_binding_preserves_legacy_key(pig, edit):
+    pig["objects"][0]["primaryKeys"] = []
+    pig["dataBindings"][0]["primaryKeyColumns"] = ["ID"]
+    model = convert(pig)
+    dataset = model["datasets"][0]
+    if edit == "source":
+        dataset["source"] = "SELECT * FROM AnotherOrder"
+    else:
+        dataset["fields"][0]["expression"] = {"sql": 'CAST("ID" AS VARCHAR)'}
+    restored = ossie_to_celonis(model)
+    assert restored["objects"][0]["primaryKeys"] == []
+    assert restored["dataBindings"][0]["primaryKeyColumns"] == ["ID"]
+    assert convert(restored)["datasets"][0]["primary_key"] == ["ID"]
+
+
 def test_edits_apply_and_keep_native_metadata(pig):
     model = convert(pig)
     model["datasets"][0]["description"] = "Edited description"

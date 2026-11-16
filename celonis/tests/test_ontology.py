@@ -117,6 +117,60 @@ def test_complete_context_projection_and_native_fidelity(context_pig):
     assert context_pig == original and b == before
 
 
+@pytest.mark.parametrize("structural_edit", [False, True])
+def test_one_to_one_join_multiplicity_after_edits(context_pig, structural_edit):
+    context_pig["relationships"][1]["cardinality"] = "ONE_TO_ONE"
+    b = bundle(context_pig)
+    model = b["semantic_model"]
+    join = model["relationships"][0]
+    join["ai_context"] = "Updated business context"
+    if structural_edit:
+        join["from_columns"] = ["ID"]
+    ontology, mapping = build_ontology_documents(model)
+    regenerated = {"semantic_model": model, "ontology": ontology, "mapping": mapping}
+    record = next(
+        r for r in mapping_metadata(regenerated)["joins"] if r["join"] == join["name"]
+    )
+    relation = next(
+        r
+        for r in concepts(regenerated)[record["concept"]]["relationships"]
+        if r["name"] == record["name"]
+    )
+    assert relation["multiplicity"] == ("ManyToOne" if structural_edit else "OneToOne")
+    restored = export(regenerated)
+    assert restored["relationships"][1]["cardinality"] == (
+        "MANY_TO_ONE" if structural_edit else "ONE_TO_ONE"
+    )
+
+
+def test_cli_round_trip_without_relationship_bucket(tmp_path):
+    original = {"objects": [entity("Order")]}
+    source, core, output = (
+        tmp_path / name for name in ("celonis.json", "model.yaml", "out.json")
+    )
+    source.write_text(json.dumps(original))
+    with pytest.warns(UserWarning, match="no binding"):
+        main(["celonis-to-ossie", "-i", str(source), "-o", str(core)])
+    main(["ossie-to-celonis", "-i", str(core), "-o", str(output)])
+    assert json.loads(output.read_text()) == original
+
+
+def test_add_type_edge_when_relationship_bucket_was_absent():
+    original = {"objects": [entity("Order"), entity("Customer")]}
+    with pytest.warns(UserWarning, match="no binding"):
+        b = celonis_to_ossie_bundle(original)
+    concepts(b)["demo_Order"]["relationships"].append(
+        {
+            "name": "relatedTo",
+            "roles": [{"concept": "demo_Customer"}],
+            "verbalizes": ["{demo_Order} relates to {demo_Customer}"],
+        }
+    )
+    restored = export(b)
+    assert len(restored["relationships"]) == 1
+    assert restored["relationships"][0]["relationshipType"] == "TYPE_TO_TYPE"
+
+
 def test_composite_identity_and_foreign_key_mapping(context_pig):
     order, customer = context_pig["objects"]
     order["fields"].append({"id": "Tenant", "dataType": "INTEGER"})

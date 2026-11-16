@@ -155,7 +155,8 @@ content, including nulls and unsupported entities. Keeping the CELONIS extension
 is required for this fidelity. The JSON whitespace may change.
 
 Changed core fields are applied on export rather than silently ignored. New or
-changed row expressions require an ANSI_SQL or OSSIE_SQL_2026 expression; a
+changed row expressions use the authoritative `sql` field when present, otherwise
+an ANSI_SQL or OSSIE_SQL_2026 dialect expression; a
 read-only STARROCKS binding is generated using a SELECT projection over the
 dataset source. Existing source SQL is not transpiled. An unchanged source and
 fields retain the original bindings. Extra Ossie dataset semantics are carried
