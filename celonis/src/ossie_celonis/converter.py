@@ -211,7 +211,7 @@ def celonis_to_ossie(pig, *, name=None):
         identity = _identity(binding.get("entityRef"))
         bindings.setdefault(_identity_key(identity), []).append(binding)
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": name or "celonis_model",
         "datasets": [],
         "relationships": [],

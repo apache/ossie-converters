@@ -20,7 +20,7 @@
 # Apache Ossie ↔ Celonis converter
 
 A standalone file converter between **Celonis JSON**
-and Ossie `0.2.0.dev0` core, ontology and standalone mapping
+and Ossie `0.3.0.dev0` core, ontology and standalone mapping
 documents. It handles business objects, event sources, information systems,
 field types, identities, descriptions, agent context, SQL bindings, data joins
 and conceptual relationships.

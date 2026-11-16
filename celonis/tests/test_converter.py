@@ -222,7 +222,7 @@ def test_edits_apply_and_keep_native_metadata(pig):
 
 def test_new_ossie_model_and_sql_generation():
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [
             {

@@ -1926,7 +1926,7 @@ class TestOssieJsonSerialization:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm]), ossie_model_name="my_project").output
         parsed = json.loads(result.to_ossie_json())
 
-        assert parsed["version"] == "0.2.0.dev0"
+        assert parsed["version"] == "0.3.0.dev0"
         assert next(iter(parsed)) == "version"
         assert "semantic_model" not in parsed
         assert parsed["name"] == "my_project"

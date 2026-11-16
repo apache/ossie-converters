@@ -285,11 +285,13 @@ class OssieToLightdashConverter:
     ) -> str:
         by_dialect = {
             dialect_expression.dialect: dialect_expression.expression
-            for dialect_expression in expression.dialects
+            for dialect_expression in expression.dialects or []
         }
         for dialect in (self._dialect, OssieDialect.OSSIE_SQL_2026, OssieDialect.ANSI_SQL):
             if dialect in by_dialect:
                 return by_dialect[dialect]
+        if expression.sql is not None:
+            return expression.sql
         if not expression.dialects:
             return ""
         issues.append(

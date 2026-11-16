@@ -99,12 +99,12 @@ class SalesforceToOssieConverterTest {
 
         String ossieYaml = results.get(0);
         assertNotNull(ossieYaml);
-        assertTrue(ossieYaml.contains("version: 0.2.0.dev0"));
+        assertTrue(ossieYaml.contains("version: 0.3.0.dev0"));
         assertFalse(ossieYaml.contains("semantic_model:"));
 
         Map<String, Object> ossieRoot = yamlMapper.readValue(ossieYaml, Map.class);
         assertNotNull(ossieRoot);
-        assertEquals("0.2.0.dev0", ossieRoot.get("version"));
+        assertEquals("0.3.0.dev0", ossieRoot.get("version"));
 
         Map<String, Object> model = ossieRoot;
         assertEquals("Customer_Orders_Model", model.get("name"));

@@ -368,7 +368,7 @@ def test_invalid_or_untranslatable_companions_fail(context_pig, mutation, match)
 
 def test_new_core_model_can_be_enriched():
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "example",
         "datasets": [
             {

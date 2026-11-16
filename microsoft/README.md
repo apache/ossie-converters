@@ -24,6 +24,19 @@ semantic model. Power BI output is available as either a TMSL `model.bim` mappin
 TMDL document. The conversion is offline and requires no Power BI or Fabric
 connection.
 
+The converter targets Ossie `0.3.0.dev0`. Vendor-specific state is stored in
+`nonportable_extensions` entries whose `data` values are structured objects, not
+JSON-encoded strings. To migrate an older document, update `version`, rename
+`custom_extensions` to `nonportable_extensions` at every level, and parse each
+JSON-encoded `data` value into an object. Legacy `custom_extensions` and string-valued
+Power BI extension data are rejected on export.
+
+Microsoft tests use a [snapshot of the 0.3 schema](tests/fixtures/ossie-schema-0.3.0.dev0.json)
+from [apache/ossie at `aa500d3`](https://github.com/apache/ossie/blob/aa500d37894c3d62c96cdce4192cbecea4d7f06a/core-spec/ossie-schema.json).
+Microsoft CI checks the snapshot and validates output with that revision's validator.
+The shared Ossie submodule remains on 0.2 for converters that have not migrated;
+cross-converter interoperability with those converters requires a spec migration.
+
 Each Ossie JSON/YAML document contains one model, with `name`, `datasets`,
 `relationships`, and `metrics` at the root alongside `version`. Legacy
 `semantic_model` wrappers must be unwrapped before conversion; split documents
@@ -225,7 +238,7 @@ logging.getLogger("ossie_microsoft").addHandler(logging.StreamHandler())
 | temporal `dataType` or `dataCategory: Time` | `field.dimension.is_time` |
 | `table.measures[]` | `metrics[]` (`DAX` dialect) |
 | `model.relationships[]` | `relationships[]` |
-| everything else | `custom_extensions` (vendor `POWER_BI`) |
+| everything else | `nonportable_extensions` (vendor `POWER_BI`, object-valued `data`) |
 
 ## Design rule: expressions are never rewritten
 
@@ -263,8 +276,8 @@ Nothing is discarded silently. The converter follows the two rules in
 1. **Preserve.** Every TMSL property the Apache Ossie mapping does not consume —
    annotations, partitions, hierarchies, roles, perspectives, cultures, query groups,
    format strings, display folders, KPIs, cross-filter behaviour, relationship
-   cardinalities, `rowNumber` columns — is stored in a versioned JSON blob in a
-   `POWER_BI` `custom_extensions` entry, alongside excluded tables, measures without
+   cardinalities, `rowNumber` columns — is stored in a versioned object in a
+   `POWER_BI` `nonportable_extensions` entry, alongside excluded tables, measures without
    expressions, and skipped relationships. This is a deny-list, not an allow-list: a
    TMSL property this converter has never heard of is preserved too, rather than
    silently dropped. The export direction replays it all, so a `model.bim` converted to
@@ -285,7 +298,7 @@ Nothing is discarded silently. The converter follows the two rules in
    ```
 
 A model that uses no Power BI-specific features converts to clean, vendor-neutral Apache
-Ossie with no `custom_extensions` at all.
+Ossie with no `nonportable_extensions` at all.
 
 ## Data type notes
 
@@ -330,7 +343,7 @@ These are reported rather than approximated, in either direction:
 | Composite relationships | A TMSL relationship joins exactly one column pair |
 | Composite primary/unique keys | TMSL marks a single key column per table |
 | `Opaque` fields | Power BI has no untyped data type |
-| Other vendors' `custom_extensions` | not interpretable by Power BI |
+| Other vendors' `nonportable_extensions` | not interpretable by Power BI |
 
 On import, private tables, calculation groups, auto-generated date tables
 (`LocalDateTable_*`, `DateTableTemplate_*`) and `rowNumber` columns are left out of the
@@ -364,7 +377,10 @@ preserved just as faithfully but are not reported: a warning on every cosmetic p
 would bury the ones that matter.
 
 In the other direction, Apache Ossie's `ai_context` is stored in an `OssieAIContext`
-annotation. A `label` has no TMSL equivalent and is reported as dropped.
+annotation. On import, a JSON object in this annotation becomes structured `ai_context`
+only when its known properties have the types required by the Ossie schema; other text,
+including JSON arrays, remains a string. A `label` has no TMSL equivalent and is reported
+as dropped.
 
 ### SQL metric expressions
 

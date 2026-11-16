@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 24 converter projects**, with explicit capability skips.
+The registry includes **all 25 converter projects**, with explicit capability skips.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -80,7 +80,7 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |
 | BigQuery, Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
 | Holistics | Compiled dataset JSON import and AML source export; re-import of generated AML requires a Holistics compiler |
-| Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
+| Ataccama, Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
 | Ontology, Palantir, RelationalAI | Explicit skip: uses the ontology domain/schema, requiring a separate matrix |
 
 All adapters run in the owning converter's environment. New native-content
