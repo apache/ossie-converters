@@ -216,7 +216,7 @@ def test_import_powerbi_project_hands_documents_to_tom_then_ossie(tmp_path, monk
     def fake_convert(semantic_model, *, translate_dax=False):
         seen["model_name"] = semantic_model["name"]
         assert translate_dax is False
-        return "version: 0.2.0.dev0\nname: mini\n"
+        return "version: 0.3.0.dev0\nname: mini\n"
 
     monkeypatch.setattr(
         "ossie_microsoft.pbip.deserialize_tmdl_documents", fake_deserialize
@@ -225,7 +225,7 @@ def test_import_powerbi_project_hands_documents_to_tom_then_ossie(tmp_path, monk
         "ossie_microsoft.pbip.convert_semantic_model_to_ossie", fake_convert
     )
 
-    assert import_powerbi_project(root / "mini.pbip") == "version: 0.2.0.dev0\nname: mini\n"
+    assert import_powerbi_project(root / "mini.pbip") == "version: 0.3.0.dev0\nname: mini\n"
     assert seen["paths"][0:2] == ["database.tmdl", "model.tmdl"]
     assert seen["model_name"] == "mini"
 

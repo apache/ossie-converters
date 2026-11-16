@@ -20,7 +20,7 @@
 Datasets become tables, fields become columns, metrics become measures and relationships
 become TMSL relationships. When the document was produced by
 :mod:`semantic_model_to_ossie`, the ``POWER_BI``
-``custom_extensions`` blob is replayed so the original Power BI model is restored rather
+``nonportable_extensions`` object is replayed so the original Power BI model is restored rather
 than approximated.
 
 Power BI evaluates DAX. An expression that cannot be translated is emitted as
@@ -255,7 +255,7 @@ def convert_ossie_to_semantic_model(
         compatibility_level = bim["compatibilityLevel"]
         if not isinstance(compatibility_level, int) or isinstance(compatibility_level, bool):
             raise ConversionError(
-                "POWER_BI custom_extensions document 'compatibilityLevel' must be "
+                "POWER_BI nonportable_extensions document 'compatibilityLevel' must be "
                 "an integer when generating Power BI partitions, got "
                 f"{compatibility_level!r}"
             )
@@ -1069,8 +1069,8 @@ def _warn_foreign_extensions(scope, obj):
     for ext in foreign_vendor_extensions(obj):
         warn(
             scope,
-            f"custom_extensions for vendor '{ext.get('vendor_name')}' have no Power BI "
-            "equivalent and are dropped",
+            f"foreign nonportable_extensions for vendor '{ext.get('vendor_name')}' "
+            "have no Power BI equivalent and are dropped",
         )
 
 

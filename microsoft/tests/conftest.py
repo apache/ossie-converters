@@ -25,6 +25,7 @@ import pytest
 import yaml
 
 from ossie_microsoft import convert_semantic_model_to_ossie
+from ossie_microsoft._common import OSSIE_VERSION
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The apache/ossie checkout (the `ossie` git submodule): core-spec/, examples/, ...
@@ -48,3 +49,20 @@ def osi(bim):
 @pytest.fixture(scope="module")
 def model(osi):
     return {key: value for key, value in osi.items() if key != "version"}
+
+
+@pytest.fixture
+def tpcds_osi():
+    # The shared example stays on 0.2 until the other converters migrate.
+    path = REPO_ROOT / "examples" / "tpcds_semantic_model.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["version"] = OSSIE_VERSION
+    owners = [document, *document["datasets"], *document["metrics"], *document["relationships"]]
+    owners.extend(field for dataset in document["datasets"] for field in dataset["fields"])
+    for owner in owners:
+        if "custom_extensions" in owner:
+            owner["nonportable_extensions"] = [
+                {**extension, "data": json.loads(extension["data"])}
+                for extension in owner.pop("custom_extensions")
+            ]
+    return document
