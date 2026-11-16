@@ -90,6 +90,7 @@ from .expressions import (
     unqualified_column_names,
     unsafe_aggregate_datasets,
     unsafe_aggregate_heads,
+    unsafe_aggregate_reads,
     UnattributableSQL,
 )
 from .import_dialect import validate_imported_expressions, validate_source_dialect
@@ -644,6 +645,30 @@ def _fanned_out_datasets(relationships, extra_joins=None):
             continue
         out[rel["to"]] = f"relationship '{rel['name']}'"
     return out
+
+
+def _many_to_one_reach(relationships):
+    """{dataset: the datasets reachable from it}, as the wide-table semantics define it.
+
+    A step crosses a relationship from `from` (many) to `to` (one) and matches at most
+    one `to` row for each `from` row, so a path of steps never multiplies the rows it
+    starts from. Self-relationships take no part in paths. Only relationships count: a
+    parked join has no column pairs to be sure of, so it reaches nothing here.
+    """
+    edges = {}
+    for rel in relationships:
+        if rel["from"] != rel["to"]:
+            edges.setdefault(rel["from"], set()).add(rel["to"])
+    reach = {}
+    for start in edges:
+        seen, stack = set(), [start]
+        while stack:
+            for nxt in edges.get(stack.pop(), ()):
+                if nxt not in seen and nxt != start:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        reach[start] = frozenset(seen)
+    return reach
 
 
 def _restore_parked_extensions(obj, meta):
@@ -1798,13 +1823,27 @@ _WINDOWING_KEYS = (
 )
 
 
-def _fanout_unsafe_datasets(expr, own_cube, dataset_names, source_dialect=None):
+def _fanout_unsafe_datasets(expr, own_cube, dataset_names, source_dialect=None,
+                            reach=None):
     """Datasets read by an aggregate in `expr` that duplicate rows would inflate.
 
     Per aggregate, because a single expression can mix safe and unsafe ones over
     different datasets. An aggregate naming no dataset is read as being over the cube the
     measure is declared on.
+
+    With `reach` (from `_many_to_one_reach`), a dataset an aggregate reads only in a
+    CASE/IF condition is left out when it is reachable from every dataset the aggregate
+    sums, so joining it multiplies none of their rows: `SUM(CASE WHEN stores.region = 'EU' THEN orders.amount END)` over
+    `orders -> stores` many-to-one sums each order once. A predicate reached any other
+    way -- through a shared dimension, say -- still counts, since joining it can
+    multiply the rows being summed.
     """
+    if reach is not None:
+        reads = unsafe_aggregate_reads(expr, source_dialect,
+                                       heads=source_dialect is not None)
+        if reads is not None:
+            return _unsafe_datasets_of_reads(reads, own_cube,
+                                             lookup_map(dataset_names), reach)
     # Explicit imports qualify every raw path with its dataset. For a struct path
     # such as users.payload.balance the head, rather than the penultimate part,
     # owns the aggregate.
@@ -1820,6 +1859,28 @@ def _fanout_unsafe_datasets(expr, own_cube, dataset_names, source_dialect=None):
     if unqualified:
         # An unsafe aggregate over an unqualified column reads the declaring cube.
         found.add(own_cube)
+    return found
+
+
+def _unsafe_datasets_of_reads(reads, own_cube, canonical, reach):
+    """The datasets `unsafe_aggregate_reads` entries make fan-out sensitive.
+
+    Every dataset an aggregate reads as a value counts. A dataset it reads only in a
+    condition counts unless it is reachable from each of those value datasets (`reach`,
+    from `_many_to_one_reach`).
+    """
+    found = set()
+    for values, predicates, unqualified_value, unqualified_predicate in reads:
+        read_values = {resolve_identifier(canonical, v) for v in values} - {None}
+        if unqualified_value:
+            read_values.add(own_cube)
+        read_predicates = {resolve_identifier(canonical, p) for p in predicates} - {None}
+        if unqualified_predicate:
+            read_predicates.add(own_cube)
+        found |= read_values
+        for dataset in read_predicates - read_values:
+            if not all(dataset in reach.get(value, ()) for value in read_values):
+                found.add(dataset)
     return found
 
 
@@ -1881,6 +1942,7 @@ class _MeasureContext:
 
     resolver: object
     fanned_out: dict
+    many_to_one_reach: dict
     integer_sum_grains: frozenset
     dataset_names: frozenset
     plain_by_cube: dict
@@ -2150,6 +2212,7 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
     context = _MeasureContext(
         resolver=resolver,
         fanned_out=fanned_out,
+        many_to_one_reach=_many_to_one_reach(relationships),
         integer_sum_grains=frozenset(
             cname for cname in fanned_out if len(pk_by_cube.get(cname) or []) == 1
             and any(parked_of(dim.get("meta")).get("datatype") == "Integer"
@@ -2238,7 +2301,8 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
     # while `users` is the fanned-out side.
     for dataset in sorted(
             _fanout_unsafe_datasets(resolver.inlined(cname, mname), cname,
-                                    context.dataset_names, resolver.source_dialect)):
+                                    context.dataset_names, resolver.source_dialect,
+                                    context.many_to_one_reach)):
         if dataset not in context.fanned_out:
             continue
         _report_fanout(issues, scope, dataset, context.fanned_out[dataset])

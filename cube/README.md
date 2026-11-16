@@ -310,6 +310,16 @@ equally be a scalar UDF, so treating it as an aggregate over-reports — the che
 since the default is to warn rather than refuse. Qualified and unqualified operands are
 counted independently, because one aggregate can read both.
 
+A column an aggregate reads only in the condition of a `CASE WHEN` (or `IF`) selects
+which rows count rather than being counted, so it is judged by how its dataset is
+joined. `SUM(CASE WHEN stores.region = 'EU' THEN orders.amount END)` -- what a Cube
+`filters:` entry on `{stores}` becomes -- sums `orders` rows. When `stores` is reachable
+from every dataset the aggregate sums, in the sense of the wide-table semantics (steps
+from the many side to the one side of relationships), each summed row joins at most one
+store, so `stores` is not reported. A condition reached any other way is judged as
+before, since `orders -> stores <- shipments` can multiply the orders a `shipments`
+condition would select.
+
 The TPC-DS fixture carries a real example: `store_productivity` is
 `SUM(store_sales.ss_ext_sales_price) / NULLIF(SUM(store.s_number_employees), 0)`, and
 summing a `store` column across a fanning join inflates it. Cube corrects that at query
