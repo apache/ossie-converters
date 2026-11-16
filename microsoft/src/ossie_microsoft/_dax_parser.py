@@ -19,7 +19,8 @@
 
 It turns a measure body into a syntax tree for ``_dax_to_sql`` to translate. It parses
 the whole DAX expression grammar (operators with DAX precedence, function calls,
-``VAR`` / ``RETURN``, column and measure references, table constructors, comments), so
+``VAR`` / ``RETURN``, column and measure references, table constructors with single- or
+multi-column rows, comments), so
 that a construct the translator does not handle is *recognised and refused by name*
 rather than misread. It does no evaluation and knows nothing about any model.
 
@@ -115,6 +116,13 @@ class Var:
 @dataclass(frozen=True)
 class TableConstructor:
     rows: tuple
+
+
+@dataclass(frozen=True)
+class Row:
+    """A multi-column row of a table constructor: ``(1, "a")`` in ``{(1, "a"), (2, "b")}``."""
+
+    values: tuple
 
 
 # --- Lexer ------------------------------------------------------------------------
@@ -303,8 +311,15 @@ class _Parser:
             return Name(token.text)
         if token.kind == "op" and token.text == "(":
             node = self.expression()
+            if not self.at_op(","):
+                self.expect_op(")")
+                return node
+            values = [node]
+            while self.at_op(","):
+                self.take()
+                values.append(self.expression())
             self.expect_op(")")
-            return node
+            return Row(tuple(values))
         if token.kind == "op" and token.text == "{":
             return self.table_constructor()
         raise DaxParseError(f"unexpected {token.text or 'end of input'!r}")

@@ -77,7 +77,9 @@ def test_independent_inputs_pass_core_validation_and_their_oracles(name):
         ]
         == "OK"
     )
-    assert set(contract.targets) == {"cube", "databricks", "dbt"}
+    base_targets = {"cube", "databricks", "dbt"}
+    dialect_targets = {"omni", "sigma"} if contract.category == "dialect" else set()
+    assert set(contract.targets) == base_targets | dialect_targets
 
 
 @pytest.mark.parametrize(
@@ -123,6 +125,25 @@ def test_returned_dialect_labels_and_self_qualification_may_normalize(dialect):
         dialect=dialect, expression="sum(amount)"
     )
     assert check_document(data, "dialect", regression(name).assertions)["grade"] == "OK"
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [('"amount"', "OK"), ('"Amount"', "FAIL"), ("price", "FAIL"), (None, "FAIL")],
+)
+def test_sigma_return_requires_matching_sql_beside_native_formula(sql, expected):
+    name = "dialect-databricks-only"
+    data = document(name)
+    field = data["datasets"][0]["fields"][1]
+    field["expression"]["dialects"] = [{"dialect": "SIGMA", "expression": "[amount]"}]
+    if sql is not None:
+        field["expression"]["dialects"].append(
+            {"dialect": "ANSI_SQL", "expression": sql}
+        )
+    result = check_document(
+        data, "dialect", regression(name).assertions, native_dialect="SIGMA"
+    )
+    assert result["grade"] == expected
 
 
 @pytest.mark.parametrize(

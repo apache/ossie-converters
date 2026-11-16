@@ -20,7 +20,7 @@
 Datasets become tables, fields become columns, metrics become measures and relationships
 become TMSL relationships. When the document was produced by
 :mod:`semantic_model_to_ossie`, the ``POWER_BI``
-``custom_extensions`` blob is replayed so the original Power BI model is restored rather
+``nonportable_extensions`` object is replayed so the original Power BI model is restored rather
 than approximated.
 
 Power BI evaluates DAX. An expression that cannot be translated is emitted as
@@ -58,6 +58,7 @@ from ._common import (
     RELATIONSHIP_CARDINALITY_METADATA,
     RELATIONSHIP_ENDPOINT_METADATA,
     TMSL_TO_OSSIE_DATATYPE,
+    VENDOR,
     ConversionError,
     dialect_expressions,
     foreign_vendor_extensions,
@@ -141,7 +142,40 @@ def _unwrap_ossie_0_1_1(document):
     if document_keys.intersection(model):
         raise ValueError("Ossie 0.1.1 requires document properties outside its model")
     # The root dialect and vendor declarations are redundant with per-object metadata.
-    return {"version": OSSIE_VERSION, **model}
+    return {"version": OSSIE_VERSION, **_normalize_wrapped_extensions(model)}
+
+
+def _normalize_wrapped_extensions(obj):
+    """Migrate legacy extensions on model objects without changing the input."""
+    normalized = dict(obj)
+    if "custom_extensions" in obj:
+        if "nonportable_extensions" in obj:
+            raise ConversionError("A wrapped model object cannot mix legacy and current extensions")
+        extensions = []
+        for ext in normalized.pop("custom_extensions") or []:
+            if not isinstance(ext, dict):
+                continue
+            vendor = ext.get("vendor_name") or ext.get("vendor")
+            # Foreign payloads are opaque to Power BI. Keep the vendor for the loss notice.
+            data = {}
+            if vendor == VENDOR:
+                data = ext.get("data", ext.get("content")) or {}
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except ValueError as e:
+                        raise ConversionError(
+                            "Legacy POWER_BI extension data is invalid JSON"
+                        ) from e
+            extensions.append({"vendor_name": vendor, "data": data})
+        normalized["nonportable_extensions"] = extensions
+    for key in ("datasets", "fields", "metrics", "relationships"):
+        if isinstance(children := obj.get(key), list):
+            normalized[key] = [
+                _normalize_wrapped_extensions(child) if isinstance(child, dict) else child
+                for child in children
+            ]
+    return normalized
 
 
 def convert_ossie_to_semantic_model(
@@ -250,7 +284,7 @@ def convert_ossie_to_semantic_model(
         compatibility_level = bim["compatibilityLevel"]
         if not isinstance(compatibility_level, int) or isinstance(compatibility_level, bool):
             raise ConversionError(
-                "POWER_BI custom_extensions document 'compatibilityLevel' must be "
+                "POWER_BI nonportable_extensions document 'compatibilityLevel' must be "
                 "an integer when generating Direct Lake partitions, got "
                 f"{compatibility_level!r}"
             )
@@ -990,11 +1024,11 @@ def _tmsl_text(value):
 
 def _warn_foreign_extensions(scope, obj):
     for ext in foreign_vendor_extensions(obj):
-        vendor = ext.get("vendor_name") or ext.get("vendor") or "<unknown>"
+        vendor = ext.get("vendor_name") or "<unknown>"
         warn(
             scope,
-            f"custom_extensions for vendor '{vendor}' have no Power BI "
-            "equivalent and are dropped",
+            f"foreign nonportable_extensions for vendor '{vendor}' "
+            "have no Power BI equivalent and are dropped",
         )
 
 

@@ -475,7 +475,7 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: s_number_employees
-    datatype: Decimal
+    datatype: Integer
     dimension: {}
     description: Number of employees at the store
     ai_context:
@@ -542,6 +542,9 @@ metrics:
     - sales per employee
     - employee productivity
     - revenue per employee
+  custom_extensions:
+  - vendor_name: CUBE
+    data: '{"_v": 1, "integer_sum_grain": ["store"]}'
 custom_extensions:
 - vendor_name: SALESFORCE
   data: |
