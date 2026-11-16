@@ -174,10 +174,11 @@ for example `source.ss_net_profit > 0`. Views with a one-to-many join at any
 depth keep their filter in the extension, since filtering the fact source
 alone can leave rows from the many side in downstream aggregates.
 
-An unchanged query exports back to Databricks as the original table and filter.
-If the query is edited, Databricks export uses the edited source and warns about
-the original filter. If pushdown was requested but is unsupported, import
-keeps the filter in the Databricks extension and emits a notice.
+Export restores the original Databricks table and filter when the source query
+and saved predicate still match the import. If either changes, export keeps
+the current dataset source, omits the separate filter, and emits a notice.
+If pushdown was requested but is unsupported, import keeps the filter in the
+Databricks extension and emits a notice.
 
 ### Dialect labels on import
 

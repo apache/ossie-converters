@@ -979,6 +979,44 @@ public class OssieConverterSuite {
   }
 
   @Test
+  public void editedSavedFilterKeepsPushedDownSourceAndWarns() throws Exception {
+    String view = """
+        version: '1.1'
+        source: c.s.orders
+        filter: source.net_profit > 0
+        measures:
+        - {name: revenue, expr: SUM(amount)}
+        """;
+    String imported = OssieConverter.convertMetricViewToOssie(view, null, true).yaml;
+    Map<String, Object> model = OssieConverterCommon.asMap(OssieConverter.parseYaml(imported));
+    Map<String, Object> extension = OssieConverterCommon.asMap(
+        OssieConverterCommon.asList(model.get("custom_extensions")).get(0));
+    Map<String, Object> stash = OssieConverterCommon.asMap(
+        OssieConverter.parseYaml((String) extension.get("data")));
+    for (boolean legacy : List.of(false, true)) {
+      if (legacy) {
+        stash.remove("filter_source_predicate");
+      }
+      stash.put("filter", "source.net_profit > 0");
+      extension.put("data", OssieConverterCommon.JSON_WRITER.writeValueAsString(stash));
+      assertEquals(OssieConverter.parseYaml(view), OssieConverter.parseYaml(
+          OssieConverter.convertOssieToMetricView(
+              OssieConverterCommon.MAPPER.writeValueAsString(model), null).yaml));
+
+      stash.put("filter", "source.net_profit > -10");
+      extension.put("data", OssieConverterCommon.JSON_WRITER.writeValueAsString(stash));
+      OssieConverter.Result exported = OssieConverter.convertOssieToMetricView(
+          OssieConverterCommon.MAPPER.writeValueAsString(model), null);
+      Map<String, Object> returned = OssieConverterCommon.asMap(
+          OssieConverter.parseYaml(exported.yaml));
+      assertEquals("SELECT * FROM c.s.orders WHERE net_profit > 0", returned.get("source"));
+      assertFalse(returned.containsKey("filter"));
+      assertTrue(exported.notices.stream().anyMatch(
+          notice -> notice.contains("saved filter no longer matches")), exported.notices.toString());
+    }
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   public void viewDefinedFilterStaysInDatabricksMetadata() {
     String mv = "version: '1.1'\nsource: c.s.orders\nfilter: adjusted_amount > 0\n"

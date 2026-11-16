@@ -24,6 +24,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAPPER;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOIN_NODES;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.OSSIE_VERSION;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_PREDICATE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_QUERY_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_SOURCE_KEY;
@@ -195,16 +196,23 @@ final class OssieToMetricView {
     boolean restoreFilter = modelStash.containsKey("filter");
     if (filterSource != null) {
       Object importedQuery = get(modelStash, STASH_FILTER_QUERY_KEY);
+      // Older imports only recorded the query. The saved filter must still generate it.
+      String regeneratedQuery = filteredSourceQuery(filterSource, filter, Set.of(), false);
       if (!(filter instanceof String predicate) || predicate.isBlank()) {
         restoreFilter = false;
         notices.warn(modelScope, "imported source filter is missing or invalid; using the current source");
-      } else if (source.equals(importedQuery != null ? importedQuery
-          : filteredSourceQuery(filterSource, filter, Set.of(), false))) {
-        source = validateSource(filterSource, fact);
-      } else {
+      } else if (!source.equals(importedQuery != null ? importedQuery : regeneratedQuery)) {
         restoreFilter = false;
         notices.warn(modelScope, "source no longer matches the imported filtered query; "
             + "using the current source without reapplying the original Metric View filter");
+      } else if (modelStash.containsKey(STASH_FILTER_PREDICATE_KEY)
+          ? !predicate.equals(get(modelStash, STASH_FILTER_PREDICATE_KEY))
+          : importedQuery != null && !importedQuery.equals(regeneratedQuery)) {
+        restoreFilter = false;
+        notices.warn(modelScope, "saved filter no longer matches the imported predicate; "
+            + "using the current source without applying the edited Metric View filter");
+      } else {
+        source = validateSource(filterSource, fact);
       }
     }
     view.put("source", source);

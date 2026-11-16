@@ -25,6 +25,7 @@ import static org.apache.ossie.converter.databricks.OssieConverterCommon.MAX_JOI
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.MV_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.OSSIE_VERSION;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.SELECT_WITH_RE;
+import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_PREDICATE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_QUERY_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_FILTER_SOURCE_KEY;
 import static org.apache.ossie.converter.databricks.OssieConverterCommon.STASH_SOURCE_KEY;
@@ -283,6 +284,7 @@ final class MetricViewToOssie {
         factDs.put("source", filteredSource);
         modelStash.put(STASH_FILTER_SOURCE_KEY, source);
         modelStash.put(STASH_FILTER_QUERY_KEY, filteredSource);
+        modelStash.put(STASH_FILTER_PREDICATE_KEY, get(view, "filter"));
       } else {
         notices.warn("view", "cannot push down the filter to the fact source; "
             + "retaining it in the Databricks extension");
