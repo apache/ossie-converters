@@ -36,7 +36,7 @@ from sqlglot.errors import ErrorLevel, SqlglotError
 import yaml
 
 # Ossie semantic model spec version this converter targets (see core-spec).
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
 # Vendor id used for the `custom_extensions` stash.
 VENDOR = "OMNI"

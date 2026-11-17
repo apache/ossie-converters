@@ -39,7 +39,7 @@ def minimal(**model_overrides):
                       "fields": [_field("amount")]}],
     }
     model.update(model_overrides)
-    return dump_yaml({"version": "0.2.0.dev0", **model})
+    return dump_yaml({"version": "0.3.0.dev0", **model})
 
 
 def _field(name, expr=None, dialect="ANSI_SQL", **extra):
@@ -347,7 +347,7 @@ def test_untranslatable_warehouse_expression_is_omitted(sql):
 
 
 def test_names_are_sanitized():
-    files = export(dump_yaml({"version": "0.2.0.dev0", "name": "My Model",
+    files = export(dump_yaml({"version": "0.3.0.dev0", "name": "My Model",
         "datasets": [{"name": "Order Items", "source": "db.sch.t",
                       "fields": [_field("Total Price", "p")]}]}))
     assert "views/order_items.view.yaml" in files
@@ -443,7 +443,7 @@ def test_foreign_vendor_extensions_warn():
     [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
 )
 def test_legacy_model_wrappers_are_rejected(wrapper):
-    document = {"version": "0.2.0.dev0", "semantic_model": wrapper}
+    document = {"version": "0.3.0.dev0", "semantic_model": wrapper}
     with pytest.raises(ConversionError, match="Legacy 'semantic_model'"):
         export(dump_yaml(document))
 

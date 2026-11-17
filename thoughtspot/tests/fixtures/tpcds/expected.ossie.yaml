@@ -25,7 +25,7 @@
 # store_returns_sv_to_store -- a ONE_TO_MANY join declared from store's own
 # side, whose emitted endpoints are swapped so store lands on `to`) joins on
 # s_store_sk.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: tpcds_retail_model
 datasets:
 - name: store_sales
@@ -40,6 +40,7 @@ datasets:
   - name: ss_sold_date_sk
     label: ss_sold_date_sk
     expression:
+      sql: ss_sold_date_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_sold_date_sk]'
@@ -49,6 +50,7 @@ datasets:
   - name: ss_item_sk
     label: ss_item_sk
     expression:
+      sql: ss_item_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_item_sk]'
@@ -58,6 +60,7 @@ datasets:
   - name: ss_customer_sk
     label: ss_customer_sk
     expression:
+      sql: ss_customer_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_customer_sk]'
@@ -67,6 +70,7 @@ datasets:
   - name: ss_store_sk
     label: ss_store_sk
     expression:
+      sql: ss_store_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_store_sk]'
@@ -76,6 +80,7 @@ datasets:
   - name: ss_quantity
     label: ss_quantity
     expression:
+      sql: ss_quantity
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_quantity]'
@@ -85,6 +90,7 @@ datasets:
   - name: ss_sales_price
     label: ss_sales_price
     expression:
+      sql: ss_sales_price
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_sales_price]'
@@ -94,6 +100,7 @@ datasets:
   - name: ss_ext_sales_price
     label: ss_ext_sales_price
     expression:
+      sql: ss_ext_sales_price
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_ext_sales_price]'
@@ -103,6 +110,7 @@ datasets:
   - name: ss_net_profit
     label: ss_net_profit
     expression:
+      sql: ss_net_profit
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_net_profit]'
@@ -125,6 +133,7 @@ datasets:
   - name: d_date_sk
     label: d_date_sk
     expression:
+      sql: d_date_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_date_sk]'
@@ -134,6 +143,7 @@ datasets:
   - name: d_date
     label: d_date
     expression:
+      sql: d_date
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_date]'
@@ -143,6 +153,7 @@ datasets:
   - name: d_year
     label: d_year
     expression:
+      sql: d_year
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_year]'
@@ -152,6 +163,7 @@ datasets:
   - name: d_quarter_name
     label: d_quarter_name
     expression:
+      sql: d_quarter_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_quarter_name]'
@@ -161,6 +173,7 @@ datasets:
   - name: d_moy
     label: d_moy
     expression:
+      sql: d_moy
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_moy]'
@@ -181,6 +194,7 @@ datasets:
   - name: c_customer_sk
     label: c_customer_sk
     expression:
+      sql: c_customer_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_customer_sk]'
@@ -190,6 +204,7 @@ datasets:
   - name: c_customer_id
     label: c_customer_id
     expression:
+      sql: c_customer_id
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_customer_id]'
@@ -199,6 +214,7 @@ datasets:
   - name: c_first_name
     label: c_first_name
     expression:
+      sql: c_first_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_first_name]'
@@ -208,6 +224,7 @@ datasets:
   - name: c_last_name
     label: c_last_name
     expression:
+      sql: c_last_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_last_name]'
@@ -227,6 +244,7 @@ datasets:
   - name: c_email_address
     label: c_email_address
     expression:
+      sql: c_email_address
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_email_address]'
@@ -236,6 +254,7 @@ datasets:
   - name: c_kana_name
     label: カナ名
     expression:
+      sql: c_kana_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::カナ名]'
@@ -260,6 +279,7 @@ datasets:
   - name: i_item_sk
     label: i_item_sk
     expression:
+      sql: i_item_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_item_sk]'
@@ -269,6 +289,7 @@ datasets:
   - name: i_item_id
     label: i_item_id
     expression:
+      sql: i_item_id
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_item_id]'
@@ -278,6 +299,7 @@ datasets:
   - name: i_item_desc
     label: i_item_desc
     expression:
+      sql: i_item_desc
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_item_desc]'
@@ -287,6 +309,7 @@ datasets:
   - name: i_brand
     label: i_brand
     expression:
+      sql: i_brand
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_brand]'
@@ -296,6 +319,7 @@ datasets:
   - name: i_category
     label: i_category
     expression:
+      sql: i_category
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_category]'
@@ -305,6 +329,7 @@ datasets:
   - name: i_current_price
     label: i_current_price
     expression:
+      sql: i_current_price
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_current_price]'
@@ -325,6 +350,7 @@ datasets:
   - name: s_store_sk
     label: s_store_sk
     expression:
+      sql: s_store_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_store_sk]'
@@ -334,6 +360,7 @@ datasets:
   - name: s_store_id
     label: s_store_id
     expression:
+      sql: s_store_id
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_store_id]'
@@ -343,6 +370,7 @@ datasets:
   - name: s_store_name
     label: s_store_name
     expression:
+      sql: STORE_NM
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_store_name]'
@@ -356,6 +384,7 @@ datasets:
   - name: s_city
     label: s_city
     expression:
+      sql: s_city
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_city]'
@@ -365,6 +394,7 @@ datasets:
   - name: s_state
     label: s_state
     expression:
+      sql: s_state
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_state]'
@@ -374,6 +404,7 @@ datasets:
   - name: s_number_employees
     label: s_number_employees
     expression:
+      sql: s_number_employees
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_number_employees]'
@@ -383,6 +414,7 @@ datasets:
   - name: 'on'
     label: 'on'
     expression:
+      sql: '"on"'
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::on]'
@@ -404,6 +436,7 @@ datasets:
   - name: sr_item_sk
     label: sr_item_sk
     expression:
+      sql: sr_item_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_returns_sv::sr_item_sk]'
@@ -413,6 +446,7 @@ datasets:
   - name: sr_ticket_number
     label: sr_ticket_number
     expression:
+      sql: sr_ticket_number
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_returns_sv::sr_ticket_number]'
@@ -422,6 +456,7 @@ datasets:
   - name: sr_return_amt
     label: sr_return_amt
     expression:
+      sql: RETURN_AMT
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_returns_sv::sr_return_amt]'
