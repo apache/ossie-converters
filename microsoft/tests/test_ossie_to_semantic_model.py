@@ -160,7 +160,13 @@ def test_0_1_1_wrapper_accepts_root_dialect_and_vendor_declarations():
         "semantic_model": [model],
     }
 
-    assert convert_ossie_to_semantic_model(document) == _convert(model)
+    with pytest.warns(UserWarning, match="declaration is discarded") as recorded:
+        result = convert_ossie_to_semantic_model(document)
+    assert {str(w.message) for w in recorded if "declaration is discarded" in str(w.message)} == {
+        "[document] legacy root 'dialects' declaration is discarded during migration",
+        "[document] legacy root 'vendors' declaration is discarded during migration",
+    }
+    assert result == _convert(model)
     assert "version" not in model
 
 
@@ -1320,6 +1326,37 @@ def test_wrapped_native_extension_is_replayed():
     }])
     result = convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
     assert result["model"]["culture"] == "fr-FR"
+
+
+def test_wrapped_field_extension_is_replayed_without_mutating_input():
+    model = _minimal()
+    field = model["datasets"][0]["fields"][0]
+    extension = {"vendor_name": "POWER_BI", "data": '{"formatString":"0.00"}'}
+    field["custom_extensions"] = [extension]
+    result = convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+    assert _column(_table(result, "T"), "C")["formatString"] == "0.00"
+    assert field["custom_extensions"] == [extension]
+    assert "nonportable_extensions" not in field
+
+
+@pytest.mark.parametrize("entry", [None, 42, "invalid"])
+def test_wrapped_non_mapping_extension_is_rejected(entry):
+    model = _minimal(custom_extensions=[entry])
+    with pytest.raises(ConversionError, match="entries must be mappings"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
+@pytest.mark.parametrize("payload_key", ["data", "content"])
+def test_wrapped_invalid_native_json_is_rejected(payload_key):
+    model = _minimal(custom_extensions=[{"vendor_name": "POWER_BI", payload_key: "{invalid"}])
+    with pytest.raises(ConversionError, match="invalid JSON"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
+def test_wrapped_mixed_extension_formats_are_rejected():
+    model = _minimal(custom_extensions=[], nonportable_extensions=[])
+    with pytest.raises(ConversionError, match="cannot mix legacy and current extensions"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
 
 
 def write_stash_for_other_vendor(obj):

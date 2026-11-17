@@ -15,7 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Shape returned by SYSTEM$READ_OSSIE_YAML_FROM_SEMANTIC_VIEW.
+# Synthetic single-model 0.1.1 example for the Snowflake import path.
+# Extension names follow the osi-0.1.1-rc1 schema. No live Snowflake capture was used.
 version: "0.1.1"
 semantic_model:
   - name: retail_sales
@@ -44,5 +45,5 @@ semantic_model:
             - dialect: SNOWFLAKE
               expression: SUM(net_amount)
     custom_extensions:
-      - vendor: SNOWFLAKE
-        content: '{"custom_instructions":"Report revenue in USD"}'
+      - vendor_name: SNOWFLAKE
+        data: '{"custom_instructions":"Report revenue in USD"}'

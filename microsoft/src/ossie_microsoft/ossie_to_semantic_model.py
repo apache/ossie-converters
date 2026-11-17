@@ -141,7 +141,9 @@ def _unwrap_ossie_0_1_1(document):
     model = models[0]
     if document_keys.intersection(model):
         raise ValueError("Ossie 0.1.1 requires document properties outside its model")
-    # The root dialect and vendor declarations are redundant with per-object metadata.
+    for key in ("dialects", "vendors"):
+        if key in document:
+            warn("document", f"legacy root '{key}' declaration is discarded during migration")
     return {"version": OSSIE_VERSION, **_normalize_wrapped_extensions(model)}
 
 
@@ -154,7 +156,9 @@ def _normalize_wrapped_extensions(obj):
         extensions = []
         for ext in normalized.pop("custom_extensions") or []:
             if not isinstance(ext, dict):
-                continue
+                raise ConversionError("Legacy custom_extensions entries must be mappings")
+            # Accept vendor/content aliases for compatibility with older caller inputs.
+            # The 0.1.1 schema uses vendor_name/data.
             vendor = ext.get("vendor_name") or ext.get("vendor")
             # Foreign payloads are opaque to Power BI. Keep the vendor for the loss notice.
             data = {}
