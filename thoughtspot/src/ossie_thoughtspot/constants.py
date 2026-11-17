@@ -70,6 +70,14 @@ PORTABLE_DIALECT = "ANSI_SQL"
 #: either way; see apache/ossie-converters#101.
 PORTABLE_DIALECTS_ACCEPTED = (PORTABLE_DIALECT, "OSSIE_SQL_2026")
 
+#: The dialect a top-level `expression.sql` is, by definition. apache/ossie#617
+#: moved the portable expression there and the specification names it
+#: `OSSIE_SQL_2026`, so a `sql` string needs no dialect tag to be read -- see
+#: `ossie_to_thoughtspot.portable_expression_entries`, which folds it in as one
+#: entry so every reader downstream sees a single shape.
+PORTABLE_SQL_DIALECT = "OSSIE_SQL_2026"
+
+
 #: Ossie spec series this converter targets, matched on major.minor. Not an exact
 #: version: upstream's first release is proposed as 0.3.0, not 0.2.0.
 SPEC_SERIES = "0.2"
@@ -82,7 +90,7 @@ SPEC_SERIES = "0.2"
 #: fails schema validation outright. Bump in lockstep with core-spec/'s own
 #: `version` if it ever moves -- the same discipline databricks'
 #: `OSSIE_VERSION` constant documents.
-DOCUMENT_VERSION = "0.2.0.dev0"
+DOCUMENT_VERSION = "0.3.0.dev0"
 
 #: ThoughtSpot's grouped-aggregation calls, mapped to the plain aggregate each
 #: is shorthand for. `group_aggregate` is the general form and has no single

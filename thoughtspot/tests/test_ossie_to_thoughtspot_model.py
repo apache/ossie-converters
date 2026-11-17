@@ -58,6 +58,17 @@ def _dialects(*pairs):
     return [{"dialect": d, "expression": e} for d, e in pairs]
 
 
+def _expr(*pairs):
+    """One whole Ossie `expression` carrying only tagged dialect entries.
+
+    `to_thoughtspot_expression` takes the expression mapping, not its
+    `dialects[]` list, because a portable expression may instead sit in the
+    top-level `sql` field (apache/ossie#617). The `sql` location has its own
+    file, `test_expression_sql.py`; these cases are the tagged half.
+    """
+    return {"dialects": _dialects(*pairs)}
+
+
 def _field(name, dialects, *, label=None, datatype=None, description=None,
            ai_context=None, field_stash=None):
     field: dict = {"name": name}
@@ -760,7 +771,7 @@ class TestDialectSelection:
     def test_a_thoughtspot_entry_is_used_verbatim(self):
         log = IssueLog()
         result = to_thoughtspot_expression(
-            _dialects(("THOUGHTSPOT", "sum (   [A::x]  )"), ("ANSI_SQL", "SUM(a.x)")),
+            _expr(("THOUGHTSPOT", "sum (   [A::x]  )"), ("ANSI_SQL", "SUM(a.x)")),
             _resolve_field({}), log, object_ref="metric:m",
         )
         assert result == "sum (   [A::x]  )"
@@ -770,7 +781,7 @@ class TestDialectSelection:
         log = IssueLog()
         index = {"orders.amount": ("orders", "Amount")}
         result = to_thoughtspot_expression(
-            _dialects(("ANSI_SQL", "orders.amount")), _resolve_field(index), log, object_ref="field:f",
+            _expr(("ANSI_SQL", "orders.amount")), _resolve_field(index), log, object_ref="field:f",
         )
         assert result == "[orders::Amount]"
         assert not log.as_dicts()
@@ -781,7 +792,7 @@ class TestDialectSelection:
         log = IssueLog()
         index = {"orders.amount": ("orders", "Amount")}
         result = to_thoughtspot_expression(
-            _dialects(("ANSI_SQL", "SUM(orders.amount)")), _resolve_field(index), log, object_ref="metric:m",
+            _expr(("ANSI_SQL", "SUM(orders.amount)")), _resolve_field(index), log, object_ref="metric:m",
         )
         assert result == "sum ( [orders::Amount] )"
         assert not log.as_dicts()
@@ -790,7 +801,7 @@ class TestDialectSelection:
         log = IssueLog()
         index = {"orders.id": ("orders", "Id")}
         result = to_thoughtspot_expression(
-            _dialects(("ANSI_SQL", "COUNT(DISTINCT orders.id)")),
+            _expr(("ANSI_SQL", "COUNT(DISTINCT orders.id)")),
             _resolve_field(index), log, object_ref="metric:m",
         )
         assert result == "unique count ( [orders::Id] )"
@@ -798,7 +809,7 @@ class TestDialectSelection:
     def test_an_unresolvable_ansi_sql_reference_raises_an_issue_and_stashes(self):
         log = IssueLog()
         result = to_thoughtspot_expression(
-            _dialects(("ANSI_SQL", "orders.unknown_field")), _resolve_field({}), log, object_ref="field:f",
+            _expr(("ANSI_SQL", "orders.unknown_field")), _resolve_field({}), log, object_ref="field:f",
         )
         assert result is None
         assert any(i["code"] == "TS-EXPR-ANSI-UNRESOLVED" for i in log.as_dicts())
@@ -806,7 +817,7 @@ class TestDialectSelection:
     def test_an_ansi_sql_expression_the_catalog_cannot_match_structurally_raises_an_issue(self):
         log = IssueLog()
         result = to_thoughtspot_expression(
-            _dialects(("ANSI_SQL", "orders.amount + orders.cost")),
+            _expr(("ANSI_SQL", "orders.amount + orders.cost")),
             _resolve_field({}), log, object_ref="field:f",
         )
         assert result is None
@@ -816,7 +827,7 @@ class TestDialectSelection:
         log = IssueLog()
         index = {"orders.amount": ("orders", "Amount"), "orders.cost": ("orders", "Cost")}
         result = to_thoughtspot_expression(
-            _dialects(("ANSI_SQL", "MOD(orders.amount, orders.cost)")),
+            _expr(("ANSI_SQL", "MOD(orders.amount, orders.cost)")),
             _resolve_field(index), log, object_ref="metric:m",
         )
         assert result is None
@@ -825,7 +836,7 @@ class TestDialectSelection:
     def test_no_usable_dialect_at_all_raises_an_issue(self):
         log = IssueLog()
         result = to_thoughtspot_expression(
-            _dialects(("DATABRICKS", "amount")), _resolve_field({}), log, object_ref="field:f",
+            _expr(("DATABRICKS", "amount")), _resolve_field({}), log, object_ref="field:f",
         )
         assert result is None
         assert any(i["code"] == "TS-EXPR-NO-USABLE-DIALECT" for i in log.as_dicts())
@@ -851,7 +862,7 @@ class TestDialectSelection:
         """
         log = IssueLog()
         result = to_thoughtspot_expression(
-            _dialects(("OSSIE_SQL_2026", "orders.amount")),
+            _expr(("OSSIE_SQL_2026", "orders.amount")),
             _resolve_field({"orders.amount": ("ORDERS", "Amount")}),
             log, object_ref="metric:total_amount",
         )
@@ -875,7 +886,7 @@ class TestDialectSelection:
         for dialect in ("ANSI_SQL", "OSSIE_SQL_2026"):
             log = IssueLog()
             result = to_thoughtspot_expression(
-                _dialects((dialect, "SUM(net_amount)")),
+                _expr((dialect, "SUM(net_amount)")),
                 _resolve_field({"orders.net_amount": ("ORDERS", "Net Amount")}),
                 log, object_ref="metric:m",
             )
@@ -890,7 +901,7 @@ class TestDialectSelection:
         # ordering in the source document.
         log = IssueLog()
         result = to_thoughtspot_expression(
-            _dialects(("OSSIE_SQL_2026", "orders.other"), ("ANSI_SQL", "orders.amount")),
+            _expr(("OSSIE_SQL_2026", "orders.other"), ("ANSI_SQL", "orders.amount")),
             _resolve_field({"orders.amount": ("ORDERS", "Amount"),
                             "orders.other": ("ORDERS", "Other")}),
             log, object_ref="field:f",
@@ -903,7 +914,7 @@ class TestDialectSelection:
         # never re-renders one vendor dialect into another.
         log = IssueLog()
         result = to_thoughtspot_expression(
-            _dialects(("DATABRICKS", "orders.amount")),
+            _expr(("DATABRICKS", "orders.amount")),
             _resolve_field({"orders.amount": ("ORDERS", "Amount")}),
             log, object_ref="field:f",
         )
@@ -937,7 +948,7 @@ class TestDialectSelection:
         # A THOUGHTSPOT entry wins even when an ANSI_SQL sibling exists and
         # would translate to something textually different.
         result = to_thoughtspot_expression(
-            _dialects(("THOUGHTSPOT", "average ( [A::x] )"), ("ANSI_SQL", "SUM(a.x)")),
+            _expr(("THOUGHTSPOT", "average ( [A::x] )"), ("ANSI_SQL", "SUM(a.x)")),
             _resolve_field({"a.x": ("A", "x")}), log, object_ref="metric:m",
         )
         assert result == "average ( [A::x] )"

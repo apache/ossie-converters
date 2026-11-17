@@ -18,7 +18,7 @@
 
 # Minimal Ossie model exercising the BIGQUERY dialect.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 
 name: ecommerce_bigquery
 description: Minimal e-commerce model with BigQuery-dialect expressions

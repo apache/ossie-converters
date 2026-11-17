@@ -56,7 +56,7 @@ import org.apache.ossie.converter.databricks.OssieConverter.ConversionException;
 final class OssieConverterCommon {
 
   // -- constants -------------------------------------------------------------
-  static final String OSSIE_VERSION = "0.2.0.dev0";
+  static final String OSSIE_VERSION = "0.3.0.dev0";
   static final String MV_VERSION = "1.1";
   static final String VENDOR = "DATABRICKS";
   static final String DIALECT_DATABRICKS = "DATABRICKS";

@@ -67,7 +67,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 from . import datatypes, formula, identifiers, stash
 from .constants import (
@@ -111,6 +111,7 @@ from .constants import (
     MODEL_STASH_UNATTRIBUTED_FORMULAS,
     MODEL_STASH_UNREPRESENTABLE_JOINS,
     PORTABLE_DIALECTS_ACCEPTED,
+    PORTABLE_SQL_DIALECT,
     RELATIONSHIP_STASH_CARDINALITY,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS,
@@ -212,6 +213,74 @@ def _bare_sql_identifier(expression: str) -> str | None:
     return text
 
 
+def portable_expression_entries(expression: Any) -> list[dict]:
+    """The dialect entries to read from one Ossie `expression`, with a
+    top-level `expression.sql` folded in as the entry it already is.
+
+    apache/ossie#617 moved the portable expression to a top-level `sql`
+    field, which is `OSSIE_SQL_2026` by definition; `expression.dialects[]`
+    keeps carrying portable expressions too, tagged, so a document may use
+    either location or both. apache/ossie-converters#79 tracks teaching every
+    converter to read both, readers first, "preferring expression.sql when
+    both are present". The schema is narrower than that wording: `sql`'s own
+    description makes it authoritative only against an `OSSIE_SQL_2026`
+    entry. Preferring it over a tagged `ANSI_SQL` entry too follows #79 and
+    the merged databricks reader, not a requirement of the schema.
+
+    A usable `sql` therefore SUPERSEDES every other entry except THOUGHTSPOT,
+    and the list it returns is `[THOUGHTSPOT entry (if any), sql]`.
+
+    Superseding rather than joining is the whole point, and it has to cover
+    EVERY other dialect, not just the portable ones. Three readers consume
+    this list and they ask different questions of it: one picks by dialect
+    name, two scan for the first entry that is a bare column identifier, in
+    list order, from any dialect at all. Leave a losing entry in the list and
+    those two will read it -- so a `DATABRICKS` entry naming `legacy_amt`
+    beside `sql: amount` produced a Table column reading the WRONG warehouse
+    column, and beside `sql: SUM(orders.qty)` produced a physical column
+    where the authoritative expression is an aggregate. Both silently, with
+    no issue raised. Dropping the superseded entries here states the
+    precedence once, where all three readers inherit it, instead of leaving
+    each to re-derive it.
+
+    THOUGHTSPOT survives because it outranks `sql`, and that is round-trip
+    fidelity rather than preference: it is the verbatim text a prior
+    `TML -> Ossie` trip preserved, already naming this document's own tables
+    and columns. Keeping it also keeps `_physical_identity`'s existing
+    short-circuit intact -- a THOUGHTSPOT entry that is not a bare reference
+    still means "computed", and no other entry is consulted.
+
+    Nothing legitimate is lost by dropping the rest: no reader in this module
+    consults a foreign vendor dialect except through the bare-identifier scan
+    this is correcting, and no stash key preserves foreign dialect entries,
+    so the `Ossie -> TML` direction never needed them.
+
+    **A superseded sibling is not a fallback.** When `sql` is present but
+    this converter cannot translate it, the field or metric is reported and
+    dropped; it does NOT quietly convert through the tagged entry instead.
+    Converting through the loser would emit a model built on an expression
+    the document itself marks as not authoritative -- silent wrong output in
+    place of a declared loss, which is the trade this converter refuses
+    everywhere else. `test_expression_sql.py` pins it.
+
+    An unusable `sql` -- absent, not a string, or blank -- supersedes
+    nothing, so a document carrying `sql: ""` beside a real tagged entry
+    still converts through the tagged one.
+    """
+    if not isinstance(expression, dict):
+        return []
+
+    entries = [e for e in (expression.get("dialects") or []) if isinstance(e, dict)]
+
+    sql = expression.get("sql")
+    if not isinstance(sql, str) or not sql.strip():
+        return entries
+
+    return [e for e in entries if e.get("dialect") == DIALECT] + [
+        {"dialect": PORTABLE_SQL_DIALECT, "expression": sql}
+    ]
+
+
 def _physical_identity(field: dict, log: IssueLog, *, object_ref: str) -> tuple[str, str] | None:
     """`(display name, warehouse identifier)` for a physical field, or `None`
     when the field is computed and has no single physical column to become.
@@ -225,7 +294,7 @@ def _physical_identity(field: dict, log: IssueLog, *, object_ref: str) -> tuple[
     hand-authored document) does a bare, unqualified SQL identifier in any
     other dialect count as a physical reference instead.
     """
-    dialects = ((field.get("expression") or {}).get("dialects")) or []
+    dialects = portable_expression_entries(field.get("expression"))
     if not dialects:
         log.add(
             code="TS-FIELD-NO-EXPRESSION",
@@ -1226,14 +1295,22 @@ def _translate_ansi_sql(
 
 
 def to_thoughtspot_expression(
-    entries: Sequence[dict],
+    expression: Any,
     resolve_field: Callable[[str], tuple[str, str] | None],
     log: IssueLog,
     *,
     object_ref: str,
 ) -> str | None:
-    """One Ossie `expression.dialects[]` list -> a ThoughtSpot formula string,
-    or `None`.
+    """One Ossie `expression` -> a ThoughtSpot formula string, or `None`.
+
+    Takes the whole `expression` mapping, not one of its keys, because a
+    portable expression lives in either of two places -- the top-level `sql`
+    field (apache/ossie#617) or a tagged `dialects[]` entry -- and choosing
+    between them is this function's job. `portable_expression_entries` folds
+    the two into one list, with `sql` superseding every entry but
+    THOUGHTSPOT; the selection below is unchanged from when `dialects[]` was
+    the only location. Honeydew (apache/ossie-converters#182) takes the same
+    mapping for the same reason.
 
     Mirrors the reference converters' own `pick_expression`, and the same
     dialect-selection order `tml_to_ossie.py`'s own `expression_entries` uses
@@ -1258,7 +1335,8 @@ def to_thoughtspot_expression(
     caller stashes rather than guessing); one dialect is never re-rendered
     into another.
     """
-    by_dialect = {e.get("dialect"): e.get("expression") for e in entries if isinstance(e, dict)}
+    entries = portable_expression_entries(expression)
+    by_dialect = {e.get("dialect"): e.get("expression") for e in entries}
 
     ts_expr = by_dialect.get(DIALECT)
     if isinstance(ts_expr, str) and ts_expr:
@@ -1306,7 +1384,7 @@ def _field_physical_display_name(field: dict) -> str | None:
     reporting it again here would be the same double report this function's
     own docstring already rules out for db_column_name.
     """
-    dialects = ((field.get("expression") or {}).get("dialects")) or []
+    dialects = portable_expression_entries(field.get("expression"))
     ts_entry = next((d for d in dialects if d.get("dialect") == DIALECT), None)
     if ts_entry is not None:
         try:
@@ -1506,8 +1584,7 @@ def _build_field(
         }
     else:
         expr = to_thoughtspot_expression(
-            (field.get("expression") or {}).get("dialects") or [],
-            resolve_field, log, object_ref=object_ref,
+            field.get("expression"), resolve_field, log, object_ref=object_ref,
         )
         if expr is None:
             log.add(
@@ -1595,8 +1672,7 @@ def _build_metric(
     formula_id = stash.read_stash(metric).get(FIELD_STASH_FORMULA_ID) or _formula_id_from(name)
 
     ts_expr = to_thoughtspot_expression(
-        (metric.get("expression") or {}).get("dialects") or [],
-        resolve_field, log, object_ref=object_ref,
+        metric.get("expression"), resolve_field, log, object_ref=object_ref,
     )
     if ts_expr is None:
         log.add(

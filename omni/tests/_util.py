@@ -72,6 +72,19 @@ def canon(obj):
     return obj
 
 
+def _canonical_expression(expr):
+    """Reduce an expression to the portable `sql` form when it is a single ANSI_SQL
+    dialect entry, so the portable form and that dialect entry compare equal."""
+    if not isinstance(expr, dict):
+        return expr
+    if expr.get("sql") is not None:
+        return {"sql": expr["sql"]}
+    dialects = expr.get("dialects") or []
+    if len(dialects) == 1 and dialects[0].get("dialect") == "ANSI_SQL":
+        return {"sql": dialects[0].get("expression")}
+    return expr
+
+
 def strip_normalized(ossie):
     """Normalize away what the Ossie -> Omni -> Ossie trip changes by design, so a
     round-trip comparison reflects the documented behavior:
@@ -83,8 +96,10 @@ def strip_normalized(ossie):
     - relationship `ai_context`: no Omni home (dropped with a warning).
     - model `ai_context` synonyms/examples: no Omni home; only the
       instructions text maps (onto the topic).
-    - `expression.sql` (the portable form): not read by the converter, so the
-      round trip keeps only the ANSI_SQL entry.
+    - `expression` representation: the portable `sql` form and a lone ANSI_SQL
+      dialect entry carry the same SQL; the round trip re-emits a portable `sql`
+      expression as an ANSI_SQL dialect entry, so both sides are canonicalized to
+      the portable form.
     - `dimension: {is_time: false}`: equivalent to an absent `dimension`
       (only `is_time: true` has an Omni form -- `timeframes`).
     - a primary-key column no field covers materializes as a hidden
@@ -110,7 +125,8 @@ def strip_normalized(ossie):
         fields = ds.get("fields", []) or []
         for field in fields:
             field.pop("custom_extensions", None)
-            (field.get("expression") or {}).pop("sql", None)
+            if field.get("expression") is not None:
+                field["expression"] = _canonical_expression(field["expression"])
             dimension = field.get("dimension")
             is_time = False
             if dimension is not None:
@@ -142,6 +158,8 @@ def strip_normalized(ossie):
     for metric in model.get("metrics", []) or []:
         metric.pop("custom_extensions", None)
         metric.pop("datatype", None)
+        if metric.get("expression") is not None:
+            metric["expression"] = _canonical_expression(metric["expression"])
     # Metric order is not semantic; the import regroups metrics by the view
     # their measure lives on.
     if model.get("metrics"):

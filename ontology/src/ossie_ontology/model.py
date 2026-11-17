@@ -769,7 +769,7 @@ class SemanticModel:
         description: str | None = None,
         ai_context: AiContext | None = None,
         custom_extensions: list[CustomExtension] | None = None,
-        version: CoreVersion = "0.2.0.dev0",
+        version: CoreVersion = "0.3.0.dev0",
     ):
         # Checked at runtime too: callers outside a type checker pass any string.
         (supported,) = get_args(CoreVersion)
