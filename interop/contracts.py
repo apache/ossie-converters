@@ -18,21 +18,24 @@
 """Bounded assertions for expressions, dataset bindings, key roles, and table identity."""
 
 import json
+import re
 from pathlib import Path
 
+import lkml
 import sqlglot
+import yaml
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
-import yaml
 
 from .manifest import ManifestError, UniqueLoader
-
 
 _DIALECTS = {
     "ANSI_SQL": None,
     "OSSIE_SQL_2026": None,
     "DATABRICKS": "databricks",
     "SNOWFLAKE": "snowflake",
+    "BIGQUERY": "bigquery",
+    "CLICKHOUSE": "clickhouse",
 }
 
 
@@ -313,6 +316,53 @@ def _check_portable_expression(
             _check(checks, f"{path}.expression.{suffix}", expected, actual)
     except (ValueError, SqlglotError) as error:
         _check(checks, path + ".expression", expected_sql, None, str(error))
+
+
+def check_lookml_portable_sql(path: Path, oracle):
+    """Check generated LookML directly for the portable SQL fixture's bounded shape."""
+    try:
+        native = lkml.load(path.read_text(encoding="utf-8"))
+        datasets = []
+        for view in native.get("views", []):
+            name = view["name"]
+
+            def expression(sql, dataset=name):
+                # These fixtures use physical dimensions and direct field references.
+                def reference(match):
+                    member = match.group(1)
+                    if member == "TABLE":
+                        return dataset
+                    return member if "." in member else f"{dataset}.{member}"
+
+                sql = re.sub(r"\$\{([^}]+)\}", reference, sql)
+                return {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+
+            table = sqlglot.parse_one(view["sql_table_name"], read="bigquery", into=exp.Table)
+            fields = [
+                {"name": field["name"], "expression": expression(field["sql"])}
+                for field in view.get("dimensions", [])
+            ]
+            metrics = []
+            for measure in view.get("measures", []):
+                sql = measure["sql"]
+                if measure.get("type") == "sum":
+                    sql = f"SUM({sql})"
+                elif measure.get("type") != "number":
+                    raise ValueError(f"unsupported fixture measure type: {measure.get('type')}")
+                metrics.append({"name": measure["name"], "expression": expression(sql)})
+            datasets.append({
+                "name": name,
+                "source": table.sql(dialect="databricks"),
+                "fields": fields,
+                "metrics": metrics,
+            })
+        if len({dataset["name"] for dataset in datasets}) != len(datasets):
+            raise ValueError("duplicate LookML view names")
+        return check_document({"datasets": datasets}, "portable-sql", oracle)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, SyntaxError, SqlglotError) as error:
+        checks = []
+        _check(checks, "native.lookml", "portable SQL fixture", None, str(error))
+        return _result(checks)
 
 
 def _native_documents(path, native_format):

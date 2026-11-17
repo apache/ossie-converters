@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "apache-ossie"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 source = { editable = "../ossie/python" }
 dependencies = [
     { name = "pydantic" },
@@ -734,23 +734,23 @@ wheels = [
 
 [[package]]
 name = "sqlglot"
-version = "30.30.0"
+version = "30.31.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b8/93/cedd3e86d49841c9509979dce3f4470243691fbd5c5227d2988d4903531e/sqlglot-30.30.0.tar.gz", hash = "sha256:b8e344042c85d7baa1d0d827127dfe1611ce9ac59bceab6fe370665baeb14ce7", size = 6186227, upload-time = "2026-11-06T13:54:57.133Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/de/aa6cc05536bec18c7ad7d3def4d724d1d7086cbc9e96dc1e39fdaf83965d/sqlglot-30.31.0.tar.gz", hash = "sha256:448404736cb0ed1335774e34399a3a99d28274778fb718877556fb7d475d8808", size = 6198638, upload-time = "2026-11-10T18:02:51.359Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/1f/2472bab660417265daa9cf6baf7870583bfbd447608b525b0071cc4c5448/sqlglot-30.30.0-py3-none-any.whl", hash = "sha256:06c4c212a7868c7dcff0fd0fda348dd3c5cbad40137b3083a70ecdfe22921cf9", size = 807597, upload-time = "2026-11-06T13:54:54.435Z" },
+    { url = "https://files.pythonhosted.org/packages/92/68/e351109f7732f193133c67fbf104178f79b534a925db8f69c074fd190c2c/sqlglot-30.31.0-py3-none-any.whl", hash = "sha256:51a876a43edecf8ee6fd4c872cf6713d899c4234256bba0be96a8c7c8d8781e8", size = 811981, upload-time = "2026-11-10T18:02:49.108Z" },
 ]
 
 [[package]]
 name = "syrupy"
-version = "6.1.1"
+version = "7.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/2c/8ffc1414d1951895d0d5b7dc83c0b079ebc48c3bf27ffbb0064646367500/syrupy-6.1.1.tar.gz", hash = "sha256:7e584a8df4ede6dd3c1c44a77f9edc46186b6767a73dea6f0083044946839a59", size = 109705, upload-time = "2026-09-13T20:25:21.599Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/75/c3312dabf8356c74580cf0f0f0c7fbf228107479f4d10ad7e9412652b9b9/syrupy-7.0.0.tar.gz", hash = "sha256:2e8733d9b3b42b665143be49f38b7543d77f4243e8fb29545ec410ef467c7b0a", size = 117384, upload-time = "2026-11-11T01:16:57.716Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/b5/bf2a8a335a6a813869dd482cedbcde252f582b5afbfe50eb78ec09962800/syrupy-6.1.1-py3-none-any.whl", hash = "sha256:6ac9ac6a42d70ae44156f5f157a9563b9bb8cc96dcf9364327f330463bff889a", size = 63436, upload-time = "2026-09-13T20:25:20.294Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/41/5915a9643bf77661e6f14a57d1edd810d0a9961dddc74a7dd7f93d98205f/syrupy-7.0.0-py3-none-any.whl", hash = "sha256:c2f00abec70c444771c999295a166bb0b957da0853a015dff0d0f95930a121f7", size = 66867, upload-time = "2026-11-11T01:16:56.232Z" },
 ]
 
 [[package]]

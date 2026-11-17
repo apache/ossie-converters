@@ -236,6 +236,13 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
             ds["metrics"] = dataset_metrics[ds["name"]]
     if metrics:
         model["metrics"] = metrics
+    _declare_key_fields(
+        cubes, {ds["name"]: ds.setdefault("fields", []) for ds in model["datasets"]},
+        {ds["name"]: ds.get("primary_key") for ds in model["datasets"]},
+        relationships, source_dialect)
+    for ds in model["datasets"]:
+        if not ds["fields"]:
+            del ds["fields"]
 
     # Model-level stash: the views verbatim (minus natively mapped properties),
     # the mapped view's identity, non-canonical file paths, and any file with no
@@ -708,6 +715,46 @@ def _yields_a_same_named_field(dim):
     """
     return not (snake(dim.get("type") or "") in ("geo", "switch")
                 or dim.get("sub_query"))
+
+
+def _declare_key_fields(cubes, fields_by_ds, keys_by_ds, relationships, source_dialect):
+    """Declare a field for every key and join column no field of that name covers.
+
+    Ossie's `primary_key` and relationship columns name dataset *fields*, but a Cube
+    join can read a raw column no dimension exposes. Each such column becomes a bare
+    key-only field named after the column, typed like the dimension that reads it and
+    marked in the stash so export does not turn it into a dimension. A field already
+    carrying the column's name, such as a computed key dimension, stands for it as is.
+
+    `fields_by_ds` maps each dataset name to its field list, which is extended in place.
+    """
+    needed = {name: list(columns or ()) for name, columns in keys_by_ds.items()}
+    for rel in relationships or ():
+        needed.setdefault(rel["from"], []).extend(rel["from_columns"])
+        needed.setdefault(rel["to"], []).extend(rel["to_columns"])
+    for name, columns in needed.items():
+        fields = fields_by_ds[name]
+        have = {f["name"] for f in fields}
+        for column in dict.fromkeys(columns):
+            if column in have:
+                continue
+            field = {"name": column, "expression": {"dialects": [{
+                "dialect": source_dialect or DIALECT_ANSI, "expression": column}]}}
+            datatype = _column_datatype(cubes, name, column)
+            if datatype:
+                field["datatype"] = datatype
+            write_stash(field, {"key_only": True})
+            fields.append(field)
+            have.add(column)
+
+
+def _column_datatype(cubes, cname, column):
+    """The Ossie datatype of the dimension reading `column`, or None when none does."""
+    for dim in _as_named_list(cubes[cname].get("dimensions"),
+                              f"cube '{cname}' dimensions"):
+        if _column_of(cubes, cname, dim["name"]) == column:
+            return DIM_TYPE_TO_DATATYPE.get(snake(dim.get("type") or "string"))
+    return None
 
 
 def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
@@ -1673,6 +1720,52 @@ class _MeasureResolver:
         # exactly the expression it was split from.
         return f"({inner})" if has_top_level_operator(inner) else inner
 
+    def aggregate_owners(self, cname, mname):
+        """Prove the native owner of each dataset read by emitted unsafe aggregates."""
+        owners = {}
+        pending = [(cname, mname)]
+        visited = set()
+        canonical = lookup_map(self._cube_names)
+        while pending:
+            key = pending.pop()
+            if key in visited:
+                continue
+            visited.add(key)
+            owner, name = key
+            measure = self._raw[key]
+            if self.aggregate_of(owner, name) in CALCULATED_MEASURE_TYPES:
+                # Aggregate syntax written inline is ambiguous. Test the glue with
+                # its measure references removed, then visit only inlined members.
+                sqls = [measure.get("sql"), *[
+                    f.get("sql") for f in measure.get("filters") or [] if isinstance(f, dict)]]
+                for sql in filter(None, sqls):
+                    def resolve(body):
+                        target = self._reference_target(body, owner)
+                        if target is None:
+                            return None
+                        metric_name = self._metric_names.get(target)
+                        if not metric_name or not is_referenceable_name(metric_name):
+                            pending.append(target)
+                        return "NULL"
+
+                    glue, _ = cube_sql_to_ossie(sql, owner, resolve_ref=resolve,
+                                                self_prefix=owner, cube_names=self._cube_names)
+                    if unsafe_aggregate_heads(glue, self.source_dialect) != (set(), False):
+                        return {}
+                continue
+            analysed = unsafe_aggregate_heads(self.expression(owner, name), self.source_dialect)
+            if analysed is None:
+                return {}
+            heads, bare = analysed
+            datasets = {resolve_identifier(canonical, head) for head in heads}
+            if bare:
+                datasets.add(owner)
+            if None in datasets:
+                return {}
+            for dataset in datasets:
+                owners.setdefault(dataset, set()).add(owner)
+        return owners
+
     def _operand(self, cname, sql, stack, inline_refs):
         """Translate an aggregate's operand into an Ossie reference.
 
@@ -1788,6 +1881,7 @@ class _MeasureContext:
 
     resolver: object
     fanned_out: dict
+    integer_sum_grains: frozenset
     dataset_names: frozenset
     plain_by_cube: dict
     pk_by_cube: dict
@@ -2056,6 +2150,11 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
     context = _MeasureContext(
         resolver=resolver,
         fanned_out=fanned_out,
+        integer_sum_grains=frozenset(
+            cname for cname in fanned_out if len(pk_by_cube.get(cname) or []) == 1
+            and any(parked_of(dim.get("meta")).get("datatype") == "Integer"
+                    for dim in _as_named_list(cubes[cname].get("dimensions"),
+                                              f"cube '{cname}' dimensions"))),
         dataset_names=frozenset(cubes),
         plain_by_cube=plain_by_cube,
         pk_by_cube=pk_by_cube,
@@ -2168,6 +2267,16 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         metric["ai_context"] = ai
 
     stash = {}
+    integer_sum_grain = []
+    if dataset_metric is None and context.integer_sum_grains and "expression" not in parked:
+        owners = resolver.aggregate_owners(cname, mname)
+        integer_sum_grain = sorted(dataset for dataset in context.integer_sum_grains
+                                   if owners.get(dataset) == {dataset})
+    if integer_sum_grain:
+        # The portable expression alone cannot say whether the aggregate sums fact-joined
+        # rows or runs once per joined dataset key. Preserve Cube's intent for consumers
+        # that can implement it for explicitly typed integer operands.
+        stash["integer_sum_grain"] = integer_sum_grain
     if context.derived_cube(expr) != cname:
         # The owning cube, recorded only when export would not place the measure
         # here on its own. The mirror of export's derivation: the sole cube the

@@ -65,7 +65,7 @@ def metric(name="total_amount", sql="SUM(amount)"):
 
 def model(*datasets, metrics=None):
     return {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "shop",
         "datasets": list(datasets),
         "metrics": metrics or [],

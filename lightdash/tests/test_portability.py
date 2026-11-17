@@ -52,7 +52,7 @@ def _metric(name: str, sql: str, dialect: str = "OSSIE_SQL_2026"):
 def _model(fields, metrics):
     return OssieDocument.model_validate(
         {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "portability",
             "datasets": [{"name": "orders", "source": "public.orders", "fields": fields}],
             "metrics": metrics,

@@ -17,18 +17,17 @@
 
 """Execute an ordered matrix without hiding failed setup or empty conversions."""
 
-from dataclasses import replace
-from datetime import datetime, timezone
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 
 import yaml
 
 from .bindings import check_bindings
-from .contracts import check_document, check_native_sources
 from .checks import (
     ContentError,
     Validator,
@@ -37,6 +36,7 @@ from .checks import (
     meaningful_ossie,
     native_content,
 )
+from .contracts import check_document, check_lookml_portable_sql, check_native_sources
 from .execution import diagnostics, has_degradation, run_command, succeeded
 from .manifest import Manifest, expand
 from .portability import GRADER, as_dict, diagnostics_text, load_grader
@@ -648,6 +648,16 @@ class Runner:
                 _skip(result, accepted["reason"], because=accepted)
             return result
         result["content"] = accepted["content"]
+        if regression.category == "portable-sql" and converter.native_format == "lookml":
+            result["native_assertions"] = check_lookml_portable_sql(
+                Path(accepted["output"]), regression.assertions
+            )
+            result["output"] = accepted["output"]
+            if result["native_assertions"]["grade"] != "OK":
+                result.update(grade="FAIL", reason="portable SQL assertions failed in native LookML")
+            else:
+                result.update(grade=accepted["grade"], reason=accepted["reason"])
+            return result
         if regression.category == "sources":
             result["native_assertions"] = check_native_sources(
                 Path(accepted["output"]), converter.native_format, regression.assertions
