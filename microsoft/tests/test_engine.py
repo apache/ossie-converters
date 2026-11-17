@@ -263,6 +263,27 @@ def test_a_dropped_measure_is_still_reported_when_the_retry_is_silent(monkeypatc
     assert "rejected it" in measure.error
 
 
+@pytest.mark.parametrize("retry", [(None, "Column 'A' cannot be found."), ([{"[v]": 42}], None)])
+def test_embedded_measure_error_retries_expression_without_hiding_failure(monkeypatch, retry):
+    queries = []
+
+    def response(method, url, token, payload=None):
+        query = payload["queries"][0]["query"]
+        queries.append(query)
+        if "[M]" in query:
+            return 200, {"results": [{"error": {"message": "measure M is missing"}}]}, {}
+        rows, error = retry
+        if error:
+            return 200, {"results": [{"error": {"message": error}}]}, {}
+        return 200, {"results": [{"tables": [{"rows": rows}]}]}, {}
+
+    _stub_request(monkeypatch, response)
+    measure = next(f for f in engine.check_model(DOC, "w", "d", "t") if f.kind == "measure")
+    assert any('ROW("v", SUM(T[A]))' in query for query in queries)
+    assert not measure.ok
+    assert measure.error == (retry[1] or "measure M is missing")
+
+
 def test_a_multi_line_expression_is_joined_before_it_is_retried(monkeypatch):
     seen = []
 
@@ -328,6 +349,16 @@ def test_an_empty_response_body_is_none(monkeypatch):
         engine.urllib.request, "urlopen", lambda request: _FakeResponse(204, "", {})
     )
     assert engine._request("DELETE", "https://e/x", "tok")[1] is None
+
+
+def test_non_json_success_response_reports_an_error_without_echoing_the_body(monkeypatch):
+    monkeypatch.setattr(
+        engine.urllib.request, "urlopen",
+        lambda request: _FakeResponse(200, "<html>proxy login page</html>", {}),
+    )
+    assert engine.evaluate("w", "d", "secret-token", "EVALUATE 1") == (
+        None, "invalid JSON response from Power BI",
+    )
 
 
 def test_an_http_error_is_returned_rather_than_raised(monkeypatch):
@@ -671,7 +702,7 @@ def test_evaluate_rejects_errors_inside_successful_http_responses(monkeypatch, b
     [
         None,
         {"results": []},
-        {"results": [{}, {}]},
+        {"results": [{"tables": [{"rows": []}]}, {"tables": [{"rows": []}]}]},
         {"results": [{"tables": [{}, {}]}]},
         {"results": [{"tables": [{"rows": {}}]}]},
         {"results": [{"tables": [{"rows": [1]}]}]},

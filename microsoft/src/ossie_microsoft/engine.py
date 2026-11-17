@@ -138,7 +138,11 @@ def _request(method, url, token, payload=None):
     try:
         with urllib.request.urlopen(request) as response:  # noqa: S310
             body = response.read().decode("utf-8")
-            return response.status, (json.loads(body) if body else None), dict(response.headers)
+            try:
+                parsed = json.loads(body) if body else None
+            except json.JSONDecodeError:
+                parsed = {"error": {"message": "invalid JSON response from Power BI"}}
+            return response.status, parsed, dict(response.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8")[:2000], dict(exc.headers)
     except (urllib.error.URLError, ConnectionError, TimeoutError, socket.gaierror) as exc:
@@ -443,6 +447,7 @@ def evaluate(workspace, dataset, token, query):
     try:
         if body.get("error"):
             return None, _engine_message(body)
+        # This request contains one query, so exactly one result table is expected.
         result, = body["results"]
         if result.get("error"):
             return None, _engine_message(result)
@@ -478,15 +483,13 @@ def check_model(document, workspace, dataset, token):
                 workspace, dataset, token, f'EVALUATE ROW("v", [{measure["name"]}])'
             )
             expression = _expression_text(measure.get("expression"))
-            # A measure whose DAX failed to compile is dropped from the model, so
-            # referencing it by name returns no rows rather than an error. That is
-            # precisely the silent failure this validator exists to catch, so the
-            # expression is re-evaluated inline to recover the real diagnostic.
-            if error is None and not rows and expression:
+            # Missing measures can return empty rows or an embedded query error.
+            # Evaluate the expression inline to obtain the engine's DAX diagnostic.
+            if not rows and expression:
                 _retry_rows, retry_error = evaluate(
                     workspace, dataset, token, f'EVALUATE ROW("v", {expression})'
                 )
-                error = retry_error or (
+                error = retry_error or error or (
                     f"measure '{measure['name']}' is not present in the deployed model; "
                     "the engine rejected it"
                 )
