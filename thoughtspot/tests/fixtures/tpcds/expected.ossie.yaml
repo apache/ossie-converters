@@ -109,6 +109,18 @@ datasets:
       - dialect: ANSI_SQL
         expression: ss_net_profit
     datatype: Decimal
+  - name: ss_ticket_number
+    label: ss_ticket_number
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[store_sales::ss_ticket_number]'
+      - dialect: ANSI_SQL
+        expression: ss_ticket_number
+    datatype: Integer
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
@@ -401,6 +413,18 @@ datasets:
   source: SELECT sr_item_sk, sr_ticket_number, sr_return_amt AS RETURN_AMT, sr_return_quantity,
     sr_store_sk FROM tpcds.public.store_returns
   fields:
+  - name: sr_return_quantity
+    label: sr_return_quantity
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[store_returns_sv::sr_return_quantity]'
+      - dialect: ANSI_SQL
+        expression: sr_return_quantity
+    datatype: Integer
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   - name: sr_item_sk
     label: sr_item_sk
     expression:
@@ -428,16 +452,28 @@ datasets:
       - dialect: ANSI_SQL
         expression: RETURN_AMT
     datatype: Decimal
+  - name: sr_store_sk
+    label: sr_store_sk
+    expression:
+      dialects:
+      - dialect: THOUGHTSPOT
+        expression: '[store_returns_sv::sr_store_sk]'
+      - dialect: ANSI_SQL
+        expression: sr_store_sk
+    datatype: Integer
+    custom_extensions:
+    - vendor_name: THOUGHTSPOT
+      data: '{"_v": 1, "not_model_surfaced": true}'
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "sql_output_columns":
-      {"sr_item_sk": "sr_item_sk", "sr_return_amt": "RETURN_AMT", "sr_ticket_number":
-      "sr_ticket_number"}, "tml_object": "sql_view", "tml_object_source_witness":
-      "SELECT sr_item_sk, sr_ticket_number, sr_return_amt AS RETURN_AMT, sr_return_quantity,
-      sr_store_sk FROM tpcds.public.store_returns", "unsurfaced_columns": [{"db_column_properties":
-      {"data_type": "INT64"}, "name": "sr_return_quantity", "sql_output_column": "sr_return_quantity"},
-      {"db_column_properties": {"data_type": "INT64"}, "name": "sr_store_sk", "sql_output_column":
-      "sr_store_sk"}]}'
+      {"sr_item_sk": "sr_item_sk", "sr_return_amt": "RETURN_AMT", "sr_return_quantity":
+      "sr_return_quantity", "sr_ticket_number": "sr_ticket_number"}, "tml_object":
+      "sql_view", "tml_object_source_witness": "SELECT sr_item_sk, sr_ticket_number,
+      sr_return_amt AS RETURN_AMT, sr_return_quantity, sr_store_sk FROM tpcds.public.store_returns",
+      "unsurfaced_columns": [{"db_column_properties": {"data_type": "INT64"}, "name":
+      "sr_return_quantity", "sql_output_column": "sr_return_quantity"}, {"db_column_properties":
+      {"data_type": "INT64"}, "name": "sr_store_sk", "sql_output_column": "sr_store_sk"}]}'
 description: TPC-DS retail semantic model used as a shared test fixture.
 relationships:
 - name: store_sales_to_date
@@ -570,6 +606,8 @@ metrics:
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_returns_sv::sr_return_quantity] )
+    - dialect: ANSI_SQL
+      expression: SUM(store_returns_sv.sr_return_quantity)
   datatype: Integer
   custom_extensions:
   - vendor_name: THOUGHTSPOT
