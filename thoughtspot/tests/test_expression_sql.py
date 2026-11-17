@@ -353,10 +353,21 @@ def test_a_sql_only_field_survives_end_to_end():
     assert {"amount", "region"} <= table_columns
 
 
-class TestTheWriterHasNotMoved:
-    """Readers first. Stage 2 is a separate change; nothing here anticipates it."""
+class TestTheWriterNowEmitsBoth:
+    """Stage 2. The reader above came first and is unchanged by this.
 
-    def test_the_writer_still_emits_dialects_and_never_sql(self):
+    Until this branch the writer emitted `dialects` only, and the test here
+    pinned that deliberately -- apache/ossie-converters#79 stages the
+    migration readers-first, so a converter must be able to READ both
+    locations before any converter starts WRITING the new one. #203 is that
+    reader for ThoughtSpot. With it in place the writer can move.
+
+    `test_expression_sql_emitted.py` carries the rest of this behaviour; what
+    is pinned here is the pairing -- `sql` arrives beside `dialects`, never
+    instead of it.
+    """
+
+    def test_the_writer_emits_sql_beside_dialects(self):
         table_doc = TmlDocument(
             kind="table",
             body={
@@ -387,4 +398,4 @@ class TestTheWriterHasNotMoved:
         assert fields
         for field in fields:
             assert "dialects" in field["expression"]
-            assert "sql" not in field["expression"]
+            assert field["expression"]["sql"] == "O_AMOUNT"

@@ -106,7 +106,7 @@ for what gets declared and why.
 | `relationship` | `model_tables[].joins[]` (inline) or Table `joins_with[]` (referencing) | `from_columns`/`to_columns` are the join's equality pairs; a join with a non-equality residual (range/ASOF) narrows the same pairs, with the verbatim condition stashed — see [the payload section](#the-custom_extensionsthoughtspot-payload) below |
 | `dataset.primary_key` / `unique_keys` | *(not native to TML)* | TML declares no keys; Ossie's are derived from to-one relationships targeting the dataset |
 | `metric` | Model `formulas[]` + surfacing `columns[]` entry with `column_type: MEASURE` | Three TML shapes compose into one metric: a bare aggregate formula, a scalar formula plus the surfacing column's `aggregation`, or a physical column plus `aggregation` |
-| `field`/`metric` `expression.sql` / `expression.dialects` | `formulas[].expr` or a physical `db_column_name` | Read from either location, `sql` first; written back as `dialects[]`. See [Expression translation](#expression-translation-what-is-not-translated-and-why) |
+| `field`/`metric` `expression.sql` / `expression.dialects` | `formulas[].expr` or a physical `db_column_name` | Read from either location, `sql` first; written to `dialects[]`, and to `sql` as well when a portable form exists. See [Expression translation](#expression-translation-what-is-not-translated-and-why) |
 | `custom_extensions[THOUGHTSPOT]` | TML fields with no Ossie equivalent | See [The `custom_extensions[THOUGHTSPOT]` payload](#the-custom_extensionsthoughtspot-payload) below |
 
 ### Where a portable expression is read from
@@ -142,10 +142,14 @@ against an `OSSIE_SQL_2026` entry. Preferring it over a tagged `ANSI_SQL` entry 
 follows converters#79's wording and the merged databricks reader, not a requirement of
 the schema.
 
-**The writer has not moved.** Every document this converter emits still carries its
-expressions in `dialects[]`. That is stage 1 of #79 and deliberately only stage 1: a
-reader that takes both forms can be released before any writer changes, so documents
-produced by older and newer versions both keep converting.
+**The writer emits both.** When an expression has a portable form, this converter writes
+it twice: as the top-level `sql`, the specification's primary location, and as the
+tagged `ANSI_SQL` entry it has always emitted, beside the verbatim `THOUGHTSPOT` entry.
+That is stage 2 of #79. The reader above came first, so documents produced by older and
+newer versions both keep converting. The `ANSI_SQL` entry stays because not every reader
+in this repository reads `sql` yet (snowflake skips an expression that has only `sql`).
+An expression with no portable form gets no `sql` and stays THOUGHTSPOT-only.
+
 ### What a join type is assumed to be
 
 An Ossie relationship carries no join type. ThoughtSpot requires one on every
@@ -211,8 +215,8 @@ field/metric).
 ## Expression translation: what is not translated, and why
 
 **A ThoughtSpot formula is captured verbatim under a `THOUGHTSPOT` dialect entry. A
-portable `ANSI_SQL` sibling is added only when the whole expression is a single bare
-column reference — the one shape where portability is certain. Every other shape — a
+portable `ANSI_SQL` sibling, also written to the top-level `sql`, is added only when the
+whole expression is a single bare column reference — the one shape where portability is certain. Every other shape — a
 function call, an operator expression, a runtime parameter, a formula cross-reference —
 is recorded THOUGHTSPOT-only, with an issue explaining why no portable sibling was
 produced.** No SQL dialect is ever re-rendered into another dialect in this converter,
