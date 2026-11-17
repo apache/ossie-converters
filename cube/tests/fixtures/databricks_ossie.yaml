@@ -26,7 +26,7 @@
 # a `unique_keys` added to the fact table, which is what a metric-view author has to
 # supply for the model to reach Cube at all.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: orders
 description: Sales orders with customer attributes
 datasets:

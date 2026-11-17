@@ -51,7 +51,7 @@ def _build_parser():
                           "(default: the FK-sink dataset)")
     exp.add_argument("-d", "--dialect",
                      help="preferred Ossie expression dialect (e.g. SNOWFLAKE); "
-                          "ANSI_SQL is always the fallback")
+                          "defaults to ANSI_SQL with translation from supported SQL dialects")
 
     imp = sub.add_parser("import", help="Omni model directory -> Ossie semantic model YAML")
     imp.add_argument("-i", "--input", required=True, help="Omni model directory")

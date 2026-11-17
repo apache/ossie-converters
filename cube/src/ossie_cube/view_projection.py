@@ -239,7 +239,7 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     resolver = _MeasureResolver(reduced, {}, IssueLog(), qualify=False,
                                 source_dialect=source_dialect)
     _report_fanout_of(resolver, tree, reduced, model, measures, issues)
-    _publish_surface(model, resolver, reduced, cubes, members, issues)
+    _publish_surface(model, resolver, reduced, cubes, members, issues, source_dialect)
     if source_dialect is not None:
         validate_imported_expressions(model)
     return dump_yaml({"version": OSSIE_VERSION, **model}), resolved_source, issues
@@ -1004,12 +1004,17 @@ def _refuse_mixed_data_sources(vname, tree, cubes):
 
 # --- the published surface --------------------------------------------------------
 
-def _publish_surface(model, resolver, reduced, cubes, members, issues):
+def _publish_surface(model, resolver, reduced, cubes, members, issues,
+                     source_dialect=None):
     """Trim the imported model to the view's surface, in place.
 
     Fields and metrics are rebuilt from the view's members: renamed, with the view's
     overrides, and with measure references inlined, since the metrics they name are
     not published. The CUBE stash keeps only what describes the published model.
+
+    Ossie's `primary_key` and relationship columns name dataset *fields*, so a key or
+    join column the view does not expose is declared as a key-only field rather than
+    left pointing at nothing.
     """
     metric_names = _metric_names_of(resolver, _decomposed_measure_names(reduced))
     metrics = {m["name"]: m for m in model.get("metrics") or []}

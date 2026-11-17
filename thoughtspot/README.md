@@ -106,8 +106,49 @@ for what gets declared and why.
 | `relationship` | `model_tables[].joins[]` (inline) or Table `joins_with[]` (referencing) | `from_columns`/`to_columns` are the join's equality pairs; a join with a non-equality residual (range/ASOF) narrows the same pairs, with the verbatim condition stashed — see [the payload section](#the-custom_extensionsthoughtspot-payload) below |
 | `dataset.primary_key` / `unique_keys` | *(not native to TML)* | TML declares no keys; Ossie's are derived from to-one relationships targeting the dataset |
 | `metric` | Model `formulas[]` + surfacing `columns[]` entry with `column_type: MEASURE` | Three TML shapes compose into one metric: a bare aggregate formula, a scalar formula plus the surfacing column's `aggregation`, or a physical column plus `aggregation` |
-| `field`/`metric` `expression.dialects` | `formulas[].expr` or a physical `db_column_name` | See [Expression translation](#expression-translation-what-is-not-translated-and-why) |
+| `field`/`metric` `expression.sql` / `expression.dialects` | `formulas[].expr` or a physical `db_column_name` | Read from either location, `sql` first; written to `dialects[]`, and to `sql` as well when a portable form exists. See [Expression translation](#expression-translation-what-is-not-translated-and-why) |
 | `custom_extensions[THOUGHTSPOT]` | TML fields with no Ossie equivalent | See [The `custom_extensions[THOUGHTSPOT]` payload](#the-custom_extensionsthoughtspot-payload) below |
+
+### Where a portable expression is read from
+
+apache/ossie#617 moved the portable expression to a top-level `expression.sql`
+field. `expression.dialects[]` still carries portable expressions too, tagged, so a
+document may use either location or both, and apache/ossie-converters#79 asks every
+converter to read both before any of them starts writing the new form.
+
+This converter reads the `THOUGHTSPOT` entry first, and a usable `expression.sql` next.
+A usable `sql` **supersedes every other entry** — a tagged `ANSI_SQL` or `OSSIE_SQL_2026`
+sibling, and any foreign vendor dialect — rather than competing with them. Only when
+there is no usable `sql` does a tagged `ANSI_SQL` or `OSSIE_SQL_2026` entry get read.
+
+Superseding has to cover every dialect, not just the portable ones, because the readers
+ask different questions of the list: one picks by dialect name, two scan for the first
+entry that is a bare column identifier, in list order, from any dialect at all. A
+surviving loser is read by those two, not ignored.
+
+The `THOUGHTSPOT` entry outranks `sql` — it is the verbatim text a prior `TML -> Ossie`
+trip preserved, so preferring a portable sibling over it would break this converter's own
+round trip.
+
+**A superseded sibling is not a fallback.** When `sql` is present but this converter
+cannot translate it, the field or metric is reported and dropped; it does not quietly
+convert through the tagged entry instead. A document whose tagged sibling happened to be
+translatable while its `sql` is not therefore converts differently than it did before
+this change — a declared loss where there used to be a silent substitution of an
+expression the document itself marks as not authoritative.
+
+The schema is narrower than this: `sql`'s own description makes it authoritative only
+against an `OSSIE_SQL_2026` entry. Preferring it over a tagged `ANSI_SQL` entry as well
+follows converters#79's wording and the merged databricks reader, not a requirement of
+the schema.
+
+**The writer emits both.** When an expression has a portable form, this converter writes
+it twice: as the top-level `sql`, the specification's primary location, and as the
+tagged `ANSI_SQL` entry it has always emitted, beside the verbatim `THOUGHTSPOT` entry.
+That is stage 2 of #79. The reader above came first, so documents produced by older and
+newer versions both keep converting. The `ANSI_SQL` entry stays because not every reader
+in this repository reads `sql` yet (snowflake skips an expression that has only `sql`).
+An expression with no portable form gets no `sql` and stays THOUGHTSPOT-only.
 
 ## The `custom_extensions[THOUGHTSPOT]` payload
 
@@ -152,8 +193,8 @@ field/metric).
 ## Expression translation: what is not translated, and why
 
 **A ThoughtSpot formula is captured verbatim under a `THOUGHTSPOT` dialect entry. A
-portable `ANSI_SQL` sibling is added only when the whole expression is a single bare
-column reference — the one shape where portability is certain. Every other shape — a
+portable `ANSI_SQL` sibling, also written to the top-level `sql`, is added only when the
+whole expression is a single bare column reference — the one shape where portability is certain. Every other shape — a
 function call, an operator expression, a runtime parameter, a formula cross-reference —
 is recorded THOUGHTSPOT-only, with an issue explaining why no portable sibling was
 produced.** No SQL dialect is ever re-rendered into another dialect in this converter,

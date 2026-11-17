@@ -17,7 +17,7 @@
 # The Ossie form of tpcds_cube/, asserted as a whole-document snapshot.
 # Regenerate with: uv run ossie-cube import -i tests/fixtures/tpcds_cube
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: tpcds_retail_model
 description: TPC-DS retail semantic model for sales and customer analytics
 ai_context:
@@ -475,7 +475,7 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: s_number_employees
-    datatype: Decimal
+    datatype: Integer
     dimension: {}
     description: Number of employees at the store
     ai_context:
@@ -542,6 +542,9 @@ metrics:
     - sales per employee
     - employee productivity
     - revenue per employee
+  custom_extensions:
+  - vendor_name: CUBE
+    data: '{"_v": 1, "integer_sum_grain": ["store"]}'
 custom_extensions:
 - vendor_name: SALESFORCE
   data: |

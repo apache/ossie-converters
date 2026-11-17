@@ -21,7 +21,7 @@
 # Star schema; every field maps to a native MV field. Documented losses on the
 # Apache Ossie -> MV -> Apache Ossie trip: the model name (MV carries none) and primary_key.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 
 name: sales
 description: Sales orders with customer attributes

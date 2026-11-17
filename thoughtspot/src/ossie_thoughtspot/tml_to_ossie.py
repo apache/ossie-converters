@@ -368,6 +368,43 @@ def expression_entries(
     return entries
 
 
+def expression_object(entries: list[dict[str, str]]) -> dict:
+    """One Ossie `expression` built from its dialect entries.
+
+    The portable entry is written TWICE: once as `dialects[ANSI_SQL]`, where
+    it has always been, and once as the top-level `sql`, which apache/ossie#617
+    made the specification's PRIMARY portable form. Both locations may stand
+    alone, so a consumer that reads only `sql` -- which the spec invites --
+    previously saw nothing portable from this converter at all.
+
+    Additive, deliberately. `PORTABLE_DIALECT` is `ANSI_SQL` rather than
+    `OSSIE_SQL_2026` on the emit side because a survey of this repository
+    found omni and sigma drop a metric carrying only `OSSIE_SQL_2026`
+    (apache/ossie-converters#22); moving the expression into `sql` instead of
+    copying it would reintroduce exactly that loss. The one string is valid in
+    both places -- apache/ossie#450 established the two dialects parse
+    identically, which is also what lets a `sql` field (OSSIE_SQL_2026 by
+    definition) carry text composed as ANSI.
+
+    `sql` is omitted entirely when there is no portable entry. An absent
+    `sql` says "no portable form exists", which is true and is already
+    reported under `TS-EXPR-THOUGHTSPOT-ONLY`; an empty one would be a claim
+    about the expression rather than an admission about it.
+
+    The THOUGHTSPOT entry is untouched and still outranks `sql` on the way
+    back in (`ossie_to_thoughtspot.portable_expression_entries` returns
+    `[THOUGHTSPOT, sql]`), so our own round trip is unchanged by this.
+    """
+    expression: dict = {}
+    portable = next(
+        (e["expression"] for e in entries if e["dialect"] == PORTABLE_DIALECT), None
+    )
+    if portable is not None:
+        expression["sql"] = portable
+    expression["dialects"] = entries
+    return expression
+
+
 def attribute_dataset(
     expr: str,
     resolve: Callable[[str, str], tuple[str, str] | None],
@@ -787,9 +824,9 @@ def convert_field(
         )
         field: dict = {"name": field_name, "label": display_name}
         expr = identifiers.format_column_ref(table_name, column_name)
-        field["expression"] = {
-            "dialects": expression_entries(expr, resolve, log, object_ref=object_ref)
-        }
+        field["expression"] = expression_object(
+            expression_entries(expr, resolve, log, object_ref=object_ref)
+        )
         datatype = _physical_datatype(
             table_name, column_name, table_lookup, log, object_ref=object_ref
         )
@@ -828,9 +865,9 @@ def convert_field(
             display_name, None, allocator, log, kind="field", object_ref=object_ref,
         )
         field: dict = {"name": field_name, "label": display_name}
-        field["expression"] = {
-            "dialects": expression_entries(expr, resolve, log, object_ref=object_ref)
-        }
+        field["expression"] = expression_object(
+            expression_entries(expr, resolve, log, object_ref=object_ref)
+        )
     else:
         log.add(
             code="TS-FIELD-NO-SOURCE",
@@ -1274,7 +1311,7 @@ def convert_metric(
             dialects = _compose_aggregate_entries(
                 field_ref, aggregation_raw, resolve, log, object_ref=object_ref
             )
-        metric["expression"] = {"dialects": dialects}
+        metric["expression"] = expression_object(dialects)
         datatype = _metric_datatype(
             table_name, column_name, aggregation_raw, table_lookup, log, object_ref=object_ref
         )
@@ -1449,7 +1486,7 @@ def convert_metric(
             dialects = _compose_aggregate_entries(
                 expr, aggregation_raw, resolve, log, object_ref=object_ref
             )
-        metric["expression"] = {"dialects": dialects}
+        metric["expression"] = expression_object(dialects)
         # A formula carries no declared type anywhere in TML — neither columns[] nor
         # formulas[] has a data_type key — so datatype is always omitted
         # here, and never logged: there was never a value here to lose.

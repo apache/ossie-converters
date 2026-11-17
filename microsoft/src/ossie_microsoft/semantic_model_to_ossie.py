@@ -24,7 +24,7 @@ relationships, and ``OssieAIContext`` annotations -> AI context.
 Power BI constructs with no Apache Ossie counterpart -- format strings, display folders,
 perspectives, row-level security, KPIs, hierarchies, partitions, calculation groups,
 cross-filter direction and so on -- are not discarded. They are preserved verbatim in a
-``POWER_BI`` ``custom_extensions`` entry so that
+``POWER_BI`` ``nonportable_extensions`` entry so that
 :mod:`ossie_microsoft.ossie_to_semantic_model` can rebuild them, per the round-trip
 guidance in the repository ``README.md``. Anything that genuinely cannot be represented is
 reported through :func:`ossie_microsoft._common.warn`.
@@ -314,7 +314,7 @@ def _convert_table(table):
     if fields:
         dataset["fields"] = fields
 
-    # Stashes are written last so `custom_extensions` sorts after the core properties.
+    # Stashes are written last so `nonportable_extensions` sorts after the core properties.
     for field, column_stash in field_stashes:
         write_stash(field, column_stash)
 
@@ -507,15 +507,16 @@ def _map_datatype(tmsl_type, format_string, scope):
 
 
 def _build_field_resolver(datasets):
-    """Return a resolver mapping a DAX (table, column) to an Ossie (dataset, field).
+    """Return a resolver mapping a DAX (table, column) to an Ossie (dataset, field, datatype).
 
     A Power BI measure addresses a column as ``'Table'[Column]`` by the model names,
     which the converter uses verbatim as the dataset and field names. So a reference
     resolves exactly when that dataset carries that field; anything else (an unknown
     column, a measure table, a column that was not exported) does not resolve, and the
-    translator keeps the measure as DAX.
+    translator keeps the measure as DAX. The field's ``datatype`` (None when the model
+    gives none) tells the translator whether an aggregate over it is a number.
     """
-    known = set()
+    known = {}
     for dataset in datasets or []:
         dataset_name = dataset.get("name")
         if not dataset_name:
@@ -523,10 +524,12 @@ def _build_field_resolver(datasets):
         for field in dataset.get("fields") or []:
             field_name = field.get("name")
             if field_name:
-                known.add((dataset_name, field_name))
+                known[(dataset_name, field_name)] = field.get("datatype")
 
     def resolve(table, column):
-        return (table, column) if (table, column) in known else None
+        if (table, column) not in known:
+            return None
+        return table, column, known[(table, column)]
 
     return resolve
 
@@ -589,7 +592,7 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 warn(
                     scope,
                     "measure has no expression; excluded from the Apache Ossie model "
-                    "and preserved in custom_extensions",
+                    "and preserved in nonportable_extensions",
                 )
                 excluded.append(
                     {"table": table["name"], "measure": measure, "index": index}
@@ -808,14 +811,24 @@ def _split_ai_context(obj, consumed):
 
 
 def _decode_ai_context(value):
-    """Decode JSON objects and arrays while leaving scalar annotation text unchanged."""
+    """Decode schema-compatible JSON objects, retaining other annotation text."""
     if not isinstance(value, str):
         return value
     try:
         decoded = json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return value
-    return decoded if isinstance(decoded, (dict, list)) else value
+    if not isinstance(decoded, dict):
+        return value
+    if "instructions" in decoded and not isinstance(decoded["instructions"], str):
+        return value
+    for key in ("synonyms", "examples"):
+        if key in decoded and (
+            not isinstance(decoded[key], list)
+            or any(not isinstance(item, str) for item in decoded[key])
+        ):
+            return value
+    return decoded
 
 
 def _stash_model(
@@ -844,15 +857,15 @@ def _stash_model(
         for table in excluded_tables:
             if table["name"] in metric_home_tables:
                 # The table is not a dataset, but its measures are first-class metrics,
-                # so only the table definition stays in custom_extensions.
+                # so only the table definition stays in nonportable_extensions.
                 detail = (
                     "excluded from the Apache Ossie model as a dataset; its measures are "
                     "exported as Apache Ossie metrics and the table definition is "
-                    "preserved in custom_extensions"
+                    "preserved in nonportable_extensions"
                 )
             else:
                 detail = (
-                    "excluded from the Apache Ossie model and preserved in custom_extensions"
+                    "excluded from the Apache Ossie model and preserved in nonportable_extensions"
                 )
             warn(f"table '{table['name']}'", f"{_exclusion_reason(table)}; {detail}")
     if excluded_relationships:

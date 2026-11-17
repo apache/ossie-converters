@@ -288,6 +288,23 @@ def test_raw_column_fields_avoid_computed_fields_and_metric_names():
     assert parse_files(export(model)) == parse_files(files)
 
 
+def test_key_only_fields_from_earlier_imports_keep_their_join_bindings():
+    model = document()
+    orders = model["datasets"][0]
+    orders["fields"][1] = field("customer_id", "customer_id")
+    orders["fields"][1]["custom_extensions"] = [{
+        "vendor_name": "CUBE", "data": json.dumps({"_v": 1, "key_only": True}),
+    }]
+    model["relationships"][0]["from_columns"] = ["customer_id"]
+    files = export(model)
+    native = cubes(files)
+    assert native["orders"]["joins"][0]["sql"] == "customer_id = {customers.customer_id}"
+    assert "customer_id" not in by_name(native["orders"]["dimensions"])
+    returned, _ = convert_cube_to_ossie(files)
+    assert_declared(yaml.safe_load(returned))
+    assert parse_files(export(yaml.safe_load(returned))) == parse_files(files)
+
+
 def test_geo_coordinate_keys_keep_the_coordinate_field_and_native_key_dimension():
     model = document()
     ds = model["datasets"][0]

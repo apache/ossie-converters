@@ -25,7 +25,7 @@ import yaml
 from ossie_bigquery import cli
 
 OSSIE_MODEL = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "retail",
     "datasets": [
         {
@@ -94,7 +94,7 @@ class TestErrors:
 
     def test_a_failed_conversion_writes_no_output_file(self, tmp_path):
         bad = tmp_path / "bad.yaml"
-        bad.write_text(yaml.dump({"version": "0.2.0.dev0"}))
+        bad.write_text(yaml.dump({"version": "0.3.0.dev0"}))
         out = tmp_path / "out.lkml"
         with pytest.raises(SystemExit):
             cli.main(["-i", str(bad), "-o", str(out)])
