@@ -134,7 +134,7 @@ class TestAPortableMetricExpressionReachesSql:
 
     def test_sql_carries_the_aggregate(self):
         metric = _metrics(_convert(PHYSICAL + MEASURE))["total_amount"]
-        assert metric["expression"]["sql"] == "SUM(ORDERS.AMOUNT)"
+        assert metric["expression"]["sql"] == "SUM(ORDERS.amount)"
         assert metric["expression"]["sql"] == _ansi(metric["expression"])
 
     def test_a_metric_over_an_unsurfaced_column_still_has_no_portable_form(self):
