@@ -219,6 +219,32 @@ class TestConvertSource:
 # ---------------------------------------------------------------------------
 
 class TestExtractExpression:
+    @pytest.mark.parametrize("tag", [None, "OSSIE_SQL_2026", "ossie_sql_2026"])
+    def test_primary_sql_is_the_authoritative_portable_expression(self, tag):
+        expression = {"sql": "refund_id"}
+        if tag is not None:
+            expression["dialects"] = [{"dialect": tag, "expression": "refund_id + 1"}]
+        assert _extract_expression(expression, "f") == ("refund_id", "OSSIE_SQL_2026")
+
+    @pytest.mark.parametrize("dialect", ["BIGQUERY", "ANSI_SQL"])
+    def test_selected_dialect_precedes_primary_portable_sql(self, dialect):
+        expression = {
+            "sql": "primary_column",
+            "dialects": [
+                {"dialect": dialect, "expression": "preferred_column"},
+                {"dialect": "OSSIE_SQL_2026", "expression": "legacy_column"},
+            ],
+        }
+        assert _extract_expression(expression, "f") == ("preferred_column", dialect)
+
+    @pytest.mark.parametrize("primary", [None, "", "   "])
+    def test_unusable_primary_sql_falls_back_to_tagged_portable_sql(self, primary):
+        expression = {
+            "sql": primary,
+            "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "legacy_column"}],
+        }
+        assert _extract_expression(expression, "f") == ("legacy_column", "OSSIE_SQL_2026")
+
     def test_prefers_bigquery_over_ansi(self):
         expression = {
             "dialects": [
@@ -254,6 +280,52 @@ class TestExtractExpression:
 # ---------------------------------------------------------------------------
 # Fields -> dimensions / dimension_groups
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("with_conflicts", [False, True])
+def test_primary_sql_preserves_fields_and_metric_ownership(with_conflicts):
+    def expression(primary, legacy):
+        value = {"sql": primary}
+        if with_conflicts:
+            value["dialects"] = [{"dialect": "OSSIE_SQL_2026", "expression": legacy}]
+        return value
+
+    model = _model(
+        [
+            _dataset("refunds", [
+                {"name": "refund_id", "expression": expression("refund_id", "refund_id + 1")},
+                {"name": "refund_amount", "expression": expression("amount", "amount * 2")},
+            ]),
+            _dataset("orders", [
+                {"name": "amount", "expression": expression("amount", "amount * 2")},
+                {"name": "net_amount", "expression": expression("amount * 0.9", "amount * 0.8")},
+            ], metrics=[{
+                "name": "local_total",
+                "expression": expression("SUM(amount)", "MAX(amount)"),
+            }]),
+        ],
+        metrics=[{
+            "name": "total_amount",
+            "expression": expression("SUM(orders.amount)", "SUM(refunds.refund_amount)"),
+        }],
+    )
+    views = {view["name"]: view for view in lkml.load(_convert(model))["views"]}
+    refund_fields = {field["name"]: field["sql"] for field in views["refunds"]["dimensions"]}
+    assert refund_fields == {
+        "refund_id": "${TABLE}.refund_id",
+        "refund_amount": "${TABLE}.amount",
+    }
+    order_fields = {field["name"]: field["sql"] for field in views["orders"]["dimensions"]}
+    assert order_fields == {
+        "amount": "${TABLE}.amount",
+        "net_amount": "${TABLE}.amount * 0.9",
+    }
+    assert not views["refunds"].get("measures")
+    measures = {measure["name"]: measure for measure in views["orders"]["measures"]}
+    assert measures["total_amount"]["type"] == "sum"
+    assert measures["total_amount"]["sql"] == "${orders.amount}"
+    assert measures["local_total"]["type"] == "sum"
+    assert measures["local_total"]["sql"] == "${TABLE}.amount"
+
 
 class TestFields:
     def _view(self, *fields, **dataset_kwargs):
