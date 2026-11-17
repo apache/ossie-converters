@@ -45,7 +45,6 @@ on:
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
-      - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'polaris/**'
@@ -77,7 +76,6 @@ on:
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
-      - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'polaris/**'
@@ -117,7 +115,6 @@ jobs:
           distribution: temurin
           cache: maven
           cache-dependency-path: |
-            databricks/java/pom.xml
             salesforce/pom.xml
 
       - name: Install uv

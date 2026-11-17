@@ -47,16 +47,6 @@ converters:
     native_gate:
       requires_env: OSSIE_CUBE_REPO
       command: [node, '{root}/cube/tools/cube_compile.js', '{files}']
-  databricks:
-    cwd: databricks/java
-    toolchain: maven
-    prepare: [mvn, -B, -DskipTests, package]
-    import: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, import, '{input}', -o, '{output}']
-    export: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, export, '{input}', -o, '{output}']
-    native_format: databricks
-    output: file
-    fixtures:
-      tpcds: databricks/java/src/test/resources/ossie_tpcds_metric_view.yaml
   dbt:
     cwd: dbt
     toolchain: uv
@@ -233,22 +223,12 @@ converters:
     output: file
     fixtures:
       finance: wisdom-semantic-view/tests/fixtures/finance/snowflake/cfo_cockpit.before.yaml
-regressions:
-  cube-databricks-tpcds:
-    source: cube
-    fixture: tpcds
-    via: databricks
-    expectations: interop/fixtures/bindings/tpcds.yaml
-  cube-databricks-metric-bindings:
-    source: cube
-    fixture: metric-bindings
-    via: databricks
-    expectations: interop/fixtures/bindings/sales.yaml
+regressions: {}
 document_regressions:
   dialect-databricks-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-databricks-only/input.yaml
-    targets: &dialect_targets [cube, databricks, dbt, omni, sigma]
+    targets: &dialect_targets [cube, dbt, omni, sigma]
     expectations: interop/fixtures/contracts/dialect-databricks-only/expectations.yaml
   dialect-snowflake-only:
     category: dialect
@@ -263,37 +243,37 @@ document_regressions:
   keys-single:
     category: keys
     input: interop/fixtures/contracts/keys-single/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, dbt]
     expectations: interop/fixtures/contracts/keys-single/expectations.yaml
   keys-composite:
     category: keys
     input: interop/fixtures/contracts/keys-composite/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, dbt]
     expectations: interop/fixtures/contracts/keys-composite/expectations.yaml
   keys-unique-only:
     category: keys
     input: interop/fixtures/contracts/keys-unique-only/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, dbt]
     expectations: interop/fixtures/contracts/keys-unique-only/expectations.yaml
   keys-joined:
     category: keys
     input: interop/fixtures/contracts/keys-joined/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, dbt]
     expectations: interop/fixtures/contracts/keys-joined/expectations.yaml
   source-two-part:
     category: sources
     input: interop/fixtures/contracts/source-two-part/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, dbt]
     expectations: interop/fixtures/contracts/source-two-part/expectations.yaml
   source-three-part:
     category: sources
     input: interop/fixtures/contracts/source-three-part/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, dbt]
     expectations: interop/fixtures/contracts/source-three-part/expectations.yaml
   source-quoted-parts:
     category: sources
     input: interop/fixtures/contracts/source-quoted-parts/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, dbt]
     expectations: interop/fixtures/contracts/source-quoted-parts/expectations.yaml
 # Report-only portability scores (apache/ossie-converters#24): every fixture of the
 # core portability ladder, through every converter that can round-trip, graded by

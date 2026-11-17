@@ -29,7 +29,7 @@ import yaml
 
 from interop.bindings import check_bindings
 from interop.checks import native_content
-from interop.manifest import Manifest, ManifestError, load_manifest
+from interop.manifest import BindingRegression, Manifest, ManifestError, load_manifest
 from interop.report import write_report
 from interop.runner import Runner, exit_code
 
@@ -53,13 +53,19 @@ def write_model(path, data):
 
 
 def test_original_fixtures_satisfy_independently_authored_oracles():
-    manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    assert len(manifest.regressions) == 2
-    for regression in manifest.regressions.values():
-        result = check_bindings(
-            manifest.converters[regression.source].fixtures[regression.fixture],
-            regression.metrics,
-        )
+    # The shipped binding regressions routed through the databricks converter, which is
+    # no longer registered; the cube source fixtures and their oracles remain, so the
+    # binding inspector is still validated directly against them.
+    pairs = [
+        (FIXTURE, ORACLE),
+        (
+            ROOT / "cube/tests/fixtures/tpcds_cube",
+            ROOT / "interop/fixtures/bindings/tpcds.yaml",
+        ),
+    ]
+    for fixture, oracle in pairs:
+        metrics = yaml.safe_load(oracle.read_text())["metrics"]
+        result = check_bindings(fixture, metrics)
         assert result["grade"] == "OK", result
 
 
@@ -242,19 +248,25 @@ def test_duplicate_native_cubes_and_yaml_keys_are_failures(tmp_path):
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(
-            fixture="missing"
-        ),
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(via="cube"),
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(
-            source="databricks"
-        ),
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(typo=True),
+        lambda reg: reg.update(fixture="missing"),
+        lambda reg: reg.update(via="cube"),
+        lambda reg: reg.update(source="dbt"),
+        lambda reg: reg.update(typo=True),
     ],
 )
 def test_bad_regression_configuration_fails_before_execution(tmp_path, mutation):
+    # A valid synthetic binding regression (cube source, distinct via) that each mutation
+    # turns into a configuration error: an unknown fixture, source == via, a non-Cube
+    # source, and an unknown field.
     data = yaml.safe_load((ROOT / "interop/manifest.yaml").read_text())
-    mutation(data)
+    regression = {
+        "source": "cube",
+        "via": "snowflake",
+        "fixture": "tpcds",
+        "expectations": "interop/fixtures/bindings/tpcds.yaml",
+    }
+    mutation(regression)
+    data["regressions"] = {"synthetic": regression}
     path = write_model(tmp_path / "manifest.yaml", data)
     with pytest.raises(ManifestError):
         load_manifest(path, ROOT)
@@ -352,8 +364,17 @@ def test_runner_persists_binding_failures_and_respects_dependency_results(
     tmp_path, mode, grade
 ):
     manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    name = "cube-databricks-metric-bindings"
-    regression = manifest.regressions[name]
+    # The binding regression that routed through databricks is no longer registered;
+    # build it directly over the cube source fixture, returning through a neutral `via`.
+    name = "cube-metric-bindings"
+    oracle = ROOT / "interop/fixtures/bindings/sales.yaml"
+    regression = BindingRegression(
+        source="cube",
+        fixture="metric-bindings",
+        via="snowflake",
+        expectations=oracle,
+        metrics=yaml.safe_load(oracle.read_text())["metrics"],
+    )
     data = model()
     if mode == "wrong-cube":
         sales, customer = data["cubes"]
@@ -379,7 +400,7 @@ def test_runner_persists_binding_failures_and_respects_dependency_results(
             "id": "pair",
             "tier": "B",
             "source": "cube--metric-bindings",
-            "target": "databricks",
+            "target": "snowflake",
             "grade": "SKIP" if mode == "blocked" else "LOSSY",
             "reason": "upstream failed",
             "output": str(tmp_path / "returned.yaml"),

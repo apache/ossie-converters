@@ -77,7 +77,7 @@ def test_independent_inputs_pass_core_validation_and_their_oracles(name):
         ]
         == "OK"
     )
-    base_targets = {"cube", "databricks", "dbt"}
+    base_targets = {"cube", "dbt"}
     dialect_targets = {"omni", "sigma"} if contract.category == "dialect" else set()
     assert set(contract.targets) == base_targets | dialect_targets
 
@@ -463,8 +463,9 @@ def test_document_runner_retains_failures_snapshots_and_strict_status(
     )
     prefix = [sys.executable, str(helper)]
     target = replace(
-        manifest.converters["databricks"],
+        manifest.converters["dbt"],
         name="fake",
+        native_format="databricks",
         cwd=tmp_path,
         export_command=prefix + ["export", mode, str(payload), "{input}", "{output}"],
         import_command=prefix + ["import", mode, str(payload), "{input}", "{output}"],
@@ -524,16 +525,15 @@ def test_converter_subset_filters_document_targets(tmp_path, monkeypatch):
     "name, target",
     [
         ("dialect-databricks-only", "cube"),
-        ("dialect-databricks-only", "databricks"),
         ("dialect-databricks-only", "dbt"),
         ("dialect-snowflake-only", "cube"),
-        ("dialect-ossie-sql-2026-only", "databricks"),
+        ("dialect-ossie-sql-2026-only", "dbt"),
         ("keys-single", "dbt"),
         ("keys-composite", "cube"),
         ("keys-unique-only", "cube"),
         ("keys-joined", "dbt"),
         ("source-two-part", "dbt"),
-        ("source-three-part", "databricks"),
+        ("source-three-part", "cube"),
         ("source-quoted-parts", "cube"),
     ],
 )

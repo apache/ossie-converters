@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 24 converter projects**, with explicit capability skips.
+The registry includes **all 23 converter projects**, with explicit capability skips.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -33,7 +33,7 @@ uv sync --project interop --locked --python 3.12
 uv run --project interop --locked python -m interop
 ```
 
-The runner needs Python 3.11+ and uv. Databricks and Salesforce additionally need Maven and
+The runner needs Python 3.11+ and uv. Salesforce additionally needs Maven and
 Java 21+ on `PATH` (and a matching `JAVA_HOME` for Maven). Missing prerequisites
 appear as `SKIP`; a preparation command that actually fails appears as `FAIL`.
 Dependencies are prepared once per converter: `uv sync --locked --no-dev` for

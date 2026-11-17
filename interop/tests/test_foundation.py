@@ -64,15 +64,17 @@ MODEL = {
 
 def test_committed_manifest_registers_all_converter_projects():
     manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
+    # The databricks converter project is intentionally not registered in the interop
+    # matrix: its Python verbs do not implement the bidirectional single-file
+    # import/export contract this harness expects (re-integration tracked separately).
     assert set(manifest.converters) == {
         p.parent.name
         for p in ROOT.glob("*/pyproject.toml")
-        if p.parent.name != "interop"
-    } | {"databricks", "polaris", "salesforce"}
+        if p.parent.name not in ("interop", "databricks")
+    } | {"polaris", "salesforce"}
     assert sum(a != b for a in manifest.converters for b in manifest.converters) == len(
         manifest.converters
     ) * (len(manifest.converters) - 1)
-    assert manifest.converters["databricks"].toolchain == "maven"
     assert manifest.converters["dbt"].fixtures["orders"].is_file()
 
 
