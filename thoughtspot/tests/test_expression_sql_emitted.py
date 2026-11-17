@@ -28,12 +28,10 @@ location may stand alone -- sees nothing. Every portable expression this
 converter produced lived only in `dialects[ANSI_SQL]`.
 
 **Additive, never a replacement.** The `ANSI_SQL` entry stays exactly where
-it was. `PORTABLE_DIALECT` is `ANSI_SQL` rather than `OSSIE_SQL_2026` on the
-emit side for a measured reason -- a survey of this repository found omni and
-sigma drop a metric carrying only `OSSIE_SQL_2026`
-(apache/ossie-converters#22) -- and moving the expression into `sql` would
-reintroduce exactly that loss. The two carry the same text: apache/ossie#450
-established the dialects parse identically, so one string is valid as both.
+it was, because not every reader in this repository reads `sql` yet:
+snowflake skips an expression that has only `sql` and no dialect entries. The
+two carry the same text: apache/ossie#450 established the dialects parse
+identically, so one string is valid as both.
 
 **The THOUGHTSPOT entry still outranks `sql` on the way back in**, which is
 what keeps the round trip intact. `portable_expression_entries` returns
@@ -102,8 +100,8 @@ class TestAPortableFieldExpressionReachesSql:
         assert field["expression"]["sql"] == "AMOUNT"
 
     def test_the_ansi_dialect_entry_is_still_there(self):
-        # Removing it would lose the metric in omni and sigma, which is why
-        # PORTABLE_DIALECT is ANSI_SQL on the emit side at all.
+        # Removing it would lose the field in snowflake, which skips an
+        # expression that has only `sql` and no dialect entries.
         field = _fields(_convert(PHYSICAL))["Amount"]
         assert _ansi(field["expression"]) == "AMOUNT"
 
@@ -122,6 +120,19 @@ class TestAPortableFieldExpressionReachesSql:
                             "properties": {"column_type": "ATTRIBUTE"}}])
         expression = _fields(result)["Clearance"]["expression"]
         assert expression["sql"] == '"Custom Clearance Time (min)"'
+        assert expression["sql"] == _ansi(expression)
+
+    def test_a_formula_field_that_is_a_bare_reference_reaches_sql_too(self):
+        # A formula-backed field builds its expression on a separate path from
+        # a physical one, so it needs its own test.
+        result = _convert(
+            PHYSICAL + [{"name": "Amount Copy", "formula_id": "f_copy",
+                         "properties": {"column_type": "ATTRIBUTE"}}],
+            formulas=[{"id": "f_copy", "name": "Amount Copy",
+                       "expr": "[ORDERS::AMOUNT]"}],
+        )
+        expression = _fields(result)["Amount Copy"]["expression"]
+        assert expression["sql"] == "AMOUNT"
         assert expression["sql"] == _ansi(expression)
 
 

@@ -384,19 +384,22 @@ def expression_object(entries: list[dict[str, str]]) -> dict:
     alone, so a consumer that reads only `sql` -- which the spec invites --
     previously saw nothing portable from this converter at all.
 
-    Additive, deliberately. `PORTABLE_DIALECT` is `ANSI_SQL` rather than
-    `OSSIE_SQL_2026` on the emit side because a survey of this repository
-    found omni and sigma drop a metric carrying only `OSSIE_SQL_2026`
-    (apache/ossie-converters#22); moving the expression into `sql` instead of
-    copying it would reintroduce exactly that loss. The one string is valid in
-    both places -- apache/ossie#450 established the two dialects parse
-    identically, which is also what lets a `sql` field (OSSIE_SQL_2026 by
-    definition) carry text composed as ANSI.
+    Additive, deliberately. Not every reader in this repository reads `sql`
+    yet -- snowflake skips an expression that has only `sql` and no dialect
+    entries -- so moving the expression out of `dialects[ANSI_SQL]` rather
+    than copying it would lose it there. Why that entry is tagged `ANSI_SQL`
+    and not `OSSIE_SQL_2026` is a separate question, answered at
+    `PORTABLE_DIALECT`. The one string is valid in both places --
+    apache/ossie#450 established the two dialects parse identically, which is
+    also what lets a `sql` field (OSSIE_SQL_2026 by definition) carry text
+    composed as ANSI.
 
     `sql` is omitted entirely when there is no portable entry. An absent
-    `sql` says "no portable form exists", which is true and is already
-    reported under `TS-EXPR-THOUGHTSPOT-ONLY`; an empty one would be a claim
-    about the expression rather than an admission about it.
+    `sql` says "no portable form exists", which is true and which
+    `expression_entries` has already reported, under whichever of
+    `TS-EXPR-THOUGHTSPOT-ONLY`, `TS-EXPR-UNRESOLVED`, `TS-EXPR-PARAM` or
+    `TS-EXPR-FORMULA-REFERENCE` applies; an empty one would be a claim about
+    the expression rather than an admission about it.
 
     The THOUGHTSPOT entry is untouched and still outranks `sql` on the way
     back in (`ossie_to_thoughtspot.portable_expression_entries` returns
