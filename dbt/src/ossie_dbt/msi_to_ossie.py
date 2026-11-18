@@ -40,6 +40,7 @@ from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, Conve
 from ossie_dbt.ratio_helpers import unchanged_ratio_helpers
 from ossie_dbt.expression_utils import _is_constant_expr
 from ossie_dbt.filter_utils import _collect_filter_sql, _merge_filter_sqls
+from ossie_dbt.portable_sql import is_portable_sql
 
 from metricflow_semantic_interfaces.enum_extension import assert_values_exhausted
 from metricflow_semantic_interfaces.implementations.semantic_manifest import PydanticSemanticManifest
@@ -144,7 +145,7 @@ class MSIToOssieConverter:
     from multiple threads, across any number of ``convert()`` calls.
     """
 
-    def __init__(self, dialect: OssieDialect = OssieDialect.ANSI_SQL) -> None:
+    def __init__(self, dialect: Optional[str] = None) -> None:
         self._dialect = dialect
 
     def convert(
@@ -698,4 +699,7 @@ class MSIToOssieConverter:
             assert_values_exhausted(agg)
 
     def _make_expression(self, expr: str) -> OssieExpression:
-        return OssieExpression(dialects=[OssieDialectExpression(dialect=self._dialect, expression=expr)])
+        if self._dialect is None and is_portable_sql(expr):
+            return OssieExpression(sql=expr)
+        dialect = self._dialect if self._dialect is not None else OssieDialect.ANSI_SQL
+        return OssieExpression(dialects=[OssieDialectExpression(dialect=dialect, expression=expr)])

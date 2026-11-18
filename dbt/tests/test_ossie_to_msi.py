@@ -1711,7 +1711,7 @@ class TestOssieToMSIRoundTrip:
 
         assert backward.issues == []
         assert (
-            backward.output.metrics[0].expression.dialects[0].expression
+            backward.output.metrics[0].expression.sql
             == "SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END)"
         )
 
@@ -1751,7 +1751,7 @@ class TestOssieToMSIRoundTrip:
         metrics = ossie_doc.metrics or []
         assert len(metrics) == 1
         assert metrics[0].name == "revenue"
-        assert metrics[0].expression.dialects[0].expression == "SUM(orders.amount)"
+        assert metrics[0].expression.sql == "SUM(orders.amount)"
         assert ossie_doc.to_ossie_yaml() == snapshot
 
     def test_count_star_round_trips_to_a_portable_sum_one(self) -> None:
@@ -1784,7 +1784,7 @@ class TestOssieToMSIRoundTrip:
         msi = OssieToMSIConverter().convert(original).output
         ossie_doc = MSIToOssieConverter().convert(msi).output
 
-        expressions = {m.name: m.expression.dialects[0].expression for m in ossie_doc.metrics or []}
+        expressions = {m.name: m.expression.sql for m in ossie_doc.metrics or []}
         assert set(expressions) == {"order_count", "avg_order_value", "avg_order_value_numerator", "avg_order_value_denominator"}
         assert expressions["order_count"] == "SUM(1)"
         assert "SUM(1)" in expressions["avg_order_value"]
@@ -1865,7 +1865,7 @@ class TestOssieToMSIRoundTrip:
             _manifest(semantic_models=[orders], metrics=[metric])
         ).output
 
-        ossie_expr = ossie_doc.metrics[0].expression.dialects[0].expression
+        ossie_expr = ossie_doc.metrics[0].expression.sql
         assert ossie_expr == "PERCENTILE_DISC(0.95) WITHIN GROUP (ORDER BY orders.amount)"
 
         back = OssieToMSIConverter().convert(ossie_doc).output
@@ -1890,7 +1890,7 @@ class TestOssieToMSIRoundTrip:
         ossie_doc = MSIToOssieConverter().convert(msi).output
 
         metrics = ossie_doc.metrics or []
-        expressions = {m.name: m.expression.dialects[0].expression for m in metrics}
+        expressions = {m.name: m.expression.sql for m in metrics}
         # msi_to_ossie._qualify_col re-qualifies only bare identifiers,
         # so the exported argument comes back unqualified.
         assert expressions == {
