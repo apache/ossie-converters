@@ -129,6 +129,14 @@ class _RelationshipDirection:
     to_col: str
 
 
+@dataclass
+class _MetricContext:
+    datasets: Dict[str, OssieDataset]
+    fields: Dict[str, List[OssieField]]
+    metrics: Dict[str, Metric]
+    cache: Dict[Tuple[str, Optional[str]], str]
+
+
 class AmbiguousDerivedReferenceError(Exception):
     """A DERIVED metric's expression reference does not resolve to a single expression.
 
@@ -164,9 +172,12 @@ class MSIToOssieConverter:
         issues.extend(entity_issues)
         relationships = self._build_relationships(entity_index)
 
-        metric_index = self._build_metric_index(manifest.metrics)
-        dataset_index = {dataset.name: dataset for dataset in datasets}
-        expression_cache: Dict[Tuple[str, Optional[str]], str] = {}
+        metric_context = _MetricContext(
+            datasets={dataset.name: dataset for dataset in datasets},
+            fields={dataset.name: list(dataset.fields or []) for dataset in datasets},
+            metrics={metric.name: metric for metric in manifest.metrics},
+            cache={},
+        )
 
         ossie_metrics: List[OssieMetric] = []
         for metric in manifest.metrics:
@@ -184,7 +195,7 @@ class MSIToOssieConverter:
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.CUMULATIVE_SEMANTICS_LOSS, element_name=metric.name)
                 )
-            elif _has_nonportable_semantics(metric, metric_index):
+            elif _has_nonportable_semantics(metric, metric_context.metrics):
                 issues.append(
                     ConverterIssue(
                         issue_type=ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS,
@@ -193,7 +204,7 @@ class MSIToOssieConverter:
                 )
                 continue
             try:
-                expr = self._resolve_metric_expression(metric, metric_index, expression_cache, dataset_index)
+                expr = self._resolve_metric_expression(metric, metric_context)
             except AmbiguousDerivedReferenceError:
                 # Every other unsupported shape drops one metric and records an issue;
                 # an ambiguous reference is no reason to fail the whole conversion.
@@ -241,7 +252,12 @@ class MSIToOssieConverter:
             output=OssieDocument(
                 version="0.3.0.dev0",
                 name=ossie_model_name,
-                datasets=datasets,
+                datasets=[
+                    dataset.model_copy(update={"fields": metric_context.fields[dataset.name]})
+                    if len(metric_context.fields[dataset.name]) > len(dataset.fields or [])
+                    else dataset
+                    for dataset in datasets
+                ],
                 relationships=relationships if relationships else None,
                 metrics=ossie_metrics if ossie_metrics else None,
             ),
@@ -364,11 +380,6 @@ class MSIToOssieConverter:
         return primary_key, unique_keys
 
     @staticmethod
-    def _build_metric_index(metrics: Sequence[Metric]) -> Dict[str, Metric]:
-        """Map metric name to Metric for recursive resolution."""
-        return {metric.name: metric for metric in metrics}
-
-    @staticmethod
     def _lookup_metric(metric_index: Dict[str, Metric], name: str, context: str) -> Metric:
         """Look up a metric by name, raising a clear ValueError if not found."""
         try:
@@ -379,9 +390,7 @@ class MSIToOssieConverter:
     def _resolve_metric_expression(
         self,
         metric: Metric,
-        metric_index: Dict[str, Metric],
-        cache: Dict[Tuple[str, Optional[str]], str],
-        dataset_index: Dict[str, OssieDataset],
+        context: _MetricContext,
         parent_filter: Optional[str] = None,
     ) -> str:
         """Recursively resolve a metric to a fully-inlined SQL expression string."""
@@ -389,30 +398,30 @@ class MSIToOssieConverter:
         combined_filter = _merge_filter_sqls(parent_filter, own_filter)
 
         cache_key = (metric.name, combined_filter)
-        if cache_key in cache:
-            return cache[cache_key]
+        if cache_key in context.cache:
+            return context.cache[cache_key]
 
         if metric.type is MetricType.SIMPLE:
-            expr = self._resolve_simple(metric, dataset_index, combined_filter)
+            expr = self._resolve_simple(metric, context, combined_filter)
         elif metric.type is MetricType.CUMULATIVE:
-            expr = self._resolve_cumulative(metric, metric_index, cache, dataset_index, combined_filter)
+            expr = self._resolve_cumulative(metric, context, combined_filter)
         elif metric.type is MetricType.RATIO:
-            expr = self._resolve_ratio(metric, metric_index, cache, dataset_index, combined_filter)
+            expr = self._resolve_ratio(metric, context, combined_filter)
         elif metric.type is MetricType.DERIVED:
-            expr = self._resolve_derived(metric, metric_index, cache, dataset_index, combined_filter)
+            expr = self._resolve_derived(metric, context, combined_filter)
         elif metric.type is MetricType.CONVERSION:
             # CONVERSION metrics are skipped in convert(); this branch should never be reached.
             raise RuntimeError(f"Unexpected CONVERSION metric in expression resolver: metric_name={metric.name!r}")
         else:
             assert_values_exhausted(metric.type)
 
-        cache[cache_key] = expr
+        context.cache[cache_key] = expr
         return expr
 
     def _resolve_simple(
         self,
         metric: Metric,
-        dataset_index: Dict[str, OssieDataset],
+        context: _MetricContext,
         filter_sql: Optional[str] = None,
     ) -> str:
         """Resolve a SIMPLE metric using metric_aggregation_params (always set after transformation).
@@ -429,9 +438,9 @@ class MSIToOssieConverter:
                 f"SIMPLE metric has no metric_aggregation_params after transformation: metric_name={metric.name!r}"
             )
         col = metric.type_params.expr if metric.type_params.expr is not None else metric.name
-        dataset = dataset_index[agg_params_obj.semantic_model]
+        dataset = context.datasets[agg_params_obj.semantic_model]
         measure = metric.type_params.measure
-        col = self._qualify_col(col, dataset, measure.name if measure else None)
+        col = self._qualify_col(col, dataset, context.fields[dataset.name], measure.name if measure else None)
         return self._build_agg_expression(agg_params_obj.agg, col, agg_params_obj.agg_params, filter_sql)
 
     @staticmethod
@@ -448,9 +457,9 @@ class MSIToOssieConverter:
         return params.agg is AggregationType.SUM and _is_constant_expr(expr)
 
     @staticmethod
-    def _matching_field(dataset: OssieDataset, source_sql: str, preferred_name: Optional[str]) -> Optional[str]:
+    def _matching_field(fields: Sequence[OssieField], source_sql: str, preferred_name: Optional[str]) -> Optional[str]:
         matches: List[str] = []
-        for field in dataset.fields or []:
+        for field in fields:
             expression = field.expression
             field_sql = expression.sql if expression.sql is not None else expression.dialects[0].expression
             if field_sql == source_sql:
@@ -461,26 +470,44 @@ class MSIToOssieConverter:
             return source_sql
         return matches[0] if matches else None
 
-    def _qualify_col(self, col: str, dataset: OssieDataset, preferred_name: Optional[str]) -> str:
+    def _field_for_source(
+        self, fields: List[OssieField], source_sql: str, source_name: str, preferred_name: Optional[str] = None
+    ) -> str:
+        existing = self._matching_field(fields, source_sql, preferred_name)
+        if existing is not None:
+            return existing
+
+        names = {field.name.casefold() for field in fields}
+        name = source_name
+        if name.casefold() in names:
+            name = f"{source_name}_input"
+            suffix = 2
+            while name.casefold() in names:
+                name = f"{source_name}_input_{suffix}"
+                suffix += 1
+        fields.append(OssieField(name=name, expression=self._make_expression(source_sql)))
+        return name
+
+    def _qualify_col(
+        self, col: str, dataset: OssieDataset, fields: List[OssieField], preferred_name: Optional[str]
+    ) -> str:
         """Qualify col with semantic_model if it is an unqualified identifier or a COUNT-converted expr."""
         # Quoted identifiers (e.g. "my col", `my col`) are not handled — qualifying
         # them correctly requires dialect-aware parsing and is deferred as a follow-up.
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", col):
-            field = self._matching_field(dataset, col, preferred_name) or col
+            field = self._field_for_source(fields, col, col, preferred_name)
             return f"{dataset.name}.{field}"
         m = ConvertCountMetricToSumRule.COUNT_CONVERSION_RE.match(col)
         if m:
             source_col = m.group(1)
-            field = self._matching_field(dataset, source_col, None) or source_col
+            field = self._field_for_source(fields, source_col, source_col)
             return f"CASE WHEN {dataset.name}.{field} IS NOT NULL THEN 1 ELSE 0 END"
         return col
 
     def _resolve_cumulative(
         self,
         metric: Metric,
-        metric_index: Dict[str, Metric],
-        cache: Dict[Tuple[str, Optional[str]], str],
-        dataset_index: Dict[str, OssieDataset],
+        context: _MetricContext,
         filter_sql: Optional[str] = None,
     ) -> str:
         """Resolve a CUMULATIVE metric to its base aggregation expression.
@@ -495,19 +522,15 @@ class MSIToOssieConverter:
         sub_input = cumulative_params.metric
         sub_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(sub_input.filter))
         return self._resolve_metric_expression(
-            self._lookup_metric(metric_index, sub_input.name, f"CUMULATIVE metric '{metric.name}'"),
-            metric_index,
-            cache,
-            dataset_index,
+            self._lookup_metric(context.metrics, sub_input.name, f"CUMULATIVE metric '{metric.name}'"),
+            context,
             sub_filter,
         )
 
     def _resolve_ratio(
         self,
         metric: Metric,
-        metric_index: Dict[str, Metric],
-        cache: Dict[Tuple[str, Optional[str]], str],
-        dataset_index: Dict[str, OssieDataset],
+        context: _MetricContext,
         filter_sql: Optional[str] = None,
     ) -> str:
         """Resolve a RATIO metric as (numerator) / NULLIF(denominator, 0), both fully inlined.
@@ -524,17 +547,13 @@ class MSIToOssieConverter:
         num_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(num_input.filter))
         den_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(den_input.filter))
         num_expr = self._resolve_metric_expression(
-            self._lookup_metric(metric_index, num_input.name, f"RATIO metric '{metric.name}' numerator"),
-            metric_index,
-            cache,
-            dataset_index,
+            self._lookup_metric(context.metrics, num_input.name, f"RATIO metric '{metric.name}' numerator"),
+            context,
             num_filter,
         )
         den_expr = self._resolve_metric_expression(
-            self._lookup_metric(metric_index, den_input.name, f"RATIO metric '{metric.name}' denominator"),
-            metric_index,
-            cache,
-            dataset_index,
+            self._lookup_metric(context.metrics, den_input.name, f"RATIO metric '{metric.name}' denominator"),
+            context,
             den_filter,
         )
         return f"({num_expr}) / NULLIF({den_expr}, 0)"
@@ -542,9 +561,7 @@ class MSIToOssieConverter:
     def _resolve_derived(
         self,
         metric: Metric,
-        metric_index: Dict[str, Metric],
-        cache: Dict[Tuple[str, Optional[str]], str],
-        dataset_index: Dict[str, OssieDataset],
+        context: _MetricContext,
         filter_sql: Optional[str] = None,
     ) -> str:
         """Resolve a DERIVED metric by substituting each input metric's expression into the expr string.
@@ -572,9 +589,9 @@ class MSIToOssieConverter:
         resolutions: Dict[str, List[str]] = {}
         for input_metric in metric.type_params.metrics or []:
             ref = input_metric.alias if input_metric.alias else input_metric.name
-            dep_metric = self._lookup_metric(metric_index, input_metric.name, f"DERIVED metric '{metric.name}'")
+            dep_metric = self._lookup_metric(context.metrics, input_metric.name, f"DERIVED metric '{metric.name}'")
             input_filter = _merge_filter_sqls(filter_sql, _collect_filter_sql(input_metric.filter))
-            resolved = self._resolve_metric_expression(dep_metric, metric_index, cache, dataset_index, input_filter)
+            resolved = self._resolve_metric_expression(dep_metric, context, input_filter)
             if dep_metric.type in (MetricType.DERIVED, MetricType.RATIO):
                 resolved = f"({resolved})"
             distinct = resolutions.setdefault(ref, [])
