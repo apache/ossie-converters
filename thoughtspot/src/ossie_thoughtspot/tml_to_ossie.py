@@ -81,7 +81,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 from . import datatypes, formula, identifiers, keys, stash
 from .constants import (
@@ -431,6 +431,43 @@ def expression_entries(
         object_ref=object_ref,
     )
     return entries
+
+
+def expression_object(entries: list[dict[str, str]]) -> dict:
+    """One Ossie `expression` built from its dialect entries.
+
+    The portable entry is written TWICE: once as `dialects[ANSI_SQL]`, where
+    it has always been, and once as the top-level `sql`, which apache/ossie#617
+    made the specification's PRIMARY portable form. Both locations may stand
+    alone, so a consumer that reads only `sql` -- which the spec invites --
+    previously saw nothing portable from this converter at all.
+
+    Additive, deliberately. `PORTABLE_DIALECT` is `ANSI_SQL` rather than
+    `OSSIE_SQL_2026` on the emit side because a survey of this repository
+    found omni and sigma drop a metric carrying only `OSSIE_SQL_2026`
+    (apache/ossie-converters#22); moving the expression into `sql` instead of
+    copying it would reintroduce exactly that loss. The one string is valid in
+    both places -- apache/ossie#450 established the two dialects parse
+    identically, which is also what lets a `sql` field (OSSIE_SQL_2026 by
+    definition) carry text composed as ANSI.
+
+    `sql` is omitted entirely when there is no portable entry. An absent
+    `sql` says "no portable form exists", which is true and is already
+    reported under `TS-EXPR-THOUGHTSPOT-ONLY`; an empty one would be a claim
+    about the expression rather than an admission about it.
+
+    The THOUGHTSPOT entry is untouched and still outranks `sql` on the way
+    back in (`ossie_to_thoughtspot.portable_expression_entries` returns
+    `[THOUGHTSPOT, sql]`), so our own round trip is unchanged by this.
+    """
+    expression: dict = {}
+    portable = next(
+        (e["expression"] for e in entries if e["dialect"] == PORTABLE_DIALECT), None
+    )
+    if portable is not None:
+        expression["sql"] = portable
+    expression["dialects"] = entries
+    return expression
 
 
 def attribute_dataset(
@@ -852,9 +889,9 @@ def convert_field(
         )
         field: dict = {"name": field_name, "label": display_name}
         expr = identifiers.format_column_ref(table_name, column_name)
-        field["expression"] = {
-            "dialects": expression_entries(expr, resolve, log, object_ref=object_ref)
-        }
+        field["expression"] = expression_object(
+            expression_entries(expr, resolve, log, object_ref=object_ref)
+        )
         datatype = _physical_datatype(
             table_name, column_name, table_lookup, log, object_ref=object_ref
         )
@@ -893,9 +930,9 @@ def convert_field(
             display_name, None, allocator, log, kind="field", object_ref=object_ref,
         )
         field: dict = {"name": field_name, "label": display_name}
-        field["expression"] = {
-            "dialects": expression_entries(expr, resolve, log, object_ref=object_ref)
-        }
+        field["expression"] = expression_object(
+            expression_entries(expr, resolve, log, object_ref=object_ref)
+        )
     else:
         log.add(
             code="TS-FIELD-NO-SOURCE",
@@ -1352,7 +1389,7 @@ def convert_metric(
             dialects = _compose_aggregate_entries(
                 field_ref, aggregation_raw, resolve, log, object_ref=object_ref
             )
-        metric["expression"] = {"dialects": dialects}
+        metric["expression"] = expression_object(dialects)
         datatype = _metric_datatype(
             table_name, column_name, aggregation_raw, table_lookup, log, object_ref=object_ref
         )
@@ -1527,7 +1564,7 @@ def convert_metric(
             dialects = _compose_aggregate_entries(
                 expr, aggregation_raw, resolve, log, object_ref=object_ref
             )
-        metric["expression"] = {"dialects": dialects}
+        metric["expression"] = expression_object(dialects)
         # A formula carries no declared type anywhere in TML — neither columns[] nor
         # formulas[] has a data_type key — so datatype is always omitted
         # here, and never logged: there was never a value here to lose.
@@ -2142,7 +2179,11 @@ def _strip_wrapping_parens(text: str) -> str:
 
 
 def _parse_join_condition(
-    on_expression: str, from_prefix: str, to_prefix: str
+    on_expression: str,
+    from_physical: str,
+    to_physical: str,
+    from_prefix: str | None = None,
+    to_prefix: str | None = None,
 ) -> tuple[list[tuple[str, str]], list[str]]:
     """Split a join condition into equality pairs and residual predicates.
 
@@ -2176,9 +2217,36 @@ def _parse_join_condition(
             continue
         left_table, left_column = identifiers.split_column_ref(match.group(1))
         right_table, right_column = identifiers.split_column_ref(match.group(2))
-        if left_table == from_prefix and right_table == to_prefix:
+        # EITHER namespace names an endpoint here: strict in what we send,
+        # liberal in what we accept.
+        #
+        # The write leg emits PHYSICAL names, because a Table's joins_with[]
+        # lives on the table, which has no knowledge of the aliases a model
+        # gives it -- structural, not a probe result. This is the read leg,
+        # and it must not mirror that strictness. An inline `joins[]` entry
+        # lives on the MODEL, where every other reference -- `with`, every
+        # `column_id` prefix -- is in the alias namespace, and real documents
+        # write its `on` that way too.
+        #
+        # Matching one namespace alone does not fix the class, it moves it.
+        # Before this function took physical names it matched the model ones,
+        # so an alias-spelled condition parsed and a physical-spelled one was
+        # demoted to an unrepresentable stash entry; matching only physical
+        # names simply swapped which half broke. Neither failure is visible
+        # to a round trip -- the verbatim condition is stashed and replayed,
+        # so the TML returns byte-identical -- and both cost the Ossie
+        # document its relationship, which is what every other converter
+        # reads.
+        #
+        # The two spellings cannot collide: a prefix is either an endpoint's
+        # physical name or its model name, and `with` already had to name a
+        # model_tables entry for this join to be parsed at all. Where nothing
+        # is aliased they coincide and this is the comparison it always was.
+        from_names = {from_physical, from_prefix or from_physical}
+        to_names = {to_physical, to_prefix or to_physical}
+        if left_table in from_names and right_table in to_names:
             equality_pairs.append((left_column, right_column))
-        elif left_table == to_prefix and right_table == from_prefix:
+        elif left_table in to_names and right_table in from_names:
             equality_pairs.append((right_column, left_column))
         else:
             # An equality pair, but not one naming both sides of *this* join --
@@ -2252,6 +2320,8 @@ def _relationship_from_join(
     name: str,
     from_prefix: str,
     to_prefix: str,
+    from_physical: str,
+    to_physical: str,
     on_expression: str | None,
     join_type: str | None,
     cardinality: str | None,
@@ -2313,7 +2383,9 @@ def _relationship_from_join(
         return None, None, False
 
     try:
-        equality_pairs, residuals = _parse_join_condition(on_expression, from_prefix, to_prefix)
+        equality_pairs, residuals = _parse_join_condition(
+            on_expression, from_physical, to_physical, from_prefix, to_prefix
+        )
     except ValueError as exc:
         log.add(
             code="TS-JOIN-MALFORMED",
@@ -2446,6 +2518,7 @@ def _relationship_from_join(
 def _convert_join(
     from_prefix: str, join: dict, from_table_body: dict, known_datasets: frozenset[str],
     table_lookup: Callable[[str], dict | None], log: IssueLog,
+    physical_by_prefix: Mapping[str, str] | None = None,
 ) -> tuple[dict | None, dict | None, keys.Relationship | None]:
     """One `model_tables[].joins[]` entry -> `(relationship,
     unrepresentable_entry, key_candidate)`.
@@ -2519,7 +2592,15 @@ def _convert_join(
                 object_ref=f"relationship:{referencing_join}",
             )
             return None, None, None
-        to_prefix = (destination or {}).get("name")
+        # `with` names the model_tables[] entry, so it is the MODEL namespace
+        # and the only thing that can name a dataset. `destination.name` is
+        # the table's own name -- the PHYSICAL namespace -- which is what the
+        # condition is written in and is no dataset at all once the target is
+        # aliased. Reading the target from `destination` dropped every
+        # relationship in an aliased model. It is kept as the physical name,
+        # with `with` falling back to it for TML that omits `with`.
+        to_prefix = join.get("with") or (destination or {}).get("name")
+        to_physical = (destination or {}).get("name") or to_prefix
         on_expression = matched.get("on")
         join_type = join.get("type", matched.get("type"))
         cardinality = join.get("cardinality", matched.get("cardinality"))
@@ -2531,6 +2612,7 @@ def _convert_join(
         name = referencing_join
     else:
         to_prefix = join.get("with")
+        to_physical = (physical_by_prefix or {}).get(to_prefix, to_prefix)
         on_expression = join.get("on")
         join_type = join.get("type")
         cardinality = join.get("cardinality")
@@ -2543,6 +2625,38 @@ def _convert_join(
             severity=Severity.WARNING,
             message=f"join {name!r} from {from_prefix!r} names no target dataset; it is skipped",
             object_ref=f"relationship:{name}",
+        )
+        return None, None, None
+
+    from_physical = from_table_body.get("name") or from_prefix
+
+    if from_physical == to_physical:
+        # ONE table on both ends -- two aliases of it, or one entry joined to
+        # itself. Either way a condition written in
+        # physical names says the same word on both sides and cannot say
+        # which end is which. ThoughtSpot never produces this -- every
+        # self-join is rejected (13125, and 14565 for a table against
+        # itself) -- so it reaches us only from hand-written TML. Guessing an
+        # orientation there would silently reverse a join, which is worse
+        # than declining to convert it.
+        log.add(
+            code="TS-JOIN-AMBIGUOUS-PREFIX",
+            severity=Severity.WARNING,
+            message=(
+                f"join {name!r} runs "
+                + (f"from {from_prefix!r} to itself over table {from_physical!r}"
+                   if from_prefix == to_prefix
+                   else f"between {from_prefix!r} and {to_prefix!r}, which are "
+                        f"both aliases of table {from_physical!r}")
+                + f"; its condition names that table on both sides, so which end "
+                  f"each column belongs to cannot be determined and the "
+                  f"relationship is dropped"
+            ),
+            object_ref=f"relationship:{name}",
+            remedy=(
+                "ThoughtSpot does not support a self-join; a hierarchy needs one "
+                "alias per level, each joined to a distinct table."
+            ),
         )
         return None, None, None
 
@@ -2564,6 +2678,8 @@ def _convert_join(
         name=name,
         from_prefix=from_prefix,
         to_prefix=to_prefix,
+        from_physical=from_physical,
+        to_physical=to_physical,
         on_expression=on_expression,
         join_type=join_type,
         cardinality=cardinality,
@@ -3078,6 +3194,12 @@ def convert(document_set: DocumentSet) -> OssieConversion:
     relationships: list[dict] = []
     key_candidates: list[keys.Relationship] = []
     known_datasets = frozenset(dataset_bodies)
+    # Model namespace -> physical table name, for the inline join form, whose
+    # `on` is also written in physical names but which carries no
+    # `destination` to read one from.
+    physical_by_prefix = {
+        prefix: (body.get("name") or prefix) for prefix, body in table_docs.items()
+    }
 
     for entry in model_tables:
         table_ref = entry.get("name")
@@ -3087,7 +3209,7 @@ def convert(document_set: DocumentSet) -> OssieConversion:
         for join in entry.get("joins") or []:
             relationship, unrepresentable, candidate = _convert_join(
                 from_prefix, join, table_docs.get(from_prefix) or {}, known_datasets,
-                table_lookup, log,
+                table_lookup, log, physical_by_prefix,
             )
             if relationship is not None:
                 # `Relationship.name` is unique across the model's flat

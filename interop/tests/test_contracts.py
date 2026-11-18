@@ -77,9 +77,15 @@ def test_independent_inputs_pass_core_validation_and_their_oracles(name):
         ]
         == "OK"
     )
-    base_targets = {"cube", "databricks", "dbt"}
-    dialect_targets = {"omni", "sigma"} if contract.category == "dialect" else set()
-    assert set(contract.targets) == base_targets | dialect_targets
+    expected = {"cube", "dbt"}
+    if contract.category == "dialect":
+        expected |= {"omni", "sigma"}
+    # Databricks's pass-through convert keeps existing dialects but does not translate a
+    # foreign dialect into the Databricks one, so it is a target everywhere except the
+    # snowflake-only and ossie-sql-only dialect contracts.
+    if name not in ("dialect-snowflake-only", "dialect-ossie-sql-2026-only"):
+        expected |= {"databricks"}
+    assert set(contract.targets) == expected
 
 
 @pytest.mark.parametrize(
@@ -463,8 +469,9 @@ def test_document_runner_retains_failures_snapshots_and_strict_status(
     )
     prefix = [sys.executable, str(helper)]
     target = replace(
-        manifest.converters["databricks"],
+        manifest.converters["dbt"],
         name="fake",
+        native_format="databricks",
         cwd=tmp_path,
         export_command=prefix + ["export", mode, str(payload), "{input}", "{output}"],
         import_command=prefix + ["import", mode, str(payload), "{input}", "{output}"],
@@ -527,8 +534,9 @@ def test_converter_subset_filters_document_targets(tmp_path, monkeypatch):
         ("dialect-databricks-only", "databricks"),
         ("dialect-databricks-only", "dbt"),
         ("dialect-snowflake-only", "cube"),
-        ("dialect-ossie-sql-2026-only", "databricks"),
+        ("dialect-ossie-sql-2026-only", "dbt"),
         ("keys-single", "dbt"),
+        ("keys-single", "databricks"),
         ("keys-composite", "cube"),
         ("keys-unique-only", "cube"),
         ("keys-joined", "dbt"),

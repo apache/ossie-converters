@@ -186,7 +186,7 @@ def test_lightdash_model_files_import_and_round_trip(tmp_path):
 def test_export_collision_fails_before_writing(tmp_path, capsys, output_format, table):
     source = tmp_path / "collision.yaml"
     source.write_text(yaml.safe_dump({
-        "version": "0.2.0.dev0", "name": "collision", "datasets": [
+        "version": "0.3.0.dev0", "name": "collision", "datasets": [
             {"name": "sales_orders", "source": "sales.orders"},
             {"name": "archived_orders", "source": f"archive.{table}"},
         ],

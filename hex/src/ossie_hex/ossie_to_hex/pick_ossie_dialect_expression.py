@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from ossie import OssieDialectExpression
+from ossie import OssieDialectExpression, OssieExpression
 
 from ..ossie import (
     LEGACY_PORTABLE_OSSIE_DIALECT,
@@ -23,6 +23,27 @@ from ..ossie import (
     PORTABLE_OSSIE_DIALECT,
 )
 from .context import ExportContext
+
+
+def dialect_expressions_of(
+    ossie_expression: OssieExpression,
+) -> list[OssieDialectExpression] | None:
+    """Return an Ossie expression's dialect entries.
+
+    An Ossie expression may carry only the portable ``sql`` form with no dialect
+    entries. That text is OSSIE_SQL_2026 by definition, so synthesize a portable
+    dialect entry from it, letting the rest of the exporter treat every
+    expression uniformly.
+    """
+    if ossie_expression.dialects:
+        return ossie_expression.dialects
+    if ossie_expression.sql is not None:
+        return [
+            OssieDialectExpression(
+                dialect=PORTABLE_OSSIE_DIALECT, expression=ossie_expression.sql
+            )
+        ]
+    return ossie_expression.dialects
 
 
 def pick_ossie_dialect_expression(
@@ -38,9 +59,8 @@ def pick_ossie_dialect_expression(
     Returns a dialect expression, or None if there are no dialect expressions.
     """
     if not ossie_dialect_expressions:
-        # An expression may carry only the portable `sql`, which is not read yet.
         if ctx.current_phase_name == "load":
-            ctx.error("No dialect expression found; `sql` is not supported")
+            ctx.error("No dialect expression found")
         return None
     fallback = ossie_dialect_expressions[0]
     for entry in ossie_dialect_expressions:

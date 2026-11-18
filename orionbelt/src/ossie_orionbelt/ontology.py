@@ -34,7 +34,7 @@ class OBMLtoOssieOntology:
     """Derive an Ossie **ontology** document from an OBML semantic model.
 
     Produces a document conforming to ``ossie-ontology-schema.json`` (Ossie version
-    ``0.2.0.dev0``) — a *separate* artefact from the Ossie core-spec semantic
+    ``0.3.0.dev0``) — a *separate* artefact from the Ossie core-spec semantic
     model. The Ossie ``OntologyMap`` embeds the full core-spec model, so this
     class reuses :class:`OBMLtoOssie` for that part and overlays a concept /
     relationship ontology plus the logical-to-conceptual mappings.
