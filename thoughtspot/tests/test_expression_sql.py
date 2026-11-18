@@ -310,8 +310,12 @@ class TestMetricsReadTheSqlLocationToo:
         result = ossie_to_tml_convert(document)
 
         assert "formulas" not in result.documents.model.body
+        # TS-DATASET-METRICS-DROPPED is the other half of this fact, added
+        # alongside. The metric is still not built; it is no longer dropped
+        # in silence, which is what made this test's own point hard to see.
         assert [i["code"] for i in result.issues.as_dicts()] == [
-            "TS-DATASET-CONNECTION-MISSING"
+            "TS-DATASET-CONNECTION-MISSING",
+            "TS-DATASET-METRICS-DROPPED",
         ]
 
     def test_a_computed_field_reads_sql(self):

@@ -366,10 +366,12 @@ class TestJoinPlacementThroughConvert:
     def test_missing_type_and_cardinality_default_rather_than_being_omitted(self):
         # TML requires both keys on every join -- a document with
         # neither stashed must still emit both, never leave one out.
+        # The assumed `type` is the row-preserving one and is reported as an
+        # assumption; `tests/test_join_type_assumed.py` is where that lives.
         result = convert(_ossie_document(self._model_with_join()))
         [orders_entry] = [t for t in result.documents.model.body["model_tables"] if t["name"] == "orders"]
         [join] = orders_entry["joins"]
-        assert join["type"] == "INNER"
+        assert join["type"] == "LEFT_OUTER"
         assert join["cardinality"] == "MANY_TO_ONE"
         assert set(join) == {"with", "on", "type", "cardinality"}
 

@@ -150,6 +150,28 @@ newer versions both keep converting. The `ANSI_SQL` entry stays because not ever
 in this repository reads `sql` yet (snowflake skips an expression that has only `sql`).
 An expression with no portable form gets no `sql` and stays THOUGHTSPOT-only.
 
+### What a join type is assumed to be
+
+An Ossie relationship carries no join type. ThoughtSpot requires one on every
+join. So a document this converter did not write has none to recover, and a
+value has to be chosen.
+
+The choice keeps the many side, because measures live there. `from` is the many
+side and `to` is the one side, so a `MANY_TO_ONE` or `ONE_TO_ONE` relationship
+becomes `LEFT_OUTER` and a `ONE_TO_MANY` one becomes `RIGHT_OUTER`. An inner
+join would drop every many-side row matching nothing on the one side, and lower
+every measure computed over it with nothing on screen to say so.
+
+Each assumption is reported under `TS-JOIN-TYPE-ASSUMED`, naming the value and
+the cardinality it followed. A relationship whose original type is stashed —
+every document that came from ThoughtSpot — keeps that type and reports nothing.
+
+A `MANY_TO_MANY` relationship gets no join at all. ThoughtSpot accepts only
+`MANY_TO_ONE`, `ONE_TO_MANY` and `ONE_TO_ONE` on a join, and refuses the
+document outright otherwise, so there is no join for a type to be chosen for.
+That is reported under `TS-JOIN-CARDINALITY-UNWRITABLE`, with the bridge-table
+remedy.
+
 ## The `custom_extensions[THOUGHTSPOT]` payload
 
 TML carries properties Ossie's core specification has no field for — a Connection name,
