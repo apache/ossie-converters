@@ -41,9 +41,9 @@ from ossie import (
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_dbt.ratio_helpers import unchanged_ratio_helpers
-from ossie_dbt.expression_utils import _is_constant_expr
+from ossie_dbt.expression_utils import _is_constant_expr, column_span, replace_columns_in_sql
 from ossie_dbt.filter_utils import _collect_filter_sql, _merge_filter_sqls
+from ossie_dbt.ratio_helpers import unchanged_ratio_helpers
 
 from metricflow_semantic_interfaces.enum_extension import assert_values_exhausted
 from metricflow_semantic_interfaces.implementations.semantic_manifest import PydanticSemanticManifest
@@ -550,15 +550,26 @@ class MSIToOssieConverter:
                 if parts and parts != [dataset.name.casefold()] and parts != source_parts[-len(parts):]:
                     raise _UnresolvedMetricInputError(f"Column qualifier {column.table!r} is outside {dataset.name!r}")
 
-        for column in columns:
+        spans = [column_span(column) for column in columns]
+        if any(span is None for span in spans) and not isinstance(tree, exp.Column):
+            # Older SQLGlot versions do not track identifier positions. Keep the
+            # row expression as a field so rendering cannot change its SQL dialect.
+            field = self._field_for_source(fields, sql, preferred_name or "metric_input", preferred_name)
+            return self._dataset_column(dataset.name, field).sql(dialect=reader)
+
+        replacements: dict[tuple[int, int], str] = {}
+        for column, span in zip(columns, spans):
             source_sql = exp.Column(this=column.this.copy()).sql(dialect=reader)
             field = self._field_for_source(fields, source_sql, column.name, preferred_name if column is tree else None)
-            resolved = self._dataset_column(dataset.name, field)
+            resolved = self._dataset_column(dataset.name, field).sql(dialect=reader)
             if column is tree:
-                tree = resolved
-            else:
-                column.replace(resolved)
-        return tree.sql(dialect=reader)
+                return resolved
+            if span is not None:
+                replacements[span] = resolved
+        try:
+            return replace_columns_in_sql(sql, replacements)
+        except ValueError as exc:
+            raise _UnresolvedMetricInputError(str(exc)) from exc
 
     def _resolve_cumulative(
         self,

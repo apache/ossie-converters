@@ -778,7 +778,7 @@ class TestMetricConversion:
 
         assert [field.name for field in _fields(output)] == ["opened", "closed"]
         assert _ossie_metrics(output)[0].expression.dialects[0].expression == (
-            "SUM(COALESCE(DATEDIFF(DAY, orders.opened, orders.closed), 0))"
+            "SUM(COALESCE(DATEDIFF(day, orders.opened, orders.closed), 0))"
         )
 
     def test_compound_metric_input_preserves_quoted_columns(self) -> None:
@@ -789,6 +789,13 @@ class TestMetricConversion:
         output = MSIToOssieConverter().convert(_manifest([orders], [metric])).output
 
         assert _ossie_metrics(output)[0].expression.dialects[0].expression == "SUM(COALESCE(orders.amount_paid, 0))"
+
+    def test_compound_qualification_preserves_native_function_spelling(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(name="orders")
+        metric = _metric_with_agg("amount_or_zero", AggregationType.SUM, "NVL(amount, 0)", "orders")
+        output = MSIToOssieConverter().convert(_manifest([orders], [metric])).output
+
+        assert _ossie_metrics(output)[0].expression.dialects[0].expression == "SUM(NVL(orders.amount, 0))"
 
     def test_metric_input_outside_the_owning_dataset_is_reported(self) -> None:
         orders = semantic_model_with_guaranteed_meta(name="orders")
@@ -928,7 +935,7 @@ class TestMetricConversion:
 
         arpu_ossie = next(m for m in _ossie_metrics(result) if m.name == "arpu")
         assert arpu_ossie.expression.dialects[0].expression == (
-            "(SUM(orders.revenue)) / NULLIF(SUM(CASE WHEN NOT orders.order_id IS NULL THEN 1 ELSE 0 END), 0)"
+            "(SUM(orders.revenue)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END), 0)"
         )
         assert result.to_ossie_yaml() == snapshot
 
@@ -2028,7 +2035,7 @@ class TestMetricFilterFlattening:
         assert paid_arpu.expression.dialects[0].expression == (
             "(SUM(CASE WHEN status = 'paid' THEN orders.revenue END))"
             " / "
-            "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN NOT orders.order_id IS NULL THEN 1 ELSE 0 END END), 0)"
+            "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
         )
 
     def test_derived_metric_filter_propagated_to_sub_expressions(self) -> None:
