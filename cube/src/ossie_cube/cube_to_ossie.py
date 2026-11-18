@@ -1890,15 +1890,20 @@ def _unsafe_datasets_of_reads(reads, own_cube, canonical, reach):
     """
     found = set()
     for values, predicates, unqualified_value, unqualified_predicate in reads:
-        read_values = {resolve_identifier(canonical, v) for v in values} - {None}
+        resolved = {resolve_identifier(canonical, v) for v in values}
+        read_values = resolved - {None}
         if unqualified_value:
             read_values.add(own_cube)
         read_predicates = {resolve_identifier(canonical, p) for p in predicates} - {None}
         if unqualified_predicate:
             read_predicates.add(own_cube)
         found |= read_values
+        # A value naming no dataset may be multiplied by any join, so no condition
+        # can be shown to select among its rows.
+        excusable = None not in resolved
         for dataset in read_predicates - read_values:
-            if not all(dataset in reach.get(value, ()) for value in read_values):
+            if not (excusable
+                    and all(dataset in reach.get(value, ()) for value in read_values)):
                 found.add(dataset)
     return found
 

@@ -149,6 +149,18 @@ def test_a_condition_reached_through_a_shared_dimension_is_still_fanout_unsafe()
     assert "orders.delayed_revenue" in flagged
 
 
+def test_a_condition_on_a_value_naming_no_dataset_is_still_fanout_unsafe():
+    """`payload` in `orders.payload.amount` names no dataset, so nothing shows the
+    condition is reachable from the summed rows, and it is judged as before."""
+    _, flagged = _fanout_issues(
+        "      - name: delayed_payload_revenue\n"
+        "        sql: \"{CUBE}.payload.amount\"\n"
+        "        type: sum\n"
+        "        filters:\n"
+        "          - sql: \"{shipments}.status = 'DELAYED'\"\n")
+    assert "orders.delayed_payload_revenue" in flagged
+
+
 def test_the_reported_cause_is_the_join_from_the_measures_own_cube():
     """`stores` is the one side of both `orders_to_stores` and `shipments_to_stores`;
     a measure on `orders` is multiplied by the first, so that is the one named."""
