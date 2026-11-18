@@ -471,6 +471,8 @@ class TestDialectConfiguration:
             ("TRY_TO_NUMBER(amount)", False),
             ("NVL(amount, 0)", False),
             ("amount::INT", False),
+            ("5 / 2", False),
+            ("ROUND(2.5, 0)", False),
         ],
     )
     def test_portable_output_checks_the_whole_expression(self, sql: str, portable: bool) -> None:
@@ -484,6 +486,26 @@ class TestDialectConfiguration:
         assert (field.sql, aggregate.sql) == ((sql, f"SUM({sql})") if portable else (None, None))
         if not portable:
             assert field.dialects[0].dialect == OssieDialect.ANSI_SQL
+
+    def test_generated_ratio_uses_portable_true_division(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders", dimensions=[_dimension("amount"), _dimension("quantity")]
+        )
+        total_amount = _metric_with_agg("total_amount", AggregationType.SUM, "amount", "orders")
+        total_quantity = _metric_with_agg("total_quantity", AggregationType.SUM, "quantity", "orders")
+        ratio = PydanticMetric(
+            name="price_per_unit",
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(name="total_amount"),
+                denominator=PydanticMetricInput(name="total_quantity"),
+            ),
+            metadata=default_meta(),
+        )
+
+        output = MSIToOssieConverter().convert(_manifest([orders], [total_amount, total_quantity, ratio])).output
+
+        assert _ossie_metrics(output)[-1].expression.sql == "(SUM(orders.amount)) / NULLIF(SUM(orders.quantity), 0)"
 
     def test_configurable_dialect(self) -> None:
         sm = semantic_model_with_guaranteed_meta(

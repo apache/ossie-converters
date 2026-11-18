@@ -209,7 +209,7 @@ class MSIToOssieConverter:
             ossie_metrics.append(
                 OssieMetric(
                     name=metric.name,
-                    expression=self._make_expression(expr),
+                    expression=self._make_expression(expr, generated_ratio=metric.type is MetricType.RATIO),
                     description=metric.description,
                     datatype=self._resolve_datatype(metric.datatype, metric.config),
                     nonportable_extensions=self._custom_extensions_from_meta(metric.config),
@@ -698,8 +698,8 @@ class MSIToOssieConverter:
         else:
             assert_values_exhausted(agg)
 
-    def _make_expression(self, expr: str) -> OssieExpression:
-        if self._dialect is None and is_portable_sql(expr):
+    def _make_expression(self, expr: str, *, generated_ratio: bool = False) -> OssieExpression:
+        if self._dialect is None and is_portable_sql(expr, generated_ratio=generated_ratio):
             return OssieExpression(sql=expr)
         dialect = self._dialect if self._dialect is not None else OssieDialect.ANSI_SQL
         return OssieExpression(dialects=[OssieDialectExpression(dialect=dialect, expression=expr)])

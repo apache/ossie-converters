@@ -38,7 +38,6 @@ _PORTABLE_NODES = {
     exp.DateAdd,
     exp.DateDiff,
     exp.Distinct,
-    exp.Div,
     exp.EQ,
     exp.GT,
     exp.GTE,
@@ -85,14 +84,17 @@ def _tokens(sql: str) -> list[tuple[TokenType, str]]:
     return parts
 
 
-def is_portable_sql(sql: str) -> bool:
+def is_portable_sql(sql: str, *, generated_ratio: bool = False) -> bool:
     """Recognize supported forms without promoting vendor syntax normalized by the parser."""
     try:
         statements = sqlglot.parse(sql, read=PORTABLE_SQL_READER)
         if len(statements) != 1 or statements[0] is None:
             return False
         tree = statements[0]
-        if any(type(node) not in _PORTABLE_NODES for node in tree.walk()):
+        # MetricFlow defines ratios as fractional division. An authored division
+        # may instead be integer division in the source warehouse.
+        ratio_division = tree if generated_ratio and isinstance(tree, exp.Div) else None
+        if any(type(node) not in _PORTABLE_NODES for node in tree.walk() if node is not ratio_division):
             return False
         # For example, the reader normalizes Snowflake NVL into COALESCE. Compare
         # the token spellings so we only promote SQL already written in the portable form.
