@@ -85,8 +85,9 @@ def fake_runner(tmp_path, mode, *, prepared=True):
     helper.write_text(HELPER)
     prefix = [sys.executable, str(helper)]
     target = replace(
-        manifest.converters["databricks"],
+        manifest.converters["dbt"],
         name="fake",
+        native_format="databricks",
         cwd=tmp_path,
         export_command=prefix + ["export", mode, "{input}", "{output}"],
         import_command=prefix + ["import", mode, "{input}", "{output}"],
@@ -320,7 +321,7 @@ def test_only_round_trippable_registrations_and_their_modes_are_scheduled():
     for name, converter in manifest.converters.items():
         if converter.skip or converter.roundtrip_skip or converter.import_skip:
             assert name not in scheduled
-    assert {"cube", "dbt", "databricks", "microsoft"} <= scheduled
+    assert {"cube", "dbt", "microsoft"} <= scheduled
     assert "microsoft-translate-dax" in scheduled
     (mode,) = [t for t, m in runner.portability_targets() if m]
     assert mode.name == "microsoft"  # shares the microsoft preparation

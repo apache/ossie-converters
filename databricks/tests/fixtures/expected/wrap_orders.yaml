@@ -1,0 +1,81 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+model:
+  version: 0.3.0.dev0
+  name: orders
+  datasets:
+  - name: orders
+    source: main.sales.orders
+    description: Orders
+    fields:
+    - name: order_date
+      expression:
+        sql: order_date
+      label: Order date
+      ai_context:
+        synonyms:
+        - purchase date
+    - name: status
+      expression:
+        sql: status
+    - name: amount
+      expression:
+        sql: amount
+    metrics:
+    - name: revenue
+      expression:
+        sql: SUM(amount)
+        dialects:
+        - dialect: DATABRICKS
+          expression: MEASURE(source.revenue)
+      description: Sum of the order prices
+    - name: open_revenue
+      expression:
+        sql: SUM(amount) FILTER(WHERE status = 'O')
+        dialects:
+        - dialect: DATABRICKS
+          expression: MEASURE(source.open_revenue)
+    - name: discount
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: MEASURE(source.discount)
+    - name: big_orders
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: MEASURE(source.big_orders)
+    - name: revenue_per_order
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: MEASURE(source.revenue_per_order)
+    - name: trailing_revenue
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: MEASURE(source.trailing_revenue)
+warnings:
+- '[METRIC_NOT_PORTABLE] at metric_views[orders].measures[discount]: evaluates the measure only: o_discount
+  is not a dimension of the metric view'
+- '[METRIC_NOT_PORTABLE] at metric_views[orders].measures[big_orders]: evaluates the measure only: no
+  verified translation for COUNT_IF'
+- '[METRIC_NOT_PORTABLE] at metric_views[orders].measures[revenue_per_order]: evaluates the measure only:
+  it reads another measure'
+- '[METRIC_NOT_PORTABLE] at metric_views[orders].measures[trailing_revenue]: evaluates the measure only:
+  a window measure'

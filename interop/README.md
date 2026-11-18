@@ -33,7 +33,7 @@ uv sync --project interop --locked --python 3.12
 uv run --project interop --locked python -m interop
 ```
 
-The runner needs Python 3.11+ and uv. Databricks and Salesforce additionally need Maven and
+The runner needs Python 3.11+ and uv. Salesforce additionally needs Maven and
 Java 21+ on `PATH` (and a matching `JAVA_HOME` for Maven). Missing prerequisites
 appear as `SKIP`; a preparation command that actually fails appears as `FAIL`.
 Dependencies are prepared once per converter: `uv sync --locked --no-dev` for
@@ -55,7 +55,7 @@ producing a false pass or overwriting earlier evidence.
 # Restrict the registry to two converters; this runs both ordered pairs.
 uv run --project interop --locked python -m interop --converters cube,dbt
 
-# Reuse previously prepared environments and the previously built Databricks JAR.
+# Reuse previously prepared environments and the previously built Salesforce JAR.
 uv run --project interop --locked python -m interop --no-prepare
 
 # Attempt optional native gates. Cube requires a built checkout.
@@ -72,7 +72,8 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 
 | Converter(s) | Native path / limits |
 |---|---|
-| Cube, Databricks, dbt | Existing CLI runners; focused semantic regressions retained |
+| Cube, dbt | Existing CLI runners; focused semantic regressions retained |
+| Databricks | Ossie-native: `from-databricks` / `to-databricks` read and write an Ossie model (`native_format: ossie`); `to-databricks` is a pass-through |
 | GoodData | API adapter for declarative LDM JSON, using the converter's serialization helpers |
 | Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
@@ -133,15 +134,15 @@ examples are intentionally outside this matrix.
 
 Registered **metric-binding regressions** continue the relevant Tier B chain back
 to its source-native format. Both the original native fixture and the final
-native export must satisfy independently authored expectations. The initial
-routes are Cube -> Ossie -> Databricks -> Ossie -> Cube for TPC-DS and a focused
-two-table sales/customer fixture. These checks are reported separately from
-the acceptance matrix and its degradation warnings.
+native export must satisfy independently authored expectations. None are
+registered at the moment: the original Cube -> Ossie -> Databricks -> Ossie -> Cube
+routes went away with the Databricks metric-view exporter. These checks are
+reported separately from the acceptance matrix and its degradation warnings.
 
 Ten independent Ossie **document regression fixtures** cover three dialect-only
 cases, four key cases, and three source cases. All ten run against Cube,
 Databricks, and dbt. The dialect cases also run against Omni and Sigma. Document
-regressions and the two native binding regressions are reported separately from
+regressions and any native binding regressions are reported separately from
 the broad acceptance matrix. Each fixture has a versioned assertion file.
 
 | Grade | Meaning |
@@ -236,23 +237,23 @@ values. A scoped document result can be `OK` while unrelated warnings or invento
 changes remain in its evidence, just as with the native binding regressions.
 
 Initial findings remain visible as incompatibilities rather than pass allowances:
-Databricks rejects foreign-only expressions and unsupported source forms, drops
-fact-table keys, and recovers joined keys with changed roles. dbt rejects compound
-keys; quoted source references containing dots expose incorrectly split native
+dbt rejects compound keys; quoted source references containing dots expose incorrectly split native
 slots even when its reconstructed source string survives the round trip.
 
 ## Native metric-binding assertions
 
 The top-level `regressions` mapping declares a source converter, one of its native
 fixtures, a `via` converter, and a versioned expectations file. A converter subset
-includes a regression only when both participants are selected.
+includes a regression only when both participants are selected. None are registered
+at the moment (`regressions: {}` in `manifest.yaml`); an entry has this shape, where
+`via` is a converter whose native format carries physical metric bindings:
 
 ```yaml
 regressions:
-  cube-databricks-tpcds:
+  cube-<via>-tpcds:
     source: cube
     fixture: tpcds
-    via: databricks
+    via: <via>
     expectations: interop/fixtures/bindings/tpcds.yaml
 ```
 
@@ -379,8 +380,9 @@ still required.
 
 The dbt fixture at `fixtures/dbt/semantic_manifest.json` is a small, independently
 authored native manifest with an entity, dimension, measure, and simple metric.
-It is not generated through the exporter under test. Cube and Databricks reuse
-their existing checked-in TPC-DS native fixtures. The independent Cube fixture
+It is not generated through the exporter under test. Cube reuses its existing
+checked-in TPC-DS native fixture, and Databricks uses `fixtures/databricks/sales.ossie.yaml`,
+an Ossie model, since that is its native format. The independent Cube fixture
 at `fixtures/cube/metric_bindings/` separates fact-table revenue, customer count,
 and customer credit aggregates. `fixtures/bindings/` holds the physical-binding
 oracles for both Cube fixtures.

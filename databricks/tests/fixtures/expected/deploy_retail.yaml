@@ -1,0 +1,153 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+files:
+  metric_views/orders.yaml: |
+    # Metric view: main.sales.orders
+    version: '1.1'
+    source: main.raw.orders
+    comment: One row for each order
+    dimensions:
+    - name: order_id
+      expr: o_orderkey
+    - name: customer_id
+      expr: o_custkey
+    - name: Order Date
+      expr: CAST(o_orderdate AS DATE)
+      display_name: Order date
+      synonyms:
+      - purchase date
+    - name: region
+      expr: UPPER(region)
+    - name: raw_region
+      expr: source.region
+    - name: amount
+      expr: o_totalprice
+      comment: Price of the order
+    measures:
+    - name: revenue
+      expr: SUM(amount)
+      comment: Sum of the order prices
+      synonyms:
+      - sales
+      - turnover
+    - name: discount
+      expr: SUM(source.o_discount)
+    - name: recent_orders
+      expr: COUNT(*) FILTER(WHERE `Order Date` >= CAST('2024-01-01' AS DATE))
+    - name: big_orders
+      expr: count_if(amount > 100)
+  metric_views/customers.yaml: |
+    # Metric view: main.sales.customers
+    version: '1.1'
+    source: main.raw.customers
+    dimensions:
+    - name: customer_id
+      expr: c_custkey
+    - name: segment
+      expr: c_mktsegment
+  retail.ossie.yaml: |
+    version: 0.3.0.dev0
+    name: retail
+    description: Orders and customers of a retail shop
+    datasets:
+    - name: orders
+      source: main.sales.orders
+      primary_key:
+      - order_id
+      description: One row for each order
+      fields:
+      - name: order_id
+        expression:
+          sql: order_id
+      - name: customer_id
+        expression:
+          sql: customer_id
+      - name: Order Date
+        expression:
+          sql: '"Order Date"'
+        label: Order date
+        ai_context:
+          synonyms:
+          - purchase date
+      - name: region
+        expression:
+          sql: region
+      - name: raw_region
+        expression:
+          sql: raw_region
+      - name: amount
+        expression:
+          sql: amount
+        description: Price of the order
+      metrics:
+      - name: revenue
+        expression:
+          sql: SUM(amount)
+          dialects:
+          - dialect: DATABRICKS
+            expression: MEASURE(source.revenue)
+        description: Sum of the order prices
+        ai_context:
+          synonyms:
+          - sales
+          - turnover
+      - name: discount
+        expression:
+          dialects:
+          - dialect: DATABRICKS
+            expression: MEASURE(source.discount)
+      - name: recent_orders
+        expression:
+          sql: COUNT(*) FILTER (WHERE "Order Date" >= DATE '2024-01-01')
+          dialects:
+          - dialect: DATABRICKS
+            expression: MEASURE(source.recent_orders)
+      - name: big_orders
+        expression:
+          dialects:
+          - dialect: DATABRICKS
+            expression: MEASURE(source.big_orders)
+    - name: customers
+      source: main.sales.customers
+      primary_key:
+      - customer_id
+      fields:
+      - name: customer_id
+        expression:
+          sql: customer_id
+      - name: segment
+        expression:
+          sql: segment
+    relationships:
+    - name: orders_to_customers
+      from: orders
+      to: customers
+      from_columns:
+      - customer_id
+      to_columns:
+      - customer_id
+    metrics:
+    - name: revenue_per_customer
+      expression:
+        sql: AGG(orders.revenue) / COUNT(DISTINCT customers.customer_id)
+    - name: average_amount
+      expression:
+        sql: AVG(orders.amount)
+warnings:
+- '[METRIC_NOT_PORTABLE] at datasets[orders].metrics[discount]: the portable expression reads source columns,
+  which the metric view does not expose; the metric only evaluates the measure'
