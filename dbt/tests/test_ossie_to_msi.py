@@ -1734,7 +1734,7 @@ class TestOssieToMSIRoundTrip:
         assert backward.issues == []
         assert (
             backward.output.metrics[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END)"
+            == "SUM(CASE WHEN orders.status = 'paid' THEN orders.amount ELSE 0 END)"
         )
 
     def test_ossie_to_msi_to_ossie_preserves_structure(self, snapshot: SnapshotAssertion) -> None:
@@ -1916,6 +1916,6 @@ class TestOssieToMSIRoundTrip:
         # msi_to_ossie._qualify_col re-qualifies only bare identifiers,
         # so the exported argument comes back unqualified.
         assert expressions == {
-            "net_sales": "SUM(gross - tax)",
-            "tax_or_zero": "SUM(COALESCE(tax, 0))",
+            "net_sales": "SUM(orders.gross - orders.tax)",
+            "tax_or_zero": "SUM(COALESCE(orders.tax, 0))",
         }

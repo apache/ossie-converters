@@ -58,6 +58,7 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
         "an input metric is listed more than once under one reference with differing filters, "
         "so the expression reference is ambiguous; give each occurrence a distinct alias"
     ),
+    ConverterIssueType.METRIC_INPUT_DROPPED: "its aggregation input could not be resolved",
     ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION: (
         "MetricFlow SIMPLE metrics require one supported aggregation over a safe scalar expression "
         "owned by exactly one semantic model"
@@ -79,6 +80,7 @@ _DROPPED_ISSUE_TYPES = {
     ConverterIssueType.ROW_COUNT_METRIC_DROPPED,
     ConverterIssueType.AMBIGUOUS_REFERENCE_METRIC_DROPPED,
     ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION,
+    ConverterIssueType.METRIC_INPUT_DROPPED,
     ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS,
 }
 
@@ -87,6 +89,8 @@ def _print_issues(issues: Sequence[ConverterIssue]) -> None:
     for issue in issues:
         verb = "was dropped" if issue.issue_type in _DROPPED_ISSUE_TYPES else "was converted with loss"
         reason = _ISSUE_REASON[issue.issue_type]
+        if issue.detail:
+            reason += f" ({issue.detail})"
         print(f"[WARNING] {issue.issue_type.value}: {issue.element_name} {verb} during conversion because {reason}", file=sys.stderr)
 
 

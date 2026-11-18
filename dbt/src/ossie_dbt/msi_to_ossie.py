@@ -22,6 +22,10 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import SqlglotError
+
 from ossie import (
     OssieNonportableExtension,
     OssieDataType,
@@ -52,7 +56,6 @@ from metricflow_semantic_interfaces.protocols.measure import (
 from metricflow_semantic_interfaces.protocols.meta import SemanticLayerElementConfig
 from metricflow_semantic_interfaces.protocols.metric import Metric
 from metricflow_semantic_interfaces.protocols.semantic_model import SemanticModel
-from metricflow_semantic_interfaces.transformations.convert_count import ConvertCountMetricToSumRule
 from metricflow_semantic_interfaces.transformations.semantic_manifest_transformer import (
     PydanticSemanticManifestTransformer,
 )
@@ -137,6 +140,10 @@ class _MetricContext:
     cache: Dict[Tuple[str, Optional[str]], str]
 
 
+class _UnresolvedMetricInputError(Exception):
+    """An aggregation input could not be bound to its source dataset."""
+
+
 class AmbiguousDerivedReferenceError(Exception):
     """A DERIVED metric's expression reference does not resolve to a single expression.
 
@@ -214,6 +221,9 @@ class MSIToOssieConverter:
                         element_name=metric.name,
                     )
                 )
+                continue
+            except _UnresolvedMetricInputError as exc:
+                issues.append(ConverterIssue(ConverterIssueType.METRIC_INPUT_DROPPED, metric.name, str(exc)))
                 continue
             # Measure annotations declare aggregate result types, including on generated metrics.
             # Preserve recognized annotations without validating SQL/type compatibility.
@@ -438,9 +448,11 @@ class MSIToOssieConverter:
                 f"SIMPLE metric has no metric_aggregation_params after transformation: metric_name={metric.name!r}"
             )
         col = metric.type_params.expr if metric.type_params.expr is not None else metric.name
-        dataset = context.datasets[agg_params_obj.semantic_model]
+        dataset = context.datasets.get(agg_params_obj.semantic_model)
+        if dataset is None:
+            raise _UnresolvedMetricInputError(f"Unknown semantic model {agg_params_obj.semantic_model!r}")
         measure = metric.type_params.measure
-        col = self._qualify_col(col, dataset, context.fields[dataset.name], measure.name if measure else None)
+        col = self._qualify_metric_input(col, dataset, context.fields[dataset.name], measure.name if measure else None)
         return self._build_agg_expression(agg_params_obj.agg, col, agg_params_obj.agg_params, filter_sql)
 
     @staticmethod
@@ -488,21 +500,65 @@ class MSIToOssieConverter:
         fields.append(OssieField(name=name, expression=self._make_expression(source_sql)))
         return name
 
-    def _qualify_col(
-        self, col: str, dataset: OssieDataset, fields: List[OssieField], preferred_name: Optional[str]
+    def _sql_reader(self) -> str:
+        # SQLGlot's Snowflake reader handles Ossie's unit-first DATEADD and DATEDIFF.
+        if self._dialect in (None, OssieDialect.ANSI_SQL, OssieDialect.OSSIE_SQL_2026):
+            return "snowflake"
+        reader = self._dialect.lower()
+        try:
+            sqlglot.Dialect.get_or_raise(reader)
+        except ValueError:
+            return "snowflake"
+        return reader
+
+    @staticmethod
+    def _parse_scalar_sql(sql: str, reader: str) -> exp.Expression:
+        try:
+            statements = sqlglot.parse(sql, read=reader)
+        except SqlglotError as exc:
+            raise _UnresolvedMetricInputError("Could not parse row-level SQL") from exc
+        if len(statements) != 1 or statements[0] is None:
+            raise _UnresolvedMetricInputError("Expected one row-level SQL expression")
+        tree = statements[0]
+        if tree.find(exp.Query, exp.Alias, exp.AggFunc, exp.Window, exp.Star):
+            raise _UnresolvedMetricInputError("Expected a scalar expression over source columns")
+        return tree
+
+    @staticmethod
+    def _dataset_column(dataset: str, field: str) -> exp.Column:
+        return exp.Column(this=exp.to_identifier(field), table=exp.to_identifier(dataset))
+
+    def _qualify_metric_input(
+        self, sql: str, dataset: OssieDataset, fields: List[OssieField], preferred_name: Optional[str]
     ) -> str:
-        """Qualify col with semantic_model if it is an unqualified identifier or a COUNT-converted expr."""
-        # Quoted identifiers (e.g. "my col", `my col`) are not handled — qualifying
-        # them correctly requires dialect-aware parsing and is deferred as a follow-up.
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", col):
-            field = self._field_for_source(fields, col, col, preferred_name)
-            return f"{dataset.name}.{field}"
-        m = ConvertCountMetricToSumRule.COUNT_CONVERSION_RE.match(col)
-        if m:
-            source_col = m.group(1)
-            field = self._field_for_source(fields, source_col, source_col)
-            return f"CASE WHEN {dataset.name}.{field} IS NOT NULL THEN 1 ELSE 0 END"
-        return col
+        reader = self._sql_reader()
+        tree = self._parse_scalar_sql(sql, reader)
+        columns = list(tree.find_all(exp.Column))
+        if not columns:
+            return sql
+
+        # dbt aggregation inputs read one relation. Strip its qualifier when
+        # building the source field, then qualify the logical metric reference.
+        if any(column.table for column in columns):
+            try:
+                relation = sqlglot.parse_one(dataset.source, read=reader, into=exp.Table)
+            except SqlglotError as exc:
+                raise _UnresolvedMetricInputError(f"Could not identify the source relation of {dataset.name!r}") from exc
+            source_parts = [part.name.casefold() for part in relation.parts]
+            for column in columns:
+                parts = [part.name.casefold() for part in column.parts[:-1]]
+                if parts and parts != [dataset.name.casefold()] and parts != source_parts[-len(parts):]:
+                    raise _UnresolvedMetricInputError(f"Column qualifier {column.table!r} is outside {dataset.name!r}")
+
+        for column in columns:
+            source_sql = exp.Column(this=column.this.copy()).sql(dialect=reader)
+            field = self._field_for_source(fields, source_sql, column.name, preferred_name if column is tree else None)
+            resolved = self._dataset_column(dataset.name, field)
+            if column is tree:
+                tree = resolved
+            else:
+                column.replace(resolved)
+        return tree.sql(dialect=reader)
 
     def _resolve_cumulative(
         self,

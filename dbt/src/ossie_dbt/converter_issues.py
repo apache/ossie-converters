@@ -17,7 +17,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, List, TypeVar
+from typing import Generic, List, Optional, TypeVar
 
 
 class ConverterIssueType(Enum):
@@ -31,6 +31,7 @@ class ConverterIssueType(Enum):
     ROW_COUNT_METRIC_DROPPED = "ROW_COUNT_METRIC_DROPPED"
     AMBIGUOUS_REFERENCE_METRIC_DROPPED = "AMBIGUOUS_REFERENCE_METRIC_DROPPED"
     CONSTANT_METRIC_SEMANTIC_MODEL_LOSS = "CONSTANT_METRIC_SEMANTIC_MODEL_LOSS"
+    METRIC_INPUT_DROPPED = "METRIC_INPUT_DROPPED"
     UNSUPPORTED_METRIC_EXPRESSION = "UNSUPPORTED_METRIC_EXPRESSION"
     INVALID_DBT_CUSTOM_EXTENSION = "INVALID_DBT_CUSTOM_EXTENSION"
     DUPLICATE_DBT_CUSTOM_EXTENSION = "DUPLICATE_DBT_CUSTOM_EXTENSION"
@@ -42,6 +43,7 @@ class ConverterIssue:
 
     issue_type: ConverterIssueType
     element_name: str
+    detail: Optional[str] = None
 
 
 T = TypeVar("T")
