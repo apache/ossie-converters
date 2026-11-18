@@ -894,8 +894,8 @@ def _doc_with_metric_expression(expression: OssieExpression) -> OssieDocument:
 class TestOssieToMSIDatasetScopedMetrics:
     """Metrics declared on a dataset (`datasets[].metrics`) belong to that dataset.
 
-    Their expressions reference the dataset's own fields by unqualified name, so each
-    one is resolved against its own dataset only.
+    Their expressions reference the dataset's own fields by unqualified name and its
+    source columns as `source.column`, so each one is resolved against its own dataset only.
     """
 
     @staticmethod
@@ -1030,6 +1030,119 @@ class TestOssieToMSIDatasetScopedMetrics:
         assert result.issues == [
             ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "orders.running_amount")
         ]
+
+    @pytest.mark.parametrize("qualifier", ["source", "SOURCE", "Source"])
+    def test_source_column_resolves_to_its_own_dataset(self, qualifier: str) -> None:
+        """`source.column` names a column of the dataset's source that need not be a declared field."""
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                returns_metrics=[_ossie_metric("refunded_cents", f"SUM({qualifier}.REFUND_CENTS)")]
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        (metric,) = result.output.metrics
+        assert metric.type_params.expr == "REFUND_CENTS"
+        params = metric.type_params.metric_aggregation_params
+        assert params is not None
+        assert params.semantic_model == "returns"
+        assert params.agg == AggregationType.SUM
+        assert SemanticManifestValidator().validate_semantic_manifest(result.output).errors == ()
+
+    def test_source_qualifier_is_stripped_inside_a_scalar_body(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                orders_metrics=[
+                    _ossie_metric("paid_amount", "SUM(CASE WHEN source.status = 'paid' THEN source.gross ELSE 0 END)")
+                ]
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        (metric,) = result.output.metrics
+        assert metric.type_params.expr == "CASE WHEN status = 'paid' THEN gross ELSE 0 END"
+        params = metric.type_params.metric_aggregation_params
+        assert params is not None
+        assert params.semantic_model == "orders"
+
+    def test_source_column_reaches_past_a_field_of_the_same_name(self) -> None:
+        doc = _ossie_doc(
+            datasets=[
+                _ossie_dataset(
+                    "orders",
+                    fields=[_ossie_field("order_id"), _ossie_field("amount", "amount_cents / 100")],
+                    primary_key=["order_id"],
+                    metrics=[_ossie_metric("raw_amount", "SUM(source.amount)")],
+                )
+            ]
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        (metric,) = result.output.metrics
+        assert metric.type_params.expr == "amount"
+
+    def test_source_columns_in_a_ratio_stay_on_their_own_dataset(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                orders_metrics=[_ossie_metric("discount_rate", "SUM(source.discount) / SUM(source.gross)")]
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        simple = {
+            metric.type_params.expr: metric.type_params.metric_aggregation_params
+            for metric in result.output.metrics
+            if metric.type == MetricType.SIMPLE
+        }
+        assert sorted(simple) == ["discount", "gross"]
+        assert {params.semantic_model for params in simple.values() if params is not None} == {"orders"}
+
+    def test_own_dataset_name_as_qualifier_resolves(self) -> None:
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(orders_metrics=[_ossie_metric("total", "SUM(orders.amount)")])
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.issues == []
+        (metric,) = result.output.metrics
+        params = metric.type_params.metric_aggregation_params
+        assert params is not None
+        assert params.semantic_model == "orders"
+
+    @pytest.mark.parametrize(
+        "expression",
+        ["SUM(returns.amount)", "SUM(typo.amount)", "SUM(source.amount - returns.amount)"],
+        ids=["other_dataset", "unknown_qualifier", "mixed_with_other_dataset"],
+    )
+    def test_other_qualifier_is_dropped_with_issue(self, expression: str) -> None:
+        """A dataset metric resolves within its dataset, so no other qualifier can name it."""
+        doc = _ossie_doc(datasets=self._orders_and_returns(orders_metrics=[_ossie_metric("total", expression)]))
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert result.issues == [ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "orders.total")]
+
+    @pytest.mark.parametrize("field_name", ["source", "SOURCE"])
+    def test_field_named_source_hides_source_columns(self, field_name: str) -> None:
+        """Then `source` names the field, and `source.amount` is not a source column."""
+        doc = _ossie_doc(
+            datasets=[
+                _ossie_dataset(
+                    "orders",
+                    fields=[_ossie_field("order_id"), _ossie_field(field_name), _ossie_field("amount")],
+                    primary_key=["order_id"],
+                    metrics=[_ossie_metric("total", "SUM(source.amount)")],
+                )
+            ]
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert result.issues == [ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "orders.total")]
 
 
 class TestOssieToMSIDialectSelection:

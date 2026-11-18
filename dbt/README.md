@@ -151,7 +151,11 @@ dates, are written as strings.
 - `(expr_a) / (expr_b)` or `(expr_a) / NULLIF(expr_b, 0)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended. Generated helpers remain public and directly queryable, preserving compatibility with existing MetricFlow queries and saved queries. The owning ratio carries versioned `config.meta.ossie.generated_ratio_helpers` provenance (helper names and a signature of the complete generated definitions). Reverse conversion folds away helpers only when that family is unchanged, has no external metric or saved-query references, and exports without conversion issues. Missing, malformed, stale, or stripped provenance conservatively retains helpers; names alone never identify generated metrics. Legacy unmarked projects therefore retain their existing output. Private metrics always report `PRIVATE_METRIC_DROPPED`; inlining cannot preserve their visibility contract.
 - Dataset-scoped metrics (`datasets[].metrics`) are converted like model-level ones,
   but against their own dataset only, so an unqualified field name or a bare
-  `COUNT(*)` resolves to that dataset. MetricFlow metric names are unique across the
+  `COUNT(*)` resolves to that dataset. A source column written as `source.column`
+  (the `source` qualifier is case insensitive) becomes `column` on that dataset, unless
+  the dataset declares a field named `source`. Any other qualifier except the dataset's
+  own name, such as another dataset's name, is skipped with an
+  `UNSUPPORTED_METRIC_EXPRESSION` warning. MetricFlow metric names are unique across the
   manifest, so a dataset metric whose name is already used by a model-level metric or
   by an earlier dataset's metric is skipped with a `DUPLICATE_METRIC_NAME_DROPPED` warning
 - A root aggregate over a scalar SQL expression (for example,
