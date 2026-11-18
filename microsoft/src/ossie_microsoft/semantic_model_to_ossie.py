@@ -24,7 +24,7 @@ relationships, and ``OssieAIContext`` annotations -> AI context.
 Power BI constructs with no Apache Ossie counterpart -- format strings, display folders,
 perspectives, row-level security, KPIs, hierarchies, partitions, calculation groups,
 cross-filter direction and so on -- are not discarded. They are preserved verbatim in a
-``POWER_BI`` ``custom_extensions`` entry so that
+``POWER_BI`` ``nonportable_extensions`` entry so that
 :mod:`ossie_microsoft.ossie_to_semantic_model` can rebuild them, per the round-trip
 guidance in the repository ``README.md``. Anything that genuinely cannot be represented is
 reported through :func:`ossie_microsoft._common.warn`.
@@ -314,7 +314,7 @@ def _convert_table(table):
     if fields:
         dataset["fields"] = fields
 
-    # Stashes are written last so `custom_extensions` sorts after the core properties.
+    # Stashes are written last so `nonportable_extensions` sorts after the core properties.
     for field, column_stash in field_stashes:
         write_stash(field, column_stash)
 
@@ -592,7 +592,7 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 warn(
                     scope,
                     "measure has no expression; excluded from the Apache Ossie model "
-                    "and preserved in custom_extensions",
+                    "and preserved in nonportable_extensions",
                 )
                 excluded.append(
                     {"table": table["name"], "measure": measure, "index": index}
@@ -811,14 +811,24 @@ def _split_ai_context(obj, consumed):
 
 
 def _decode_ai_context(value):
-    """Decode JSON objects and arrays while leaving scalar annotation text unchanged."""
+    """Decode schema-compatible JSON objects, retaining other annotation text."""
     if not isinstance(value, str):
         return value
     try:
         decoded = json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return value
-    return decoded if isinstance(decoded, (dict, list)) else value
+    if not isinstance(decoded, dict):
+        return value
+    if "instructions" in decoded and not isinstance(decoded["instructions"], str):
+        return value
+    for key in ("synonyms", "examples"):
+        if key in decoded and (
+            not isinstance(decoded[key], list)
+            or any(not isinstance(item, str) for item in decoded[key])
+        ):
+            return value
+    return decoded
 
 
 def _stash_model(
@@ -847,15 +857,15 @@ def _stash_model(
         for table in excluded_tables:
             if table["name"] in metric_home_tables:
                 # The table is not a dataset, but its measures are first-class metrics,
-                # so only the table definition stays in custom_extensions.
+                # so only the table definition stays in nonportable_extensions.
                 detail = (
                     "excluded from the Apache Ossie model as a dataset; its measures are "
                     "exported as Apache Ossie metrics and the table definition is "
-                    "preserved in custom_extensions"
+                    "preserved in nonportable_extensions"
                 )
             else:
                 detail = (
-                    "excluded from the Apache Ossie model and preserved in custom_extensions"
+                    "excluded from the Apache Ossie model and preserved in nonportable_extensions"
                 )
             warn(f"table '{table['name']}'", f"{_exclusion_reason(table)}; {detail}")
     if excluded_relationships:

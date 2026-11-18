@@ -36,11 +36,11 @@ def test_rejects_unsupported_version_at_construction(version):
         SemanticModel(name="sales", version=version)
 
 
-@pytest.mark.parametrize("version_args", [{}, {"version": "0.2.0.dev0"}])
+@pytest.mark.parametrize("version_args", [{}, {"version": "0.3.0.dev0"}])
 def test_requires_datasets_at_export_but_allows_incremental_construction(version_args):
     model = SemanticModel(name="sales", **version_args)
     ontology = OssieOntology(
-        name="sales", version="0.2.0.dev0", ontology=OntologyComponent()
+        name="sales", version="0.3.0.dev0", ontology=OntologyComponent()
     )
     ontology.add_ontology_mapping(
         OntologyMapping(
@@ -56,7 +56,7 @@ def test_requires_datasets_at_export_but_allows_incremental_construction(version
     exported = OssieToSpecConverter.convert(ontology).dump_dict()
 
     assert exported["ontology_mappings"][0]["semantic_model"] == {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [{"name": "orders", "source": "sales.public.orders"}],
     }

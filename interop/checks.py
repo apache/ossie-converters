@@ -170,6 +170,11 @@ def native_content(path, native_format, output_shape):
                     for model in models
                 )
                 is_model = bool(models)
+            elif native_format == "ossie":
+                # The native artifact is an Ossie model; count its fields and metrics.
+                counts = inventory(data)
+                count = counts["fields"] + counts["metrics"]
+                is_model = counts["datasets"] > 0
             elif native_format != "databricks":
                 count = _additional_members(data, native_format)
                 is_model = count > 0

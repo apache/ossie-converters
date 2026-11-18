@@ -16,9 +16,14 @@
 # under the License.
 
 # One label per converter
+converter/ataccama:
+  - changed-files:
+      - any-glob-to-any-file: 'ataccama/**'
+
 converter/atlan:
   - changed-files:
       - any-glob-to-any-file: 'atlan/**'
+
 converter/bigquery:
   - changed-files:
       - any-glob-to-any-file: 'bigquery/**'

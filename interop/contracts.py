@@ -33,6 +33,7 @@ _DIALECTS = {
     "OSSIE_SQL_2026": None,
     "DATABRICKS": "databricks",
     "SNOWFLAKE": "snowflake",
+    "CLICKHOUSE": "clickhouse",
 }
 
 
@@ -216,6 +217,11 @@ def check_native_sources(path: Path, native_format, oracle):
                 actual += [
                     table_parts(cube.get("sql_table"))
                     for cube in data.get("cubes") or []
+                ]
+            elif native_format == "ossie":
+                actual += [
+                    table_parts(dataset.get("source"))
+                    for dataset in data.get("datasets") or []
                 ]
             elif native_format == "databricks":
 

@@ -60,6 +60,15 @@ dependencies = [
 [project.scripts]
 ossie-thoughtspot = "ossie_thoughtspot.cli:main"
 
+# The vendor validator apache/ossie#697 looks up. `validate.py --vendor
+# THOUGHTSPOT` finds this entry point only when the package is installed in
+# the environment validate.py runs in:
+#   uv run --with apache-ossie-thoughtspot validation/validate.py #       --vendor THOUGHTSPOT model.yaml
+# The hook merged as apache/ossie#697 on 2026-11-12, so this group is looked
+# up today.
+[project.entry-points."ossie.vendor_validators"]
+THOUGHTSPOT = "ossie_thoughtspot.vendor_check:check"
+
 [project.urls]
 homepage = "https://ossie.apache.org/"
 repository = "https://github.com/apache/ossie-converters/"

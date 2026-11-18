@@ -38,7 +38,7 @@ git submodule update --init
 ```
 
 Repository-level cross-converter acceptance and pairwise checks live in
-[`interop/`](interop/README.md). The matrix registers all 24 converter projects,
+[`interop/`](interop/README.md). The matrix registers all 25 converter projects,
 with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
 
 Contributions follow the Apache Ossie
@@ -92,7 +92,7 @@ Read an Ossie semantic model and produce the equivalent vendor-specific represen
 - Ossie → Snowflake semantic model definition
 - Ossie → dbt `semantic_models` YAML
 - Ossie → Tableau data source / Salesforce semantic layer
-- Ossie → Databricks semantic layer definition
+- Ossie → Databricks Unity Catalog metric views
 - Ossie → LookML (Looker / BigQuery)
 
 ### Import (Vendor → Apache Ossie)
@@ -120,6 +120,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `HOLISTICS` | Holistics AML dataset |
 | `ATLAN` | Atlan metric registry records |
 | `LIGHTDASH` | Lightdash semantic layer (model files, or dbt `meta`) |
+| `ATACCAMA` | Ataccama ONE catalog metadata |
 
 [`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped spoke. It reads one Snowflake semantic view, writes one Ossie document, writes a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. It does not call `snowflake` (Cortex Analyst export only) or `wisdom` (that spoke drops synonyms and field or metric `ai_context`).
 

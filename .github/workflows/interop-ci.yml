@@ -26,9 +26,11 @@ on:
       - 'ossie'
       - '.gitmodules'
       - '.github/workflows/interop-ci.yml'
+      - 'ataccama/**'
       - 'atlan/**'
       - 'bigquery/**'
       - 'cube/**'
+      - 'databricks/**'
       - 'dbt/**'
       - 'gooddata/**'
       - 'hex/**'
@@ -45,7 +47,6 @@ on:
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
-      - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'polaris/**'
@@ -58,9 +59,11 @@ on:
       - 'ossie'
       - '.gitmodules'
       - '.github/workflows/interop-ci.yml'
+      - 'ataccama/**'
       - 'atlan/**'
       - 'bigquery/**'
       - 'cube/**'
+      - 'databricks/**'
       - 'dbt/**'
       - 'gooddata/**'
       - 'hex/**'
@@ -77,7 +80,6 @@ on:
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
-      - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'polaris/**'
@@ -111,13 +113,12 @@ jobs:
           python-version: '3.12'
 
       - name: Set up JDK 21
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: '21'
           distribution: temurin
           cache: maven
           cache-dependency-path: |
-            databricks/java/pom.xml
             salesforce/pom.xml
 
       - name: Install uv
