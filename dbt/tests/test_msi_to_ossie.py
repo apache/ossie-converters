@@ -895,12 +895,12 @@ class TestMetricConversion:
         assert _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(1)"
 
     def test_filtered_count_of_all_rows_keeps_the_filter(self) -> None:
-        orders = semantic_model_with_guaranteed_meta(name="orders")
+        orders = semantic_model_with_guaranteed_meta(name="orders", dimensions=[_dimension("status")])
         metric = _metric_with_agg("paid_orders", AggregationType.COUNT, "1", "orders", filter_sql="status = 'paid'")
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[orders], metrics=[metric])).output
 
         assert (
-            _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(CASE WHEN status = 'paid' THEN 1 END)"
+            _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(CASE WHEN orders.status = 'paid' THEN 1 END)"
         )
 
     # --- RATIO ---
@@ -1052,6 +1052,8 @@ class TestMetricConversion:
         """
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            entities=[_entity("order", EntityType.PRIMARY, expr="order_id")],
+            dimensions=[_dimension("path")],
             measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
         )
         revenue_m = _simple_metric("revenue", "revenue")
@@ -1073,10 +1075,10 @@ class TestMetricConversion:
         revenue_ossie = next(m for m in _ossie_metrics(result) if m.name == "revenue")
         scaled_ossie = next(m for m in _ossie_metrics(result) if m.name == "scaled")
         assert revenue_ossie.expression.dialects[0].expression == (
-            r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.revenue END)"
+            r"SUM(CASE WHEN orders.path LIKE 'a\b' THEN orders.revenue END)"
         )
         assert scaled_ossie.expression.dialects[0].expression == (
-            r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.revenue END) * 2"
+            r"SUM(CASE WHEN orders.path LIKE 'a\b' THEN orders.revenue END) * 2"
         )
 
     def test_derived_metric_drops_a_used_reference_listed_twice_with_differing_filters(self) -> None:
@@ -1089,6 +1091,8 @@ class TestMetricConversion:
         """
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            entities=[_entity("order", EntityType.PRIMARY, expr="order_id")],
+            dimensions=[_dimension("region")],
             measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
         )
         revenue_m = _simple_metric("revenue", "revenue")
@@ -1152,6 +1156,8 @@ class TestMetricConversion:
         region_eu = "{{ Dimension('order__region') }} = 'EU'"
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            entities=[_entity("order", EntityType.PRIMARY, expr="order_id")],
+            dimensions=[_dimension("region")],
             measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
         )
         revenue_m = _simple_metric("revenue", "revenue")
@@ -1174,7 +1180,7 @@ class TestMetricConversion:
 
         scaled_ossie = next(m for m in _ossie_metrics(result.output) if m.name == "scaled")
         assert scaled_ossie.expression.dialects[0].expression == (
-            "SUM(CASE WHEN order__region = 'EU' THEN orders.revenue END) * 2"
+            "SUM(CASE WHEN orders.region = 'EU' THEN orders.revenue END) * 2"
         )
         assert result.issues == []
 
@@ -1884,40 +1890,35 @@ class TestConverterIssues:
 
 
 class TestFilterRendering:
-    """Unit tests for the Jinja → SQL rendering of where-filter templates."""
+    @pytest.mark.parametrize(
+        "template,arguments",
+        [
+            ("{{ Dimension('order__status') }}", ("Dimension", "order__status", (), None)),
+            ("{{ Dimension('status', entity_path=['order']) }}", ("Dimension", "status", ["order"], None)),
+            ("{{ Dimension('order__ds').grain('day') }}", ("Dimension", "order__ds", (), "day")),
+            ("{{ TimeDimension('order__ds', 'week') }}", ("TimeDimension", "order__ds", (), "week")),
+            ("{{ TimeDimension('metric_time') }}", ("TimeDimension", "metric_time", (), None)),
+            ("{{ Entity('user') }}", ("Entity", "user", (), None)),
+            ("{{ Metric('revenue') }}", ("Metric", "revenue", (), None)),
+        ],
+    )
+    def test_filter_references_pass_arguments_to_resolver(self, template, arguments) -> None:
+        def resolve(*actual):
+            assert actual == arguments
+            return "orders.resolved"
 
-    def test_plain_sql_passthrough(self) -> None:
-        assert _render_filter_template("status = 'paid'") == "status = 'paid'"
+        assert _render_filter_template(template, resolve) == "orders.resolved"
 
-    def test_dimension_reference(self) -> None:
-        assert _render_filter_template("{{ Dimension('order__status') }} = 'paid'") == "order__status = 'paid'"
-
-    def test_dimension_with_grain(self) -> None:
-        result = _render_filter_template("{{ Dimension('order__ds').grain('day') }} >= '2023-01-01'")
-        assert result == "order__ds__day >= '2023-01-01'"
-
-    def test_time_dimension_with_grain_arg(self) -> None:
-        result = _render_filter_template("{{ TimeDimension('order__ds', 'week') }} >= '2023-01-01'")
-        assert result == "order__ds__week >= '2023-01-01'"
-
-    def test_time_dimension_without_grain(self) -> None:
-        assert _render_filter_template("{{ TimeDimension('metric_time') }} IS NOT NULL") == "metric_time IS NOT NULL"
-
-    def test_entity_reference(self) -> None:
-        assert _render_filter_template("{{ Entity('user') }} != 'bot'") == "user != 'bot'"
-
-    def test_metric_reference(self) -> None:
-        assert _render_filter_template("{{ Metric('revenue') }} > 0") == "revenue > 0"
-        
     def test_ssti_gadget_payload_is_blocked(self) -> None:  # noqa: D102
         with pytest.raises(jinja2.exceptions.SecurityError):
-            _render_filter_template("{{ cycler.__init__.__globals__.os.popen('id').read() }}")
+            _render_filter_template("{{ cycler.__init__.__globals__.os.popen('id').read() }}", lambda *_: "unused")
 
 
 class TestMetricFilterFlattening:
     def test_metric_level_filter_inlines_case_when(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            dimensions=[_dimension("status")],
             measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
         )
         metric = PydanticMetric(
@@ -1933,12 +1934,13 @@ class TestMetricFilterFlattening:
 
         assert (
             _ossie_metrics(result)[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN status = 'paid' THEN orders.revenue END)"
+            == "SUM(CASE WHEN orders.status = 'paid' THEN orders.revenue END)"
         )
 
     def test_measure_level_filter_inlines_case_when(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            dimensions=[_dimension("status")],
             measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
         )
         metric = PydanticMetric(
@@ -1956,12 +1958,13 @@ class TestMetricFilterFlattening:
 
         assert (
             _ossie_metrics(result)[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN status = 'paid' THEN orders.revenue END)"
+            == "SUM(CASE WHEN orders.status = 'paid' THEN orders.revenue END)"
         )
 
     def test_metric_and_measure_filters_combined_with_and(self, snapshot: SnapshotAssertion) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            dimensions=[_dimension("status"), _dimension("region")],
             measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
         )
         metric = PydanticMetric(
@@ -1978,13 +1981,15 @@ class TestMetricFilterFlattening:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
         assert _ossie_metrics(result)[0].expression.dialects[0].expression == (
-            "SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.revenue END)"
+            "SUM(CASE WHEN (orders.status = 'paid') AND (orders.region = 'intl') THEN orders.revenue END)"
         )
         assert result.to_ossie_yaml() == snapshot
 
     def test_jinja_dimension_reference_rendered(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            entities=[_entity("order", EntityType.PRIMARY, expr="order_id")],
+            dimensions=[_dimension("country")],
             measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
         )
         metric = PydanticMetric(
@@ -2000,12 +2005,89 @@ class TestMetricFilterFlattening:
 
         assert (
             _ossie_metrics(result)[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN order__country = 'US' THEN orders.revenue END)"
+            == "SUM(CASE WHEN orders.country = 'US' THEN orders.revenue END)"
+        )
+
+    @pytest.mark.parametrize("multiple_joins", [False, True])
+    def test_linked_dimension_resolves_only_with_one_representable_join(self, multiple_joins: bool) -> None:
+        order_entities = [_entity("order", EntityType.PRIMARY), _entity("customer", EntityType.FOREIGN)]
+        customer_entities = [_entity("customer", EntityType.PRIMARY)]
+        if multiple_joins:
+            order_entities.append(_entity("buyer", EntityType.FOREIGN))
+            customer_entities.append(_entity("buyer", EntityType.UNIQUE))
+        orders = semantic_model_with_guaranteed_meta(name="orders", entities=order_entities)
+        customers = semantic_model_with_guaranteed_meta(
+            name="customers", entities=customer_entities, dimensions=[_dimension("tier", expr="account_tier")]
+        )
+        filter_sql = "{{ Dimension('customer__tier', entity_path=['order']) }} = 'gold'"
+        metric = _metric_with_agg("gold_sales", AggregationType.SUM, "amount", "orders", filter_sql=filter_sql)
+        result = MSIToOssieConverter().convert(_manifest([orders, customers], [metric]))
+
+        if multiple_joins:
+            assert result.output.metrics is None
+            assert result.issues[0].issue_type is ConverterIssueType.METRIC_FILTER_DROPPED
+            assert result.issues[0].element_name == "gold_sales"
+        else:
+            assert result.issues == []
+            assert _ossie_metrics(result.output)[0].expression.dialects[0].expression == (
+                "SUM(CASE WHEN customers.tier = 'gold' THEN orders.amount END)"
+            )
+
+    def test_linked_dimension_can_follow_a_one_to_one_relationship(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders", entities=[_entity("customer", EntityType.UNIQUE)]
+        )
+        customers = semantic_model_with_guaranteed_meta(
+            name="customers", entities=[_entity("customer", EntityType.PRIMARY)], dimensions=[_dimension("tier")]
+        )
+        metric = _metric_with_agg(
+            "gold_sales", AggregationType.SUM, "amount", "orders",
+            filter_sql="{{ Dimension('customer__tier') }} = 'gold'",
+        )
+        result = MSIToOssieConverter().convert(_manifest([orders, customers], [metric]))
+
+        assert result.issues == []
+        assert _ossie_metrics(result.output)[0].expression.dialects[0].expression == (
+            "SUM(CASE WHEN customers.tier = 'gold' THEN orders.amount END)"
+        )
+
+    @pytest.mark.parametrize(
+        "filter_sql",
+        [
+            "{{ TimeDimension('ordered_at', 'month') }} IS NOT NULL",
+            "{{ Dimension('ordered_at').date_part('day') }} > 1",
+            "{{ Dimension('missing') }} = 'unknown'",
+            "{{ Metric('revenue') }} > 0",
+        ],
+    )
+    def test_unrepresentable_filter_drops_only_the_affected_metric(self, filter_sql: str) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[_dimension("ordered_at", DimensionType.TIME, granularity=TimeGranularity.DAY)],
+        )
+        filtered = _metric_with_agg("filtered", AggregationType.SUM, "amount", "orders", filter_sql=filter_sql)
+        unfiltered = _metric_with_agg("all_sales", AggregationType.SUM, "amount", "orders")
+        result = MSIToOssieConverter().convert(_manifest([orders], [filtered, unfiltered]))
+
+        assert [metric.name for metric in _ossie_metrics(result.output)] == ["all_sales"]
+        assert result.issues[0].issue_type is ConverterIssueType.METRIC_FILTER_DROPPED
+        assert result.issues[0].element_name == "filtered"
+
+    def test_raw_filter_qualification_preserves_native_function_spelling(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(name="orders", dimensions=[_dimension("status")])
+        metric = _metric_with_agg(
+            "paid_sales", AggregationType.SUM, "amount", "orders", filter_sql="NVL(status, 'unpaid') = 'paid'"
+        )
+        output = MSIToOssieConverter().convert(_manifest([orders], [metric])).output
+
+        assert _ossie_metrics(output)[0].expression.dialects[0].expression == (
+            "SUM(CASE WHEN NVL(orders.status, 'unpaid') = 'paid' THEN orders.amount END)"
         )
 
     def test_ratio_metric_filter_propagated_to_both_sides(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            dimensions=[_dimension("status")],
             measures=[
                 _measure("revenue", agg=AggregationType.SUM, expr="amount"),
                 _measure("order_count", agg=AggregationType.COUNT, expr="order_id"),
@@ -2033,14 +2115,15 @@ class TestMetricFilterFlattening:
 
         paid_arpu = next(m for m in _ossie_metrics(result) if m.name == "paid_arpu")
         assert paid_arpu.expression.dialects[0].expression == (
-            "(SUM(CASE WHEN status = 'paid' THEN orders.revenue END))"
+            "(SUM(CASE WHEN orders.status = 'paid' THEN orders.revenue END))"
             " / "
-            "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
+            "NULLIF(SUM(CASE WHEN orders.status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
         )
 
     def test_derived_metric_filter_propagated_to_sub_expressions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
+            dimensions=[_dimension("status")],
             measures=[
                 _measure("revenue", agg=AggregationType.SUM, expr="amount"),
                 _measure("cost", agg=AggregationType.SUM, expr="cost_amount"),
@@ -2066,9 +2149,9 @@ class TestMetricFilterFlattening:
 
         paid_profit = next(m for m in _ossie_metrics(result) if m.name == "paid_profit")
         assert paid_profit.expression.dialects[0].expression == (
-            "SUM(CASE WHEN status = 'paid' THEN orders.revenue END)"
+            "SUM(CASE WHEN orders.status = 'paid' THEN orders.revenue END)"
             " - "
-            "SUM(CASE WHEN status = 'paid' THEN orders.cost END)"
+            "SUM(CASE WHEN orders.status = 'paid' THEN orders.cost END)"
         )
 
     def test_no_filter_produces_plain_expression(self) -> None:

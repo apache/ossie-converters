@@ -118,6 +118,20 @@
   - name: orders
     source: schema.table
     fields:
+    - name: status
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: status
+      dimension:
+        is_time: false
+    - name: region
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: region
+      dimension:
+        is_time: false
     - name: revenue
       expression:
         dialects:
@@ -128,8 +142,8 @@
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.revenue
-          END)
+        expression: SUM(CASE WHEN (orders.status = 'paid') AND (orders.region = 'intl')
+          THEN orders.revenue END)
   
   '''
 # ---
