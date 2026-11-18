@@ -2185,7 +2185,12 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
             if expr is None:
                 continue
             dialect = measure_dialect(measure, source_dialect) or DIALECT_ANSI
-            local = native_local_expression(expr, dialect, cname)
+            key_operand = None
+            if resolver.aggregate_of(*key) == "count" and measure.get("sql") is None:
+                # The resolver writes a bare count over declared primary-key
+                # fields. Its filters can still refer directly to source columns.
+                key_operand = primary_key_operand(cname, pk_by_cube[cname], source_dialect=dialect)
+            local = native_local_expression(expr, dialect, cname, key_operand=key_operand)
             if local:
                 native[key] = local
     metric_names = _metric_names_of(resolver, decomposed, scoped=origins.keys() | native.keys())

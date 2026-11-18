@@ -885,3 +885,18 @@ def test_authored_model_metric_keeps_scope_after_export():
     document = yaml.safe_load(restored)
     assert document["metrics"][0]["name"] == "authored"
     assert not document["datasets"][0].get("metrics")
+
+
+def test_cross_cube_formula_round_trip_keeps_native_primary_key_count():
+    from pathlib import Path
+
+    fixture = Path(__file__).resolve().parents[2] / "interop/fixtures/cube/metric_bindings/model.yml"
+    imported, _ = convert_cube_to_ossie({"model.yml": fixture.read_text()})
+    exported, issues = convert_ossie_to_cube(imported)
+    assert not list(issues)
+    cubes = by_name(yaml.safe_load(exported["model.yml"])["cubes"])
+    count = by_name(cubes["customer"]["measures"])["customer_count"]
+    assert count["type"] == "count"
+    assert "sql" not in count
+    formula = by_name(cubes["sales"]["measures"])["revenue_per_customer"]
+    assert formula["sql"] == "{CUBE.total_revenue} / {customer.customer_count}"

@@ -215,12 +215,13 @@ def model_fields_resolve(expr, dialect, member_names):
     return True
 
 
-def native_local_expression(text, dialect, cube, *, bare_source=False):
+def native_local_expression(text, dialect, cube, *, bare_source=False, key_operand=None):
     """Rebind physical columns from a native Cube measure to the Ossie source."""
     text = text.strip()
     tree = parse(text, dialect)
     if tree is None or tree.find(sqlglot.exp.Query, sqlglot.exp.Command):
         return None
+    key_start = text.rfind(key_operand) if key_operand else -1
     edits = []
     for column in tree.find_all(sqlglot.exp.Column):
         parts = column.parts
@@ -233,7 +234,10 @@ def native_local_expression(text, dialect, cube, *, bare_source=False):
         pos = parts[-1].meta.get("start")
         if pos is None or (len(parts) == 2 and start is None):
             return None
-        edits.append((pos if start is None else start, pos))
-    for start, end in sorted(set(edits), reverse=True):
-        text = text[:start] + "source." + text[end:]
+        key_column = key_start >= 0 and start is not None and (
+            key_start <= start < key_start + len(key_operand)
+        )
+        edits.append((pos if start is None else start, pos, "" if key_column else "source."))
+    for start, end, qualifier in sorted(set(edits), reverse=True):
+        text = text[:start] + qualifier + text[end:]
     return {"dialects": [{"dialect": dialect, "expression": text}]}
