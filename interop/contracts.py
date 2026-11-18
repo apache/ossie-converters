@@ -34,6 +34,8 @@ _DIALECTS = {
     "DATABRICKS": "databricks",
     "SNOWFLAKE": "snowflake",
     "CLICKHOUSE": "clickhouse",
+    "POSTGRES": "postgres",
+    "REDSHIFT": "redshift",
 }
 
 

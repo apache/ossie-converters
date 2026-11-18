@@ -746,3 +746,74 @@ def test_clickhouse_dialect_parses_and_rewrites_column_references():
         dialect="CLICKHOUSE",
     )
     assert [c.name for c in cols] == ["created_at", "revenue"]
+
+
+@pytest.mark.parametrize(
+    ("dialect", "sqlglot_name", "expression", "names"),
+    [
+        # sqlglot's default dialect cannot parse the containment operator.
+        (
+            "POSTGRES",
+            "postgres",
+            "tags @> ARRAY['vip'] AND payload ->> 'plan' = 'pro'",
+            ["tags", "payload"],
+        ),
+        # Read without the dialect, `day` comes back as a column.
+        (
+            "REDSHIFT",
+            "redshift",
+            "DATEDIFF(day, created_at, shipped_at)",
+            ["created_at", "shipped_at"],
+        ),
+    ],
+)
+def test_postgres_and_redshift_dialects_parse_and_find_column_references(
+    dialect, sqlglot_name, expression, names
+):
+    from ossie_holistics import sqlrefs
+
+    assert sqlrefs.SQLGLOT_DIALECT[dialect] == sqlglot_name
+    cols = sqlrefs.columns(expression, dialect=dialect)
+    assert [c.name for c in cols] == names
+
+
+@pytest.mark.parametrize(
+    ("dialect", "body", "written"),
+    [
+        ("POSTGRES", "tags @> ARRAY['vip']", "{{ #SOURCE.tags }} @> ARRAY['vip']"),
+        (
+            "REDSHIFT",
+            "DATEDIFF(day, created_at, shipped_at)",
+            "DATEDIFF(day, {{ #SOURCE.created_at }}, {{ #SOURCE.shipped_at }})",
+        ),
+    ],
+)
+def test_a_postgres_or_redshift_body_is_kept_for_that_warehouse(dialect, body, written):
+    """`to-aml` aimed at the warehouse a body is written for keeps the body.
+
+    While the dialect was missing from `SQLGLOT_DIALECT` the CLI refused it as a
+    target and the body was read in sqlglot's default dialect, which cannot
+    parse the first of these and takes `day` in the second for a column.
+    """
+    document = {
+        "version": "0.3.0.dev0",
+        "name": "shop",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "public.orders",
+                "primary_key": ["id"],
+                "fields": [
+                    {
+                        "name": name,
+                        "expression": {"dialects": [{"dialect": dialect, "expression": sql}]},
+                    }
+                    for name, sql in (("id", "id"), ("derived", body))
+                ],
+            }
+        ],
+    }
+    result = ossie_to_aml.convert(document, dialect, data_source_name="warehouse")
+
+    orders = next(text for name, text in result.files if name.endswith("orders.model.aml"))
+    assert f"definition: @sql {written};;" in orders

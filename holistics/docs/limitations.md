@@ -116,13 +116,13 @@ materialised as a table in Holistics first.
 
 ### Warehouse SQL has no dialect of its own
 
-`Dialect` in `core-spec/ossie-schema.json` is a closed enumeration. Its members
-today are `ANSI_SQL`, `SNOWFLAKE`, `MDX`, `TABLEAU`, `DATABRICKS`, `MAQL`, `BIGQUERY`, `SIGMA`, `THOUGHTSPOT`, `DAX`, `HOLISTICS_AQL`, and
-`OSSIE_SQL_2026`.
+`Dialect` in `core-spec/ossie-schema.json` accepts any non-empty string, and `extensions/dialects.md` registers the
+tokens in use.
 
 `HOLISTICS_AQL` covers AQL. It does not cover a `@sql` body, because that body is the warehouse's SQL rather than a
 Holistics language, and AML does not record which warehouse. A computed `@sql` body takes its dialect from
-`--sql-dialect`, which must name an existing member.
+`--sql-dialect`, which must name a registered SQL dialect this converter can parse. The [README](../README.md) lists
+them.
 
 
 Part of the [Apache Ossie Holistics converter](../README.md). See also [the fixture](fixture.md), [the mapping](mapping.md), [expression translation](expressions.md), [measures](measures.md), [the HOLISTICS payload](vendor-payload.md), [Ossie to AML](reverse.md) and [Ossie SQL to AQL](aql.md).
