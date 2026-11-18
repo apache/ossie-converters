@@ -72,6 +72,11 @@ Some Ossie concepts (e.g., `ai_context` on relationships) do not have a native c
 Snowflake metric result types are inferred from their expressions, so Ossie
 metric `datatype` values are not emitted as `data_type` properties.
 
+Dataset-scoped metrics (`datasets[].metrics`) are emitted as Cortex Analyst
+`metrics` alongside model-root metrics, with the Ossie expression passed
+through. A later metric that reuses a name already emitted is skipped with a
+warning.
+
 A unique key that repeats the dataset's primary key, with its columns in any
 order, is not emitted as a `unique_keys` entry: Snowflake semantic views
 declare a column as `PRIMARY KEY` or `UNIQUE`, not both.

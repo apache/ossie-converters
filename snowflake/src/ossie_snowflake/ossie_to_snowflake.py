@@ -163,16 +163,9 @@ def _convert_model(ossie):
         if converted_rels:
             result["relationships"] = converted_rels
 
-    # metrics
-    metrics = ossie.get("metrics")
-    if metrics:
-        converted_metrics = []
-        for m in metrics:
-            converted = _convert_named_expr(m, "metric")
-            if converted is not None:
-                converted_metrics.append(converted)
-        if converted_metrics:
-            result["metrics"] = converted_metrics
+    converted_metrics = _convert_metrics(ossie)
+    if converted_metrics:
+        result["metrics"] = converted_metrics
 
     dropped_ai = ["ai_context"] if isinstance(ai_context, dict) and ai_context else []
     _warn_dropped_fields(ossie, "model", extra_dropped=dropped_ai)
@@ -260,6 +253,37 @@ def _convert_dataset(dataset):
     _warn_dropped_fields(dataset, f"dataset '{name}'", extra_dropped=dropped_ai)
 
     return result
+
+
+def _convert_metrics(ossie):
+    """Snowflake Cortex Analyst metrics are a flat list. Dataset-scoped Ossie
+    metrics (`datasets[].metrics`) are emitted there alongside model-root
+    metrics. A later metric with the same name is skipped with a warning."""
+    converted = []
+    seen = {}
+    for dataset in ossie.get("datasets") or []:
+        ds_name = dataset.get("name") or "<unnamed>"
+        for metric in dataset.get("metrics") or []:
+            _append_metric(converted, seen, metric, dataset_name=ds_name)
+    for metric in ossie.get("metrics") or []:
+        _append_metric(converted, seen, metric)
+    return converted
+
+
+def _append_metric(converted, seen, metric, dataset_name=None):
+    item = _convert_named_expr(metric, "metric")
+    if item is None:
+        return
+    name = item["name"]
+    if dataset_name is None:
+        source = f"metric '{name}'"
+    else:
+        source = f"dataset-scoped metric '{dataset_name}.{name}'"
+    if name in seen:
+        warnings.warn(f"{source} collides with {seen[name]}; skipped")
+        return
+    seen[name] = source
+    converted.append(item)
 
 
 def _classify_field(field):
