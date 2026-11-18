@@ -82,7 +82,6 @@ _MSI_TO_OSSIE_DATATYPE = {
 @dataclass(frozen=True)
 class _EntityEntry:
     dataset: str
-    col: str
     entity_type: EntityType
 
 
@@ -119,14 +118,6 @@ def _has_nonportable_semantics(
         if dependency is not None and _has_nonportable_semantics(dependency, metric_index, visiting):
             return True
     return False
-
-
-@dataclass(frozen=True)
-class _RelationshipDirection:
-    from_dataset: str
-    to_dataset: str
-    from_col: str
-    to_col: str
 
 
 class AmbiguousDerivedReferenceError(Exception):
@@ -590,34 +581,18 @@ class MSIToOssieConverter:
                         ConverterIssue(issue_type=ConverterIssueType.NATURAL_ENTITY_DROPPED, element_name=entity.name)
                     )
                     continue
-                col = entity.expr if entity.expr is not None else entity.name
-                index[entity.name].append(_EntityEntry(dataset=sm.name, col=col, entity_type=entity.type))
+                index[entity.name].append(_EntityEntry(dataset=sm.name, entity_type=entity.type))
         return dict(index), issues
 
-    @staticmethod
-    def _relationship_direction(
-        ds_a: str, col_a: str, type_a: EntityType, ds_b: str, col_b: str, type_b: EntityType
-    ) -> _RelationshipDirection:
-        """Return a _RelationshipDirection obeying Ossie directionality.
-
-        Ossie spec: `from` is the many-side (FK holder), `to` is the one-side (PK holder).
-        FOREIGN entities are always the many-side; PRIMARY/UNIQUE are the one-side.
-        When both sides share the same cardinality tier, break ties alphabetically by dataset name.
-        """
-        one_side_types = {EntityType.PRIMARY, EntityType.UNIQUE}
-        a_is_one_side = type_a in one_side_types
-        b_is_one_side = type_b in one_side_types
-
-        if a_is_one_side and not b_is_one_side:
-            return _RelationshipDirection(from_dataset=ds_b, to_dataset=ds_a, from_col=col_b, to_col=col_a)
-        if b_is_one_side and not a_is_one_side:
-            return _RelationshipDirection(from_dataset=ds_a, to_dataset=ds_b, from_col=col_a, to_col=col_b)
-        # Same cardinality tier — use alphabetical order for determinism.
-        if ds_a <= ds_b:
-            return _RelationshipDirection(from_dataset=ds_a, to_dataset=ds_b, from_col=col_a, to_col=col_b)
-        return _RelationshipDirection(from_dataset=ds_b, to_dataset=ds_a, from_col=col_b, to_col=col_a)
-
     _ONE_SIDE_ENTITY_TYPES = {EntityType.PRIMARY, EntityType.UNIQUE}
+
+    @classmethod
+    def _relationship_direction(cls, a: _EntityEntry, b: _EntityEntry) -> Tuple[str, str]:
+        """Put the many-side dataset first, breaking ties by dataset name."""
+        from_entry, to_entry = sorted(
+            (a, b), key=lambda entry: (entry.entity_type in cls._ONE_SIDE_ENTITY_TYPES, entry.dataset)
+        )
+        return from_entry.dataset, to_entry.dataset
 
     @staticmethod
     def _build_relationships(
@@ -639,21 +614,14 @@ class MSIToOssieConverter:
                     and entry_b.entity_type not in MSIToOssieConverter._ONE_SIDE_ENTITY_TYPES
                 ):
                     continue
-                direction = MSIToOssieConverter._relationship_direction(
-                    entry_a.dataset,
-                    entry_a.col,
-                    entry_a.entity_type,
-                    entry_b.dataset,
-                    entry_b.col,
-                    entry_b.entity_type,
-                )
+                from_dataset, to_dataset = MSIToOssieConverter._relationship_direction(entry_a, entry_b)
                 relationships.append(
                     OssieRelationship(
-                        name=f"{direction.from_dataset}__{direction.to_dataset}__{entity_name}",
-                        from_dataset=direction.from_dataset,
-                        to=direction.to_dataset,
-                        from_columns=[direction.from_col],
-                        to_columns=[direction.to_col],
+                        name=f"{from_dataset}__{to_dataset}__{entity_name}",
+                        from_dataset=from_dataset,
+                        to=to_dataset,
+                        from_columns=[entity_name],
+                        to_columns=[entity_name],
                     )
                 )
         return relationships
