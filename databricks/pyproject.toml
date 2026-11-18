@@ -55,6 +55,8 @@ repository = "https://github.com/apache/ossie-converters/"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ossie_databricks"]
 
+[tool.hatch.build.hooks.custom]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

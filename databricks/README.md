@@ -102,7 +102,8 @@ specification. It works from Ossie to Databricks only.
 
 The package does not implement Ossie checks. It loads `validation/validate.py` from the `ossie`
 submodule and runs it on each Ossie model that it reads or writes. An invalid input raises
-`ConversionError`. To use another apache/ossie checkout, set `OSSIE_REPO` to its root directory.
+`ConversionError`. Installed wheels include the pinned Ossie validator and schema. To use a
+different apache/ossie checkout, set `OSSIE_REPO` to its root directory.
 The package does not validate metric views beyond their version: Databricks validates a metric
 view when it is created.
 
