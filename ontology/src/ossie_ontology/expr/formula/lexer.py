@@ -31,6 +31,7 @@ class FormulaLexer:
         'EXISTS': 'EXISTS',
         'FALSE': 'FALSE',
         'GROUP': 'GROUP',
+        'IN': 'IN',
         'MAX' : 'MAX',
         'MIN' : 'MIN',
         'NOT': 'NOT',
