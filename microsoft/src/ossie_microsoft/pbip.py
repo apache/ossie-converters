@@ -18,14 +18,15 @@
 """Resolve a Power BI project folder into TMDL documents.
 
 The documents keep the PBIP folder layout. TOM resolves references between
-documents before the existing TMSL-to-Ossie mapping runs.
+documents before the existing TMSL-to-Ossie mapping runs. A project that stores its
+model as TMSL (``model.bim``) is read with the existing BIM import instead.
 """
 
 import json
 from pathlib import Path
 from typing import NoReturn
 
-from ._common import ConversionError
+from ._common import LOGGER, ConversionError
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
 from .tom import TomUnavailableError, deserialize_tmdl_documents
 
@@ -35,6 +36,8 @@ _LOAD_FIRST = ("database.tmdl", "model.tmdl")
 def resolve_definition_dir(path: Path) -> Path:
     """Return the ``definition`` directory that holds ``database.tmdl``."""
     path = path.expanduser().resolve()
+    if not path.exists():
+        raise ConversionError(f"{path} does not exist")
     if path.is_file() and path.suffix.lower() == ".pbip":
         return _definition_from_pbip(path)
     if path.is_dir() and (path / "database.tmdl").is_file():
@@ -45,6 +48,33 @@ def resolve_definition_dir(path: Path) -> Path:
         f"{path} is not a .pbip file or a semantic model folder "
         "(no definition/database.tmdl)"
     )
+
+
+def tmsl_model(path: Path) -> Path | None:
+    """The ``model.bim`` of a project that stores its model as TMSL, or None.
+
+    For a ``.SemanticModel`` folder, or a ``.pbip`` whose ``byPath`` points at one,
+    that has ``model.bim`` and no ``definition/``. A folder with both is ambiguous, as
+    it is to Power BI, and is refused.
+    """
+    path = path.expanduser().resolve()
+    if not path.exists():
+        raise ConversionError(f"{path} does not exist")
+    if path.is_file() and path.suffix.lower() == ".pbip":
+        folder = _semantic_model_from_pbip(path)
+    elif path.is_dir():
+        folder = path
+    else:
+        return None
+    model_bim = folder / "model.bim"
+    if not model_bim.is_file():
+        return None
+    if (folder / "definition" / "database.tmdl").is_file():
+        raise ConversionError(
+            f"{folder} has both model.bim and definition/; remove one so the storage "
+            "format is unambiguous"
+        )
+    return model_bim
 
 
 def tmdl_documents(definition_dir: Path) -> list[tuple[str, str]]:
@@ -64,6 +94,10 @@ def tmdl_documents(definition_dir: Path) -> list[tuple[str, str]]:
         # such as `.pbi`, not file names.
         if any(part.startswith(".") for part in relative.parts[:-1]):
             continue
+        # Every document goes to TOM, which merges partial declarations
+        # (`tables/Orders.tmdl` plus `tables/Orders.measures.tmdl`) and reports real
+        # conflicts. The list is logged so it is visible what was loaded.
+        LOGGER.debug("loading TMDL document %s", relative.as_posix())
         found.append((relative.as_posix(), file.read_text(encoding="utf-8-sig")))
 
     def sort_key(item: tuple[str, str]) -> tuple[int, str]:
@@ -83,6 +117,10 @@ def import_powerbi_project(path: str | Path, *, translate_dax: bool = False) -> 
     ``translate_dax`` enables the same opt-in DAX-to-SQL translation as BIM import.
     """
 
+    model_bim = tmsl_model(Path(path))
+    if model_bim is not None:
+        with model_bim.open(encoding="utf-8-sig") as fh:
+            return convert_semantic_model_to_ossie(json.load(fh), translate_dax=translate_dax)
     documents = tmdl_documents(resolve_definition_dir(Path(path)))
     try:
         semantic_model = deserialize_tmdl_documents(documents)
@@ -107,6 +145,23 @@ def reraise_tom_load_failure(exc: BaseException) -> NoReturn:
 
 
 def _definition_from_pbip(pbip: Path) -> Path:
+    definition = _semantic_model_from_pbip(pbip) / "definition"
+    if not (definition / "database.tmdl").is_file():
+        raise ConversionError(
+            f"{pbip} byPath does not contain definition/database.tmdl or model.bim")
+    return definition
+
+
+def _inside_project(pbip: Path, target: Path, what: str) -> Path:
+    # An absolute path, or one with enough `..`, would point the importer at any folder;
+    # the referenced artifacts belong next to the .pbip.
+    root = pbip.parent.resolve()
+    if not target.is_relative_to(root):
+        raise ConversionError(f"{pbip} {what} points outside the project folder {root}")
+    return target
+
+
+def _semantic_model_from_pbip(pbip: Path) -> Path:
     try:
         payload = json.loads(pbip.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
@@ -118,7 +173,7 @@ def _definition_from_pbip(pbip: Path) -> Path:
     if report_rel is None:
         raise ConversionError(f"{pbip} has no report artifact")
 
-    report_dir = (pbip.parent / report_rel).resolve()
+    report_dir = _inside_project(pbip, (pbip.parent / report_rel).resolve(), "report path")
     pbir_path = report_dir / "definition.pbir"
     if not pbir_path.is_file():
         raise ConversionError(f"{pbip} report has no definition.pbir")
@@ -144,10 +199,7 @@ def _definition_from_pbip(pbip: Path) -> Path:
     if not model_rel:
         raise ConversionError(f"{pbip} has no datasetReference.byPath")
 
-    definition = (report_dir / model_rel / "definition").resolve()
-    if not (definition / "database.tmdl").is_file():
-        raise ConversionError(f"{pbip} byPath does not contain definition/database.tmdl")
-    return definition
+    return _inside_project(pbip, (report_dir / model_rel).resolve(), "byPath")
 
 
 def _report_path(payload: dict) -> str | None:

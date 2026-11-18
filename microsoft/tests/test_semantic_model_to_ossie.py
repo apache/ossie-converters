@@ -30,8 +30,7 @@ from ossie_microsoft._common import VENDOR, make_expression, read_stash, write_s
 from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# The apache/ossie checkout (the `ossie` git submodule): core-spec/, examples/, ...
-REPO_ROOT = Path(__file__).resolve().parents[2] / "ossie"
+SCHEMA_PATH = FIXTURES / "ossie-schema-0.3.0.dev0.json"
 
 
 def _dataset(model, name):
@@ -100,7 +99,7 @@ def test_cli_reports_errors_without_traceback(tmp_path, capsys):
 
 
 def test_document_header(osi):
-    assert osi["version"] == "0.2.0.dev0"
+    assert osi["version"] == "0.3.0.dev0"
     assert "semantic_model" not in osi
     assert osi["name"] == "sales_model"
 
@@ -749,18 +748,41 @@ def test_inactive_many_to_many_and_dangling_relationships_are_dropped(model):
 # --- spec conformance ------------------------------------------------------
 
 
-def test_output_validates_against_core_spec_schema(osi):
+@pytest.mark.parametrize("translate_dax", [False, True])
+def test_output_validates_against_core_spec_schema(bim, translate_dax):
     jsonschema = pytest.importorskip("jsonschema")
 
-    with open(REPO_ROOT / "core-spec" / "ossie-schema.json", encoding="utf-8") as fh:
+    bim = json.loads(json.dumps(bim))
+    sentinel = {
+        "nested": {"yes": "yes", "date": "2024-01-01", "number": "010"},
+        "values": [None, True, 2, "false", "line one\nline two"],
+    }
+    bim["model"]["extensionSentinel"] = sentinel
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        output = convert_semantic_model_to_ossie(bim, translate_dax=translate_dax)
+    osi = yaml.safe_load(output)
+    with open(SCHEMA_PATH, encoding="utf-8") as fh:
         schema = json.load(fh)
     jsonschema.validate(osi, schema)
+    assert osi["version"] == "0.3.0.dev0"
+    assert read_stash(osi)["extensionSentinel"] == sentinel
 
-
-def test_dax_is_a_spec_dialect():
-    with open(REPO_ROOT / "core-spec" / "ossie-schema.json", encoding="utf-8") as fh:
-        schema = json.load(fh)
-    assert "DAX" in schema["$defs"]["Dialect"]["enum"]
+    sites = {
+        "model": [osi],
+        "dataset": osi["datasets"],
+        "field": [field for dataset in osi["datasets"] for field in dataset.get("fields", [])],
+        "metric": osi["metrics"],
+        "relationship": osi["relationships"],
+    }
+    for objects in sites.values():
+        extensions = [ext for obj in objects for ext in obj.get("nonportable_extensions", [])]
+        assert extensions
+        for ext in extensions:
+            assert ext["vendor_name"] == VENDOR
+            data = ext["data"]
+            assert isinstance(data, dict)
+            assert json.loads(json.dumps(data, allow_nan=False)) == data
 
 
 # --- lossless preservation (POWER_BI stash) --------------------------------
@@ -850,13 +872,13 @@ def _exclusion_warning(bim, table_name):
         str(w.message)
         for w in caught
         if f"table '{table_name}'" in str(w.message)
-        and "custom_extensions" in str(w.message)
+        and "nonportable_extensions" in str(w.message)
     )
 
 
 def test_measure_only_table_warning_does_not_imply_lost_measures():
     """A measure-only table's measures become metrics, so the exclusion warning must
-    say so rather than implying the measures survive only in custom_extensions."""
+    say so rather than implying the measures survive only in nonportable_extensions."""
     bim = {
         "name": "m",
         "model": {
@@ -916,7 +938,7 @@ def test_calculated_table_without_measures_warning_is_unchanged():
     message = _exclusion_warning(bim, "Calendar")
 
     assert "exported as Apache Ossie metrics" not in message
-    assert message.endswith("preserved in custom_extensions")
+    assert message.endswith("preserved in nonportable_extensions")
 
 
 def test_dataset_stash_preserves_partitions_and_annotations(model):
@@ -961,13 +983,19 @@ def test_a_model_without_power_bi_specifics_has_no_stash():
     }
     osi = yaml.safe_load(convert_semantic_model_to_ossie(bim))
     dataset = osi["datasets"][0]
-    assert "custom_extensions" not in dataset
-    assert "custom_extensions" not in dataset["fields"][0]
+    assert "nonportable_extensions" not in dataset
+    assert "nonportable_extensions" not in dataset["fields"][0]
 
 
-def test_stash_data_is_versioned_json(model):
-    ext = next(e for e in model["custom_extensions"] if e["vendor_name"] == VENDOR)
-    assert json.loads(ext["data"])["_v"] == 2
+def test_stash_data_is_a_versioned_object_at_every_supported_level(model):
+    objects = [model, *model["datasets"], *model["relationships"], *model["metrics"]]
+    objects.extend(field for dataset in model["datasets"] for field in dataset.get("fields", []))
+    for obj in objects:
+        assert "custom_extensions" not in obj
+        for ext in obj.get("nonportable_extensions", []):
+            assert ext["vendor_name"] == VENDOR
+            assert isinstance(ext["data"], dict)
+            assert ext["data"]["_v"] == 2
 
 
 def test_ai_context_annotations_round_trip_at_every_supported_level():
@@ -1092,6 +1120,29 @@ def test_ai_context_annotations_round_trip_at_every_supported_level():
         (round_trip_relationship, "OtherRelationship"),
     ):
         assert annotations(target)[other_name] == "preserve me"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['["one", "two"]', "[]", '{"instructions": 5}', '{"synonyms": "orders"}',
+     '{"examples": [1]}'],
+)
+def test_unstructured_ai_context_json_is_kept_as_text_and_schema_valid(value):
+    bim = {
+        "name": "contexts",
+        "model": {
+            "annotations": [{"name": "OssieAIContext", "value": value}],
+            "tables": [{"name": "Orders"}],
+        },
+    }
+    output = convert_semantic_model_to_ossie(bim)
+    document = yaml.safe_load(output)
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    pytest.importorskip("jsonschema").validate(document, schema)
+    assert document["ai_context"] == value
+    restored = convert_ossie_to_semantic_model(document)
+    annotation = restored["model"]["annotations"][0]
+    assert annotation == {"name": "OssieAIContext", "value": value}
 
 
 # --- data types ------------------------------------------------------------

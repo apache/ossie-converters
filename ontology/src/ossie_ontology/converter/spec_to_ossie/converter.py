@@ -78,6 +78,9 @@ Container = Concept | Relationship
 _QUALIFIED_FIELD_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
 _BARE_FIELD_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
 
+# The dialect the top-level `sql` of an expression is written in.
+_OSSIE_SQL_DIALECT = "OSSIE_SQL_2026"
+
 
 class SpecToOssieConverter:
     """Converts OssieSpec (Pydantic DTOs) to OssieOntology (runtime model).
@@ -528,9 +531,13 @@ def _convert_custom_extension(ce: SpecCustomExtension) -> CustomExtension:
 
 
 def _convert_expression(expr: SpecExpression) -> DialectExpressionSet:
-    return DialectExpressionSet(
-        dialects=[_convert_dialect_expression(d) for d in expr.dialects]
-    )
+    dialects = [_convert_dialect_expression(d) for d in expr.dialects]
+    if expr.sql is not None:
+        # The top-level `sql` wins over an OSSIE_SQL_2026 entry, and goes first
+        # so that it is the expression read when no preferred dialect matches.
+        sql = DialectExpression(dialect=_OSSIE_SQL_DIALECT, expression=expr.sql)
+        dialects = [sql] + [d for d in dialects if d.dialect != _OSSIE_SQL_DIALECT]
+    return DialectExpressionSet(dialects=dialects)
 
 
 def _convert_dialect_expression(dialect_expr: SpecDialectExpression) -> DialectExpression:

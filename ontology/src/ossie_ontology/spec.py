@@ -120,6 +120,7 @@ class DialectExpression(OssieObject):
 class Expression(OssieObject):
     """Multi-dialect expression carrier — same logical expression rendered in
     one or more dialects (e.g. ANSI_SQL + SNOWFLAKE)."""
+    sql: str | None = None
     dialects: list[DialectExpression] = Field(default_factory=list)
 
 
@@ -188,7 +189,7 @@ class Metric(OssieObject):
 
 
 # The core semantic model version this package reads and writes.
-CoreVersion = Literal["0.2.0.dev0"]
+CoreVersion = Literal["0.3.0.dev0"]
 
 
 class SemanticModel(OssieObject):

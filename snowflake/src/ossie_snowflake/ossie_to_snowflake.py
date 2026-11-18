@@ -33,7 +33,7 @@ from sqlglot.errors import TokenError
 from sqlglot.tokens import TokenType
 
 
-SUPPORTED_VERSION = "0.2.0.dev0"
+SUPPORTED_VERSION = "0.3.0.dev0"
 
 _TIME_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
 
@@ -85,7 +85,7 @@ def convert_ossie_to_snowflake(ossie_yaml_str):
 
     Expects the standard Ossie document format::
 
-        version: "0.2.0.dev0"
+        version: "0.3.0.dev0"
         name: ...
         datasets: [...]
 
@@ -390,6 +390,12 @@ def _extract_expression(expression, field_name):
 
     dialects = expression.get("dialects")
     if not dialects:
+        if expression.get("sql") is not None:
+            warnings.warn(
+                f"Skipping field/metric '{field_name}': it has only a portable sql "
+                f"expression and no dialect entries"
+            )
+            return None
         raise OssieConversionError(
             f"Missing expression for field/metric '{field_name}'"
         )

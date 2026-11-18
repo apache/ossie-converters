@@ -16,6 +16,7 @@
 # under the License.
 
 import json
+from datetime import date
 from typing import List, Optional
 
 import jinja2
@@ -274,6 +275,127 @@ class TestEntityConversion:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
         assert _fields(result)[0].name == "user_id"
+
+
+class TestConfigMetaCustomExtensions:
+    """config.meta is otherwise silently dropped at the MSI -> Ossie boundary (#42)."""
+
+    def test_dimension_config_meta_becomes_custom_extension(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[
+                _dimension(
+                    "status",
+                    config=PydanticSemanticLayerElementConfig(meta={"looker_group_label": "Order Info"}),
+                )
+            ],
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        extensions = _fields(result)[0].custom_extensions
+        assert extensions is not None
+        assert len(extensions) == 1
+        assert extensions[0].vendor_name == "DBT"
+        assert json.loads(extensions[0].data) == {"meta": {"looker_group_label": "Order Info"}}
+
+    def test_entity_config_meta_becomes_custom_extension(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            entities=[
+                _entity(
+                    "order_id",
+                    entity_type=EntityType.PRIMARY,
+                    config=PydanticSemanticLayerElementConfig(meta={"hidden": True}),
+                )
+            ],
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        extensions = _fields(result)[0].custom_extensions
+        assert extensions is not None
+        assert json.loads(extensions[0].data) == {"meta": {"hidden": True}}
+
+    def test_measure_config_meta_becomes_custom_extension(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[
+                _measure(
+                    "revenue",
+                    config=PydanticSemanticLayerElementConfig(meta={"value_format": "$#,##0.00"}),
+                )
+            ],
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        extensions = _fields(result)[0].custom_extensions
+        assert extensions is not None
+        assert json.loads(extensions[0].data) == {"meta": {"value_format": "$#,##0.00"}}
+
+    def test_metric_config_meta_becomes_custom_extension(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        revenue = _simple_metric(
+            "revenue",
+            "revenue",
+            config=PydanticSemanticLayerElementConfig(meta={"group_label": "Revenue"}),
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue])).output
+
+        extensions = _ossie_metrics(result)[0].custom_extensions
+        assert extensions is not None
+        assert json.loads(extensions[0].data) == {"meta": {"group_label": "Revenue"}}
+
+    def test_semantic_model_config_meta_becomes_dataset_custom_extension(self) -> None:
+        sm = PydanticSemanticModel(
+            name="orders",
+            defaults=None,
+            description=None,
+            node_relation=PydanticNodeRelation(schema_name="analytics", alias="orders_table"),
+            primary_entity=None,
+            metadata=default_meta(),
+            config=PydanticSemanticLayerElementConfig(meta={"view_label": "Orders"}),
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        extensions = result.datasets[0].custom_extensions
+        assert extensions is not None
+        assert json.loads(extensions[0].data) == {"meta": {"view_label": "Orders"}}
+
+    def test_no_config_meta_omits_custom_extensions(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[_dimension("status")],
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        assert _fields(result)[0].custom_extensions is None
+
+    def test_empty_config_meta_omits_custom_extensions(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[_dimension("status", config=PydanticSemanticLayerElementConfig(meta={}))],
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        assert _fields(result)[0].custom_extensions is None
+
+    def test_non_json_meta_value_is_stringified(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[
+                _dimension(
+                    "status",
+                    config=PydanticSemanticLayerElementConfig(meta={"launched": date(2024, 1, 1)}),
+                )
+            ],
+        )
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
+
+        extensions = _fields(result)[0].custom_extensions
+        assert extensions is not None
+        assert json.loads(extensions[0].data) == {"meta": {"launched": "2024-01-01"}}
 
 
 class TestEntityKeyExtraction:
@@ -737,7 +859,7 @@ class TestMetricConversion:
 
         arpu_ossie = next(m for m in _ossie_metrics(result) if m.name == "arpu")
         assert arpu_ossie.expression.dialects[0].expression == (
-            "(SUM(orders.amount)) / (SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END))"
+            "(SUM(orders.amount)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END), 0)"
         )
         assert result.to_ossie_yaml() == snapshot
 
@@ -1742,7 +1864,7 @@ class TestMetricFilterFlattening:
         assert paid_arpu.expression.dialects[0].expression == (
             "(SUM(CASE WHEN status = 'paid' THEN orders.amount END))"
             " / "
-            "(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END))"
+            "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
         )
 
     def test_derived_metric_filter_propagated_to_sub_expressions(self) -> None:
@@ -1804,7 +1926,7 @@ class TestOssieJsonSerialization:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm]), ossie_model_name="my_project").output
         parsed = json.loads(result.to_ossie_json())
 
-        assert parsed["version"] == "0.2.0.dev0"
+        assert parsed["version"] == "0.3.0.dev0"
         assert next(iter(parsed)) == "version"
         assert "semantic_model" not in parsed
         assert parsed["name"] == "my_project"

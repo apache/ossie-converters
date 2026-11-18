@@ -45,7 +45,7 @@ from ossie_snowflake.ossie_to_snowflake import (
 def _wrap_ossie(model_dict):
     """Wrap a model dict in the standard Ossie envelope."""
     return yaml.dump(
-        {"version": "0.2.0.dev0", **model_dict},
+        {"version": "0.3.0.dev0", **model_dict},
         default_flow_style=False,
     )
 
@@ -446,6 +446,14 @@ class TestExtractExpression:
         assert len(w) == 1
         assert "my_field" in str(w[0].message)
 
+    def test_sql_only_returns_none_with_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = _extract_expression({"sql": "orders.amount"}, "my_field")
+        assert result is None
+        assert len(w) == 1
+        assert "my_field" in str(w[0].message)
+
     def test_missing_expression_raises(self):
         with pytest.raises(OssieConversionError, match="Missing or malformed"):
             _extract_expression(None, "f")
@@ -784,7 +792,7 @@ class TestConvertOssieToSnowflake:
             convert_ossie_to_snowflake(bad)
 
     def test_missing_model_name_raises(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "description": "x"})
+        bad = yaml.dump({"version": "0.3.0.dev0", "description": "x"})
         with pytest.raises(OssieConversionError, match="Missing required 'name'"):
             convert_ossie_to_snowflake(bad)
 
@@ -793,7 +801,7 @@ class TestConvertOssieToSnowflake:
         [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
     )
     def test_legacy_model_wrappers_are_rejected(self, wrapper):
-        bad = yaml.dump({"version": "0.2.0.dev0", "semantic_model": wrapper})
+        bad = yaml.dump({"version": "0.3.0.dev0", "semantic_model": wrapper})
         with pytest.raises(OssieConversionError, match="Legacy 'semantic_model'"):
             convert_ossie_to_snowflake(bad)
 

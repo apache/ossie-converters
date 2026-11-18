@@ -20,6 +20,19 @@ canonical:
   tpcds: ossie/examples/tpcds_semantic_model.yaml
   flights: ossie/examples/flights.semantic_model.yaml
 converters:
+  ataccama:
+    cwd: ataccama
+    skip: Requires a live Ataccama ONE REST catalog and is import-only; outside the file runner.
+  bigquery:
+    cwd: bigquery
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: null
+    export: [uv, run, --no-sync, ossie-bigquery, -i, '{input}', -o, '{output}']
+    native_format: lookml
+    output: file
+    fixtures: {}
+    import_skip: No native-to-Ossie importer is implemented in this converter.
   cube:
     cwd: cube
     toolchain: uv
@@ -35,15 +48,15 @@ converters:
       requires_env: OSSIE_CUBE_REPO
       command: [node, '{root}/cube/tools/cube_compile.js', '{files}']
   databricks:
-    cwd: databricks/java
-    toolchain: maven
-    prepare: [mvn, -B, -DskipTests, package]
-    import: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, import, '{input}', -o, '{output}']
-    export: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, export, '{input}', -o, '{output}']
-    native_format: databricks
+    cwd: databricks
+    toolchain: uv
+    prepare: [uv, sync, --no-dev]
+    import: [uv, run, --no-sync, ossie-databricks, from-databricks, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-databricks, to-databricks, '{input}', -o, '{output}']
+    native_format: ossie
     output: file
     fixtures:
-      tpcds: databricks/java/src/test/resources/ossie_tpcds_metric_view.yaml
+      sales: interop/fixtures/databricks/sales.ossie.yaml
   dbt:
     cwd: dbt
     toolchain: uv
@@ -84,7 +97,7 @@ converters:
     native_format: holistics
     output: directory
     fixtures:
-      ecommerce: holistics/tests/fixtures/ecommerce/ecommerce.dataset.aml.json
+      orders: interop/fixtures/holistics/orders.dataset.aml.json
     roundtrip_skip: Export emits AML source; re-import requires Holistics compilation to compiled dataset JSON, unavailable
       in the file runner.
   honeydew:
@@ -220,32 +233,25 @@ converters:
     output: file
     fixtures:
       finance: wisdom-semantic-view/tests/fixtures/finance/snowflake/cfo_cockpit.before.yaml
-regressions:
-  cube-databricks-tpcds:
-    source: cube
-    fixture: tpcds
-    via: databricks
-    expectations: interop/fixtures/bindings/tpcds.yaml
-  cube-databricks-metric-bindings:
-    source: cube
-    fixture: metric-bindings
-    via: databricks
-    expectations: interop/fixtures/bindings/sales.yaml
+regressions: {}
 document_regressions:
+  # Databricks reads Ossie natively, so the pass-through convert keeps a model's existing
+  # DATABRICKS dialect but never translates a foreign dialect into it. Databricks is a
+  # target for the databricks-only dialect contract, not the snowflake/ossie-sql ones.
   dialect-databricks-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-databricks-only/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: [cube, databricks, dbt, omni, sigma]
     expectations: interop/fixtures/contracts/dialect-databricks-only/expectations.yaml
   dialect-snowflake-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-snowflake-only/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: &dialect_targets [cube, dbt, omni, sigma]
     expectations: interop/fixtures/contracts/dialect-snowflake-only/expectations.yaml
   dialect-ossie-sql-2026-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-ossie-sql-2026-only/input.yaml
-    targets: [cube, databricks, dbt]
+    targets: *dialect_targets
     expectations: interop/fixtures/contracts/dialect-ossie-sql-2026-only/expectations.yaml
   keys-single:
     category: keys
@@ -282,3 +288,12 @@ document_regressions:
     input: interop/fixtures/contracts/source-quoted-parts/input.yaml
     targets: [cube, databricks, dbt]
     expectations: interop/fixtures/contracts/source-quoted-parts/expectations.yaml
+# Report-only portability scores (apache/ossie-converters#24): every fixture of the
+# core portability ladder, through every converter that can round-trip, graded by
+# the core grader. `modes` adds a second re-import for an opt-in converter flag.
+portability:
+  fixtures: ossie/compliance/portability/manifest.yaml
+  modes:
+    microsoft-translate-dax:
+      converter: microsoft
+      import: [uv, run, --no-sync, ossie-microsoft, import, --translate-dax, -i, '{input}', -o, '{output}']

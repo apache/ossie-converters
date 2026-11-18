@@ -20,8 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 21 converter projects**, with explicit capability skips.
-Cube, Databricks, and dbt remain the targets of the focused semantic regressions.
+The registry includes **all 24 converter projects**, with explicit capability skips.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -34,7 +33,7 @@ uv sync --project interop --locked --python 3.12
 uv run --project interop --locked python -m interop
 ```
 
-The runner needs Python 3.11+ and uv. Databricks and Salesforce additionally need Maven and
+The runner needs Python 3.11+ and uv. Salesforce additionally needs Maven and
 Java 21+ on `PATH` (and a matching `JAVA_HOME` for Maven). Missing prerequisites
 appear as `SKIP`; a preparation command that actually fails appears as `FAIL`.
 Dependencies are prepared once per converter: `uv sync --locked --no-dev` for
@@ -56,7 +55,7 @@ producing a false pass or overwriting earlier evidence.
 # Restrict the registry to two converters; this runs both ordered pairs.
 uv run --project interop --locked python -m interop --converters cube,dbt
 
-# Reuse previously prepared environments and the previously built Databricks JAR.
+# Reuse previously prepared environments and the previously built Salesforce JAR.
 uv run --project interop --locked python -m interop --no-prepare
 
 # Attempt optional native gates. Cube requires a built checkout.
@@ -73,15 +72,16 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 
 | Converter(s) | Native path / limits |
 |---|---|
-| Cube, Databricks, dbt | Existing CLI runners; focused semantic regressions retained |
+| Cube, dbt | Existing CLI runners; focused semantic regressions retained |
+| Databricks | Ossie-native: `from-databricks` / `to-databricks` read and write an Ossie model (`native_format: ossie`); `to-databricks` is a pass-through |
 | GoodData | API adapter for declarative LDM JSON, using the converter's serialization helpers |
 | Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |
-| Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
+| BigQuery, Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
 | Holistics | Compiled dataset JSON import and AML source export; re-import of generated AML requires a Holistics compiler |
-| Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
+| Ataccama, Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
 | Ontology, Palantir, RelationalAI | Explicit skip: uses the ontology domain/schema, requiring a separate matrix |
 
 All adapters run in the owning converter's environment. New native-content
@@ -89,10 +89,14 @@ inspectors count format-specific model members; these checks do not imply vendor
 compilation or platform acceptance. Holistics checks AML member declarations only.
 Its selected import/export dialect is BIGQUERY and exports use the placeholder
 connection `interop_warehouse`; no live connection is created.
-Existing vendor fixtures are reused, plus a small independently authored Honeydew
-workspace. OrionBelt installs its locked `obml-validation` extra so its native
-semantic validation is available during export checks. Missing directions never
-run a dummy successful command. The report includes a capabilities table even for registrations with no native fixture.
+BigQuery (LookML export only) checks `dimension`, `dimension_group` and `measure`
+declarations in the single exported file; LookML validation needs a Looker instance.
+Source fixtures include a small Honeydew workspace and an orders dataset
+compiled with Holistics CLI 2.3.32. The Holistics converter suite checks the
+ecommerce fixture's unresolved query template separately. OrionBelt installs
+its locked `obml-validation` extra for native semantic validation during
+export checks. The capabilities table includes registrations with no native
+fixture, and unsupported directions appear as skips.
 `import_requires_files` records repository-relative prerequisites that may be absent.
 A missing prerequisite skips imports and target re-imports while leaving export
 checks available. Salesforce needs
@@ -101,9 +105,6 @@ its README describes how to obtain it. Rebuild its JAR after supplying the schem
 `import: null` requires an `import_skip` reason; `roundtrip_skip` names a format
 bridge that is not available, and a `cwd`/`skip` entry disables an entire
 registration with an explicit reason.
-
-Focused dialect/key/source oracles remain scoped to their original three targets;
-other formats currently receive native-content, schema, and inventory checks.
 
 ## Coverage and grading
 
@@ -122,9 +123,9 @@ examples are intentionally outside this matrix.
   extensions are compared. Before/after counts and structural changes are saved.
   Extension comparisons include the owning model, dataset, field, metric, or
   relationship, so moving an unchanged payload between objects is reported as loss.
-  The full registry currently schedules 378 Tier A and 320 Tier B cases across
-  16 native fixtures and two canonical documents. Unsupported directions and
-  unavailable or invalid upstream sources remain visible as skips.
+  Case totals in the generated report reflect the selected converters and fixtures.
+  Unsupported directions and unavailable or invalid upstream sources appear as
+  skips. Each cell with a Tier B result links to its case evidence.
   For dbt targets, re-import exercises MetricFlow's manifest parser; Tier A
   alone checks JSON model content rather than MetricFlow compilation.
 - **Tier C:** optional native gates run on successful exports. Cube's existing
@@ -133,15 +134,16 @@ examples are intentionally outside this matrix.
 
 Registered **metric-binding regressions** continue the relevant Tier B chain back
 to its source-native format. Both the original native fixture and the final
-native export must satisfy independently authored expectations. The initial
-routes are Cube -> Ossie -> Databricks -> Ossie -> Cube for TPC-DS and a focused
-two-table sales/customer fixture. These checks are reported separately from
-the acceptance matrix and its degradation warnings.
+native export must satisfy independently authored expectations. None are
+registered at the moment: the original Cube -> Ossie -> Databricks -> Ossie -> Cube
+routes went away with the Databricks metric-view exporter. These checks are
+reported separately from the acceptance matrix and its degradation warnings.
 
-Ten independent Ossie **document regression fixtures** continue to run against
-Cube, Databricks, and dbt: three dialect-only cases, four key cases, and three source cases.
-Their 30 results and the two native binding results remain separate from
-the broad acceptance matrix. Each fixture has an independently authored, versioned assertion file.
+Ten independent Ossie **document regression fixtures** cover three dialect-only
+cases, four key cases, and three source cases. All ten run against Cube,
+Databricks, and dbt. The dialect cases also run against Omni and Sigma. Document
+regressions and any native binding regressions are reported separately from
+the broad acceptance matrix. Each fixture has a versioned assertion file.
 
 | Grade | Meaning |
 |---|---|
@@ -206,7 +208,9 @@ Dialect fixtures have one dataset, a computed discount field, a computed upperca
 field, and an aggregate metric. Expression assertions compare SQLGlot-normalized
 syntax trees through a common rendering, allowing the dialect label to change
 and normalizing bare versus own-dataset-qualified columns. They check every
-returned dialect alternative. This deliberately bounded comparison is not an
+returned SQL alternative and require at least one. For Sigma returns, the native
+`SIGMA` formula accompanies the SQL and is outside this assertion. This
+deliberately bounded comparison is not an
 algebraic or SQL-value equivalence proof, and it does not run warehouse queries.
 An accidental ANSI fallback in a dialect-only input fails the fixture's baseline
 check before conversion.
@@ -233,23 +237,23 @@ values. A scoped document result can be `OK` while unrelated warnings or invento
 changes remain in its evidence, just as with the native binding regressions.
 
 Initial findings remain visible as incompatibilities rather than pass allowances:
-Databricks rejects foreign-only expressions and unsupported source forms, drops
-fact-table keys, and recovers joined keys with changed roles. dbt rejects compound
-keys; quoted source references containing dots expose incorrectly split native
+dbt rejects compound keys; quoted source references containing dots expose incorrectly split native
 slots even when its reconstructed source string survives the round trip.
 
 ## Native metric-binding assertions
 
 The top-level `regressions` mapping declares a source converter, one of its native
 fixtures, a `via` converter, and a versioned expectations file. A converter subset
-includes a regression only when both participants are selected.
+includes a regression only when both participants are selected. None are registered
+at the moment (`regressions: {}` in `manifest.yaml`); an entry has this shape, where
+`via` is a converter whose native format carries physical metric bindings:
 
 ```yaml
 regressions:
-  cube-databricks-tpcds:
+  cube-<via>-tpcds:
     source: cube
     fixture: tpcds
-    via: databricks
+    via: <via>
     expectations: interop/fixtures/bindings/tpcds.yaml
 ```
 
@@ -305,6 +309,58 @@ Foreign-extension counts are a conservative text heuristic, not an exact measure
 of extension loss. Source diagnostics stay on source rows; they are not counted
 against every downstream exporter.
 
+## Portability scores (report-only)
+
+The core repository's portability ladder (`ossie/compliance/portability/`,
+[apache/ossie#596](https://github.com/apache/ossie/pull/596)) is graded on every
+run, as agreed on [#24](https://github.com/apache/ossie-converters/issues/24):
+
+```yaml
+portability:
+  fixtures: ossie/compliance/portability/manifest.yaml
+  modes:
+    microsoft-translate-dax:
+      converter: microsoft
+      import: [uv, run, --no-sync, ossie-microsoft, import, --translate-dax, -i, '{input}', -o, '{output}']
+```
+
+Every variant listed in the core `manifest.yaml` is exported to, and re-imported
+from, each registration that can round-trip from its command line (not `skip`,
+`roundtrip_skip`, `import_skip`, or a missing import prerequisite; those stay in
+the capabilities table). The export and re-import are the same Tier A and Tier B
+code as the matrix, so preparation, timeouts, diagnostics and validation behave
+the same. The returned document is then graded against the fixture by the pinned
+core grader (`ossie/compliance/portability/grader/grade.py`), element by element:
+PORTABLE, RELABELED, REWRITTEN, SURVIVED_VENDOR_ONLY, PLACEHOLDER, DROPPED_DIAGNOSED,
+DROPPED_SILENT, ADDED, or REJECTED. The diagnostics that separate a diagnosed
+drop from a silent one are the converter diagnostics the matrix reports (every
+key the converter wrote, such as ThoughtSpot's `object_ref`), not the raw command
+output, so success messages and file paths do not count. A failed export or
+re-import (including one that wrote a document and then exited non-zero), or a
+return with nothing in it, is graded against an empty document, which the grader
+reports as REJECTED. A skip is not graded. A case the grader cannot grade keeps
+its round-trip grade, shows the grader error in the report, and is not a harness
+error.
+
+A mode re-imports with a second command for the same converter (an opt-in flag
+such as Microsoft's `--translate-dax`). It shares the converter's preparation and
+re-imports the export of the converter's own case, so the two rows grade the same
+export. `--converters` keeps a mode only when its converter is selected.
+
+The report's portability section totals the outcomes per converter or mode, in
+one table for metrics and one for fields: `portable` (PORTABLE, a RELABELED to the
+other portable tag, and a REWRITTEN the grader proves cosmetic), `review` (a
+REWRITTEN the grader cannot prove cosmetic, or an element returned under another
+name), `vendor` (SURVIVED_VENDOR_ONLY, and a RELABELED to a vendor tag),
+`placeholder`, `dropped`, `rejected`, `added` (invented by the converter, not
+counted in `authored`), and `other` (an outcome, or a grader detail, this table
+cannot read, such as one a newer grader adds). Per-case results with every finding
+are saved under `portability/<variant>--to--<converter>/`. Scores are evidence
+about the round trip, not a pass: they never change the exit status, with or
+without `--strict`. The grader compares normalized sqlglot trees, so REWRITTEN can
+be cosmetic or a change in meaning; an execution check can take the same graded
+report per case.
+
 ## Manifest
 
 `manifest.yaml` is versioned and validated before execution. Each entry declares
@@ -324,8 +380,9 @@ still required.
 
 The dbt fixture at `fixtures/dbt/semantic_manifest.json` is a small, independently
 authored native manifest with an entity, dimension, measure, and simple metric.
-It is not generated through the exporter under test. Cube and Databricks reuse
-their existing checked-in TPC-DS native fixtures. The independent Cube fixture
+It is not generated through the exporter under test. Cube reuses its existing
+checked-in TPC-DS native fixture, and Databricks uses `fixtures/databricks/sales.ossie.yaml`,
+an Ossie model, since that is its native format. The independent Cube fixture
 at `fixtures/cube/metric_bindings/` separates fact-table revenue, customer count,
 and customer credit aggregates. `fixtures/bindings/` holds the physical-binding
 oracles for both Cube fixtures.
@@ -361,8 +418,9 @@ a Holistics compiler, a Salesforce schema, or a live Polaris catalog.
 
 After the run, two steps use `always()` so a runner failure still allows evidence
 publication and a summary. The Actions job summary contains grade counts for
-each tier and regression group plus a link to the uploaded artifact. Missing or
-invalid results produce a diagnostic summary and a publication error. The summary
+each tier and regression group plus a link to the uploaded artifact. It separates
+declared capability skips from cases blocked by prerequisites or upstream failures.
+Missing or invalid results produce a diagnostic summary and a publication error. The summary
 does not render artifact-relative links that would break in the Actions UI.
 
 Download `interop-<run-id>-<attempt>` from that workflow run's artifacts. It is

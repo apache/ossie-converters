@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from itertools import combinations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ossie import (
+    OssieCustomExtension,
     OssieDataType,
     OssieDataset,
     OssieDialect,
@@ -32,6 +34,7 @@ from ossie import (
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
 from ossie_dbt.expression_utils import _is_constant_expr
@@ -206,6 +209,7 @@ class MSIToOssieConverter:
                     expression=self._make_expression(expr),
                     description=metric.description,
                     datatype=self._resolve_datatype(metric.datatype, metric.config),
+                    custom_extensions=self._custom_extensions_from_meta(metric.config),
                 )
             )
             if len(manifest.semantic_models) > 1 and self._aggregates_a_constant(metric):
@@ -221,7 +225,7 @@ class MSIToOssieConverter:
 
         return ConverterResult(
             output=OssieDocument(
-                version="0.2.0.dev0",
+                version="0.3.0.dev0",
                 name=ossie_model_name,
                 datasets=datasets,
                 relationships=relationships if relationships else None,
@@ -248,6 +252,7 @@ class MSIToOssieConverter:
             unique_keys=unique_keys if unique_keys else None,
             description=sm.description,
             fields=fields if fields else None,
+            custom_extensions=self._custom_extensions_from_meta(sm.config),
         )
 
     def _convert_dimension(self, dim: Dimension) -> OssieField:
@@ -261,6 +266,7 @@ class MSIToOssieConverter:
             label=dim.label,
             description=dim.description,
             datatype=self._resolve_datatype(dim.datatype, dim.config),
+            custom_extensions=self._custom_extensions_from_meta(dim.config),
         )
 
     @staticmethod
@@ -293,6 +299,7 @@ class MSIToOssieConverter:
             label=entity.label,
             description=entity.description,
             datatype=self._resolve_datatype(None, entity.config),
+            custom_extensions=self._custom_extensions_from_meta(entity.config),
         )
 
     def _convert_measure(self, measure: Measure) -> OssieField:
@@ -304,7 +311,29 @@ class MSIToOssieConverter:
             label=measure.label,
             description=measure.description,
             datatype=self._resolve_datatype(None, measure.config),
+            custom_extensions=self._custom_extensions_from_meta(measure.config),
         )
+
+    @staticmethod
+    def _custom_extensions_from_meta(
+        config: Optional[SemanticLayerElementConfig],
+    ) -> Optional[List[OssieCustomExtension]]:
+        """Carry a non-empty MSI `config.meta` dict across as one Ossie `custom_extensions` entry.
+
+        `config.meta` is otherwise silently dropped at this boundary (#42). It goes under a
+        `meta` key, mirroring dbt's own `config`, so Ossie -> dbt can tell it apart from
+        `DBT` entries that hold other dbt config, such as `materialized` or `tags`.
+        """
+        if config is None or not config.meta:
+            return None
+        # YAML-parsed meta can hold datetime.date. default=str keeps those
+        # values instead of aborting the conversion.
+        return [
+            OssieCustomExtension(
+                vendor_name=OssieVendor.DBT.value,
+                data=json.dumps({"meta": config.meta}, default=str),
+            )
+        ]
 
     @staticmethod
     def _extract_keys(entities: Sequence[Entity]) -> Tuple[Optional[List[str]], List[List[str]]]:
@@ -444,7 +473,11 @@ class MSIToOssieConverter:
         cache: Dict[Tuple[str, Optional[str]], str],
         filter_sql: Optional[str] = None,
     ) -> str:
-        """Resolve a RATIO metric as (numerator) / (denominator), both fully inlined."""
+        """Resolve a RATIO metric as (numerator) / NULLIF(denominator, 0), both fully inlined.
+
+        MetricFlow divides by NULLIF(denominator, 0), so a group whose denominator is 0 gets NULL;
+        a plain division would make the whole query fail on engines that raise on division by zero.
+        """
         if metric.type_params.numerator is None or metric.type_params.denominator is None:
             raise ValueError(
                 f"RATIO metric is missing numerator or denominator: metric_name={metric.name!r}"
@@ -465,7 +498,7 @@ class MSIToOssieConverter:
             cache,
             den_filter,
         )
-        return f"({num_expr}) / ({den_expr})"
+        return f"({num_expr}) / NULLIF({den_expr}, 0)"
 
     def _resolve_derived(
         self,

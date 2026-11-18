@@ -77,7 +77,15 @@ def test_independent_inputs_pass_core_validation_and_their_oracles(name):
         ]
         == "OK"
     )
-    assert set(contract.targets) == {"cube", "databricks", "dbt"}
+    expected = {"cube", "dbt"}
+    if contract.category == "dialect":
+        expected |= {"omni", "sigma"}
+    # Databricks's pass-through convert keeps existing dialects but does not translate a
+    # foreign dialect into the Databricks one, so it is a target everywhere except the
+    # snowflake-only and ossie-sql-only dialect contracts.
+    if name not in ("dialect-snowflake-only", "dialect-ossie-sql-2026-only"):
+        expected |= {"databricks"}
+    assert set(contract.targets) == expected
 
 
 @pytest.mark.parametrize(
@@ -123,6 +131,25 @@ def test_returned_dialect_labels_and_self_qualification_may_normalize(dialect):
         dialect=dialect, expression="sum(amount)"
     )
     assert check_document(data, "dialect", regression(name).assertions)["grade"] == "OK"
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [('"amount"', "OK"), ('"Amount"', "FAIL"), ("price", "FAIL"), (None, "FAIL")],
+)
+def test_sigma_return_requires_matching_sql_beside_native_formula(sql, expected):
+    name = "dialect-databricks-only"
+    data = document(name)
+    field = data["datasets"][0]["fields"][1]
+    field["expression"]["dialects"] = [{"dialect": "SIGMA", "expression": "[amount]"}]
+    if sql is not None:
+        field["expression"]["dialects"].append(
+            {"dialect": "ANSI_SQL", "expression": sql}
+        )
+    result = check_document(
+        data, "dialect", regression(name).assertions, native_dialect="SIGMA"
+    )
+    assert result["grade"] == expected
 
 
 @pytest.mark.parametrize(
@@ -442,8 +469,9 @@ def test_document_runner_retains_failures_snapshots_and_strict_status(
     )
     prefix = [sys.executable, str(helper)]
     target = replace(
-        manifest.converters["databricks"],
+        manifest.converters["dbt"],
         name="fake",
+        native_format="databricks",
         cwd=tmp_path,
         export_command=prefix + ["export", mode, str(payload), "{input}", "{output}"],
         import_command=prefix + ["import", mode, str(payload), "{input}", "{output}"],
@@ -506,8 +534,9 @@ def test_converter_subset_filters_document_targets(tmp_path, monkeypatch):
         ("dialect-databricks-only", "databricks"),
         ("dialect-databricks-only", "dbt"),
         ("dialect-snowflake-only", "cube"),
-        ("dialect-ossie-sql-2026-only", "databricks"),
+        ("dialect-ossie-sql-2026-only", "dbt"),
         ("keys-single", "dbt"),
+        ("keys-single", "databricks"),
         ("keys-composite", "cube"),
         ("keys-unique-only", "cube"),
         ("keys-joined", "dbt"),
