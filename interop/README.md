@@ -245,14 +245,16 @@ slots even when its reconstructed source string survives the round trip.
 
 The top-level `regressions` mapping declares a source converter, one of its native
 fixtures, a `via` converter, and a versioned expectations file. A converter subset
-includes a regression only when both participants are selected.
+includes a regression only when both participants are selected. None are registered
+at the moment (`regressions: {}` in `manifest.yaml`); an entry has this shape, where
+`via` is a converter whose native format carries physical metric bindings:
 
 ```yaml
 regressions:
-  cube-databricks-tpcds:
+  cube-<via>-tpcds:
     source: cube
     fixture: tpcds
-    via: databricks
+    via: <via>
     expectations: interop/fixtures/bindings/tpcds.yaml
 ```
 
