@@ -22,13 +22,27 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
-from interop.manifest import Manifest, load_manifest
+from interop.manifest import BindingRegression, Manifest, load_manifest
 from interop.report import write_report
 from interop.runner import Runner, exit_code
 from interop.tests.test_foundation import matrix  # noqa: F401 -- subprocess fixture
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _binding_regression():
+    """A synthetic binding regression over the cube metric-bindings fixture.
+
+    The only shipped binding regressions routed through the retired Databricks
+    metric-view exporter; the fixtures remain, so tests build the regression directly.
+    """
+    oracle = ROOT / "interop/fixtures/bindings/sales.yaml"
+    metrics = yaml.safe_load(oracle.read_text())["metrics"]
+    return BindingRegression(
+        source="cube", fixture="metric-bindings", via="snowflake", expectations=oracle, metrics=metrics
+    )
 
 
 def test_declared_preparation_skip_propagates_through_sources_and_cases(matrix):  # noqa: F811
@@ -123,7 +137,7 @@ def test_document_regression_retains_skip_classification(
         else "declared unsupported"
     )
     target = replace(
-        manifest.converters["databricks"], name="fake", **{capability: value}
+        manifest.converters["dbt"], name="fake", native_format="databricks", **{capability: value}
     )
     runner = Runner(ROOT, Manifest({"fake": target}, {}), tmp_path, prepare=False)
     if capability == "skip":
@@ -160,20 +174,20 @@ def test_document_regression_retains_skip_classification(
 @pytest.mark.parametrize("expected", [True, False])
 def test_binding_regression_inherits_upstream_skip(tmp_path, expected):
     manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    regression = manifest.regressions["cube-databricks-metric-bindings"]
+    regression = _binding_regression()
     runner = Runner(ROOT, manifest, tmp_path, prepare=False)
     runner.report["cases"] = [
         dict(
             id="pair",
             tier="B",
             source="cube--metric-bindings",
-            target="databricks",
+            target="snowflake",
             grade="SKIP",
             reason="upstream unavailable",
             expected_skip=expected,
         )
     ]
-    result = runner.binding_regression("cube-databricks-metric-bindings", regression)
+    result = runner.binding_regression("cube-metric-bindings", regression)
     assert result["grade"] == "SKIP" and result["expected_skip"] == expected
     runner.report["cases"] = []
     runner.report["regressions"] = [result]

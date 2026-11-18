@@ -92,7 +92,7 @@ Read an Ossie semantic model and produce the equivalent vendor-specific represen
 - Ossie → Snowflake semantic model definition
 - Ossie → dbt `semantic_models` YAML
 - Ossie → Tableau data source / Salesforce semantic layer
-- Ossie → Databricks semantic layer definition
+- Ossie → Databricks Unity Catalog metric views
 - Ossie → LookML (Looker / BigQuery)
 
 ### Import (Vendor → Apache Ossie)
