@@ -35,8 +35,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def _binding_regression():
     """A synthetic binding regression over the cube metric-bindings fixture.
 
-    The only shipped binding regressions routed through the databricks converter, which
-    is no longer registered; the fixtures remain, so tests build the regression directly.
+    The only shipped binding regressions routed through the retired Databricks
+    metric-view exporter; the fixtures remain, so tests build the regression directly.
     """
     oracle = ROOT / "interop/fixtures/bindings/sales.yaml"
     metrics = yaml.safe_load(oracle.read_text())["metrics"]
