@@ -43,6 +43,7 @@ The deployment verbs connect an Ossie model to Unity Catalog metric views.
 | `convert_ossie_model_to_databricks(model)` | `to-databricks in.yaml -o out.yaml` | The model, unchanged |
 | `convert_ossie_model_from_databricks(model)` | `from-databricks in.yaml -o out.yaml` | The model, with the portable `sql` filled wherever possible |
 | `deploy_ossie_model_to_databricks(model, catalog=..., schema=...)` | `deploy in.yaml -o out/ --catalog main --schema sales` | A metric view file for each dataset, and the model rewritten to read the metric views |
+| `convert_metric_view_to_ossie_model(definition, name)` | `import-view view.yaml -o model.yaml --name orders` | An Ossie model over the metric view’s original tables and joins |
 | `wrap_metric_view_in_ossie_model(name, view)` | `wrap view.yaml --name main.sales.orders -o out.yaml` | A one-dataset model whose source is the metric view |
 
 Each verb takes YAML text (or a parsed mapping) and returns a `Result` with the output and a list
@@ -126,11 +127,26 @@ view when it is created.
     output: file
   ```
 
+Use `deploy --joins` (Python `joins=True`) to include many-to-one joins and eligible model
+metrics in the generated views. Deployment still emits one view per dataset. A relationship
+needs a declared primary or unique key on the target. Nested joins follow the relationship
+direction. A model metric is placed on its own dataset when it reads just one, or on a single
+eligible root when it reads across datasets. The rewritten model evaluates the exported measure
+with Databricks SQL. See the [Databricks metric view YAML reference](https://docs.databricks.com/aws/en/uc-semantics/metric-views/yaml-reference).
+
+`import-view` reconstructs datasets and expressions over the source tables or queries. It
+imports column equality and `using` joins as relationships and places single-source measures
+on their datasets. It preserves features such as filters, windows, parameters and unsupported
+join conditions in a Databricks extension, with warnings when they have no portable expression.
+Deploying the imported model with `--joins` restores those features to the root view.
+
 ## Limitations
 
 - The package does not connect to a workspace. It writes metric view definitions but does not
   create them.
-- Relationships have no metric view form. `deploy` keeps them in the Ossie model.
+- `deploy` warns for each omitted relationship or model-scoped metric. Relationships remain in
+  the rewritten model. A model-scoped metric is removed when its SQL references a column the metric
+  views do not expose or depends on another removed metric.
 - A field or metric whose expressions are all in a non-SQL dialect has no dimension or measure.
   `deploy` reports it and keeps it unchanged in the model.
 - The package reads and writes metric view YAML version `1.1` only.

@@ -128,6 +128,8 @@ def parse(text: str, dialect: str) -> exp.Expression:
         tree = sqlglot.parse_one(text, read=_ossie.sqlglot_dialect(dialect))
     except (ParseError, TokenError, KeyError) as error:
         raise Untranslatable(f"cannot parse {text!r} as {dialect}") from error
+    if tree is None:
+        raise Untranslatable(f"cannot parse an empty expression as {dialect}")
     return tree.transform(_normalize_dateadd)
 
 

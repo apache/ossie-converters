@@ -31,6 +31,7 @@ from ossie_databricks.convert import (
     convert_ossie_model_to_databricks,
 )
 from ossie_databricks.deploy import deploy_ossie_model_to_databricks
+from ossie_databricks.import_view import convert_metric_view_to_ossie_model
 from ossie_databricks.result import ConversionError, Result
 from ossie_databricks.wrap import wrap_metric_view_in_ossie_model
 
@@ -58,7 +59,7 @@ def _from_databricks(args: argparse.Namespace) -> Result:
 
 def _deploy(args: argparse.Namespace) -> Result:
     result = deploy_ossie_model_to_databricks(
-        _read(args.input), catalog=args.catalog, schema=args.schema
+        _read(args.input), catalog=args.catalog, schema=args.schema, joins=args.joins
     )
     files = {args.output / relative: text for relative, text in result.value.items()}
     existing = [str(path) for path in files if path.exists()]
@@ -73,6 +74,12 @@ def _deploy(args: argparse.Namespace) -> Result:
 
 def _wrap(args: argparse.Namespace) -> Result:
     result = wrap_metric_view_in_ossie_model(args.name, _read(args.input))
+    _write(args.output, result.value)
+    return result
+
+
+def _import_view(args: argparse.Namespace) -> Result:
+    result = convert_metric_view_to_ossie_model(_read(args.input), args.name)
     _write(args.output, result.value)
     return result
 
@@ -111,6 +118,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     sub.add_argument("--catalog", required=True)
     sub.add_argument("--schema", required=True)
+    sub.add_argument("--joins", action="store_true", help="include many-to-one joins")
     sub.add_argument("--overwrite", action="store_true", help="replace existing files")
     sub = command(
         "wrap",
@@ -120,6 +128,14 @@ def _parser() -> argparse.ArgumentParser:
         "Ossie model file",
     )
     sub.add_argument("--name", required=True, help="the metric view, catalog.schema.view")
+    sub = command(
+        "import-view",
+        _import_view,
+        "rebuild an Ossie model over the metric view's source tables",
+        "metric view file",
+        "Ossie model file",
+    )
+    sub.add_argument("--name", required=True, help="name of the model and root dataset")
     return parser
 
 

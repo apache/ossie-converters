@@ -22,6 +22,7 @@ https://docs.databricks.com/aws/en/metric-views/data-modeling/
 """
 
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from typing import Any
 
 from sqlglot import exp
@@ -167,8 +168,21 @@ def _item(obj: Mapping[str, Any], expr: str, path: str, result: Result) -> dict[
     return item
 
 
-def load(definition: str | Mapping[str, Any]) -> dict[str, Any]:
-    view = _ossie.load(definition)
+def load(
+    definition: str | Mapping[str, Any], *, require_parameter_defaults: bool = True
+) -> dict[str, Any]:
+    view = deepcopy(_ossie.load(definition))
+    # PyYAML resolves the unquoted YAML key "on" as a boolean.
+    pending = list(view.get("joins") or [])
+    while pending:
+        join = pending.pop()
+        if not isinstance(join, dict):
+            raise ConversionError("a metric view join must be a mapping")
+        if True in join:
+            if "on" in join:
+                raise ConversionError("a metric view join has duplicate 'on' keys")
+            join["on"] = join.pop(True)
+        pending.extend(join.get("joins") or [])
     # YAML reads `version: 1.1` as a number.
     if str(view.get("version")) != VERSION:
         raise ConversionError(
@@ -177,7 +191,7 @@ def load(definition: str | Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(view.get("source"), str):
         raise ConversionError("a metric view needs a source")
     for parameter in view.get("parameters") or []:
-        if "default" not in parameter:
+        if require_parameter_defaults and "default" not in parameter:
             raise ConversionError(
                 f"the parameter {parameter['name']} has no default, so the metric view has no "
                 "value without one"
