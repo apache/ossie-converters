@@ -79,10 +79,12 @@ Rules:
   String values are quoted; numeric values are not. The ontology expression
   language has comparison and boolean operators but no `IN`; the spec's own
   corpus (`flights.yaml`, `CancelationCode`) writes closed sets this way.
-- `length` is **recorded, not modeled**: the expression language defines no
-  functions, so there is no portable `LENGTH(x) <= n`. The length is appended to
-  the value type's description (`CSN length 10.`) and reported as a dropped
-  constraint in the conversion warnings.
+- `length` becomes `requires: LENGTH(x) <= n`, the form the merged SAP Business
+  Partner example in apache/ossie uses, and is also appended to the value type's
+  description (`CSN length 10.`). `LENGTH` is an `OSSIE_SQL_2026` function; the
+  reference ontology parser does not accept it yet (apache/ossie-converters#<§41>),
+  so each emitted length is reported as a warning. An overlay `requires: []`
+  clears it for a value type whose length is not a business rule.
 - `cds.*` scalar types map to Ossie built-ins (`String`, `Integer`, `Decimal`,
   `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`).
 - Elements across entities that resolve to the same value-type name produce one
@@ -104,12 +106,14 @@ the population to arrive through an ontology mapping.
   type: ValueType
   description: "Country key. DDIC domain LAND1 (CHAR 3), check table T005. CSN length 3."
   extends: [ String ]
+  requires:
+    - "LENGTH(CountryCode) <= 3"
 ```
 
 This is the same split the spec itself makes between `requires` and
 `ontology_mappings`. The check table's identity survives in the description; the
-converter never enumerates a check table's rows, and (see §1) it cannot state
-the length as a constraint either.
+converter never enumerates a check table's rows; the length (see §1) is the only
+constraint it states.
 
 ## 3 · `key` elements → `identify_by` + identifying relationships
 

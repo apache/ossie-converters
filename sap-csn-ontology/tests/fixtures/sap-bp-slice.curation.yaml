@@ -73,6 +73,9 @@ value_types:
   FullName:
     rename: PartnerName
     description: "Full name of the business partner (BUT000 name fields, concatenated business view)."
+    # The merged example (apache/ossie#310) constrains identifier and code
+    # lengths only; a display name's length is not a business rule.
+    requires: []
 
 concepts:
 

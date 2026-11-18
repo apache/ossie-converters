@@ -40,6 +40,8 @@ ontology:
       10, ALPHA conversion). The leading-zero conversion routine is a representation
       concern and is recorded here, not modeled.
     extends: [ String ]
+    requires:
+      - "LENGTH(BusinessPartnerNumber) <= 10"
 
   - concept: BusinessPartnerCategory
     type: ValueType
@@ -57,6 +59,8 @@ ontology:
       Identifier of a business partner in its customer role. Technical origin: DDIC
       domain KUNNR (CHAR 10, ALPHA).
     extends: [ String ]
+    requires:
+      - "LENGTH(CustomerNumber) <= 10"
 
   - concept: CountryCode
     type: ValueType
@@ -66,21 +70,29 @@ ontology:
       check table T005 is noted here as provenance; it is not modeled as a dataset in
       this example.
     extends: [ String ]
+    requires:
+      - "LENGTH(CountryCode) <= 3"
 
   - concept: SalesOrganization
     type: ValueType
     description: "Sales organization. DDIC domain VKORG (CHAR 4, check table TVKO)."
     extends: [ String ]
+    requires:
+      - "LENGTH(SalesOrganization) <= 4"
 
   - concept: DistributionChannel
     type: ValueType
     description: "Distribution channel. DDIC domain VTWEG (CHAR 2, check table TVTW)."
     extends: [ String ]
+    requires:
+      - "LENGTH(DistributionChannel) <= 2"
 
   - concept: Division
     type: ValueType
     description: "Division. DDIC domain SPART (CHAR 2, check table TSPA)."
     extends: [ String ]
+    requires:
+      - "LENGTH(Division) <= 2"
 
   - concept: PartnerName
     type: ValueType

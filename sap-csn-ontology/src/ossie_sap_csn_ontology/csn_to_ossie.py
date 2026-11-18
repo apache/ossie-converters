@@ -25,7 +25,7 @@ CSN construct                                Apache Ossie construct
 ===========================================  ==========================================
 ``kind: type`` with ``enum``                 ``ValueType`` + closed-world ``requires``
 Scalar element with a domain                 ``ValueType`` ``extends`` a built-in
-``length``                                   recorded in ``description``, reported dropped
+``length``                                   ``requires: LENGTH(x) <= n``, also in ``description``
 ``key`` element                              Identifying relationship + ``identify_by``
 Compound ``key``                             Several identifying relationships
 ``cds.Boolean`` element                      Unary relationship (no ``roles``)
@@ -162,14 +162,27 @@ def fixed_value_constraint(concept: str, enum: dict[str, Any]) -> str:
 
 
 def length_note(length: int) -> str:
-    """A CSN ``length`` is recorded, not modeled.
-
-    The ontology expression language defines no functions, so there is no
-    portable way to state ``LENGTH(x) <= n`` as a ``requires`` constraint. The
-    length is carried into the value type's description and reported as a
-    dropped constraint, never silently lost.
-    """
+    """A CSN ``length``, as recorded in the value type's description."""
     return f"CSN length {length}."
+
+
+def length_constraint(concept: str, length: int) -> str:
+    """A CSN ``length`` as a ``requires`` constraint, in the merged example's form.
+
+    ``LENGTH`` is an ``OSSIE_SQL_2026`` function and the SAP Business Partner
+    example in apache/ossie uses exactly this form, so the converter emits it.
+    The reference ontology parser does not accept it yet; that is reported as a
+    warning, and the length is kept in the description as well.
+    """
+    return f"LENGTH({concept}) <= {length}"
+
+
+def length_warning(concept: str) -> str:
+    return (
+        f"value type {concept}: `LENGTH` is an `OSSIE_SQL_2026` function, but the reference ontology "
+        "parser does not accept it in `requires` (apache/ossie-converters#<§41>); the length is also "
+        "recorded in the description"
+    )
 
 
 def mandatory_constraint(concept: str, relationship: str) -> str:
@@ -516,10 +529,9 @@ def _collect_value_types(conversion: Conversion) -> None:
             requires.append(fixed_value_constraint(final, definition.enum))
         elif definition.length is not None and definition.builtin == "String":
             description = _joined(description, length_note(definition.length))
-            conversion.warnings.append(
-                f"value type {final}: CSN length {definition.length} recorded in the description; "
-                "the ontology expression language cannot express a length constraint"
-            )
+            requires.append(length_constraint(final, definition.length))
+            if requires[-1] in curation.value_type_requires(derived, requires):
+                conversion.warnings.append(length_warning(final))
         register(derived, definition.builtin, description, requires)
 
     for definition in model.entities():
@@ -537,11 +549,11 @@ def _collect_value_types(conversion: Conversion) -> None:
                 requires.append(fixed_value_constraint(final, element.enum))
             elif element.length is not None and element.builtin == "String":
                 description = _joined(description, length_note(element.length))
-                if derived not in conversion.value_types:
-                    conversion.warnings.append(
-                        f"value type {final}: CSN length {element.length} recorded in the description; "
-                        "the ontology expression language cannot express a length constraint"
-                    )
+                requires.append(length_constraint(final, element.length))
+                if derived not in conversion.value_types and requires[-1] in curation.value_type_requires(
+                    derived, requires
+                ):
+                    conversion.warnings.append(length_warning(final))
             register(derived, element.builtin, description, requires)
 
 

@@ -57,7 +57,8 @@ Two converters read SAP CSN; they target different layers of the spec.
 | An association | a relationship with `from_columns`/`to_columns` | a relationship whose shape depends on which side's key the `ON` references |
 | A role view (I_Customer) | a dataset | a derived subtype: `extends` + `derived_by: EXISTS(...)` |
 | `@EndUserText.label` | `label` | `description`, and the raw material for `verbalizes` |
-| Other annotations, `length`/`precision`/`scale` | kept in the `SAP_CSN` extension | reported as dropped (see known losses) |
+| Other annotations, `precision`/`scale` | kept in the `SAP_CSN` extension | reported as dropped (see known losses) |
+| `length` on strings | kept in the `SAP_CSN` extension | `requires: LENGTH(x) <= n`, also recorded in `description` (see known parser findings) |
 
 On the shared fixture `sap-bp-slice.csn.json`, `sap-csn` emits 3 datasets with
 the same 4-part `primary_key` on `CustomerSalesArea`, 3 relationships
@@ -100,7 +101,8 @@ data-product binding. Nothing in it changes structure.
 | `kind: entity` | `EntityType` |
 | `kind: type`, scalar element with a domain | `ValueType` `extends` a built-in |
 | `enum` (fixed values) | `requires: x == 'a' OR x == 'b' …` — closed world |
-| `length`, `precision`, `scale` | recorded in `description`; reported as dropped |
+| `length` on strings | `requires: LENGTH(x) <= n`, as in the merged apache/ossie SAP example; also in `description` |
+| `precision`, `scale` | recorded in `description`; reported as dropped |
 | Check-table domain | description provenance only; population arrives via `ontology_mappings` |
 | Single `key` | `identify_by` + one `OneToOne` identifying relationship |
 | Compound `key` | one `ManyToOne` identifying relationship per part + a `requires` per part |
@@ -117,7 +119,7 @@ data-product binding. Nothing in it changes structure.
 
 | CSN construct | Why it does not convert | Where it belongs |
 |---|---|---|
-| `length` on strings, `precision`/`scale` on decimals | the ontology expression language defines comparison and boolean operators and `COUNT`/`SUM`/`EXISTS`, no `LENGTH` or other functions | recorded in `description`, reported as a warning; a spec question |
+| `precision`/`scale` on decimals | no constraint form in the ontology layer | recorded in `description`, reported as a warning; a spec question |
 | Annotations other than `@EndUserText.label` (`@ODM.entityName`, `@Semantics.*`, `@ObjectModel.*`, …) | `OntologyComponent`, `Relationship`, `Role` are `additionalProperties: false`, with no `custom_extensions` and no per-concept `ai_context` | reported as dropped, one line per annotation; apache/ossie#146 / ossie-converters#111 (`annotations`, both open) |
 | Association `ON` predicates | read for their shape only; a relationship carries no join predicate | open |
 | `cds.Composition` containment | emitted as an association | open |
@@ -144,6 +146,15 @@ qualified name (#129). This converter keeps the spec form. With that one referen
 written bare, the parser resolves all 11 concepts, 10 relationships,
 `Customer.identify_by == ['BusinessPartner.nr']`, the `EXISTS` derivation, and
 both concept mappings.
+
+**Known parser finding: `LENGTH`.** String lengths are emitted as
+`requires: LENGTH(x) <= n`, the form the merged SAP Business Partner example in
+apache/ossie uses. `LENGTH` is an `OSSIE_SQL_2026` function, but the reference
+parser rejects it ("Unresolved reference 'LENGTH'"), and `ontology.md` does not say
+which expression language `requires` uses. Each emitted length is reported as a
+warning and kept in the description too. Parser side: #<§41>; spec side:
+apache/ossie#<§40>. Same rule as #129: keep the project's own form and report the
+parser's limit.
 
 Two earlier parser findings (`datatype` on dataset fields; reverse-direction
 verbalizations) are fixed on the current `ontology` converter.

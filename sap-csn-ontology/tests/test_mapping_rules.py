@@ -140,8 +140,8 @@ class TestDomainsBecomeValueTypes:
         assert level["extends"] == ["Integer"]
         assert level["requires"] == ["Level == 1 OR Level == 2"]
 
-    def test_length_is_recorded_not_modeled(self):
-        """The ontology expression language has no functions, so no LENGTH constraint."""
+    def test_length_becomes_a_requires_constraint_and_is_reported(self):
+        """Emitted as in the merged apache/ossie example; the parser limit is a warning."""
         from ossie_sap_csn_ontology import convert, parse_csn
 
         conversion = convert(
@@ -149,9 +149,9 @@ class TestDomainsBecomeValueTypes:
         )
         document = csn_to_ossie({"definitions": {"s.E": entity({"Id": string_element(10, key=True, label="Customer Number")})}}, name="t")
         value_type = concept(document, "CustomerNumber")
-        assert "requires" not in value_type
+        assert value_type["requires"] == ["LENGTH(CustomerNumber) <= 10"]
         assert "CSN length 10." in value_type["description"]
-        assert any("cannot express a length constraint" in w for w in conversion.warnings)
+        assert any("reference ontology parser does not accept it" in w for w in conversion.warnings)
 
     def test_value_type_is_named_from_the_end_user_label(self):
         document = build(
@@ -227,7 +227,7 @@ class TestCheckTables:
             }
         )
         country = concept(document, "CountryKey")
-        assert "requires" not in country, "a check table's rows must not become an enumeration"
+        assert country["requires"] == ["LENGTH(CountryKey) <= 3"], "a check table's rows must not become an enumeration"
         assert "CSN length 3." in country["description"]
 
     def test_the_check_table_origin_survives_in_the_description(self):
@@ -1090,6 +1090,6 @@ class TestTypeFidelity:
         """No portable constraint form exists for them; they are a known loss."""
         assert "requires" not in concept(cds_types_document, "NetAmount")
 
-    def test_string_length_is_recorded_in_the_description(self, cds_types_document):
+    def test_string_length_is_a_constraint_and_is_recorded_in_the_description(self, cds_types_document):
         assert "CSN length 10." in concept(cds_types_document, "DocumentNumber")["description"]
-        assert "requires" not in concept(cds_types_document, "DocumentNumber")
+        assert concept(cds_types_document, "DocumentNumber")["requires"] == ["LENGTH(DocumentNumber) <= 10"]
