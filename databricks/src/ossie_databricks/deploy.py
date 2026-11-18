@@ -59,7 +59,13 @@ def deploy_ossie_model_to_databricks(
         if "/" in name or "\\" in name or name in (".", ".."):
             raise ConversionError(f"the dataset name {name!r} cannot be a file name")
         view = metric_view.from_dataset(dataset, result)
-        view_name = exp.table_(name, db=schema, catalog=catalog).sql(dialect="databricks")
+        view_table = exp.table_(name, db=schema, catalog=catalog)
+        view_name = view_table.sql(dialect="databricks")
+        if _targets_own_source(dataset.get("source"), view_table):
+            raise ConversionError(
+                f"the metric view target {view_name} is dataset {name!r}'s own source; "
+                "deploy to a different catalog or schema"
+            )
         files[f"metric_views/{name}.yaml"] = f"# Metric view: {view_name}\n{_ossie.dump(view)}"
         dataset["source"] = view_name
         # An object without a dimension or measure keeps its expression as it is.
@@ -77,6 +83,19 @@ def deploy_ossie_model_to_databricks(
 
     result.value = files
     return result
+
+
+def _targets_own_source(source: Any, view_table: exp.Table) -> bool:
+    """Whether the deployed metric view would read its own dataset source table.
+
+    A query source never names a single table, so it cannot collide.
+    """
+    if not isinstance(source, str):
+        return False
+    normalized = exp.to_table(source, dialect="databricks").sql(
+        dialect="databricks", normalize=True
+    )
+    return normalized == view_table.sql(dialect="databricks", normalize=True)
 
 
 def _deployed_metric(

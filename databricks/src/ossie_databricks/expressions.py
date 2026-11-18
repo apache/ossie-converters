@@ -24,6 +24,8 @@ function is in `_PORTABLE`, a set that the table test in `tests/test_expressions
 by row. For any other tree it raises `Untranslatable`, and the caller keeps the original text.
 """
 
+import re
+
 import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.databricks import Databricks
@@ -33,6 +35,12 @@ from ossie_databricks import _ossie
 
 OSSIE = "OSSIE_SQL_2026"
 DATABRICKS = "DATABRICKS"
+
+# A name that may be written without quotes. Quoting forces exact-case matching, so an
+# unnecessarily quoted name (a backtick name becomes a double-quoted one) stops matching a
+# column created with that spelling; printing it bare keeps the case-insensitive match.
+_REGULAR_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_RESERVED = {keyword.upper() for keyword in Databricks.Tokenizer.KEYWORDS}
 
 
 class Untranslatable(Exception):
@@ -100,8 +108,23 @@ class _DatabricksSql(Databricks):
         }
 
 
+class _OssieParse(sqlglot.Dialect):
+    """Default spelling for reading OSSIE_SQL_2026 and ANSI_SQL, with Ossie's NULL ordering.
+
+    Ossie orders NULLs last for ASC and first for DESC (the ANSI default), the reverse of
+    the sqlglot default. Reading with it records a bare ORDER BY item's implied placement
+    with Ossie's meaning, so a translation keeps it instead of flipping it.
+    """
+
+    NULL_ORDERING = "nulls_are_large"
+
+
 class _OssieSql(Databricks):
     """Databricks spelling, which Ossie shares for its functions, with ANSI quoting."""
+
+    # Match _OssieParse so the printer omits only the placements Ossie also defaults to,
+    # and spells out the rest (a Databricks ASC NULLS FIRST becomes an explicit clause).
+    NULL_ORDERING = "nulls_are_large"
 
     class Tokenizer(Databricks.Tokenizer):
         IDENTIFIERS = ['"']
@@ -125,7 +148,10 @@ class _OssieSql(Databricks):
 def parse(text: str, dialect: str) -> exp.Expression:
     """Parse `text` as the Ossie validator does for `dialect`."""
     try:
-        tree = sqlglot.parse_one(text, read=_ossie.sqlglot_dialect(dialect))
+        # OSSIE_SQL_2026 and ANSI_SQL map to the default dialect; read them with Ossie's
+        # NULL ordering so a bare window ORDER BY keeps its meaning across a translation.
+        read = _ossie.sqlglot_dialect(dialect) or _OssieParse
+        tree = sqlglot.parse_one(text, read=read)
     except (ParseError, TokenError, KeyError) as error:
         raise Untranslatable(f"cannot parse {text!r} as {dialect}") from error
     return tree.transform(_normalize_dateadd)
@@ -161,9 +187,21 @@ def translate(tree: exp.Expression, target: str) -> str:
     unsupported = _unsupported_functions(tree)
     if unsupported:
         raise Untranslatable(f"no verified translation for {', '.join(unsupported)}")
+    work = tree.copy()
+    for identifier_node in work.find_all(exp.Identifier):
+        _drop_unneeded_quotes(identifier_node)
     if target == DATABRICKS:
-        return tree.copy().transform(_to_databricks).sql(dialect=_DatabricksSql)
-    return tree.copy().transform(_to_ossie).sql(dialect=_OssieSql)
+        return work.transform(_to_databricks).sql(dialect=_DatabricksSql)
+    return work.transform(_to_ossie).sql(dialect=_OssieSql)
+
+
+def _drop_unneeded_quotes(node: exp.Identifier) -> None:
+    if (
+        node.quoted
+        and _REGULAR_IDENTIFIER.fullmatch(node.this)
+        and node.this.upper() not in _RESERVED
+    ):
+        node.set("quoted", False)
 
 
 def _to_databricks(node: exp.Expression) -> exp.Expression:
@@ -198,6 +236,10 @@ def _to_databricks(node: exp.Expression) -> exp.Expression:
 
 
 def _to_ossie(node: exp.Expression) -> exp.Expression:
+    if isinstance(node, exp.IntDiv):
+        # Databricks DIV is integer division; Ossie writes it as TRUNC(x / y, 0).
+        quotient = exp.Div(this=node.this, expression=node.expression)
+        return exp.Anonymous(this="TRUNC", expressions=[quotient, exp.Literal.number(0)])
     if _call_name(node) == "MEASURE":
         return exp.Agg(this=node.expressions[0])
     if isinstance(node, exp.Extract) and node.name.upper() == "DOY":

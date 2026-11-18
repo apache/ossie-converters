@@ -20,7 +20,7 @@ version: 0.3.0.dev0
 name: sources
 datasets:
   - name: orders
-    source: main.sales.orders
+    source: main.raw.orders
     fields:
       - name: order_id
         expression:

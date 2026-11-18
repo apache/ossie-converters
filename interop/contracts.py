@@ -161,7 +161,12 @@ def check_document(data, category, oracle, *, input_stage=False, native_dialect=
         for name, sql in oracle["metrics"].items()
     ]
     for path, expected_sql, element, metric in elements:
-        dialects = (element or {}).get("expression", {}).get("dialects") or []
+        expression = (element or {}).get("expression", {})
+        dialects = list(expression.get("dialects") or [])
+        # The primary `sql` slot is the OSSIE_SQL_2026 form. A converter may fill it instead
+        # of leaving an OSSIE_SQL_2026 dialect entry, so treat it as one for the comparison.
+        if expression.get("sql"):
+            dialects.append({"dialect": "OSSIE_SQL_2026", "expression": expression["sql"]})
         if input_stage:
             _check(
                 checks,
