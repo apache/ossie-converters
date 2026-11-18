@@ -406,10 +406,20 @@ def expression_entries(
     # portable sibling for one would need an expression tree this converter does not
     # build — see the module docstring — so the non-portability is recorded instead
     # of guessed at.
-    portable = _single_aggregate_portable(expr, resolve, log, object_ref=object_ref)
-    if portable is not None:
-        entries.append({"dialect": PORTABLE_DIALECT, "expression": portable})
-        return entries
+    # Only from the metric path. An aggregate is a metric's shape: a field is a
+    # row-level attribute (core-spec/spec.md), so `sum(...)` has no honest field
+    # expression. The qualified form resolves to nothing -- the qualifier is the
+    # Ossie dataset name and the column half is the warehouse column -- and the
+    # bare form claims a row-level value the column does not have. ThoughtSpot
+    # itself runs such a column as a measure (live: no GROUP BY). So the field
+    # path falls through to the THOUGHTSPOT-only issue below, as it does for
+    # window and level-of-detail constructs. Raised by @christianeu-db reviewing
+    # apache/ossie-converters#209.
+    if kind != "field":
+        portable = _single_aggregate_portable(expr, resolve, log, object_ref=object_ref)
+        if portable is not None:
+            entries.append({"dialect": PORTABLE_DIALECT, "expression": portable})
+            return entries
 
     log.add(
         code="TS-EXPR-THOUGHTSPOT-ONLY",

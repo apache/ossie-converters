@@ -40,7 +40,9 @@ class TestExpressionEntries:
         # A reconstruction from a parsed (name, args) shape would normalise this to
         # `sum ( [ORDERS::Amount] )` and break exact-string equality on the way back.
         log = IssueLog()
-        out = expression_entries("sum([ORDERS::Amount])", _resolve, log, object_ref="f")
+        out = expression_entries(
+            "sum([ORDERS::Amount])", _resolve, log, object_ref="f", kind="metric"
+        )
         assert out[0] == {"dialect": "THOUGHTSPOT", "expression": "sum([ORDERS::Amount])"}
         # The portable sibling composed beside it is normalised; the verbatim
         # entry is not, which is the whole point of this test.
@@ -157,6 +159,10 @@ class TestExpressionEntriesVerbatimUnderAdversarialInput:
         assert isinstance(out[0]["expression"], str)
 
 
+#: Portable as a metric, not as a field -- see the aggregate row below.
+METRIC_ONLY = object()
+
+
 class TestPortableSiblingTruthTable:
     """When exactly does a portable ANSI_SQL sibling appear? One row per input shape,
     plus a sweep confirming none of the non-portable shapes ever produces one anyway
@@ -169,10 +175,12 @@ class TestPortableSiblingTruthTable:
         "expression with a runtime parameter": ("[ORDERS::Amount] * [Growth Rate]", False),
         "expression with a formula cross-reference": ("sum ( [formula_Margin] )", False),
         # One catalog aggregate over one resolvable reference: portable since
-        # apache/ossie-converters#30. Everything below it is a call too, and
+        # apache/ossie-converters#30, but only as a METRIC. A field is a
+        # row-level attribute, so an aggregate has no honest field expression
+        # (apache/ossie-converters#209). Everything below it is a call too, and
         # each is non-portable for a DIFFERENT reason, so they are listed
         # separately rather than as one "function call" row.
-        "single aggregate over a resolvable reference": ("sum([ORDERS::Amount])", True),
+        "single aggregate over a resolvable reference": ("sum([ORDERS::Amount])", METRIC_ONLY),
         "single aggregate, two arguments": (
             "sum_if([ORDERS::Amount] > 1, [ORDERS::Amount])", False),
         "single aggregate over an unresolvable reference": ("sum([MISSING::Col])", False),
@@ -182,10 +190,13 @@ class TestPortableSiblingTruthTable:
         "compound expression": ("[ORDERS::Amount] + [ORDERS::Tax]", False),
     }
 
+    @pytest.mark.parametrize("kind", ["field", "metric"])
     @pytest.mark.parametrize("expr,expect_portable", CASES.values(), ids=CASES.keys())
-    def test_portability_per_case(self, expr, expect_portable):
+    def test_portability_per_case(self, expr, expect_portable, kind):
+        if expect_portable is METRIC_ONLY:
+            expect_portable = kind == "metric"
         log = IssueLog()
-        out = expression_entries(expr, _resolve, log, object_ref="f")
+        out = expression_entries(expr, _resolve, log, object_ref="f", kind=kind)
         dialects = [e["dialect"] for e in out]
         if expect_portable:
             assert dialects == ["THOUGHTSPOT", "ANSI_SQL"]
@@ -197,12 +208,15 @@ class TestPortableSiblingTruthTable:
     def test_no_non_portable_case_produces_a_portable_sibling(self):
         # The inverse check: sweep every case this table declares non-portable and
         # confirm none of them slipped an ANSI_SQL entry in anyway.
-        for expr, expect_portable in self.CASES.values():
-            if expect_portable:
-                continue
-            log = IssueLog()
-            out = expression_entries(expr, _resolve, log, object_ref="f")
-            assert "ANSI_SQL" not in [e["dialect"] for e in out], expr
+        for kind in ("field", "metric"):
+            for expr, expect_portable in self.CASES.values():
+                if expect_portable is METRIC_ONLY:
+                    expect_portable = kind == "metric"
+                if expect_portable:
+                    continue
+                log = IssueLog()
+                out = expression_entries(expr, _resolve, log, object_ref="f", kind=kind)
+                assert "ANSI_SQL" not in [e["dialect"] for e in out], (expr, kind)
 
 
 class TestAttributeDataset:

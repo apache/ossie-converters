@@ -86,6 +86,49 @@ def _codes(result):
     return [i.get("code") for i in result.issues.as_dicts()]
 
 
+def _convert_attribute(expr, *, name="Test"):
+    """The same formula on an ATTRIBUTE column, so it becomes a FIELD not a metric."""
+    columns = list(SURFACED) + [
+        {"name": name, "formula_id": "f1", "properties": {"column_type": "ATTRIBUTE"}},
+    ]
+    model = TmlDocument(kind="model", body={
+        "name": "sales",
+        "model_tables": [{"name": "ORDERS"}],
+        "columns": columns,
+        "formulas": [{"id": "f1", "name": name, "expr": expr}],
+    }, guid=None)
+    return convert(DocumentSet(
+        model=model, tables=(_table("ORDERS", ["AMOUNT", "CUST_ID"]),)))
+
+
+def _field_ansi(result, field_name):
+    dataset = next(d for d in result.model["datasets"] if d["name"] == "ORDERS")
+    field = next(f for f in dataset["fields"] if f["name"] == field_name)
+    return next((e["expression"] for e in field["expression"]["dialects"]
+                 if e["dialect"] == PORTABLE_DIALECT), None)
+
+
+class TestAFieldNeverCarriesAnAggregate:
+    """An aggregate is a metric's shape. A field is a row-level attribute
+    (core-spec/spec.md), so `sum(...)` has no honest field expression: the
+    qualified form resolves to nothing, and the bare form claims a row-level
+    value the column does not have. ThoughtSpot itself runs such a column as a
+    measure. Raised by @christianeu-db reviewing apache/ossie-converters#209.
+    """
+
+    def test_an_aggregating_attribute_gets_no_portable_sibling(self):
+        result = _convert_attribute("sum ( [ORDERS::AMOUNT] )")
+        assert _field_ansi(result, "test") is None
+        assert "TS-EXPR-THOUGHTSPOT-ONLY" in _codes(result)
+
+    def test_a_bare_attribute_still_gets_its_unqualified_sibling(self):
+        result = _convert_attribute("[ORDERS::AMOUNT]")
+        assert _field_ansi(result, "test") == "AMOUNT"
+
+    def test_the_metric_path_is_unchanged(self):
+        assert _ansi(_convert("sum ( [ORDERS::AMOUNT] )"), "total") == "SUM(ORDERS.AMOUNT)"
+
+
 class TestASingleAggregateOverADeclaredColumnBecomesPortable:
 
     def test_sum_composes(self):
