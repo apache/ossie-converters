@@ -107,7 +107,8 @@ concepts:
         description: >
           Association _Customer (I_Customer / FLCU00-class role view). A
           business partner may hold the customer role; when it does, exactly one
-          customer number applies.
+          customer number applies. Populated from the CUSTOMER dataset, which is
+          what makes the derived Customer population below observable.
         verbalizes:
           - "{BusinessPartner} acts as customer {CustomerNumber}"
 
@@ -214,6 +215,15 @@ ontology_mappings:
               datatype: String
             - name: COUNTRY
               datatype: String
+        - name: CUSTOMER
+          description: "Customer role records (I_Customer-shaped): one row per business partner that acts as a customer."
+          source: "master_data.customer"
+          primary_key: [ CUSTOMER ]
+          fields:
+            - name: CUSTOMER
+              datatype: String
+            - name: BUSINESS_PARTNER
+              datatype: String
     concept_bindings:
       - concept: BusinessPartner
         dataset: BUSINESS_PARTNER
@@ -223,6 +233,15 @@ ontology_mappings:
           BusinessPartnerCategory: BP_CATEGORY
           BusinessPartnerFullName: BP_FULL_NAME
           Country: COUNTRY
+      # A second binding of the same concept adds link mappings only: the
+      # CUSTOMER role dataset feeds customer_nr, which makes the derived
+      # Customer population observable without asserting Customer objects.
+      - concept: BusinessPartner
+        dataset: CUSTOMER
+        identity:
+          BusinessPartner: BUSINESS_PARTNER
+        attributes:
+          _Customer: CUSTOMER
       - concept: CustomerSalesArea
         dataset: CUSTOMER_SALES_AREA
         identity:

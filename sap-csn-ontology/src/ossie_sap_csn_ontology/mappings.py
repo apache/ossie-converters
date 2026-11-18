@@ -228,6 +228,31 @@ def _render_concept_mapping(conversion: Conversion, binding: dict[str, Any]) -> 
     return rendered
 
 
+def _merge_concept_mappings(mappings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fold repeated bindings of one concept into a single concept mapping.
+
+    The first binding of a concept supplies its object mappings. A later binding
+    of the same concept adds link mappings only, each identifying its subject in
+    its own dataset: a role dataset that feeds one relationship of an entity
+    whose population comes from elsewhere. A later binding with no attributes
+    would add nothing, so it is an error rather than a silent no-op.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    for mapping in mappings:
+        existing = merged.get(mapping["concept"])
+        if existing is None:
+            merged[mapping["concept"]] = mapping
+            continue
+        links = mapping.get("link_mappings")
+        if not links:
+            raise ConversionError(
+                f"concept {mapping['concept']}: a repeated binding must bind attributes; "
+                "only the first binding of a concept supplies its objects"
+            )
+        existing.setdefault("link_mappings", []).extend(links)
+    return list(merged.values())
+
+
 def render_ontology_mappings(conversion: Conversion) -> list[dict[str, Any]]:
     """Render every ontology map declared in the curation overlay."""
     rendered: list[dict[str, Any]] = []
@@ -240,9 +265,8 @@ def render_ontology_mappings(conversion: Conversion) -> list[dict[str, Any]]:
             if entry.get(key) is not None:
                 ontology_map[key] = entry[key]
         ontology_map["semantic_model"] = _render_semantic_model(semantic_model)
-        ontology_map["concept_mappings"] = [
-            _render_concept_mapping(conversion, binding)
-            for binding in entry.get("concept_bindings") or []
-        ]
+        ontology_map["concept_mappings"] = _merge_concept_mappings(
+            [_render_concept_mapping(conversion, binding) for binding in entry.get("concept_bindings") or []]
+        )
         rendered.append(ontology_map)
     return rendered

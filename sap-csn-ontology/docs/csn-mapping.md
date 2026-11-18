@@ -284,8 +284,12 @@ fields:
 
 Identity bindings become `object_mappings`; attribute bindings become
 `link_mappings` whose children are qualified by their concept. A concept with no
-bound attributes emits no `link_mappings`. Expressions are emitted in the
-portable ANSI SQL core.
+bound attributes emits no `link_mappings`. A concept bound more than once gets
+one concept mapping: the first binding supplies its `object_mappings`, and each
+later binding adds `link_mappings` only, identifying its subject in its own
+dataset. That is how a role dataset such as `CUSTOMER` feeds one relationship of
+an entity whose population comes from elsewhere. A later binding with no
+attributes is an error. Expressions are emitted in the portable ANSI SQL core.
 
 ## 9a · CDS scalar types
 

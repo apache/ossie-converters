@@ -592,6 +592,65 @@ class TestCompoundIdentity:
             )
 
 
+    PARTNER = {
+        "s.Partner": entity(
+            {
+                "Partner": string_element(10, key=True, label="Partner Number"),
+                "Name": string_element(40, label="Partner Name"),
+                "Region": string_element(3, label="Region"),
+            }
+        )
+    }
+
+    @staticmethod
+    def _two_bindings(second: dict) -> dict:
+        return {
+            "ontology_mappings": [
+                {
+                    "semantic_model": {"name": "m", "datasets": []},
+                    "concept_bindings": [
+                        {
+                            "concept": "Partner",
+                            "dataset": "PARTNERS",
+                            "identity": {"Partner": "ID"},
+                            "attributes": {"Name": "NAME"},
+                        },
+                        second,
+                    ],
+                }
+            ]
+        }
+
+    def test_a_repeated_binding_adds_link_mappings_to_one_concept_mapping(self):
+        """A second dataset feeds one relationship; it does not assert objects."""
+        document = build(
+            self.PARTNER,
+            self._two_bindings(
+                {
+                    "concept": "Partner",
+                    "dataset": "REGIONS",
+                    "identity": {"Partner": "PARTNER"},
+                    "attributes": {"Region": "REGION"},
+                }
+            ),
+        )
+        mappings = document["ontology_mappings"][0]["concept_mappings"]
+        assert len(mappings) == 1
+        assert mappings[0]["object_mappings"] == [
+            {"referent_mappings": [{"relationship": "partner", "expression": "PARTNERS.ID"}]}
+        ]
+        assert mappings[0]["link_mappings"][1] == {
+            "object_mapping": {"referent_mappings": [{"relationship": "partner", "expression": "REGIONS.PARTNER"}]},
+            "children": [{"relationship": "region", "object_mapping": {"expression": "REGIONS.REGION"}}],
+        }
+
+    def test_a_repeated_binding_without_attributes_is_an_error(self):
+        with pytest.raises(ConversionError, match="repeated binding must bind attributes"):
+            build(
+                self.PARTNER,
+                self._two_bindings({"concept": "Partner", "dataset": "OTHER", "identity": {"Partner": "ID"}}),
+            )
+
 # ---------------------------------------------------------------------------
 # Rule 6: role-based specialization -> extends + derived_by
 # ---------------------------------------------------------------------------

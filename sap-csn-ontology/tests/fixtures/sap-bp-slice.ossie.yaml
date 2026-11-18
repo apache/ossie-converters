@@ -132,7 +132,8 @@ ontology:
         description: >
           Association _Customer (I_Customer / FLCU00-class role view). A business
           partner may hold the customer role; when it does, exactly one customer number
-          applies.
+          applies. Populated from the CUSTOMER dataset, which is what makes the derived
+          Customer population below observable.
         roles:
           - concept: CustomerNumber
         multiplicity: ManyToOne
@@ -284,6 +285,23 @@ ontology_mappings:
                   - dialect: ANSI_SQL
                     expression: "COUNTRY"
               datatype: String
+        - name: CUSTOMER
+          description: "Customer role records (I_Customer-shaped): one row per business partner that acts as a customer."
+          source: "master_data.customer"
+          primary_key: [ CUSTOMER ]
+          fields:
+            - name: CUSTOMER
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "CUSTOMER"
+              datatype: String
+            - name: BUSINESS_PARTNER
+              expression:
+                dialects:
+                  - dialect: ANSI_SQL
+                    expression: "BUSINESS_PARTNER"
+              datatype: String
     concept_mappings:
 
       - concept: BusinessPartner
@@ -306,6 +324,17 @@ ontology_mappings:
               - relationship: country
                 object_mapping:
                   expression: "BUSINESS_PARTNER.COUNTRY"
+          # Feeds BusinessPartner.customer_nr from the CUSTOMER role dataset,
+          # making the derived Customer population observable without asserting
+          # Customer objects directly.
+          - object_mapping:
+              referent_mappings:
+                - relationship: nr
+                  expression: "CUSTOMER.BUSINESS_PARTNER"
+            children:
+              - relationship: customer_nr
+                object_mapping:
+                  expression: "CUSTOMER.CUSTOMER"
 
       - concept: CustomerSalesArea
         object_mappings:
