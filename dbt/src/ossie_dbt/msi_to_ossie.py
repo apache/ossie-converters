@@ -41,7 +41,13 @@ from ossie import (
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_dbt.expression_utils import _is_constant_expr, column_span, replace_columns_in_sql
+from ossie_dbt.expression_utils import (
+    _is_constant_expr,
+    column_span,
+    parse_scalar_sql,
+    qualified_column,
+    replace_columns_in_sql,
+)
 from ossie_dbt.filter_utils import (
     MetricFilterResolver,
     UnresolvedFilterError,
@@ -469,12 +475,13 @@ class MSIToOssieConverter:
         dataset = context.datasets.get(agg_params_obj.semantic_model)
         if dataset is None:
             raise _UnresolvedMetricInputError(f"Unknown semantic model {agg_params_obj.semantic_model!r}")
-        reader = self._sql_reader()
-        filter_sql, filter_datasets = context.filters.resolve(filter_templates, dataset.name, reader)
-        if filter_datasets - {dataset.name} and not self._parse_scalar_sql(col, reader).find(exp.Column):
-            raise UnresolvedFilterError(f"A filter across datasets cannot retain the aggregation dataset {dataset.name!r}")
+        filter_sql, related_filter = context.filters.resolve(filter_templates, dataset.name, self._sql_reader())
         measure = metric.type_params.measure
-        col = self._qualify_metric_input(col, dataset, context.fields[dataset.name], measure.name if measure else None)
+        col, reads_source = self._qualify_metric_input(
+            col, dataset, context.fields[dataset.name], measure.name if measure else None
+        )
+        if related_filter and not reads_source:
+            raise UnresolvedFilterError(f"A filter across datasets cannot retain the aggregation dataset {dataset.name!r}")
         return self._build_agg_expression(agg_params_obj.agg, col, agg_params_obj.agg_params, filter_sql)
 
     @staticmethod
@@ -533,31 +540,17 @@ class MSIToOssieConverter:
             return "snowflake"
         return reader
 
-    @staticmethod
-    def _parse_scalar_sql(sql: str, reader: str) -> exp.Expression:
-        try:
-            statements = sqlglot.parse(sql, read=reader)
-        except SqlglotError as exc:
-            raise _UnresolvedMetricInputError("Could not parse row-level SQL") from exc
-        if len(statements) != 1 or statements[0] is None:
-            raise _UnresolvedMetricInputError("Expected one row-level SQL expression")
-        tree = statements[0]
-        if tree.find(exp.Query, exp.Alias, exp.AggFunc, exp.Window, exp.Star):
-            raise _UnresolvedMetricInputError("Expected a scalar expression over source columns")
-        return tree
-
-    @staticmethod
-    def _dataset_column(dataset: str, field: str) -> exp.Column:
-        return exp.Column(this=exp.to_identifier(field), table=exp.to_identifier(dataset))
-
     def _qualify_metric_input(
         self, sql: str, dataset: OssieDataset, fields: List[OssieField], preferred_name: Optional[str]
-    ) -> str:
+    ) -> tuple[str, bool]:
         reader = self._sql_reader()
-        tree = self._parse_scalar_sql(sql, reader)
+        try:
+            tree = parse_scalar_sql(sql, reader)
+        except ValueError as exc:
+            raise _UnresolvedMetricInputError(str(exc)) from exc
         columns = list(tree.find_all(exp.Column))
         if not columns:
-            return sql
+            return sql, False
 
         # dbt aggregation inputs read one relation. Strip its qualifier when
         # building the source field, then qualify the logical metric reference.
@@ -577,19 +570,19 @@ class MSIToOssieConverter:
             # Older SQLGlot versions do not track identifier positions. Keep the
             # row expression as a field so rendering cannot change its SQL dialect.
             field = self._field_for_source(fields, sql, preferred_name or "metric_input", preferred_name)
-            return self._dataset_column(dataset.name, field).sql(dialect=reader)
+            return qualified_column(dataset.name, field).sql(dialect=reader), True
 
         replacements: dict[tuple[int, int], str] = {}
         for column, span in zip(columns, spans):
             source_sql = exp.Column(this=column.this.copy()).sql(dialect=reader)
             field = self._field_for_source(fields, source_sql, column.name, preferred_name if column is tree else None)
-            resolved = self._dataset_column(dataset.name, field).sql(dialect=reader)
+            resolved = qualified_column(dataset.name, field).sql(dialect=reader)
             if column is tree:
-                return resolved
+                return resolved, True
             if span is not None:
                 replacements[span] = resolved
         try:
-            return replace_columns_in_sql(sql, replacements)
+            return replace_columns_in_sql(sql, replacements), True
         except ValueError as exc:
             raise _UnresolvedMetricInputError(str(exc)) from exc
 

@@ -15,14 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Mapping, Optional, Sequence
 
 import jinja2
-import sqlglot
 from jinja2.sandbox import SandboxedEnvironment
 from sqlglot import exp
-from sqlglot.errors import SqlglotError
 
 from metricflow_semantic_interfaces.protocols.semantic_model import SemanticModel
 from metricflow_semantic_interfaces.protocols.where_filter import WhereFilterIntersection
@@ -30,32 +28,26 @@ from metricflow_semantic_interfaces.type_enums import DimensionType, EntityType
 from metricflow_semantics.errors.error_classes import FeatureNotSupportedError
 from metricflow_semantics.naming.linkable_spec_name import StructuredLinkableSpecName
 from ossie import OssieDataset, OssieRelationship
+from ossie_dbt.expression_utils import column_span, parse_scalar_sql, qualified_column, replace_columns_in_sql
 
 
 class UnresolvedFilterError(Exception):
     """A dbt filter could not be represented as an Ossie predicate."""
 
 
+@dataclass(frozen=True)
 class _FilterReference:
-    def __init__(
-        self,
-        kind: str,
-        name: str,
-        entity_path: Sequence[str],
-        resolve: Callable[[str, str, Sequence[str], Optional[str]], str],
-        time_modifier: Optional[str] = None,
-    ) -> None:
-        self._kind = kind
-        self._name = name
-        self._path = entity_path
-        self._resolve = resolve
-        self._time_modifier = time_modifier
+    _kind: str
+    _name: str
+    _path: Sequence[str]
+    _resolve: Callable[[str, str, Sequence[str], Optional[str]], str]
+    _time_modifier: Optional[str] = None
 
     def grain(self, time_granularity: str) -> "_FilterReference":
-        return _FilterReference(self._kind, self._name, self._path, self._resolve, time_granularity)
+        return replace(self, _time_modifier=time_granularity)
 
     def date_part(self, date_part_name: str) -> "_FilterReference":
-        return _FilterReference(self._kind, self._name, self._path, self._resolve, date_part_name)
+        return self.grain(date_part_name)
 
     def descending(self, is_descending: bool) -> "_FilterReference":
         if is_descending:
@@ -118,14 +110,14 @@ class MetricFilterResolver:
 
     def resolve(
         self, templates: tuple[str, ...], dataset: str, reader: str
-    ) -> tuple[Optional[str], frozenset[str]]:
-        referenced_datasets: set[str] = set()
+    ) -> tuple[Optional[str], bool]:
+        related_filter = False
 
         def resolve_reference(
             kind: str, argument: str, entity_path: Sequence[str], time_modifier: Optional[str]
         ) -> str:
             owner, name = self._template_field(dataset, kind, argument, entity_path, time_modifier)
-            return self._qualified_field(owner, name).sql(dialect=reader)
+            return qualified_column(owner, name).sql(dialect=reader)
 
         parts: list[str] = []
         for template in templates:
@@ -133,42 +125,34 @@ class MetricFilterResolver:
                 sql = _render_filter_template(template, resolve_reference).strip()
                 if not sql:
                     continue
-                statements = sqlglot.parse(sql, read=reader)
-            except (jinja2.TemplateError, TypeError, ValueError, SqlglotError) as exc:
-                raise UnresolvedFilterError("Could not render or parse the predicate") from exc
-            if len(statements) != 1 or statements[0] is None:
-                raise UnresolvedFilterError("Expected one SQL predicate")
-            tree = statements[0]
-            if tree.find(exp.Query, exp.Alias, exp.AggFunc, exp.Window, exp.Star):
-                raise UnresolvedFilterError("Expected a row-level predicate")
+                tree = parse_scalar_sql(sql, reader)
+            except (jinja2.TemplateError, TypeError, ValueError) as exc:
+                raise UnresolvedFilterError(f"Could not render or parse the predicate ({exc})") from exc
 
-            changed = False
-            for column in list(tree.find_all(exp.Column)):
+            replacements: dict[tuple[int, int], str] = {}
+            for column in tree.find_all(exp.Column):
                 owner = column.table or dataset
                 if column.db or column.catalog or owner not in self.datasets:
                     raise UnresolvedFilterError(f"Unknown filter dataset {owner!r}")
                 if owner != dataset:
                     self._require_unique_relationship(dataset, owner)
+                    related_filter = True
                 name = self._field_name(owner, column.name, quoted=column.this.quoted)
-                referenced_datasets.add(owner)
                 if column.table == owner and column.name == name:
                     continue
-                resolved = self._qualified_field(owner, name)
-                if column is tree:
-                    tree = resolved
-                else:
-                    column.replace(resolved)
-                changed = True
-            parts.append(tree.sql(dialect=reader) if changed else sql)
+                span = column_span(column)
+                if span is None:
+                    raise UnresolvedFilterError(f"Could not locate filter field {name!r} in the SQL")
+                replacements[span] = qualified_column(owner, name).sql(dialect=reader)
+            try:
+                parts.append(replace_columns_in_sql(sql, replacements))
+            except ValueError as exc:
+                raise UnresolvedFilterError(str(exc)) from exc
 
         parts = list(dict.fromkeys(parts))
         if len(parts) < 2:
-            return (parts[0] if parts else None), frozenset(referenced_datasets)
-        return " AND ".join(f"({part})" for part in parts), frozenset(referenced_datasets)
-
-    @staticmethod
-    def _qualified_field(dataset: str, field: str) -> exp.Column:
-        return exp.Column(this=exp.to_identifier(field), table=exp.to_identifier(dataset))
+            return (parts[0] if parts else None), related_filter
+        return " AND ".join(f"({part})" for part in parts), related_filter
 
     def _template_field(
         self, dataset: str, kind: str, argument: str, entity_path: Sequence[str], time_modifier: Optional[str]
@@ -201,7 +185,7 @@ class MetricFilterResolver:
 
         if not self._declares(dataset, kind, name):
             raise UnresolvedFilterError(f"{kind} {name!r} is not declared in {dataset!r}")
-        return dataset, self._field_name(dataset, name)
+        return dataset, name
 
     def _declares(self, dataset: str, kind: str, name: str) -> bool:
         model = self.models[dataset]

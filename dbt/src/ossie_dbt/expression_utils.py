@@ -26,6 +26,23 @@ from metricflow_semantic_interfaces.type_enums import AggregationType
 ROW_COUNT_EXPR = "1"
 
 
+def parse_scalar_sql(sql: str, reader: str) -> exp.Expression:
+    try:
+        statements = sqlglot.parse(sql, read=reader)
+    except sqlglot.errors.SqlglotError as exc:
+        raise ValueError("Could not parse row-level SQL") from exc
+    if len(statements) != 1 or statements[0] is None:
+        raise ValueError("Expected one row-level SQL expression")
+    tree = statements[0]
+    if tree.find(exp.Query, exp.Alias, exp.AggFunc, exp.Window, exp.Star):
+        raise ValueError("Expected a scalar expression over source columns")
+    return tree
+
+
+def qualified_column(dataset: str, field: str) -> exp.Column:
+    return exp.Column(this=exp.to_identifier(field), table=exp.to_identifier(dataset))
+
+
 def column_span(column: exp.Column) -> tuple[int, int] | None:
     """Return the source interval of a complete column reference when the parser supplies it."""
     parts = column.parts
