@@ -641,8 +641,8 @@ def _extract_expression(expression, context):
 
     Prefers BIGQUERY, then ANSI_SQL, then OSSIE_SQL_2026, where primary sql
     supersedes a tagged OSSIE_SQL_2026 entry. Returns
-    (expression, dialect), or (None, None) if only unsupported dialects are
-    present (the caller skips the entry). Raises OssieConversionError if the
+    (expression, dialect), or (None, None) if only unsupported or blank
+    dialect entries are present (the caller skips the entry). Raises OssieConversionError if the
     expression block is missing or malformed.
     """
     if expression is None or not isinstance(expression, dict):
@@ -672,6 +672,9 @@ def _extract_expression(expression, context):
                 f"{context}: dialect #{index}: expression must be a string, "
                 f"got {type(value).__name__}"
             )
+        # A blank entry is unusable; let a lower-priority expression stand in.
+        if not value.strip():
+            continue
         available.setdefault(dialect_name.upper(), value)
 
     if portable_sql is not None:
@@ -683,7 +686,7 @@ def _extract_expression(expression, context):
 
     dialect_names = [str(d.get("dialect", "")) for d in dialects]
     warnings.warn(
-        f"Skipping {context}: no BigQuery-compatible expression "
+        f"Skipping {context}: no usable BigQuery-compatible expression "
         f"(has dialects: {', '.join(dialect_names)}; requires one of "
         f"{', '.join(_DIALECT_PREFERENCE)})"
     )
