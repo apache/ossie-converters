@@ -53,9 +53,26 @@ _DIALECT_PREFERENCE = ("BIGQUERY", "ANSI_SQL", "OSSIE_SQL_2026")
 # How sqlglot reads each dialect. ANSI_SQL and OSSIE_SQL_2026 use sqlglot's
 # default (ANSI-style) dialect and are transpiled to BigQuery on output, since
 # the two disagree on quoting ("x" is an identifier in ANSI, a string literal
-# in BigQuery) and on argument order (DATE_TRUNC). Same mapping as
-# interop/contracts.py and the orionbelt converter.
+# in BigQuery) and on argument order (DATE_TRUNC, DATEADD, DATEDIFF). Same
+# mapping as interop/contracts.py and the orionbelt converter.
 _SQLGLOT_DIALECTS = {"BIGQUERY": "bigquery", "ANSI_SQL": None, "OSSIE_SQL_2026": None}
+
+# Ossie DATEADD/DATEDIFF take a unit as the first argument. sqlglot's default
+# reader treats that unit as a column, so _qualify would emit ${TABLE}.day and
+# BigQuery has no DATEADD. Canonical names are the BigQuery DATE_ADD /
+# DATE_DIFF date_part values.
+_DATE_PARTS = {
+    "YEAR": "YEAR", "YEARS": "YEAR", "YY": "YEAR", "YYYY": "YEAR",
+    "QUARTER": "QUARTER", "QUARTERS": "QUARTER",
+    "MONTH": "MONTH", "MONTHS": "MONTH", "MM": "MONTH",
+    "WEEK": "WEEK", "WEEKS": "WEEK",
+    "DAY": "DAY", "DAYS": "DAY", "DD": "DAY", "D": "DAY",
+    "HOUR": "HOUR", "HOURS": "HOUR", "HH": "HOUR",
+    "MINUTE": "MINUTE", "MINUTES": "MINUTE", "MI": "MINUTE",
+    "SECOND": "SECOND", "SECONDS": "SECOND", "SS": "SECOND",
+}
+_DATE_ADD_NAMES = frozenset({"DATEADD"})
+_DATE_DIFF_NAMES = frozenset({"DATEDIFF"})
 
 # A valid LookML object name (view, field, join); also a bare SQL identifier.
 _LOOKML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -699,7 +716,7 @@ def _parse(expr, dialect, context):
     text verbatim. SqlglotError covers tokenizer errors (an unterminated
     string) as well as parse errors."""
     try:
-        return sqlglot.parse_one(expr, read=_SQLGLOT_DIALECTS[dialect])
+        tree = sqlglot.parse_one(expr, read=_SQLGLOT_DIALECTS[dialect])
     except sqlglot.errors.SqlglotError as e:
         first_line = str(e).splitlines()[0]
         if dialect != "BIGQUERY":
@@ -714,12 +731,98 @@ def _parse(expr, dialect, context):
                 warnings.warn(
                     f"{context}: not valid {dialect} ({first_line}); read as BIGQUERY"
                 )
-                return tree
+                return _prepare_tree(tree, expr, "BIGQUERY", context)
         warnings.warn(
             f"{context}: could not parse expression ({first_line}); emitted "
             f"verbatim, verify column references in LookML"
         )
         return None
+    return _prepare_tree(tree, expr, dialect, context)
+
+
+def _prepare_tree(tree, expr, dialect, context):
+    """Maps Ossie date functions to BigQuery and warns on leftover calls."""
+    tree = tree.transform(lambda node: _rewrite_ossie_date_function(node, expr))
+    if dialect != "BIGQUERY":
+        _warn_unknown_functions(tree, context)
+    return tree
+
+
+def _rewrite_ossie_date_function(node, original):
+    """DATEADD(part, n, d) -> DATE_ADD(d, INTERVAL n PART);
+    DATEDIFF(part, start, end) -> DATE_DIFF(end, start, PART)."""
+    if isinstance(node, exp.Anonymous):
+        name = str(node.this).upper()
+        args = list(node.expressions)
+        if name in _DATE_ADD_NAMES and len(args) == 3:
+            unit, amount, value = args
+            part = _date_part_name(unit)
+            if part:
+                return exp.DateAdd(this=value, expression=amount, unit=exp.var(part))
+        if name in _DATE_DIFF_NAMES and len(args) == 3:
+            unit, start, end = args
+            part = _date_part_name(unit)
+            if part:
+                return exp.DateDiff(this=end, expression=start, unit=exp.var(part))
+        return node
+    if isinstance(node, exp.DateDiff):
+        # Default reader: DATEDIFF(day, start, end) has this=day (a column)
+        # and unit=END_DATE (the end date, not a date part).
+        part = _date_part_name(node.this)
+        if part and not _date_part_name(node.args.get("unit")):
+            end = _column_from_unit(node.args.get("unit"), original)
+            return exp.DateDiff(
+                this=end, expression=node.expression, unit=exp.var(part)
+            )
+    return node
+
+
+def _date_part_name(node):
+    """Canonical BigQuery date part when `node` is a unit, else None."""
+    if node is None:
+        return None
+    if isinstance(node, exp.Literal) and node.is_string:
+        name = str(node.this)
+    elif isinstance(node, exp.Column) and not node.table:
+        name = node.name
+    elif isinstance(node, (exp.Var, exp.Identifier)):
+        name = node.name
+    else:
+        return None
+    return _DATE_PARTS.get(name.upper())
+
+
+def _column_from_unit(unit, original):
+    """Rebuilds the end-date column sqlglot stored as a date-part unit."""
+    if isinstance(unit, exp.Column):
+        return unit
+    if isinstance(unit, exp.Var):
+        name = unit.name
+    elif isinstance(unit, exp.Identifier):
+        name = unit.name
+    elif isinstance(unit, str):
+        name = unit
+    else:
+        return unit
+    match = re.search(r"(?i)\b" + re.escape(name) + r"\b", original or "")
+    return exp.column(match.group(0) if match else name)
+
+
+def _warn_unknown_functions(tree, context):
+    """Warns when a portable call has no BigQuery function of that name.
+
+    Typed nodes (SUM, DATE_TRUNC, the rewritten DATE_ADD / DATE_DIFF) already
+    have a BigQuery spelling. sqlglot leaves everything else as Anonymous.
+    """
+    names = sorted({
+        str(node.this).upper()
+        for node in tree.find_all(exp.Anonymous)
+        if node.this
+    })
+    for name in names:
+        warnings.warn(
+            f"{context}: {name} is not a BigQuery function; emitted as-is"
+        )
 
 
 def _qualify(expr, dialect, home, plans, context, tree=None, metric=False):
