@@ -136,7 +136,7 @@
   - name: users_a
     source: schema.table
     primary_key:
-    - user_id
+    - user
     fields:
     - name: user
       expression:
@@ -146,7 +146,7 @@
   - name: users_b
     source: schema.table
     unique_keys:
-    - - user_id
+    - - user
     fields:
     - name: user
       expression:
