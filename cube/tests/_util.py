@@ -45,7 +45,24 @@ def load_fixture_dir(name):
 
 
 def parse(yaml_str):
-    return load_yaml(yaml_str)
+    return _without_scope_marker(load_yaml(yaml_str))
+
+
+def _without_scope_marker(document):
+    """Compare native Cube semantics independently of the scope transport marker."""
+    for cube in document.get("cubes", []) if isinstance(document, dict) else []:
+        measures = cube.get("measures") or []
+        if isinstance(measures, dict):
+            measures = measures.values()
+        for measure in measures:
+            meta = measure.get("meta")
+            ossie = meta.get("ossie") if isinstance(meta, dict) else None
+            if isinstance(ossie, dict) and ossie.pop("model_scoped", None) is not None:
+                if not ossie:
+                    del meta["ossie"]
+                if not meta:
+                    del measure["meta"]
+    return document
 
 
 _ALIAS_DOT_RE = re.compile(r"\$?\{\s*(?:CUBE|TABLE)\s*\}\s*\.")
@@ -86,7 +103,7 @@ def parse_files(files):
     """
     out = {}
     for name, text in files.items():
-        out[name] = (canon_sql(load_yaml(text, name))
+        out[name] = (canon_sql(_without_scope_marker(load_yaml(text, name)))
                      if name.lower().endswith((".yml", ".yaml")) else text)
     return out
 
@@ -156,3 +173,17 @@ def to_cube_sql(expr, own_cube, members=(), cube_names=(), inline_sql=None):
         columns_by_cube={own_cube: members},
         inline_sql_by_cube={own_cube: inline_sql or {}})
     return ossie_expr_to_cube_sql(expr, own_cube, tables)
+
+
+def import_model_scoped(*args, **kwargs):
+    """Exercise the previous expression layout where a test assumes it."""
+    from ossie_cube import convert_cube_to_ossie
+
+    return convert_cube_to_ossie(*args, scope_native_metrics=False, **kwargs)
+
+
+def project_model_scoped(*args, **kwargs):
+    """Exercise projection with all published measures at model scope."""
+    from ossie_cube import convert_cube_view_to_ossie
+
+    return convert_cube_view_to_ossie(*args, scope_native_metrics=False, **kwargs)

@@ -36,7 +36,8 @@ from _cube_gate import (
 from _util import (REPO_ROOT, canon, load_fixture, load_fixture_dir, parse,
                    parse_files)
 
-from ossie_cube import IssueType, convert_cube_to_ossie, convert_ossie_to_cube
+from _util import import_model_scoped as convert_cube_to_ossie
+from ossie_cube import IssueType, convert_ossie_to_cube
 from ossie_cube._common import OSSIE_VERSION
 
 FIXTURES = ["fixtureA_cube", "tpcds_cube"]

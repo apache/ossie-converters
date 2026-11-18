@@ -32,7 +32,8 @@ def test_cli_projects_a_view(tmp_path, capsys):
     (tmp_path / "model.yml").write_text(_MODEL)
     assert main(["import", "-i", str(tmp_path), "--view", "sales", "--project"]) == 0
     captured = capsys.readouterr()
-    assert _metrics(captured.out) == {"average_value"}
+    assert {m["name"] for ds in model_of(captured.out)["datasets"]
+            for m in ds.get("metrics", [])} == {"average_value"}
     assert "rooted at dataset 'orders'" in captured.err
 
 

@@ -1219,9 +1219,10 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
 def _record_model_metric_name(measure, raw_name, requested_name, stash, issues, target):
     """Keep the Ossie name when its native slot belongs to a dataset metric."""
     native_name = measure["name"]
+    parked = measure.setdefault("meta", {}).setdefault("ossie", {})
+    parked["model_scoped"] = True
     if native_name != requested_name or stash.get("model_metric_name"):
-        measure.setdefault("meta", {}).setdefault("ossie", {})["model_metric_name"] = (
-            escape_braces_for_cube(raw_name))
+        parked["model_metric_name"] = escape_braces_for_cube(raw_name)
     if native_name != requested_name:
         issues.add(IssueType.APPROXIMATED, f"metric '{raw_name}'",
                    f"dataset metric keeps its Cube member name; model metric exported as "

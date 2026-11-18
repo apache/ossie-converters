@@ -513,16 +513,15 @@ def test_unsupported_metric_dialect_is_reported_instead_of_silently_dropped():
     )
 
 
-def test_projection_publishes_a_dataset_measure_as_a_model_metric():
+def test_projection_publishes_a_dataset_measure_with_local_scope():
     files, _ = export(model(dataset(metrics=[metric()])))
     projected, source, _ = convert_cube_view_to_ossie(files, "shop")
     document = yaml.safe_load(projected)
     assert source == "orders"
-    assert document["metrics"][0]["name"] == "total_amount"
-    assert (
-        "orders." in document["metrics"][0]["expression"]["dialects"][0]["expression"]
-    )
-    assert not document["datasets"][0].get("metrics")
+    restored = document["datasets"][0]["metrics"][0]
+    assert restored["name"] == "total_amount"
+    assert "source." in restored["expression"]["dialects"][0]["expression"]
+    assert not document.get("metrics")
 
 
 def test_primary_key_count_and_multiple_dialects_survive_repeated_round_trips():
@@ -823,3 +822,66 @@ def test_older_origin_without_binding_record_is_preserved_natively():
     assert not back.get("metrics") and not back["datasets"][0].get("metrics")
     assert stash_of(back["datasets"][0])["extra_measures"][0]["measure"] == measure
     assert any("no field binding record" in i.detail for i in issues)
+
+
+_NATIVE_SALES = """cubes:
+- name: orders
+  sql_table: samples.tpch.orders
+  joins:
+  - name: customers
+    sql: "{CUBE}.o_custkey = {customers}.c_custkey"
+    relationship: many_to_one
+  dimensions:
+  - {name: id, sql: o_orderkey, type: number, primary_key: true}
+  - {name: status, sql: o_orderstatus, type: string}
+  measures:
+  - {name: count, type: count}
+  - {name: revenue, sql: o_totalprice, type: sum}
+  - {name: mixed, sql: "{revenue} + MAX({customers}.credit)", type: number}
+- name: customers
+  sql_table: samples.tpch.customer
+  dimensions:
+  - {name: c_custkey, sql: c_custkey, type: number, primary_key: true}
+  - {name: name, sql: c_name, type: string}
+views:
+- name: sales
+  cubes:
+  - {join_path: orders, includes: [status, count, revenue, mixed]}
+  - {join_path: orders.customers, includes: [name]}
+"""
+
+
+@pytest.mark.parametrize("project", [False, True])
+def test_native_single_cube_measures_use_dataset_scope(project):
+    files = {"model.yml": _NATIVE_SALES}
+    imported = (convert_cube_view_to_ossie(files, "sales")[0]
+                if project else convert_cube_to_ossie(files)[0])
+    assert_ossie_is_valid(imported)
+    document = yaml.safe_load(imported)
+    orders = by_name(document["datasets"])["orders"]
+    assert [m["name"] for m in orders["metrics"]] == ["count", "revenue"]
+    revenue = orders["metrics"][1]["expression"]["dialects"][0]["expression"]
+    assert revenue == "SUM(source.o_totalprice)"
+    assert [m["name"] for m in document["metrics"]] == ["mixed"]
+    assert "customers." in document["metrics"][0]["expression"]["dialects"][0]["expression"]
+
+    exported, _ = convert_ossie_to_cube(imported)
+    restored, _ = convert_cube_to_ossie(exported)
+    assert_ossie_is_valid(restored)
+    document = yaml.safe_load(restored)
+    assert [m["name"] for m in by_name(document["datasets"])["orders"]["metrics"]] == [
+        "count", "revenue",
+    ]
+    assert [m["name"] for m in document["metrics"]] == ["mixed"]
+
+
+def test_authored_model_metric_keeps_scope_after_export():
+    files, _ = export(model(dataset(), metrics=[{
+        "name": "authored",
+        "expression": {"dialects": [{"dialect": "ANSI_SQL",
+                                     "expression": "SUM(orders.amount)"}]},
+    }]))
+    restored, _ = convert_cube_to_ossie(files)
+    document = yaml.safe_load(restored)
+    assert document["metrics"][0]["name"] == "authored"
+    assert not document["datasets"][0].get("metrics")
