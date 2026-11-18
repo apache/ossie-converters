@@ -21,8 +21,8 @@ language for Looker (Google Cloud's semantic layer over BigQuery). Pure offline
 conversion: no BigQuery or Looker connection required.
 
 The converter prefers BIGQUERY-dialect expressions, then ANSI_SQL, then
-OSSIE_SQL_2026, mirroring the dialect-selection contract documented in
-../README.md. Expressions are parsed with sqlglot so that every column
+OSSIE_SQL_2026. The primary expression.sql supplies the authoritative
+OSSIE_SQL_2026 expression. Expressions are parsed with sqlglot so that every column
 reference can be rewritten to the LookML substitution operator (`${TABLE}.col`
 inside a view, `${view.field}` across views) and so that aggregate metrics can
 be typed as native LookML measures.
@@ -639,7 +639,8 @@ def _convert_source(source, dataset_name):
 def _extract_expression(expression, context):
     """Selects the best dialect expression for BigQuery/LookML.
 
-    Prefers BIGQUERY, then ANSI_SQL, then OSSIE_SQL_2026. Returns
+    Prefers BIGQUERY, then ANSI_SQL, then OSSIE_SQL_2026, where primary sql
+    supersedes a tagged OSSIE_SQL_2026 entry. Returns
     (expression, dialect), or (None, None) if only unsupported dialects are
     present (the caller skips the entry). Raises OssieConversionError if the
     expression block is missing or malformed.
@@ -648,14 +649,13 @@ def _extract_expression(expression, context):
         raise OssieConversionError(f"Missing or malformed expression for {context}")
 
     dialects = _require_list(expression, "dialects", context)
-    # A portable `sql` expression carries no dialect; treat it as ANSI SQL, which
-    # LookML reads the same way. It is also the fallback when no dialect matches.
+    # The top-level sql is the authoritative OSSIE_SQL_2026 expression.
     portable_sql = expression.get("sql")
-    if not isinstance(portable_sql, str) or not portable_sql:
+    if not isinstance(portable_sql, str) or not portable_sql.strip():
         portable_sql = None
     if not dialects:
         if portable_sql is not None:
-            return portable_sql, "ANSI_SQL"
+            return portable_sql, "OSSIE_SQL_2026"
         raise OssieConversionError(f"Missing expression for {context}")
 
     available = {}
@@ -674,12 +674,12 @@ def _extract_expression(expression, context):
             )
         available.setdefault(dialect_name.upper(), value)
 
+    if portable_sql is not None:
+        available["OSSIE_SQL_2026"] = portable_sql
+
     for dialect_name in _DIALECT_PREFERENCE:
         if dialect_name in available:
             return available[dialect_name], dialect_name
-
-    if portable_sql is not None:
-        return portable_sql, "ANSI_SQL"
 
     dialect_names = [str(d.get("dialect", "")) for d in dialects]
     warnings.warn(
