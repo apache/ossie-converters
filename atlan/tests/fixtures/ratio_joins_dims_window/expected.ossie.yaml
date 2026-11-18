@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: ratio_joins_dims_window
 description: ratio, two joins, dimensions, filters, parameters and a date window
 datasets:

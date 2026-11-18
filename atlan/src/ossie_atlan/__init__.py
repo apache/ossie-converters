@@ -33,7 +33,7 @@ from ._common import ConversionError, load
 from .converter import Conflict, NotConvertible, NotWritable, agent_context, export
 from .converter_issues import ConverterIssue, IssueLog, IssueType
 
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
 
 def convert_registry_to_ossie(records: list[dict], name: str = "atlan_registry",

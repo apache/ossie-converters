@@ -18,7 +18,7 @@
 """Shared pieces: the error type and the strict-form helpers.
 
 An Ossie document in *strict form* carries every `custom_extensions[].data` as a JSON string,
-which is what the 0.2.0 schema accepts and what every other converter can read. The converter
+which is what the 0.3.0 schema accepts and what every other converter can read. The converter
 works on objects; `converter.export` writes the strict form and `load` here reads it back.
 """
 

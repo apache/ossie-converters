@@ -64,8 +64,7 @@ def test_expected_ossie_validates_against_the_core_spec(name):
 
 @pytest.mark.parametrize("name", OK)
 def test_expected_ossie_passes_ossie_own_validator(name):
-    """More than the schema: unique names, references, key arity and SQL parse, with the
-    validator apache/ossie ships."""
+    """More than the schema: every check of the validator apache/ossie ships."""
     path = OSSIE / "validation" / "validate.py"
     if not path.exists():
         pytest.skip("apache/ossie submodule not checked out")
@@ -74,8 +73,7 @@ def test_expected_ossie_passes_ossie_own_validator(name):
     spec.loader.exec_module(mod)
     doc = _ossie_yaml(name)
     schema = json.loads((OSSIE / "core-spec" / "ossie-schema.json").read_text())
-    msgs = (mod.validate_schema(doc, schema) + mod.validate_unique_names(doc) + mod.validate_references(doc)
-            + mod.validate_relationship_column_arity(doc) + mod.validate_sql(doc))
+    msgs = mod.validate_document(doc, schema)
     errors = [m for m in msgs if not isinstance(m, mod.ValidationWarning)]
     assert errors == []
 

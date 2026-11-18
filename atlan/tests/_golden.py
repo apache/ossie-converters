@@ -22,7 +22,7 @@
 
 Each case directory holds
     input.registry.json           the registry record, as the registry API returns it
-    expected.ossie.yaml           the Ossie document the converter must produce (strict 0.2.0 form:
+    expected.ossie.yaml           the Ossie document the converter must produce (strict 0.3.0 form:
                                   extension data as JSON strings, so every converter can read it)
     expected.registry.json        each Ossie metric converted back to a registry definition
     expected.writeback.json       write_back() of the unedited Ossie file against the input: must be {}

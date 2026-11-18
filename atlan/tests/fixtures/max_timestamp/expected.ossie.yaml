@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: max_timestamp
 description: a non-additive aggregate (MAX) with a time field
 datasets:

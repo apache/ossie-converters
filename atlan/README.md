@@ -117,7 +117,7 @@ rewrites the formula. Only a range comparison of a column against a fixed date (
 range relative to the current date, and any other predicate in the same filter string stay in
 the metric.
 
-The extension data is written as a JSON string (strict 0.2.0 form), so every other converter
+The extension data is written as a JSON string (strict 0.3.0 form), so every other converter
 reads the file.
 
 ## What the converter refuses

@@ -1025,7 +1025,7 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
                     have["unique_keys"].append(key)
         for r in rl:
             rels.setdefault(r["name"], copy.deepcopy(r))
-    doc = {"version": "0.2.0.dev0", "name": name}
+    doc = {"version": "0.3.0.dev0", "name": name}
     if description:
         doc["description"] = description
     doc["datasets"] = list(ds.values())
@@ -1040,7 +1040,7 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
 
 
 def export(doc: dict) -> dict:
-    """The strict Ossie 0.2.0.dev0 form: every ATLAN extension's data as a JSON string; private
+    """The strict Ossie 0.3.0.dev0 form: every ATLAN extension's data as a JSON string; private
     keys (`_merge_notes`) dropped."""
     out = json.loads(json.dumps({k: v for k, v in doc.items() if not k.startswith("_")}))
     holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", []) + d.get("metrics", [])] \

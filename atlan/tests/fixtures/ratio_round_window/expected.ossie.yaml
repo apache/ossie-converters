@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: ratio_round_window
 description: ROUND ratio and a count from one query; its fixed date range is named in the instructions
   only
