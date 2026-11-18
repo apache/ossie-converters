@@ -560,6 +560,7 @@ relationships:
 metrics:
 - name: total_sales
   expression:
+    sql: SUM(store_sales.ss_ext_sales_price)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] )
@@ -570,6 +571,7 @@ metrics:
     data: '{"_v": 1, "formula_id": "formula_total_sales"}'
 - name: total_profit
   expression:
+    sql: SUM(store_sales.ss_net_profit)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_net_profit] )
@@ -589,6 +591,7 @@ metrics:
     data: '{"_v": 1, "formula_id": "formula_customer_lifetime_value"}'
 - name: sales_by_brand
   expression:
+    sql: SUM(store_sales.ss_ext_sales_price)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] )
