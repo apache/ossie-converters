@@ -1044,6 +1044,67 @@ class TestSourceDialects:
         view = self._view(_field("m", expr="DATE_TRUNC('month', order_date)", dialect="OSSIE_SQL_2026"))
         assert "sql: DATE_TRUNC(${TABLE}.order_date, MONTH) ;;" in view
 
+    @pytest.mark.parametrize("dialect", ["ANSI_SQL", "OSSIE_SQL_2026"])
+    @pytest.mark.parametrize(
+        "expr, sql",
+        [
+            ("DATEADD(day, 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
+            ("DATEADD(month, -1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL -1 MONTH)"),
+            ("DATEADD(year, 1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 1 YEAR)"),
+            ("DATEADD('day', 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
+            (
+                "DATEDIFF(day, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY)",
+            ),
+            (
+                "DATEDIFF(month, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, MONTH)",
+            ),
+            (
+                "DATEDIFF(year, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, YEAR)",
+            ),
+        ],
+    )
+    def test_ossie_date_arithmetic_is_transpiled(self, dialect, expr, sql):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(_field("d", expr=expr, dialect=dialect))
+        assert f"sql: {sql} ;;" in view
+
+    def test_primary_sql_date_arithmetic_is_transpiled(self):
+        plus_week = {"name": "plus_week", "expression": {"sql": "DATEADD(day, 7, order_date)"}}
+        span_days = {
+            "name": "span_days",
+            "expression": {"sql": "DATEDIFF(day, start_date, end_date)"},
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(plus_week, span_days)
+        assert "sql: DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY) ;;" in view
+        assert "sql: DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY) ;;" in view
+
+    def test_datediff_metric_keeps_native_sum(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("start_date"), _field("end_date")],
+            primary_key=["id"],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(
+                _model([ds], metrics=[_metric("span", "SUM(DATEDIFF(day, t.start_date, t.end_date))")])
+            )
+        measure = _block(out, "measure: span")
+        assert "type: sum" in measure
+        assert "sql: DATE_DIFF(${t.end_date}, ${t.start_date}, DAY) ;;" in measure
+
+    def test_unknown_function_warns_and_is_emitted(self):
+        model = _model([_dataset("t", [_field("x", expr="FOO(order_date)")])])
+        with pytest.warns(UserWarning, match="Field 't.x'.*FOO is not a BigQuery function"):
+            out = convert_ossie_to_lookml(model)
+        assert "sql: FOO(${TABLE}.order_date) ;;" in _block(out, "view: t")
+
     def test_ansi_count_distinct_of_quoted_identifier(self):
         ds = _dataset("t", [_field("id"), _field("cid", expr='"customer id"')], primary_key=["id"])
         out = _convert(_model([ds], metrics=[_metric("n", 'COUNT(DISTINCT t.cid)')]))
