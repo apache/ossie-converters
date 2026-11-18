@@ -26,7 +26,9 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
+import sqlglot
 from sqlglot import exp
+from sqlglot.errors import ParseError, TokenError
 
 from ossie_databricks import _ossie, metric_view
 from ossie_databricks.expressions import (
@@ -88,14 +90,27 @@ def deploy_ossie_model_to_databricks(
 def _targets_own_source(source: Any, view_table: exp.Table) -> bool:
     """Whether the deployed metric view would read its own dataset source table.
 
-    A query source never names a single table, so it cannot collide.
+    Only a plain three-part table name can collide. A query source, or a name of another
+    shape, never names the same single table, so it does not.
     """
     if not isinstance(source, str):
         return False
-    normalized = exp.to_table(source, dialect="databricks").sql(
-        dialect="databricks", normalize=True
+    try:
+        table = sqlglot.parse_one(source, read="databricks", into=exp.Table)
+    except (ParseError, TokenError):
+        return False
+    if not (
+        isinstance(table, exp.Table)
+        and not table.alias
+        and len(table.parts) == 3
+        and all(isinstance(part, exp.Identifier) for part in table.parts)
+    ):
+        return False
+    return (table.catalog.lower(), table.db.lower(), table.name.lower()) == (
+        view_table.catalog.lower(),
+        view_table.db.lower(),
+        view_table.name.lower(),
     )
-    return normalized == view_table.sql(dialect="databricks", normalize=True)
 
 
 def _deployed_metric(

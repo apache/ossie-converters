@@ -75,3 +75,21 @@ def test_target_cannot_equal_source():
         deploy_ossie_model_to_databricks(
             fixture("sources.ossie.yaml"), catalog="main", schema="raw"
         )
+
+
+def test_multi_table_query_source_is_not_a_collision():
+    # A query source naming several dotted tables must not crash or read as one table.
+    model = {
+        "version": "0.3.0.dev0",
+        "name": "joins",
+        "datasets": [
+            {
+                "name": "joined",
+                "source": "SELECT o.o_custkey FROM main.raw.orders o "
+                "JOIN main.raw.customers c ON o.o_custkey = c.c_custkey",
+                "fields": [{"name": "customer_id", "expression": {"sql": "o_custkey"}}],
+            }
+        ],
+    }
+    result = _deploy(model)
+    assert "metric_views/joined.yaml" in result.value

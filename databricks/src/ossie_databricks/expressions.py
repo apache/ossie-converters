@@ -36,11 +36,28 @@ from ossie_databricks import _ossie
 OSSIE = "OSSIE_SQL_2026"
 DATABRICKS = "DATABRICKS"
 
-# A name that may be written without quotes. Quoting forces exact-case matching, so an
-# unnecessarily quoted name (a backtick name becomes a double-quoted one) stops matching a
-# column created with that spelling; printing it bare keeps the case-insensitive match.
+# A name that may be written without quotes. A Databricks backtick name is case-insensitive,
+# so an unnecessary quote (a backtick name becomes a double-quoted one) forces case-sensitive
+# matching in Ossie and stops matching the column; printing a regular identifier bare keeps
+# the match. A reserved word still needs its quotes, so it is never dropped. The ANSI and
+# Databricks reserved sets are spelled out because sqlglot's keyword table stores multi-word
+# phrases ("ORDER BY") and omits many reserved words.
 _REGULAR_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_RESERVED = {keyword.upper() for keyword in Databricks.Tokenizer.KEYWORDS}
+_RESERVED = {
+    "ALL", "ALTER", "AND", "ANTI", "ANY", "ARRAY", "AS", "ASC", "AUTHORIZATION", "BETWEEN",
+    "BOTH", "BY", "CASE", "CAST", "CHECK", "COLLATE", "COLUMN", "CONSTRAINT", "CREATE", "CROSS",
+    "CUBE", "CURRENT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER",
+    "DELETE", "DESC", "DESCRIBE", "DISTINCT", "DROP", "ELSE", "END", "ESCAPE", "EXCEPT",
+    "EXISTS", "FALSE", "FETCH", "FILTER", "FOR", "FOREIGN", "FROM", "FULL", "FUNCTION", "GLOBAL",
+    "GRANT", "GROUP", "GROUPING", "HAVING", "IN", "INNER", "INSERT", "INTERSECT", "INTERVAL",
+    "INTO", "IS", "JOIN", "LATERAL", "LEADING", "LEFT", "LIKE", "LIMIT", "LOCAL", "NATURAL",
+    "NOT", "NULL", "OF", "ON", "ONLY", "OR", "ORDER", "OUTER", "OVERLAPS", "PARTITION",
+    "PERCENT", "PRIMARY", "RANGE", "REFERENCES", "RIGHT", "ROLLUP", "ROW", "ROWS", "SELECT",
+    "SEMI", "SESSION_USER", "SET", "SOME", "START", "TABLE", "THEN", "TIME", "TO", "TRAILING",
+    "TRUE", "TRUNCATE", "UNION", "UNIQUE", "UNKNOWN", "UPDATE", "USER", "USING", "VALUES",
+    "WHEN", "WHERE", "WINDOW", "WITH",
+}  # fmt: skip
+_RESERVED |= {keyword.upper() for keyword in Databricks.Tokenizer.KEYWORDS if " " not in keyword}
 
 
 class Untranslatable(Exception):
@@ -142,6 +159,11 @@ class _OssieSql(Databricks):
             exp.StrPosition: lambda self, node: (
                 f"POSITION({self.sql(node, 'substr')} IN {self.sql(node, 'this')})"
             ),
+            # Databricks integer division; Ossie writes it as TRUNC(x / y, 0). A generator
+            # transform (not a tree transform) so the operands are still rendered.
+            exp.IntDiv: lambda self, node: (
+                f"TRUNC({self.sql(node, 'this')} / {self.sql(node, 'expression')}, 0)"
+            ),
         }
 
 
@@ -154,7 +176,14 @@ def parse(text: str, dialect: str) -> exp.Expression:
         tree = sqlglot.parse_one(text, read=read)
     except (ParseError, TokenError, KeyError) as error:
         raise Untranslatable(f"cannot parse {text!r} as {dialect}") from error
-    return tree.transform(_normalize_dateadd)
+    tree = tree.transform(_normalize_dateadd)
+    if dialect == DATABRICKS:
+        # Databricks identifiers are case-insensitive, so a backtick quote on a regular name
+        # is unnecessary; drop it so the name stays case-insensitive after translation. ANSI
+        # and OSSIE_SQL quotes are case-sensitive and intentional, so they are left alone.
+        for identifier_node in tree.find_all(exp.Identifier):
+            _drop_unneeded_quotes(identifier_node)
+    return tree
 
 
 def _normalize_dateadd(node: exp.Expression) -> exp.Expression:
@@ -187,12 +216,9 @@ def translate(tree: exp.Expression, target: str) -> str:
     unsupported = _unsupported_functions(tree)
     if unsupported:
         raise Untranslatable(f"no verified translation for {', '.join(unsupported)}")
-    work = tree.copy()
-    for identifier_node in work.find_all(exp.Identifier):
-        _drop_unneeded_quotes(identifier_node)
     if target == DATABRICKS:
-        return work.transform(_to_databricks).sql(dialect=_DatabricksSql)
-    return work.transform(_to_ossie).sql(dialect=_OssieSql)
+        return tree.copy().transform(_to_databricks).sql(dialect=_DatabricksSql)
+    return tree.copy().transform(_to_ossie).sql(dialect=_OssieSql)
 
 
 def _drop_unneeded_quotes(node: exp.Identifier) -> None:
@@ -236,10 +262,6 @@ def _to_databricks(node: exp.Expression) -> exp.Expression:
 
 
 def _to_ossie(node: exp.Expression) -> exp.Expression:
-    if isinstance(node, exp.IntDiv):
-        # Databricks DIV is integer division; Ossie writes it as TRUNC(x / y, 0).
-        quotient = exp.Div(this=node.this, expression=node.expression)
-        return exp.Anonymous(this="TRUNC", expressions=[quotient, exp.Literal.number(0)])
     if _call_name(node) == "MEASURE":
         return exp.Agg(this=node.expressions[0])
     if isinstance(node, exp.Extract) and node.name.upper() == "DOY":

@@ -62,6 +62,8 @@ TO_DATABRICKS = [
     ("TRY_CAST(x AS DATE)", "TRY_CAST(x AS DATE)"),
     ("DATE '2024-01-15'", "CAST('2024-01-15' AS DATE)"),
     ('"Order Date"', "`Order Date`"),
+    # An intentional case-sensitive quote from OSSIE_SQL is kept, not folded to a bare name.
+    ('SUM("orderAmount")', "SUM(`orderAmount`)"),
     ("'it''s'", "'it\\'s'"),
     ("'a\\b'", "'a\\\\b'"),
     ("s LIKE 'a%' OR s ILIKE 'b%'", "s LIKE 'a%' OR s ILIKE 'b%'"),
@@ -110,10 +112,13 @@ TO_DATABRICKS = [
 FROM_DATABRICKS = [
     ("SUM(x) / COUNT(DISTINCT y)", "SUM(x) / COUNT(DISTINCT y)"),
     ("`Order Date` || 'it\\'s'", "\"Order Date\" || 'it''s'"),
-    # A backtick name that is a regular identifier prints unquoted (case-insensitive match).
+    # A backtick name that is a regular identifier prints unquoted (case-insensitive match);
+    # a reserved name keeps its quotes.
     ("date_trunc('week', `o_orderdate`)", "DATE_TRUNC('WEEK', o_orderdate)"),
-    # Databricks integer division becomes Ossie's TRUNC(x / y, 0).
+    ("`order`", '"order"'),
+    # Databricks integer division becomes Ossie's TRUNC(x / y, 0), operands translated too.
     ("qty DIV 2", "TRUNC(qty / 2, 0)"),
+    ("MEASURE(x) DIV 2", "TRUNC(AGG(x) / 2, 0)"),
     # Databricks orders NULLs first on ASC and last on DESC; made explicit for Ossie.
     ("RANK() OVER (ORDER BY amount)", "RANK() OVER (ORDER BY amount NULLS FIRST)"),
     ("RANK() OVER (ORDER BY amount DESC)", "RANK() OVER (ORDER BY amount DESC NULLS LAST)"),
