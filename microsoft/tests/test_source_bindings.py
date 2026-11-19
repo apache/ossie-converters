@@ -20,7 +20,7 @@ import json
 import pytest
 import yaml
 
-from ossie_microsoft import convert_ossie_to_semantic_model
+from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
 from ossie_microsoft._common import OSSIE_VERSION, write_stash
 from ossie_microsoft.cli import main
 
@@ -224,3 +224,47 @@ def test_cli_rejects_an_unknown_snowflake_object_kind(tmp_path, capsys, model, o
 
     assert not output.exists()
     assert "requires kind 'table' or 'view'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind", ["Table", "View"])
+@pytest.mark.parametrize("name", ["SALES_ORDERS", 'Sales "Current" #('])
+def test_snowflake_binding_roundtrip_preserves_the_source(model, orders_binding, kind, name):
+    binding = {**orders_binding, "kind": kind, "table": name}
+    exported = convert_ossie_to_semantic_model(model, source_bindings={
+        dataset["name"]: binding for dataset in model["datasets"]
+    })
+    returned = yaml.safe_load(convert_semantic_model_to_ossie(exported))
+    quoted = name if name == "SALES_ORDERS" else '"' + name.replace('"', '""') + '"'
+    assert {dataset["source"] for dataset in returned["datasets"]} == {
+        "RETAIL.REPORTING." + quoted
+    }
+
+
+@pytest.mark.parametrize("final", ["Source", "Schema", "Filtered"])
+def test_snowflake_source_requires_a_complete_selected_navigation(model, orders_binding, final):
+    exported = convert_ossie_to_semantic_model(model, source_bindings={
+        dataset["name"]: orders_binding for dataset in model["datasets"]
+    })
+    for table in exported["model"]["tables"]:
+        lines = table["partitions"][0]["source"]["expression"]
+        lines[-1] = "    " + final
+    returned = yaml.safe_load(convert_semantic_model_to_ossie(exported))
+    assert [dataset["source"] for dataset in returned["datasets"]] == ["orders", "customers"]
+
+
+def test_snowflake_navigation_supports_quoted_steps_and_reordered_keys(model, orders_binding):
+    exported = convert_ossie_to_semantic_model(model, source_bindings={
+        dataset["name"]: orders_binding for dataset in model["datasets"]
+    })
+    for table in exported["model"]["tables"]:
+        table["partitions"][0]["source"]["expression"] = [
+            'let Conn = Snowflake.Databases("host", "warehouse"),',
+            ' #"Database Step" = Conn{[Kind="Database", Name="RETAIL"]}[Data],',
+            ' #"Schema Step" = #"Database Step"{[Kind="Schema", Name="REPORTING"]}[Data],',
+            ' #"Selected View" = #"Schema Step"{[Kind="View", Name="SALES_ORDERS"]}[Data]',
+            'in #"Selected View"',
+        ]
+    returned = yaml.safe_load(convert_semantic_model_to_ossie(exported))
+    assert {dataset["source"] for dataset in returned["datasets"]} == {
+        "RETAIL.REPORTING.SALES_ORDERS"
+    }

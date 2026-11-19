@@ -397,11 +397,50 @@ def _qualified_name_from_bigquery_m(expression):
     return ".".join(parts)
 
 
+def _qualified_name_from_snowflake_m(expression):
+    """Read the selected static Database/Schema/Table-or-View navigation chain."""
+    identifier = r'(?:[A-Za-z_]\w*|#"(?:[^\"]|\"\")*")'
+    connection = re.search(
+        rf'({identifier})\s*=\s*Snowflake\.Databases\s*\(', expression
+    )
+    selected = re.search(rf'\bin\s+({identifier})\s*$', expression)
+    if connection is None or selected is None:
+        return None
+
+    def unquote(value):
+        if value.startswith('#"'):
+            value = value[2:-1]
+        return value.replace('""', '"').replace('#(#)(', '#(')
+
+    paths = {unquote(connection.group(1)): ()}
+    steps = re.finditer(
+        rf'({identifier})\s*=\s*({identifier})\s*\{{\s*\['
+        r'((?:[^\]"\[]|"(?:[^\"]|\"\")*")*)\]\s*\}\s*\[Data\]',
+        expression,
+    )
+    for step in steps:
+        parent = paths.get(unquote(step.group(2)))
+        properties = dict(re.findall(r'(Name|Kind)\s*=\s*"((?:[^\"]|\"\")*)"', step.group(3)))
+        kind, name = properties.get("Kind"), properties.get("Name")
+        if parent is None or name is None:
+            continue
+        expected = ({"Database"}, {"Schema"}, {"Table", "View"})
+        if len(parent) < 3 and kind in expected[len(parent)]:
+            paths[unquote(step.group(1))] = (*parent, unquote(name))
+    parts = paths.get(unquote(selected.group(1)), ())
+    if len(parts) != 3:
+        return None
+    # Preserve case and special characters of quoted Snowflake object names.
+    return ".".join(part if re.fullmatch(r"[A-Z_][A-Z0-9_$]*", part)
+                    else '"' + part.replace('"', '""') + '"' for part in parts)
+
+
 # Each parser returns a qualified name, or None when the M expression is not
 # that warehouse. Another warehouse is another function in this tuple.
 _M_SOURCE_PARSERS = (
     _qualified_name_from_sql_server_m,
     _qualified_name_from_bigquery_m,
+    _qualified_name_from_snowflake_m,
 )
 
 

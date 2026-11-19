@@ -200,6 +200,10 @@ Use the identifier spelling returned by the Snowflake Navigator, typically upper
 unquoted names. Each target table or view must expose the source columns expected by the
 model. If a dataset is defined by a query, point the binding at a table or view that
 provides the equivalent result. Configure credentials in Power BI or Fabric.
+On import, a complete static Snowflake Database/Schema/Table or View navigation chain
+restores the qualified source name. Special characters and case-sensitive names remain
+quoted. Incomplete or transformed navigation retains the table-name fallback and the
+original Power BI partition metadata.
 
 An explicit binding replaces the dataset's partitions and removes any incremental
 refresh policy. Datasets with preserved Power BI partitions can omit a binding.
