@@ -48,7 +48,7 @@ def schema_path(schema_mode, tmp_path, monkeypatch):
 )
 @pytest.mark.parametrize("include_root_model", [False, True])
 def test_legacy_wrapper_is_always_invalid(schema_path, wrapper, include_root_model):
-    document = {"version": "0.2.0.dev0", "semantic_model": wrapper}
+    document = {"version": "0.3.0.dev0", "semantic_model": wrapper}
     if include_root_model:
         document.update(name="m", datasets=[{"name": "t", "source": "a.b.c"}])
 
@@ -68,7 +68,7 @@ def test_non_mapping_document_is_always_invalid(schema_path, document):
 
 def test_valid_flat_document_can_be_checked_without_schema(schema_path, schema_mode):
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [{"name": "t", "source": "a.b.c"}],
     }
@@ -95,7 +95,7 @@ def test_valid_flat_document_can_be_checked_without_schema(schema_path, schema_m
     ids=["datasets_type", "datasets_missing", "name_missing", "source_missing", "dataset_type"],
 )
 def test_structural_validation_coverage_is_reported(schema_path, schema_mode, model):
-    result = validate_ossie({"version": "0.2.0.dev0", **model}, schema_path=schema_path)
+    result = validate_ossie({"version": "0.3.0.dev0", **model}, schema_path=schema_path)
 
     assert not result.semantic_errors
     if schema_mode == "available":
@@ -114,7 +114,7 @@ def test_structural_validation_coverage_is_reported(schema_path, schema_mode, mo
 @pytest.mark.parametrize("error_code", ["DUPLICATE_DATASET", "UNKNOWN_DATASET_REF"])
 def test_semantic_checks_still_run_without_schema(schema_path, error_code):
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [{"name": "t", "source": "a.b.c"}],
     }
@@ -185,7 +185,7 @@ def test_a_non_string_name_is_reported_not_raised(schema_path):
     TypeError instead.
     """
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": ["a"], "source": "a.b.c"},
@@ -202,7 +202,7 @@ def test_a_non_string_name_is_reported_not_raised(schema_path):
 def test_a_non_string_name_does_not_hide_a_dataset_reference(schema_path):
     """One malformed name must not disturb reference checks for the valid ones."""
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": "orders", "source": "a.b.orders"},
@@ -236,7 +236,7 @@ def _triplicate_document(kind: str) -> dict:
     """A flat document whose *kind* names collide three times over."""
     expression = {"dialects": [{"dialect": "ANSI_SQL", "expression": "x"}]}
     document: dict = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [{"name": "orders", "source": "a.b.orders"}],
     }
@@ -313,7 +313,7 @@ def test_duplicate_concepts_still_resolve_as_defined_references():
 
 @pytest.mark.parametrize("has_name", [True, False])
 def test_cli_reports_validation_coverage(schema_path, schema_mode, has_name, capsys):
-    document = {"version": "0.2.0.dev0", "datasets": [{"name": "t", "source": "a.b.c"}]}
+    document = {"version": "0.3.0.dev0", "datasets": [{"name": "t", "source": "a.b.c"}]}
     if has_name:
         document["name"] = "m"
 

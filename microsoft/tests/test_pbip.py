@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import copy
 import json
 from pathlib import Path
 
@@ -446,3 +447,41 @@ def test_a_plain_file_is_not_a_tmsl_project(tmp_path):
 
     _write(tmp_path / "model.bim", "{}")
     assert tmsl_model(tmp_path / "model.bim") is None
+
+
+@pytest.mark.parametrize("with_report", [False, True])
+def test_debug_records_do_not_count_as_conversion_issues(
+    tmp_path, monkeypatch, capsys, caplog, bim, with_report
+):
+    # With the package logger at DEBUG (as under `pytest --log-level=DEBUG`), the
+    # "loading TMDL document" lines reach the CLI's handler. Only WARNING and above are
+    # constructs that could not be converted, so a clean project passes --strict.
+    root = _project(tmp_path)
+    # The sales model, trimmed to what converts without a single warning.
+    clean = copy.deepcopy(bim)
+    for key in ("cultures", "expressions", "perspectives", "queryGroups", "relationships", "roles"):
+        clean["model"].pop(key, None)
+    clean["model"]["tables"] = clean["model"]["tables"][:1]
+    for measure in clean["model"]["tables"][0]["measures"]:
+        measure.pop("kpi", None)
+    monkeypatch.setattr(
+        "ossie_microsoft.pbip.deserialize_tmdl_documents", lambda documents: clean
+    )
+    args = ["import", "--strict", "-i", str(root / "mini.pbip")]
+    report = tmp_path / "report.json"
+    if with_report:
+        args.extend(["--report", str(report)])
+    # The same project converts cleanly under --strict at the default level.
+    assert main(args) == 0
+    capsys.readouterr()
+    with caplog.at_level("DEBUG", logger="ossie_microsoft"):
+        assert main(args) == 0
+    err = capsys.readouterr().err
+    assert "could not be converted" not in err
+    assert "loading TMDL document" not in err
+    assert any("loading TMDL document" in r.getMessage() for r in caplog.records)
+    if with_report:
+        recorded = json.loads(report.read_text(encoding="utf-8"))
+        assert recorded["completed"] is True
+        assert recorded["warnings"] == []
+        assert recorded["entries"]
