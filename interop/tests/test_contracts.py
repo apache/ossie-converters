@@ -17,18 +17,23 @@
 
 """Regression fixtures and mutations for the remaining interoperability traps."""
 
-from copy import deepcopy
-from dataclasses import replace
 import json
 import os
-from pathlib import Path
 import sys
+from copy import deepcopy
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 import yaml
 
-from interop.contracts import check_document, check_native_sources, table_parts
 from interop.checks import Validator
+from interop.contracts import (
+    check_document,
+    check_lookml_portable_sql,
+    check_native_sources,
+    table_parts,
+)
 from interop.manifest import (
     Manifest,
     ManifestError,
@@ -37,7 +42,6 @@ from interop.manifest import (
 )
 from interop.report import write_report
 from interop.runner import Runner, exit_code
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,6 +84,28 @@ def test_independent_inputs_pass_core_validation_and_their_oracles(name):
     base_targets = {"cube", "databricks", "dbt"}
     dialect_targets = {"omni", "sigma"} if contract.category == "dialect" else set()
     assert set(contract.targets) == base_targets | dialect_targets
+
+
+@pytest.mark.parametrize("name", ["portable-sql-only", "portable-sql-precedence"])
+def test_portable_sql_fixtures_pass_validation_and_their_oracles(name):
+    contract = regression(name)
+    data, validation = Validator(ROOT).validate(contract.input)
+    assert not validation["errors"], validation
+    assert (
+        check_document(data, contract.category, contract.assertions, input_stage=True)[
+            "grade"
+        ]
+        == "OK"
+    )
+    assert set(contract.targets) == {
+        "bigquery",
+        "cube",
+        "databricks",
+        "dbt",
+        "honeydew",
+        "omni",
+        "sigma",
+    }
 
 
 @pytest.mark.parametrize(
@@ -197,6 +223,139 @@ def test_input_with_an_accidental_ansi_fallback_cannot_claim_dialect_only_covera
             "grade"
         ]
         == "FAIL"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "path"),
+    [
+        (lambda data: data["datasets"][1]["fields"].pop(), "datasets.orders.fields"),
+        (lambda data: data["metrics"].clear(), "metrics.names"),
+        (
+            lambda data: data["datasets"][1].update(source="analytics.public.refunds"),
+            "datasets.orders.source",
+        ),
+        (
+            lambda data: data["metrics"][0]["expression"].update(
+                sql="SUM(refunds.refund_amount)"
+            ),
+            "metrics.total_amount.expression",
+        ),
+        (
+            lambda data: data["metrics"][0]["expression"].update(sql="SUM(amount)"),
+            "metrics.total_amount.expression",
+        ),
+        (
+            lambda data: data["datasets"][1]["fields"][-1]["expression"].update(
+                sql="amount * 0.8"
+            ),
+            "datasets.orders.fields.net_amount.expression.sql",
+        ),
+    ],
+)
+def test_portable_sql_contract_rejects_changed_members_and_bindings(mutation, path):
+    name = "portable-sql-precedence"
+    data = document(name)
+    mutation(data)
+    result = check_document(data, "portable-sql", regression(name).assertions)
+    assert any(
+        check["path"] == path and check["grade"] == "FAIL" for check in result["checks"]
+    )
+
+
+@pytest.mark.parametrize("owner", ["orders", "refunds"])
+def test_portable_sql_metric_can_return_with_its_binding_in_dataset_scope(owner):
+    name = "portable-sql-only"
+    data = document(name)
+    metric = data.pop("metrics")[0]
+    metric["expression"] = {
+        "dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(amount)"}]
+    }
+    next(dataset for dataset in data["datasets"] if dataset["name"] == owner)[
+        "metrics"
+    ] = [metric]
+    result = check_document(data, "portable-sql", regression(name).assertions)
+    assert result["grade"] == ("OK" if owner == "orders" else "FAIL")
+    if owner == "refunds":
+        assert any(
+            check["path"] == "metrics.total_amount.dataset" and check["grade"] == "FAIL"
+            for check in result["checks"]
+        )
+
+
+@pytest.fixture
+def portable_lookml(tmp_path):
+    path = tmp_path / "native.lkml"
+    path.write_text("""
+view: refunds {
+  sql_table_name: `analytics.public.refunds` ;;
+  dimension: refund_id { sql: ${TABLE}.refund_id ;; }
+  dimension: refund_amount { sql: ${TABLE}.amount ;; }
+}
+view: orders {
+  sql_table_name: `analytics.public.orders` ;;
+  dimension: id { sql: ${TABLE}.id ;; }
+  dimension: amount { sql: ${TABLE}.amount ;; }
+  dimension: net_amount { sql: ${TABLE}.amount * 0.9 ;; }
+  measure: total_amount { type: sum sql: ${orders.amount} ;; }
+}
+""")
+    return path
+
+
+@pytest.mark.parametrize(("before", "after", "grade"), [
+    ("", "", "OK"),
+    ("${TABLE}.refund_id", "${TABLE}.refund_id + 1", "FAIL"),
+    ("${orders.amount}", "${refunds.refund_amount}", "FAIL"),
+    ("analytics.public.orders", "other.public.orders", "FAIL"),
+    ("dimension: amount", "dimension: other_amount", "FAIL"),
+])
+def test_native_lookml_checks_portable_expressions_sources_and_bindings(
+    portable_lookml, before, after, grade,
+):
+    if before:
+        portable_lookml.write_text(portable_lookml.read_text().replace(before, after))
+    result = check_lookml_portable_sql(
+        portable_lookml, regression("portable-sql-precedence").assertions,
+    )
+    assert result["grade"] == grade, result
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_lookml_export_contract_is_checked_without_an_importer(
+    tmp_path, portable_lookml, monkeypatch, changed,
+):
+    if changed:
+        portable_lookml.write_text(
+            portable_lookml.read_text().replace("${TABLE}.refund_id", "${TABLE}.refund_id + 1")
+        )
+    manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
+    converter = manifest.converters["bigquery"]
+    assert converter.import_command is None
+    runner = Runner(ROOT, Manifest({"bigquery": converter}, {}), tmp_path / "run", prepare=False)
+    monkeypatch.setattr(runner, "acceptance", lambda *args, **kwargs: {
+        "grade": "OK", "reason": "", "commands": [], "diagnostics": [],
+        "native_gate": {"grade": "SKIP"}, "output": str(portable_lookml),
+        "content": {"files": [str(portable_lookml)], "members": 6},
+    })
+    result = runner.document_regression(
+        "portable-sql-precedence", regression("portable-sql-precedence"), "bigquery",
+    )
+    assert result["grade"] == ("FAIL" if changed else "OK"), result
+    assert result["native_assertions"]["grade"] == result["grade"]
+    assert result["output"] == str(portable_lookml)
+
+
+def test_portable_sql_precedence_fixture_requires_a_distinct_legacy_expression():
+    name = "portable-sql-precedence"
+    data = document(name)
+    data["metrics"][0]["expression"]["dialects"][0]["expression"] = "sum(ORDERS.amount)"
+    result = check_document(
+        data, "portable-sql", regression(name).assertions, input_stage=True
+    )
+    assert any(
+        check["path"] == "metrics.total_amount.conflict" and check["grade"] == "FAIL"
+        for check in result["checks"]
     )
 
 
@@ -414,6 +573,11 @@ def test_document_regression_configuration_is_validated_before_execution(
         ("dialect-databricks-only", lambda data: data.update(metrics={})),
         ("source-three-part", lambda data: data.update(sources=[])),
         ("source-three-part", lambda data: data.update(version=True)),
+        ("portable-sql-only", lambda data: data.update(input_form="dialects-only")),
+        (
+            "portable-sql-only",
+            lambda data: data["metrics"]["total_amount"].update(dataset="missing"),
+        ),
     ],
 )
 def test_malformed_document_oracles_are_configuration_errors(tmp_path, name, mutation):
