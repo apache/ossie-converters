@@ -309,6 +309,8 @@ def _wait_for_operation(url, token, tries=40, delay=3):
         received_response = True
         if status != 200:
             return {"status": "Failed", "error": _request_failure(status, body)}
+        if isinstance(body, dict) and "error" in body:
+            return {"status": "Failed", "error": _engine_message(body)}
         if isinstance(body, dict) and body.get("status") in ("Succeeded", "Failed"):
             return body
     if last_transport_error and not received_response:
@@ -350,6 +352,8 @@ def deploy(document, workspace, name, token):
     status, body, headers = _request(
         "POST", f"{FABRIC_API}/workspaces/{workspace}/items", token, payload
     )
+    if status in (200, 201, 202) and isinstance(body, dict) and "error" in body:
+        return None, _engine_message(body)
     if status in (200, 201):
         dataset = body.get("id") if isinstance(body, dict) else None
         if dataset:
@@ -368,6 +372,8 @@ def deploy(document, workspace, name, token):
             )
             dataset = created.get("id") if isinstance(created, dict) else None
             if result_status == 200:
+                if isinstance(created, dict) and "error" in created:
+                    return None, _engine_message(created)
                 if (
                     isinstance(dataset, str)
                     and dataset
@@ -405,6 +411,8 @@ def refresh(workspace, dataset, token, tries=60, delay=5):
     )
     if status not in (200, 202):
         return _request_failure(status, body)
+    if isinstance(body, dict) and "error" in body:
+        return _engine_message(body)
     last_transport_error = None
     received_response = False
     for _ in range(tries):
@@ -418,6 +426,8 @@ def refresh(workspace, dataset, token, tries=60, delay=5):
             last_transport_error = _engine_message(body)
             continue
         received_response = True
+        if status == 200 and isinstance(body, dict) and "error" in body:
+            return _engine_message(body)
         if status == 200 and body.get("value"):
             state = body["value"][0]
             if state.get("status") == "Completed":

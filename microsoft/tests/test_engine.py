@@ -862,3 +862,35 @@ def test_validate_with_engine_requires_a_workspace():
 def test_validate_with_engine_requires_both_tokens():
     with pytest.raises(engine.EngineUnavailableError, match="token"):
         engine.validate_with_engine({}, workspace="w", fabric_token="", powerbi_token="b")
+
+
+@pytest.mark.parametrize(
+    "stage", ["deploy", "operation", "operation_result", "refresh", "refresh_poll"]
+)
+def test_non_json_success_stops_deployment_and_refresh_without_timeout(monkeypatch, stage):
+    responses = {
+        "deploy": [(200, "<html>secret login</html>", {})],
+        "operation": [(202, "", {"Location": "https://e/operation"}),
+                      (200, "<html>secret login</html>", {})],
+        "operation_result": [(202, "", {"Location": "https://e/operation"}),
+                             (200, '{"status":"Succeeded"}', {}),
+                             (200, "<html>secret login</html>", {})],
+        "refresh": [(200, "<html>secret login</html>", {})],
+        "refresh_poll": [(202, "", {}), (200, "<html>secret login</html>", {})],
+    }[stage]
+    remaining = list(responses)
+    def request(_request):
+        assert remaining, "unexpected extra polling after invalid JSON"
+        return _FakeResponse(*remaining.pop(0))
+    monkeypatch.setattr(engine.urllib.request, "urlopen", request)
+    monkeypatch.setattr(engine.time, "sleep", lambda _delay: None)
+    if stage.startswith("refresh"):
+        error = engine.refresh("w", "d", "secret-token")
+    else:
+        dataset, error = engine.deploy({"model": {}}, "w", "n", "secret-token")
+        assert dataset is None
+    assert "invalid JSON response from Power BI" in error
+    assert "secret" not in error
+    assert "succeeded" not in error.lower()
+    assert "TimedOut" not in error
+    assert not remaining
