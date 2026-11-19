@@ -65,7 +65,10 @@ do; the CLI writes them to the output folder and replaces existing files only wi
   metric view file is a comment that names this target. In the rewritten model
   each field is the dimension of the same name, and each dataset-scoped metric evaluates
   `MEASURE(source.<metric>)`. A metric keeps its portable expression when that expression reads
-  only fields. Keys, relationships, model-scoped metrics, and metadata are unchanged.
+  only fields. Keys, relationships, model-scoped metrics, and metadata are unchanged. `deploy`
+  raises `ConversionError` when a dataset source reads a metric view target, whether as a table
+  name, with time travel, or in a query. A name without its catalog or schema is compared as if
+  it were in the target catalog and schema, where it may resolve.
 - `wrap` keeps every measure through `MEASURE(source.<measure>)`. It also writes a portable
   expression for a measure when each input of the measure is a dimension of the metric view, the
   measure has no window, and no input comes from a `one_to_many` join. Parameters must have
@@ -78,11 +81,23 @@ ANSI text to OSSIE_SQL_2026, and `deploy` translates a portable expression to Da
 has no `DATABRICKS` entry. The package parses and prints expressions with sqlglot, with the dialect mapping of the Ossie
 validator: `OSSIE_SQL_2026` and `ANSI_SQL` parse with the sqlglot default dialect. sqlglot
 rewrites some functions into forms with another meaning, so the package translates an
-expression only when each function is in a verified list (`expressions._PORTABLE`). Each entry
-has a row in `tests/test_expressions.py`.
+expression only when each function, operator, and other piece of syntax is in a verified list
+(`_PORTABLE`, `_PORTABLE_OPERATORS`, and `_PORTABLE_SYNTAX` in `expressions.py`). Each entry has
+a row in `tests/test_expressions.py`. Array subscripts, subqueries, `INTERVAL`, `IGNORE NULLS`,
+and Databricks bitwise operators have no verified form.
 
 When an expression has no verified translation, the package keeps the original text and emits a
 warning. It never writes a guessed translation.
+
+A Databricks name is case-insensitive, so a backtick name becomes a bare name in Ossie. A
+SQL:2016 or Databricks reserved word is written in its quoted normalized form instead:
+`` `order` `` becomes `"ORDER"`, which Ossie matches like a bare `order`. Names that need quotes,
+such as `` `Order Date` ``, keep them.
+
+A window `ORDER BY` item without `NULLS FIRST` or `NULLS LAST` sorts NULLs last for `ASC` in
+`OSSIE_SQL_2026` and first in Databricks, and the reverse for `DESC`. A translation spells out the
+placement wherever the two differ. `ANSI_SQL` leaves the placement to the engine, here
+Databricks.
 
 A few constructs need a rewrite because Databricks spells or evaluates them differently:
 
@@ -94,9 +109,11 @@ A few constructs need a rewrite because Databricks spells or evaluates them diff
 | `REGEXP_EXTRACT(s, p)` (whole match) | `REGEXP_EXTRACT(s, p, 0)` |
 | `CURRENT_DATE` | `CURRENT_DATE()`, so that no column of that name captures it |
 | `TO_CHAR(x, 'YYYY-MM')`, `TO_DATE(s, 'DD/MM/YYYY')` | `DATE_FORMAT(x, 'yyyy-MM')`, `TO_DATE(s, 'dd/MM/yyyy')` |
+| `TRUNC(x / y, 0)` | `x DIV y` |
 
 The datetime format translation is EXPERIMENTAL, as the format functions are in the Ossie
-specification. It works from Ossie to Databricks only.
+specification. It works from Ossie to Databricks only. Integer division works from Databricks to
+Ossie only, since `DIV` is not an Ossie operator.
 
 ## Validation
 
