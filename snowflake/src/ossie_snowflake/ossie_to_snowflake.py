@@ -424,7 +424,7 @@ def _extract_expression(expression, field_name):
         return ossie_sql_expr
     if bigquery_expr is not None:
         try:
-            return _translate_bigquery_expression(bigquery_expr)
+            translated = _translate_bigquery_expression(bigquery_expr)
         except (SqlglotError, ValueError) as error:
             warnings.warn(
                 f"Skipping field/metric '{field_name}': "
@@ -433,6 +433,13 @@ def _extract_expression(expression, field_name):
                 stacklevel=2,
             )
             return None
+        warnings.warn(
+            f"Translated field/metric '{field_name}' from BIGQUERY to SNOWFLAKE; "
+            "SQL translation can change results, including cast failures and NULL "
+            "handling. Review the generated expression.",
+            stacklevel=2,
+        )
+        return translated
 
     dialect_names = [d.get("dialect", "") for d in dialects]
     warnings.warn(

@@ -82,3 +82,9 @@ metric `datatype` values are not emitted as `data_type` properties.
 A unique key that repeats the dataset's primary key is not emitted as a
 `unique_keys` entry: Snowflake semantic views declare a column as `PRIMARY KEY`
 or `UNIQUE`, not both.
+
+Successful BigQuery-to-Snowflake expression translations emit a warning for each
+field or metric. A translation that parses successfully can still change results,
+including failed-cast behavior and NULL handling; review the generated SQL before use.
+Existing Snowflake, ANSI_SQL and OSSIE_SQL_2026 alternatives retain their precedence
+and do not produce this translation warning.

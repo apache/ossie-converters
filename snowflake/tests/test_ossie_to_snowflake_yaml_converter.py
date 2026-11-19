@@ -442,7 +442,18 @@ class TestExtractExpression:
             {"dialect": "BIGQUERY", "expression": "CAST(amount AS FLOAT64)"},
             {"dialect": dialect, "expression": "preferred"},
         ]}
-        assert _extract_expression(expression, "amount") == "preferred"
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert _extract_expression(expression, "amount") == "preferred"
+        assert not caught
+
+    @pytest.mark.parametrize("sql", [
+        "SAFE_CAST(zip_code AS INT64)", "COUNTIF(is_paid IS NOT TRUE)",
+    ])
+    def test_successful_bigquery_translation_warns_about_changed_semantics(self, sql):
+        expression = {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+        with pytest.warns(UserWarning, match="'checked'.*BIGQUERY to SNOWFLAKE.*change results"):
+            assert _extract_expression(expression, "checked")
 
     @pytest.mark.parametrize("sql", ["SELECT amount", "amount; SELECT 1", "my_udf(amount)", "CAST("])
     def test_untranslatable_bigquery_expression_warns_and_is_omitted(self, sql):
@@ -938,7 +949,11 @@ class TestConvertOssieToSnowflake:
             metrics=[{"name": "orders__total_amount", "expression": expression("SUM(amount)")}],
         )
 
-        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        with pytest.warns(UserWarning, match="BIGQUERY to SNOWFLAKE") as caught:
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert len(caught) == 4
+        for name in ("order_id", "amount", "float_amount", "orders__total_amount"):
+            assert any(f"'{name}'" in str(warning.message) for warning in caught)
         table = result["tables"][0]
         assert table["base_table"] == {"database": "ANALYTICS", "schema": "SALES", "table": "ORDERS"}
         facts = {field["name"]: field["expr"] for field in table["facts"]}
