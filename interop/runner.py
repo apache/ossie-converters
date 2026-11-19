@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,6 +95,50 @@ def _dirty(path):
     return bool(result.stdout) if result.returncode == 0 else None
 
 
+def _uv_version(executable):
+    """Return (version, error) for a uv executable, without trusting its name."""
+    result = subprocess.run(
+        [executable, "--version"], capture_output=True, text=True, check=False
+    )
+    match = re.search(r"(\d+\.\d+(?:\.\d+)?)", result.stdout or result.stderr)
+    if result.returncode != 0 or match is None:
+        return None, (result.stderr or result.stdout or "").strip()
+    return match.group(1), None
+
+
+def _required_uv_version(converter):
+    """Read tool.uv.required-version from the converter's pyproject, if declared."""
+    pyproject = converter.cwd / "pyproject.toml"
+    if not pyproject.is_file():
+        return None
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return data.get("tool", {}).get("uv", {}).get("required-version")
+
+
+def _satisfies(version, requirement):
+    """Evaluate a uv `required-version` clause (e.g. `>=0.9.0`) against a version."""
+    match = re.fullmatch(r"\s*(>=|>|<=|<|==)?\s*(\d+(?:\.\d+)*)\s*", requirement or "")
+    if match is None:
+        return None
+    operator, required = match.group(1) or ">=", tuple(
+        int(part) for part in match.group(2).split(".")
+    )
+    actual = tuple(int(part) for part in version.split("."))
+    width = max(len(actual), len(required))
+    actual += (0,) * (width - len(actual))
+    required += (0,) * (width - len(required))
+    return {
+        ">=": actual >= required,
+        ">": actual > required,
+        "<=": actual <= required,
+        "<": actual < required,
+        "==": actual == required,
+    }[operator]
+
+
 class Runner:
     def __init__(
         self,
@@ -108,6 +153,7 @@ class Runner:
         self.root, self.manifest, self.output = root, manifest, output
         self.timeout, self.prepare_enabled, self.native = timeout, prepare, native
         self.validator = Validator(root)
+        self._uv_probe = None
         self.report = {
             "schema_version": 1,
             "metadata": {
@@ -167,6 +213,34 @@ class Runner:
                 reason=f"missing toolchain executable(s): {', '.join(missing)}",
             )
             return result
+        if converter.toolchain == "uv":
+            # A stale uv earlier on PATH makes every converter fail with uv's own
+            # required-version refusal, which reads like a broken matrix rather
+            # than an environment problem. Probe the resolved executable once and
+            # report the path, the version and the requirement that rejected it.
+            if self._uv_probe is None:
+                executable = shutil.which("uv")
+                version, error = _uv_version(executable)
+                self._uv_probe = (executable, version, error)
+            executable, version, error = self._uv_probe
+            required = _required_uv_version(converter)
+            satisfied = (
+                _satisfies(version, required)
+                if version is not None and required is not None
+                else True
+            )
+            if version is None or satisfied is False:
+                reason = (
+                    f"uv at {executable} is {version or 'unusable'}"
+                    + (f" ({error})" if error else "")
+                    + (
+                        f"; {converter.name}/pyproject.toml requires {required}"
+                        if required
+                        else ""
+                    )
+                )
+                result.update(grade="SKIP", reason=reason)
+                return result
         if converter.toolchain == "maven":
             stage = self.command(
                 result,

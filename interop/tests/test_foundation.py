@@ -20,6 +20,7 @@
 from copy import deepcopy
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -30,7 +31,7 @@ from interop.checks import ContentError, Validator, compare_inventory, native_co
 from interop.execution import diagnostics, run_command
 from interop.manifest import Converter, Manifest, ManifestError, expand, load_manifest
 from interop.report import _link, write_report
-from interop.runner import Runner, exit_code
+from interop.runner import Runner, _satisfies, exit_code
 from interop.__main__ import main
 
 
@@ -428,6 +429,87 @@ def test_missing_toolchain_is_explicit_and_never_satisfies_strict(matrix, monkey
     assert all(case["grade"] == "SKIP" for case in report["cases"])
     assert exit_code(report) == 0
     assert exit_code(report, strict=True) == 1
+
+
+def _uv_stub(tmp_path, version_text, *, exit_code=0):
+    """A stand-in `uv` that reports `version_text` for --version."""
+    path = tmp_path / "uv"
+    path.write_text(
+        "#!/bin/sh\n"
+        f'echo "{version_text}"\n'
+        f"exit {exit_code}\n"
+    )
+    path.chmod(0o755)
+    return path
+
+
+def test_uv_newer_than_required_version_passes_the_preflight(matrix, tmp_path, monkeypatch):
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "uv 0.12.9 (9f9286029 2026-09-01)")
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\nrequired-version = ">=0.9.0"\n')
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    assert report["preparations"]["alpha"]["grade"] == "OK"
+    assert "uv at" not in report["preparations"]["alpha"]["reason"]
+
+
+def test_uv_older_than_required_version_is_an_environment_skip(matrix, tmp_path, monkeypatch):
+    """A stale uv must name the path, the version and the requirement it missed.
+
+    Without this the matrix reports every uv converter as one indistinguishable
+    failure, which reads as a broken harness rather than the wrong interpreter.
+    """
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "uv 0.6.3")
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\nrequired-version = ">=0.9.0"\n')
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    preparation = report["preparations"]["alpha"]
+    assert preparation["grade"] == "SKIP"
+    assert str(stub) in preparation["reason"]
+    assert "0.6.3" in preparation["reason"]
+    assert ">=0.9.0" in preparation["reason"]
+    assert all(case["grade"] == "SKIP" for case in report["cases"])
+    assert exit_code(report) == 0
+    assert exit_code(report, strict=True) == 1
+
+
+def test_uv_preflight_does_not_claim_a_version_it_could_not_read(matrix, tmp_path, monkeypatch):
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "unparseable output")
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\nrequired-version = ">=0.9.0"\n')
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    preparation = report["preparations"]["alpha"]
+    assert preparation["grade"] == "SKIP"
+    assert "unusable" in preparation["reason"]
+    assert str(stub) in preparation["reason"]
+
+
+@pytest.mark.parametrize(
+    ("version", "requirement", "expected"),
+    [
+        ("0.12.9", ">=0.9.0", True),
+        ("0.6.3", ">=0.9.0", False),
+        ("0.9.0", ">=0.9.0", True),
+        ("0.8.99", ">=0.9.0", False),
+        ("1.0", ">=0.9.0", True),
+        ("0.9.0", "==0.9.0", True),
+        ("0.9.1", "==0.9.0", False),
+        ("0.9.0", "<0.10.0", True),
+        ("0.9.0", "not-a-constraint", None),
+    ],
+)
+def test_required_version_comparison(version, requirement, expected):
+    assert _satisfies(version, requirement) is expected
+
+
+def test_uv_preflight_is_skipped_without_a_declared_requirement(matrix, tmp_path, monkeypatch):
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "uv 0.6.3")
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    assert report["preparations"]["alpha"]["grade"] == "OK"
 
 
 def test_export_failure_does_not_abort_other_targets(matrix):
