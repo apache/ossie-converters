@@ -2285,7 +2285,9 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                     metric["expression"] = native[cname, mname]
                     # Reserve the native slot before allocating newly authored
                     # model metrics, so curated views keep selecting this measure.
-                    write_stash(metric, {"dataset_metric_member": mname})
+                    kept = {k: v for k, v in read_stash(metric).items()
+                            if k not in ("cube", "sql", "type", "filters", "name")}
+                    write_stash(metric, {**kept, "dataset_metric_member": mname})
                     dataset_metrics.setdefault(cname, []).append(metric)
                 else:
                     metrics.append(metric)

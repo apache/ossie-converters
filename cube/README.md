@@ -37,7 +37,9 @@ a round trip.
 
 - **Import** (`ossie-cube import`): Cube files -> Ossie. Cube features Ossie has
   no native field for are preserved in `custom_extensions[CUBE]`, so
-  **Cube -> Ossie -> Cube is lossless**.
+  Cube-only metadata survives **Cube -> Ossie -> Cube**. The default dataset-scoped
+  metric layout adds origin metadata and can inline calculated-measure references
+  on export. Use `--model-scoped-metrics` for the former structural round trip.
 - **Export** (`ossie-cube export`): Ossie -> Cube files. Ossie features with no
   Cube slot are parked under `meta.ossie` rather than dropped -- Cube has a `meta`
   field at every level -- so **Ossie -> Cube -> Ossie is lossless too**.
@@ -171,7 +173,7 @@ to **import** (Cube -> Ossie) or **export** (Ossie -> Cube).
 | Cube-only measure keys (`format`, `drill_members`, `public`, …) | flat stash entries | The same protocol dimensions use. Import used to stash a *copy of the whole measure* whenever any extra key was present, which duplicated the `sql`/`type`/`filters` the expression already carries; now only the keys the expression cannot carry ride along. |
 | `metric.datatype` | — | Import emits `Integer` for the count family, whose result type Cube does know, and reads a parked one otherwise. |
 | `metric.description` / `ai_context` | measure `description` / `meta.ai_context` | |
-| `custom_extensions[CUBE]` | everything Cube-only | Import stashes; export restores -- keeping `Cube -> Ossie -> Cube` lossless. |
+| `custom_extensions[CUBE]` | everything Cube-only | Import stashes; export restores Cube-only properties. Default dataset-scoped metrics can normalize measure SQL and add origin metadata; use `--model-scoped-metrics` for the former structural round trip. |
 | foreign-vendor `custom_extensions` | `meta.ossie.custom_extensions` | Parked so a multi-vendor Ossie model survives the round trip. |
 
 **Stashed on import** (and restored on export): the views verbatim (minus the
