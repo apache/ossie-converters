@@ -114,7 +114,10 @@ tagged entry of that dialect. It also supports expressions with only `sql`.
 use sqlglot's default ANSI dialect and are transpiled to BigQuery SQL.
 For example, `"Customer ID"` is an identifier in ANSI and a string literal in
 BigQuery, and `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`.
-If no usable supported expression is present, the field/metric is skipped with a warning.
+Blank expressions are ignored, so a blank tagged entry falls back to the next
+supported expression. If only unsupported or blank dialect entries remain, the
+field/metric is skipped with a warning. An expression with no `dialects` and
+no nonblank `sql` is an error.
 
 The converter also runs on `ANSI_SQL`-only models — see the canonical [TPC-DS example](../ossie/examples/tpcds_semantic_model.yaml), which the test suite converts and parses back with [lkml](https://github.com/joshtemple/lkml) to check the output is well-formed LookML.
 
