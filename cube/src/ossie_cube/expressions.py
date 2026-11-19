@@ -546,7 +546,7 @@ def _parse_as(text, dialect):
         return None
 
 
-def _misread(tree, text):
+def ambiguous_column_arguments(tree, text):
     """True when a reading of `text` takes a unit or type argument for a column, or a
     column for a unit -- what the portable grammar does to `DATEDIFF(day, a, b)`."""
     if any(var.name.upper() not in _UNIT_WORDS for var in tree.find_all(exp.Var)):
@@ -673,7 +673,7 @@ def qualify_column_paths(cube_sql, own_cube=None, cube_names=(), source_dialect=
     if not readings:
         raise UnattributableSQL("it does not parse")
     tree = (readings[0] if native
-            else next((t for t in readings if not _misread(t, masked)), None))
+            else next((t for t in readings if not ambiguous_column_arguments(t, masked)), None))
     if tree is None:
         raise UnattributableSQL(
             "a unit or type argument reads as a column (or a column as a unit); write "

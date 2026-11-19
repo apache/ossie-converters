@@ -1461,12 +1461,14 @@ class _MeasureResolver:
     reject a legitimate model to guard against a hand-written pathological one.
     """
 
-    def __init__(self, cubes, pk_by_cube, issues, qualify=True, source_dialect=None):
+    def __init__(self, cubes, pk_by_cube, issues, qualify=True, source_dialect=None,
+                 *, dataset_scope=False):
         # `qualify=False` is for SQL whose columns are already qualified -- view
         # projection's -- where the portable grammar's reading of a bare name (`day` in
         # `DATEDIFF(day, a, b)`) is not to be trusted.
         self.source_dialect = source_dialect
         self._qualify = qualify
+        self._dataset_scope = dataset_scope
         self._pk = pk_by_cube
         self._issues = issues
         self._raw = {}
@@ -1690,7 +1692,7 @@ class _MeasureResolver:
         expression.
         """
         if self._qualify:
-            if self.source_dialect is None:
+            if self.source_dialect is None and not self._dataset_scope:
                 sql = qualify_bare_columns(sql)
             else:
                 try:
@@ -1704,7 +1706,8 @@ class _MeasureResolver:
         out, _ = cube_sql_to_ossie(
             sql, cname,
             resolve_ref=lambda body: self._resolve(body, cname, stack, inline_refs),
-            self_prefix=cname, cube_names=self._cube_names)
+            self_prefix="source" if self._dataset_scope else cname,
+            cube_names=self._cube_names)
         return out
 
     def _resolve(self, body, cname, stack, inline_refs):
@@ -1721,6 +1724,13 @@ class _MeasureResolver:
         """
         target = self._reference_target(body, cname)
         if target is None:
+            if self._dataset_scope:
+                head, dot, tail = body.partition(".")
+                if dot:
+                    owner = cname if head in ("CUBE", "TABLE") else head
+                    return f"{owner}.{tail}"
+                if head not in {"CUBE", "TABLE", *self._cube_names}:
+                    return f"{cname}.{head}"
             return None
         target_cube, target_name = target
         inner = self._expression(target_cube, target_name, stack,
@@ -2164,11 +2174,15 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                if restore_dataset_metrics else {})
     native = {}
     if scope_native_metrics and restore_dataset_metrics:
+        local_resolver = _MeasureResolver(cubes, pk_by_cube, issues,
+                                          source_dialect=source_dialect, dataset_scope=True)
         local_names = {name: set(fields) | set(pk_by_cube[name] or [])
                        for name, fields in member_names.items()}
         for relationship in relationships:
             local_names[relationship["from"]].update(relationship["from_columns"])
             local_names[relationship["to"]].update(relationship["to_columns"])
+        for (cname, _), origin in origins.items():
+            local_names[cname].add(origin["name"])
         local_names = {name: lookup_map(fields) for name, fields in local_names.items()}
         for key, measure in resolver.measures().items():
             cname, mname = key
@@ -2185,12 +2199,14 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
             if expr is None:
                 continue
             dialect = measure_dialect(measure, source_dialect) or DIALECT_ANSI
-            key_operand = None
-            if resolver.aggregate_of(*key) == "count" and measure.get("sql") is None:
-                # The resolver writes a bare count over declared primary-key
-                # fields. Its filters can still refer directly to source columns.
-                key_operand = primary_key_operand(cname, pk_by_cube[cname], source_dialect=dialect)
-            local = native_local_expression(expr, dialect, cname, key_operand=key_operand)
+            try:
+                expr = local_resolver.inlined(*key)
+            except ConversionError:
+                # The local binding must be proven even when legacy model import
+                # allows opaque SQL. Retain that existing model-level fallback.
+                continue
+            local = (native_local_expression(expr, dialect, cname, fields=member_names[cname])
+                     if expr is not None else None)
             if local:
                 native[key] = local
     metric_names = _metric_names_of(resolver, decomposed, scoped=origins.keys() | native.keys())
@@ -2267,6 +2283,9 @@ def _convert_measures(cubes, pk_by_cube, plain_by_cube, fanned_out, relationship
                     dataset_metrics.setdefault(cname, []).append(metric)
                 elif (cname, mname) in native:
                     metric["expression"] = native[cname, mname]
+                    # Reserve the native slot before allocating newly authored
+                    # model metrics, so curated views keep selecting this measure.
+                    write_stash(metric, {"dataset_metric_member": mname})
                     dataset_metrics.setdefault(cname, []).append(metric)
                 else:
                     metrics.append(metric)
