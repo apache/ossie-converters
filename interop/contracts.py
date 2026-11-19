@@ -33,6 +33,7 @@ _DIALECTS = {
     "OSSIE_SQL_2026": None,
     "DATABRICKS": "databricks",
     "SNOWFLAKE": "snowflake",
+    "CLICKHOUSE": "clickhouse",
 }
 
 
@@ -160,7 +161,12 @@ def check_document(data, category, oracle, *, input_stage=False, native_dialect=
         for name, sql in oracle["metrics"].items()
     ]
     for path, expected_sql, element, metric in elements:
-        dialects = (element or {}).get("expression", {}).get("dialects") or []
+        expression = (element or {}).get("expression", {})
+        dialects = list(expression.get("dialects") or [])
+        # The primary `sql` slot is the OSSIE_SQL_2026 form. A converter may fill it instead
+        # of leaving an OSSIE_SQL_2026 dialect entry, so treat it as one for the comparison.
+        if expression.get("sql"):
+            dialects.append({"dialect": "OSSIE_SQL_2026", "expression": expression["sql"]})
         if input_stage:
             _check(
                 checks,
@@ -216,6 +222,11 @@ def check_native_sources(path: Path, native_format, oracle):
                 actual += [
                     table_parts(cube.get("sql_table"))
                     for cube in data.get("cubes") or []
+                ]
+            elif native_format == "ossie":
+                actual += [
+                    table_parts(dataset.get("source"))
+                    for dataset in data.get("datasets") or []
                 ]
             elif native_format == "databricks":
 

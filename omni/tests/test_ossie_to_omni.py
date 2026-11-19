@@ -39,7 +39,7 @@ def minimal(**model_overrides):
                       "fields": [_field("amount")]}],
     }
     model.update(model_overrides)
-    return dump_yaml({"version": "0.2.0.dev0", **model})
+    return dump_yaml({"version": "0.3.0.dev0", **model})
 
 
 def _field(name, expr=None, dialect="ANSI_SQL", **extra):
@@ -347,7 +347,7 @@ def test_untranslatable_warehouse_expression_is_omitted(sql):
 
 
 def test_names_are_sanitized():
-    files = export(dump_yaml({"version": "0.2.0.dev0", "name": "My Model",
+    files = export(dump_yaml({"version": "0.3.0.dev0", "name": "My Model",
         "datasets": [{"name": "Order Items", "source": "db.sch.t",
                       "fields": [_field("Total Price", "p")]}]}))
     assert "views/order_items.view.yaml" in files
@@ -414,6 +414,14 @@ def test_unique_keys_restating_primary_key_do_not_warn():
     assert not any("unique_keys" in m for m in msgs)
 
 
+def test_unique_keys_restating_primary_key_in_another_order_do_not_warn():
+    msgs = _warnings_of(minimal(datasets=[
+        {"name": "lines", "source": "db.s.t", "primary_key": ["order_id", "line_no"],
+         "unique_keys": [["line_no", "order_id"]],
+         "fields": [_field("order_id"), _field("line_no")]}]))
+    assert not any("unique_keys" in m for m in msgs)
+
+
 def test_field_without_usable_dialect_warns_and_drops():
     ossie = minimal(datasets=[
         {"name": "orders", "source": "db.s.t",
@@ -443,7 +451,7 @@ def test_foreign_vendor_extensions_warn():
     [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
 )
 def test_legacy_model_wrappers_are_rejected(wrapper):
-    document = {"version": "0.2.0.dev0", "semantic_model": wrapper}
+    document = {"version": "0.3.0.dev0", "semantic_model": wrapper}
     with pytest.raises(ConversionError, match="Legacy 'semantic_model'"):
         export(dump_yaml(document))
 

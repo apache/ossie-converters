@@ -16,7 +16,7 @@
 # under the License.
 
 name: Flights
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 description: Ontology of flights into and out of airports.
 
 ontology requires:

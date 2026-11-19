@@ -100,6 +100,14 @@ class FormulaParser:
         op = BinOp.from_value(p[2])
         p[0] = Expression(op, p[1], p[3])
 
+    def p_formula_in(self, p):
+        "formula : expr IN LPAREN value_seq RPAREN"
+        p[0] = self._any_equal(p[1], p[4])
+
+    def p_formula_not_in(self, p):
+        "formula : expr NOT IN LPAREN value_seq RPAREN"
+        p[0] = Negation(self._any_equal(p[1], p[5]))
+
     def p_formula_and(self, p):
         "formula : formula AND formula"
         p[0] = Conjunction(p[1], p[3])
@@ -242,6 +250,17 @@ class FormulaParser:
         p[1].append(p[3])
         p[0] = p[1]
 
+    # `IN` takes a list of values only, not subqueries or other expressions
+    # (core spec, expression_language.md).
+    def p_value_seq_single(self, p):
+        "value_seq : literal"
+        p[0] = [p[1]]
+
+    def p_value_seq_many(self, p):
+        "value_seq : value_seq COMMA literal"
+        p[1].append(p[3])
+        p[0] = p[1]
+
     def p_agg_expr(self, p):
         "agg_expr : agg_method LBRACKET node_expr_seq WHERE formula GROUP BY node_expr_seq RBRACKET"
         p[0] = AggExpr(p[1], p[3], p[5], p[8])
@@ -290,6 +309,23 @@ class FormulaParser:
 
     def p_error(self, p):
         raise ValueError("Unable to parse:", p)
+
+    def _any_equal(self, expr, values: list[LiteralHandle]) -> Expression | Disjunction:
+        """`expr IN (v1, ..., vn)` as `expr == v1 OR ... OR expr == vn`.
+
+        Desugaring keeps the AST to the node types every visitor already
+        handles. The disjunction is balanced rather than chained, so its depth
+        grows with log2(n) and a long list does not exhaust the recursion limit
+        of the visitors that walk it. Up to three values it is the same tree
+        the hand-written `OR` form parses to.
+        """
+        if len(values) == 1:
+            return Expression(BinOp.EQ, expr, values[0])
+        mid = (len(values) + 1) // 2
+        return Disjunction(
+            self._any_equal(expr, values[:mid]),
+            self._any_equal(expr, values[mid:]),
+        )
 
     # ----------------- identifier resolution -----------------------------
 

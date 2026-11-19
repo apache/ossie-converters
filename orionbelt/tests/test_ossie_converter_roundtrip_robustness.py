@@ -87,7 +87,7 @@ class TestMetricRoundTripCodeVsName:
         # Snowflake-style Ossie: field display name != physical column code, and
         # the metric references the physical code. Must resolve, not drop.
         ossie = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "datasets": [
                 {
@@ -129,7 +129,7 @@ class TestMetricRoundTripCodeVsName:
         # (column "Net Amount"), not a broken "{[Orders].[Net]} Amount" that
         # fails query resolution.
         ossie = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "datasets": [
                 {
@@ -175,7 +175,7 @@ class TestMetricRoundTripCodeVsName:
         # are quoted identifiers. A metric referencing the bare physical code
         # must still resolve to a queryable measure, not fall through to LOSSY.
         ossie = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "datasets": [
                 {
@@ -238,7 +238,7 @@ def _dim_dataset(name: str, source: str) -> dict[str, Any]:
 class TestDimensionNameCollision:
     def test_both_dimensions_survive(self) -> None:
         ossie = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "sales",
             "datasets": [
                 _dim_dataset("Orders", "WH.PUBLIC.orders"),
@@ -274,7 +274,7 @@ class TestValidateOssieRobustness:
     def test_malformed_fields_does_not_raise(self) -> None:
         r = conv.validate_ossie(
             {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "x", "datasets": [{"name": "D", "fields": "nope"}],
             }
         )
@@ -284,7 +284,7 @@ class TestValidateOssieRobustness:
         # The robustness guards must not suppress real semantic errors.
         r = conv.validate_ossie(
             {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "m",
                 "datasets": [
                     {"name": "D", "source": "a.b.d", "fields": []},

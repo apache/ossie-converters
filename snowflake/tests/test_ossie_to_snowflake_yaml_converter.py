@@ -46,7 +46,7 @@ from ossie_snowflake.ossie_to_snowflake import (
 def _wrap_ossie(model_dict):
     """Wrap a model dict in the standard Ossie envelope."""
     return yaml.dump(
-        {"version": "0.2.0.dev0", **model_dict},
+        {"version": "0.3.0.dev0", **model_dict},
         default_flow_style=False,
     )
 
@@ -685,6 +685,15 @@ class TestConvertDataset:
         }
         assert "unique_keys" not in result
 
+    def test_unique_key_with_primary_key_columns_reordered_is_dropped(self):
+        ds = {
+            "name": "store_sales",
+            "primary_key": ["ss_item_sk", "ss_ticket_number"],
+            "unique_keys": [["ss_ticket_number", "ss_item_sk"], ["ss_sold_date_sk"]],
+        }
+        result = _convert_dataset(ds)
+        assert result["unique_keys"] == [{"columns": ["ss_sold_date_sk"]}]
+
     def test_unique_keys_kept_without_primary_key(self):
         ds = {"name": "t", "unique_keys": [["id"], ["code"]]}
         result = _convert_dataset(ds)
@@ -818,7 +827,7 @@ class TestConvertOssieToSnowflake:
             convert_ossie_to_snowflake(bad)
 
     def test_missing_model_name_raises(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "description": "x"})
+        bad = yaml.dump({"version": "0.3.0.dev0", "description": "x"})
         with pytest.raises(OssieConversionError, match="Missing required 'name'"):
             convert_ossie_to_snowflake(bad)
 
@@ -827,7 +836,7 @@ class TestConvertOssieToSnowflake:
         [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
     )
     def test_legacy_model_wrappers_are_rejected(self, wrapper):
-        bad = yaml.dump({"version": "0.2.0.dev0", "semantic_model": wrapper})
+        bad = yaml.dump({"version": "0.3.0.dev0", "semantic_model": wrapper})
         with pytest.raises(OssieConversionError, match="Legacy 'semantic_model'"):
             convert_ossie_to_snowflake(bad)
 
