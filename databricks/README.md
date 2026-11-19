@@ -78,8 +78,8 @@ Its dimensions and measures are evaluated over that view's joined rows. Ossie re
 connect separate datasets; they do not turn those datasets into one joined row set or assign
 all aggregates the grain of a particular source table.
 
-For example, suppose two orders refer to the same state, with no null values. In a metric
-view joining Orders to States, `COUNT(*)`, `COUNT(order_id)` and `COUNT(state_name)` each
+For example, suppose Orders contains exactly two rows and States contains exactly one row,
+with both orders referring to that state and no null values. In a metric view joining Orders to States, `COUNT(*)`, `COUNT(order_id)` and `COUNT(state_name)` each
 count two joined rows. In an Ossie model with separate Orders and States datasets,
 `COUNT(Orders.order_id)` counts two orders while `COUNT(States.state_name)` counts one state.
 `COUNT(*)` has no model-level dataset to count. Declaring a many-to-one relationship does
