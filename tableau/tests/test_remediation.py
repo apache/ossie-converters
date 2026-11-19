@@ -280,6 +280,14 @@ def test_categorical_bin_becomes_case_field():
     assert any(x.kind == "categorical_bin" and x.category == "approximated" for x in r.losses)
 
 
+def test_categorical_bin_member_with_quote_keeps_tableau_escaping():
+    r = _bin_ds("<column name='[G]' caption='Grp' datatype='string' role='dimension'>"
+                "<calculation class='categorical-bin' column='[name]' new-bin='true'>"
+                "<bin value='&quot;A&quot;&quot;s&quot;'><value>&quot;it's&quot;</value></bin></calculation></column>")
+    assert _expr(r, "Grp") == 'IF [name] IN ("it\'s") THEN "A""s" ELSE [name] END'
+    assert _expr(r, "Grp", "ANSI_SQL") == """CASE WHEN "name" IN ('it''s') THEN 'A"s' ELSE "name" END"""
+
+
 def test_categorical_bin_with_non_literal_member_stays_a_loss():
     r = _bin_ds("<column name='[G]' datatype='string' role='dimension'><calculation class='categorical-bin' column='[name]'>"
                 "<bin value='&quot;A&quot;'><value>%null%</value></bin></calculation></column>")

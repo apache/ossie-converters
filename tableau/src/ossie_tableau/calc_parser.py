@@ -69,8 +69,9 @@ def _lex(f: str) -> list[tuple[str, str]]:
         if t.kind == "ref":
             out.append(("ref", t.value))
         elif t.kind == "string":
-            _q, body = text[0], text[1:-1] if len(text) > 1 and text[-1] == text[0] else text[1:]
-            out.append(("str", re.sub(r"\\(.)", r"\1", body)))
+            q = text[0]
+            body = text[1:-1] if len(text) > 1 and text[-1] == q else text[1:]
+            out.append(("str", body.replace(q + q, q)))
         else:
             pos = 0
             while pos < len(text):
@@ -895,7 +896,7 @@ def emit_tableau(tree: exp.Expression, ref: Callable[[exp.Column], str] | None =
         if t is exp.Column:
             return ref(n)
         if t is exp.Literal:
-            return "'" + n.name.replace("\\", "\\\\").replace("'", "\\'") + "'" if n.is_string else n.name
+            return "'" + n.name.replace("'", "''") + "'" if n.is_string else n.name
         if t is exp.Null:
             return "NULL"
         if t is exp.Boolean:

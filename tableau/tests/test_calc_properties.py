@@ -16,6 +16,7 @@
 # under the License.
 
 import pytest
+import sqlglot
 from hypothesis import HealthCheck, given, settings, strategies as st
 
 from ossie_tableau.calc_parser import from_sql, translate
@@ -151,3 +152,12 @@ def test_rank_order_direction_follows_spec(fn, agg, word, twb_desc):
     assert isinstance(tree, exp.Case) and agg not in sql.upper(), sql
     for d in ("snowflake", "bigquery"):
         sqlglot.parse_one(sqlglot.transpile(sql, write=d)[0], read=d)
+
+
+@given(st.text(alphabet="ab'\"\\ ", max_size=8), st.sampled_from("'\""))
+def test_string_literal_round_trip(s, q):
+    """A Tableau string literal ('' / "" doubled, backslash literal) keeps its value through SQL and back."""
+    t = translate(q + s.replace(q, q + q) + q)
+    assert t.type == "str" and sqlglot.parse_one(t.sql, read="snowflake").name == s
+    back = from_sql(t.sql)
+    assert back == "'" + s.replace("'", "''") + "'" and translate(back).sql == t.sql

@@ -308,7 +308,10 @@ def test_a2_union_distinct_and_mismatch_fallback():
     ("/* [a] */ [b]", ["b"]),
     ("[Col]]x] + 1", ["Col]x"]),
     ("'{FIXED [a]: SUM([b])}'", []),
-    ('"it\\"s [a]" + [c]', ["c"]),
+    ('"it""s [a]" + [c]', ["c"]),
+    ("'it''s [a]' + [c]", ["c"]),
+    ('"C:\\" + [path]', ["path"]),
+    ("'a\\' + [b] + '\\[c]'", ["b"]),
 ])
 def test_a3_tokenizer_refs(text, refs):
     assert F.refs(text) == refs
@@ -317,6 +320,12 @@ def test_a3_tokenizer_refs(text, refs):
 def test_a3_masked_hides_strings_and_comments():
     m = F.masked("IF [a]='SUM(x)' THEN 1 END // SUM(y)")
     assert "SUM" not in m and len(m) == len("IF [a]='SUM(x)' THEN 1 END // SUM(y)")
+
+
+def test_a3_doubled_quote_is_one_string_token():
+    toks = [x for x in F.tokenize("'it''s' + [a]") if x.kind != "code"]
+    assert [x.kind for x in toks] == ["string", "ref"] and (toks[0].start, toks[0].end) == (0, 7)
+    assert F.masked('"C:\\" + [path]').endswith(" + [xxxx]")  # the string closes at the second quote
 
 
 def test_a3_keywords_in_strings_do_not_change_classification():
@@ -584,10 +593,9 @@ def test_rawsql_over_calc_without_sql_stays_parked(monkeypatch):
     assert "Raw" not in _fields_by_name(r) and r.stats["unconverted_calcs"] == 1
 
 
-def test_rawsql_doubled_quote_in_literal_never_emits_invalid_sql():
+def test_rawsql_doubled_quote_in_literal_is_unescaped():
     r = convert_datasource(ds(BASE, calc("RAWSQL_STR('CONCAT(%1, ''x'')', [name])", "string", caption="Q")))
-    f = _fields_by_name(r).get("Q")
-    assert f is None or "''x''" not in _snow_expr(r, "Q")
+    assert _snow_expr(r, "Q") == """CONCAT(("name"), 'x')"""
 
 
 def test_tableau_internal_columns_are_not_emitted_as_fields():

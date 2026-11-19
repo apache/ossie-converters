@@ -52,10 +52,10 @@ def tokenize(f: str) -> list[Tok]:
         if c in "\"'":
             j = i + 1
             while j < n:
-                if f[j] == "\\":
-                    j += 2
-                    continue
                 if f[j] == c:
+                    if j + 1 < n and f[j + 1] == c:  # '' / "" is an escaped quote; a backslash is a literal character
+                        j += 2
+                        continue
                     break
                 j += 1
             j = min(j + 1, n)

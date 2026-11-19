@@ -109,7 +109,9 @@ def test_unmappable_entries_raise(name):
     ("CASE [r] WHEN 'a' THEN 1 WHEN 'b' THEN 2 END", "CASE r WHEN 'a' THEN 1 WHEN 'b' THEN 2 END", "num"),
     ("#2020-01-02#", "CAST('2020-01-02' AS DATE)", "date"),
     ("#2020-01-02 03:04:05#", "CAST('2020-01-02 03:04:05' AS TIMESTAMP)", "date"),
-    ("'it\\'s'", "'it\\'s'", "str"),
+    ("'it''s'", "'it\\'s'", "str"),
+    ('"say ""hi"""', "'say \"hi\"'", "str"),
+    ("'C:\\' + [s]", "'C:\\\\' || s", "str"),
     ("[a] // comment\n + 1", "a + 1", "num"),
     ("/* c */ [a]", "a", "any"),
     ("null", "NULL", "any"),
@@ -149,7 +151,8 @@ def test_aggregate_flag_and_resolver():
     ("a BETWEEN 1 AND 5", "[a] >= 1 AND [a] <= 5"), ("CAST(a AS INTEGER)", "INT(ROUND([a]))"),
     ("a || b", "[a] + [b]"), ("IFF(a, 1, 2)", "IIF([a], 1, 2)"), ("NOT a IS NULL", "NOT ISNULL([a])"),
     ("CASE WHEN a THEN 1 END", "IF [a] THEN 1 END"), ("COUNT(DISTINCT a)", "COUNTD([a])"), ("a % 2", "[a] % 2"),
-    ("TRUE", "true"), ("'it''s'", "'it\\'s'"),
+    ("TRUE", "true"), ("'it''s'", "'it''s'"), ("a = 'O''Brien'", "[a] = 'O''Brien'"),
+    ("REGEXP_SUBSTR(s, '(\\\\d+)', 1, 1, 'e', 1)", "REGEXP_EXTRACT([s], '(\\d+)')"),
     ("QUARTER(a)", "DATEPART('quarter', [a])"),
     ("DATE_TRUNC('quarter', a)", "DATETRUNC('quarter', [a])"),
 ])
@@ -219,3 +222,12 @@ def test_datename_verified_parts(part, fmt):
     t = translate(f"DATENAME('{part}', [d])")
     assert t.sql == f"TO_CHAR(d, '{fmt}')"
     assert from_sql(t.sql) == f"DATENAME('{part}', [d])"
+
+
+@pytest.mark.parametrize("wh", ["snowflake", "bigquery"])
+def test_regexp_backslash_survives(wh):
+    from ossie_tableau.warehouse import get
+    sql = translate(r"REGEXP_EXTRACT([s], '(\d+)')", wh=get(wh)).sql
+    assert r"'(\\d+)'" in sql, sql
+    assert sqlglot.parse_one(sql, read=wh).find(sqlglot.exp.Literal).name == r"(\d+)"
+

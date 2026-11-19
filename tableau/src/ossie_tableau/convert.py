@@ -186,7 +186,7 @@ def _viz_arith_formula(masked: str) -> bool:
 LOD_FIXED_FIELD = re.compile(rf"^\s*\{{\s*FIXED\s+\[[^\[\]]+\](?:\s*,\s*\[[^\[\]]+\])*\s*:\s*{_AGG1}\s*\}}\s*$", re.I)
 CALC_CLASS_LOSS = {"bin": "bin", "categorical-bin": "categorical_bin", "passthrough": "passthrough"}
 RAWSQL_RE = re.compile(
-    r"^\s*RAWSQL_(?:BOOL|DATE|DATETIME|INT|REAL|STR)\s*\(\s*(?P<q>['\"])(?P<sql>.*?)(?P=q)\s*(?P<args>(?:,\s*\[[^\]]+\]\s*)*)\)\s*$", re.S | re.I)
+    r"^\s*RAWSQL_(?:BOOL|DATE|DATETIME|INT|REAL|STR)\s*\(\s*(?P<q>['\"])(?P<sql>(?:(?!(?P=q)).|(?P=q){2})*)(?P=q)\s*(?P<args>(?:,\s*\[[^\]]+\]\s*)*)\)\s*$", re.S | re.I)
 OBJECT_ID_REF = "__tableau_internal_object_id__"
 TYPE_MAP = {
     "string": OssieDataType.STRING,
@@ -1321,7 +1321,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
         def lit(v: str) -> str | None:
             v = v.strip()
             if len(v) >= 2 and v[0] == v[-1] == '"':
-                return v[1:-1]
+                return v[1:-1].replace('""', '"')
             return None
         parsed = []
         for label, vals in arms:
@@ -1331,7 +1331,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 return False
             parsed.append((lab, lv))
         tcol = f"[{t.field_names[remote]}]"
-        tq = lambda x: '"' + x.replace('"', '\\"') + '"'  # noqa: E731
+        tq = lambda x: '"' + x.replace('"', '""') + '"'  # noqa: E731
         sq = lambda x: "'" + x.replace("'", "''") + "'"  # noqa: E731
         tab = "IF " + " ELSEIF ".join(f"{tcol} IN ({', '.join(tq(v) for v in lv)}) THEN {tq(lab)}" for lab, lv in parsed) + f" ELSE {tcol} END"
         sql = "CASE " + " ".join(f"WHEN {_sql_col(remote, wh)} IN ({', '.join(sq(v) for v in lv)}) THEN {sq(lab)}" for lab, lv in parsed) + f" ELSE {_sql_col(remote, wh)} END"
@@ -1397,7 +1397,8 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 return False
         if len(tabs) > 1 or not tabs:
             return False
-        sql = re.sub(r"%(\d+)", lambda g: subs[int(g.group(1)) - 1] if 0 < int(g.group(1)) <= len(subs) else g.group(0), rm.group("sql"))
+        sql = re.sub(r"%(\d+)", lambda g: subs[int(g.group(1)) - 1] if 0 < int(g.group(1)) <= len(subs) else g.group(0),
+                     rm.group("sql").replace(rm.group("q") * 2, rm.group("q")))
         try:
             sqlglot.parse_one(sql, read=wh.sqlglot_dialect)
         except sqlglot.errors.SqlglotError:
