@@ -881,3 +881,100 @@ def test_older_origin_without_binding_record_is_preserved_natively():
     assert not back.get("metrics") and not back["datasets"][0].get("metrics")
     assert stash_of(back["datasets"][0])["extra_measures"][0]["measure"] == measure
     assert any("no field binding record" in i.detail for i in issues)
+
+
+@pytest.mark.parametrize("kind", ["field", "model_metric"])
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("edit", ["sql", "type", "description", "unchanged"])
+def test_restoring_saved_expression_warns_when_native_definition_changed(kind, legacy, edit):
+    saved = expression("SUM(orders.id)" if kind == "model_metric" else "gross - tax")
+    saved["sql"] = saved["dialects"][0]["expression"]
+    if not legacy:
+        saved.pop("dialects")
+    ds = dataset()
+    if kind == "field":
+        ds["fields"][1]["expression"] = saved
+    document = model(ds, metrics=[{"name": "total", "expression": saved}]
+                     if kind == "model_metric" else [])
+    files, _ = export(document)
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    cube = native["cubes"][0]
+    member = by_name(cube["dimensions"])["amount"] if kind == "field" else cube["measures"][0]
+    if edit == "sql":
+        member["sql"] = "changed_value"
+    elif edit == "type":
+        member["type"] = "string" if kind == "field" else "max"
+    elif edit == "description":
+        member["description"] = "Updated explanation"
+    files[path] = yaml.safe_dump(native)
+    returned, issues = convert_cube_to_ossie(files)
+    back = yaml.safe_load(returned)
+    result = (by_name(back["datasets"][0]["fields"])["amount"] if kind == "field"
+              else back["metrics"][0])
+    assert result["expression"] == saved
+    warnings = [i for i in issues if i.issue_type.value == "STALE_PARKED_EXPRESSION"]
+    assert len(warnings) == (1 if edit in {"sql", "type"} else 0)
+    if warnings:
+        assert warnings[0].element_name == ("orders.amount" if kind == "field" else "orders.total")
+        assert "restored the saved Ossie expression" in warnings[0].detail
+
+
+def test_changed_dataset_measure_imports_current_definition_without_restoring_saved_sql():
+    ds = dataset(metrics=[{"name": "total", "expression": {"sql": "SUM(id)"}}])
+    files, _ = export(model(ds))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    native["cubes"][0]["measures"][0]["sql"] = "{CUBE.amount}"
+    files[path] = yaml.safe_dump(native)
+    returned, issues = convert_cube_to_ossie(files)
+    back = yaml.safe_load(returned)
+    assert not back["datasets"][0].get("metrics")
+    assert back["metrics"][0]["expression"] == expression("SUM(orders.amount)", "OSSIE_SQL_2026")
+    assert not [i for i in issues if i.issue_type.value == "STALE_PARKED_EXPRESSION"]
+
+
+@pytest.mark.parametrize("primary", [False, True])
+def test_saved_model_expression_warns_after_native_filter_edit(primary):
+    saved = expression("SUM(CASE WHEN orders.id > 1 THEN orders.amount END)")
+    if primary:
+        saved = {"sql": saved["dialects"][0]["expression"]}
+    else:
+        saved["dialects"].append({"dialect": "DAX", "expression": "SUM(orders[amount])"})
+    files, _ = export(model(dataset(), metrics=[{"name": "total", "expression": saved}]))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    measure = native["cubes"][0]["measures"][0]
+    measure["filters"] = [{"sql": "{CUBE}.id > 2"}]
+    files[path] = yaml.safe_dump(native)
+    returned, issues = convert_cube_to_ossie(files)
+    assert yaml.safe_load(returned)["metrics"][0]["expression"] == saved
+    assert len(issues.of_type(IssueType.STALE_PARKED_EXPRESSION)) == 1
+
+
+def test_older_export_without_expression_signature_keeps_restoration_compatibility():
+    saved = {"sql": "SUM(orders.id)"}
+    files, _ = export(model(dataset(), metrics=[{"name": "total", "expression": saved}]))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    native["cubes"][0]["measures"][0]["meta"]["ossie"].pop("expression_signature")
+    files[path] = yaml.safe_dump(native)
+    returned, issues = convert_cube_to_ossie(files)
+    assert yaml.safe_load(returned)["metrics"][0]["expression"] == saved
+    assert not issues.of_type(IssueType.STALE_PARKED_EXPRESSION)
+
+
+def test_saved_primary_sql_warns_for_active_to_trialing_native_edit():
+    ds = dataset()
+    ds["fields"].append({"name": "status", "expression": {"sql": "status"}})
+    saved = {"sql": "SUM(CASE WHEN orders.status = 'active' THEN orders.amount END)"}
+    files, _ = export(model(ds, metrics=[{"name": "mrr", "expression": saved}]))
+    path = "model/cubes/orders.yml"
+    native = yaml.safe_load(files[path])
+    measure = native["cubes"][0]["measures"][0]
+    assert "'active'" in measure["sql"]
+    measure["sql"] = measure["sql"].replace("'active'", "'trialing'")
+    files[path] = yaml.safe_dump(native)
+    returned, issues = convert_cube_to_ossie(files)
+    assert yaml.safe_load(returned)["metrics"][0]["expression"] == saved
+    assert [i.element_name for i in issues.of_type(IssueType.STALE_PARKED_EXPRESSION)] == ["orders.mrr"]

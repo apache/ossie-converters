@@ -71,6 +71,7 @@ from ._common import (
     lookup_map,
     match_keys,
     normalize_identifier,
+    native_expression_signature,
     resolve_identifier,
     quoted_runs,
     split_dotted_ref,
@@ -202,6 +203,16 @@ def _convert_model(model, dialect, base_cube, issues):
 
     if not _a_view_carries_the_model(model_stash):
         _carry_model_on_a_cube(model, cubes_by_name, issues)
+
+    # Snapshot the final native definition, after key flags and stash overrides.
+    # Import can then report a Cube edit before restoring an authoritative saved
+    # expression. Presentation-only edits do not invalidate this record.
+    for cube in cubes_by_name.values():
+        for key in ("dimensions", "measures"):
+            for member in _member_entries(cube.get(key)):
+                parked = (member.get("meta") or {}).get("ossie") or {}
+                if parked.get("expression"):
+                    parked["expression_signature"] = native_expression_signature(member)
 
     files = {path: dump_yaml(content) for path, content in files_content.items()}
 

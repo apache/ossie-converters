@@ -343,6 +343,14 @@ def measure_signature(measure):
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def native_expression_signature(member):
+    """Fingerprint the native expression without labels or other presentation keys."""
+    keys = {"sql", "type", "filters", "case", "latitude", "longitude", "sub_query",
+            "multi_stage", "time_shift", "rolling_window", "group_by", "reduce_by",
+            "add_group_by"}
+    return measure_signature({k: v for k, v in member.items() if k in keys})
+
+
 def write_stash(obj, data):
     """Attach a CUBE `custom_extensions` entry holding `data` (a dict).
 

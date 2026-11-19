@@ -62,6 +62,7 @@ from ._common import (
     sanitize_name,
     uncollided_view_name,
     normalize_identifier,
+    native_expression_signature,
     resolve_identifier,
     referenced_datasets,
     join_source,
@@ -949,7 +950,7 @@ def _finish_dimension_field(cname, dname, dim, field, stash, issues):
         # A dimension export added only to carry Cube's primary key; the Ossie model had
         # no field for that column, so it gets none back.
         return None
-    _restore_expression(field, parked)
+    _restore_expression(field, parked, dim, issues, f"{cname}.{dname}")
     # A field that carried no datatype keeps carrying none: Ossie says not to infer a
     # scalar type from `is_time` alone, so emitting DateTime for a `type: time`
     # dimension would assert something the model never said.
@@ -1061,7 +1062,7 @@ def _case_label(cname, dname, holder, translate, literal):
     return "'" + text.replace("'", "''") + "'"
 
 
-def _restore_expression(target, parked):
+def _restore_expression(target, parked, member, issues, scope):
     """Put back the dialect, or the whole expression, that export had to set aside.
 
     Cube holds one `sql` per member, so an Ossie expression carrying several dialects
@@ -1069,6 +1070,14 @@ def _restore_expression(target, parked):
     A single non-ANSI dialect needs only its label restored.
     """
     if parked.get("expression"):
+        saved = parked.get("expression_signature")
+        if saved is not None and saved != native_expression_signature(member):
+            issues.add(
+                IssueType.STALE_PARKED_EXPRESSION, scope,
+                "the native Cube SQL, type, filters or evaluation settings changed; "
+                "restored the saved Ossie expression from meta.ossie.expression, "
+                "so the native edit is not reflected in this expression. Update the "
+                "saved expression or remove it to import the current Cube definition")
         target["expression"] = parked["expression"]
     elif parked.get("dialect"):
         target["expression"]["dialects"][0]["dialect"] = parked["dialect"]
@@ -2257,7 +2266,7 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         # A rejected local origin must not restore another stale expression
         # from the same measure's parking metadata.
         parked = {k: v for k, v in parked.items() if k != "expression"}
-    _restore_expression(metric, parked)
+    _restore_expression(metric, parked, measure, issues, scope)
     # A datatype parked by a previous export wins: Cube has no field for a measure's
     # result type, and only the count family can be inferred from the aggregate.
     parked_dt = parked_of(measure.get("meta")).get("datatype")
