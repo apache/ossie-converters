@@ -28,6 +28,9 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+# The portability execution check (portability_execution.py). Without it every
+# execution finding is NOT_RUN; CI installs it.
+execution = ["duckdb>=1.5.5"]
 
 [tool.uv]
 package = false
