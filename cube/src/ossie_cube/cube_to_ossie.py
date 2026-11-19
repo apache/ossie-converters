@@ -1076,8 +1076,8 @@ def _restore_expression(target, parked, member, issues, scope):
                 IssueType.STALE_PARKED_EXPRESSION, scope,
                 "the native Cube SQL, type, filters or evaluation settings changed; "
                 "restored the saved Ossie expression from meta.ossie.expression, "
-                "so the native edit is not reflected in this expression. Update the "
-                "saved expression or remove it to import the current Cube definition")
+                "verify that it includes the intended edit, or remove "
+                "meta.ossie.expression to import the current Cube definition")
         target["expression"] = parked["expression"]
     elif parked.get("dialect"):
         target["expression"]["dialects"][0]["dialect"] = parked["dialect"]

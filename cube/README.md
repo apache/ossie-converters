@@ -244,8 +244,10 @@ keep its alternatives natively — the whole expression object is parked and res
 nothing less brings them back. Exports record the native expression's signature.
 If its SQL, type, filters or evaluation settings change in Cube, import reports
 `STALE_PARKED_EXPRESSION` before restoring the saved Ossie expression. Description,
-title and other presentation edits do not trigger this warning. Update or remove
-`meta.ossie.expression` to import an intentional native edit. Older exports without
+title and other presentation edits do not trigger this warning. Remove
+`meta.ossie.expression` to import the current native definition. Editing the saved
+expression does not refresh the native signature, so import can still warn even
+when both definitions were edited consistently. Older exports without
 a signature retain restoration behavior but cannot detect those edits. This is what
 makes another converter's output usable: everything the Databricks converter emits is
 `DATABRICKS` with no ANSI alternative, and requiring ANSI dropped every field and metric

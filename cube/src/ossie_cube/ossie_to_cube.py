@@ -1117,6 +1117,7 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
     refs = _MetricReferences(model, dialect, tables, resolve_base, name,
                              field_owners, set(cube_names.values()), issues)
 
+    restored_fields = _restored_field_names(datasets, cube_names, plan)
     measures_by_cube = {}
     _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
                             dialect, issues, name, refs)
@@ -1137,7 +1138,8 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             measure = dict(stash["measure"])
             target = refs.cube_of_metric(mname_raw)
             measure["name"] = refs.native_name(mname_raw)
-            _apply_measure_metadata(metric, measure, stash)
+            _apply_measure_metadata(
+                _restored_model_metric(metric, restored_fields, tables, cube_names), measure, stash)
             _record_model_metric_name(measure, mname_raw, mname, stash, issues, target)
             _place(measures_by_cube, target, measure, name)
             continue
@@ -1214,8 +1216,8 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             measure = _measure_from_expression(
                 expr, target, mname, stash, plan, refs,
                 expression_dialect=expression_dialect)
-        _apply_measure_metadata(metric, measure, stash, expression_dialect,
-                                decomposed=decomposed)
+        _apply_measure_metadata(_restored_model_metric(metric, restored_fields, tables, cube_names),
+                                measure, stash, expression_dialect, decomposed=decomposed)
         # Cube-only keys import found on the measure (`format`, `drill_members`,
         # `public`, ...) ride flat in the stash -- the same protocol dimensions
         # use -- and go back onto the rebuilt measure as written.
@@ -1300,13 +1302,7 @@ def _qualify_dataset_metric(expr, dialect, dataset, fields, scope, renamed_field
     return expr
 
 
-def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
-                            dialect, issues, model_name, model_refs):
-    # Local expressions contain no metric references, so model-level metric names
-    # must never shadow their fields. Ownership comes from the declaring dataset,
-    # including COUNT(*) and other expressions with no field reference.
-    # Import splits merged geo dimensions back into coordinate fields. Those
-    # names, rather than the merged member name, define the restored namespace.
+def _restored_field_names(datasets, cube_names, plan):
     restored_fields = {}
     for ds_name, ds in datasets.items():
         target = cube_names[ds_name]
@@ -1318,6 +1314,72 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
             member = plan[target].names[fname]
             geo = read_stash(field).get("geo")
             restored_fields[target][fname] = f"{member}_{geo['part']}" if geo else member
+    return restored_fields
+
+
+def _restored_model_metric(metric, restored_fields, tables, cube_names):
+    """Rebind saved SQL to the field and dataset names emitted on re-import."""
+    renamed_datasets = lookup_map({name: cube for name, cube in cube_names.items() if name != cube})
+
+    def rewrite(sql, dialect):
+        tree = parse_expression(sql, dialect)
+        if tree is None:
+            return sql
+        replacements = {}
+        leading = len(sql) - len(sql.lstrip())
+        for column in tree.find_all(sqlglot.exp.Column):
+            if len(column.parts) != 2:
+                continue
+            owner, field = column.parts
+            def written(identifier):
+                return ('"' + identifier.name.replace('"', '""') + '"'
+                        if identifier.args.get("quoted") else identifier.name)
+            cube = resolve_identifier(tables.datasets, written(owner))
+            names = restored_fields.get(cube)
+            if names is None:
+                continue
+            original = resolve_identifier(lookup_map(names.keys()), written(field))
+            if original is None:
+                continue
+            replacements_to_make = []
+            if names[original] != original:
+                replacements_to_make.append((field, names[original]))
+            renamed_owner = resolve_identifier(renamed_datasets, written(owner))
+            if renamed_owner is not None:
+                replacements_to_make.append((owner, renamed_owner))
+            for identifier, replacement in replacements_to_make:
+                start, end = identifier.meta.get("start"), identifier.meta.get("end")
+                if not isinstance(start, int) or not isinstance(end, int):
+                    continue
+                quote = "`" if dialect in BACKTICK_DIALECTS else '"'
+                if identifier.args.get("quoted") or not is_referenceable_name(replacement):
+                    replacement = quote + replacement.replace(quote, quote * 2) + quote
+                replacements[start + leading, end + leading + 1] = replacement
+        for (start, end), replacement in sorted(replacements.items(), reverse=True):
+            sql = sql[:start] + replacement + sql[end:]
+        return sql
+
+    expression = metric.get("expression") or {}
+    restored = dict(expression)
+    if expression.get("sql") is not None:
+        restored["sql"] = rewrite(expression["sql"], DIALECT_OSSIE_SQL)
+    if expression.get("dialects") is not None:
+        restored["dialects"] = [
+            {**entry, "expression": rewrite(entry["expression"], entry["dialect"])}
+            if entry["dialect"] in {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL} else dict(entry)
+            for entry in expression["dialects"]
+        ]
+    return {**metric, "expression": restored}
+
+
+def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
+                            dialect, issues, model_name, model_refs):
+    # Local expressions contain no metric references, so model-level metric names
+    # must never shadow their fields. Ownership comes from the declaring dataset,
+    # including COUNT(*) and other expressions with no field reference.
+    # Import splits merged geo dimensions back into coordinate fields. Those
+    # names, rather than the merged member name, define the restored namespace.
+    restored_fields = _restored_field_names(datasets, cube_names, plan)
     restored_names = {c: {normalize_identifier(n) for n in fields.values()}
                       for c, fields in restored_fields.items()}
     pinned_members = {}
