@@ -142,13 +142,12 @@ files:
       to_columns:
       - customer_id
     metrics:
+    - name: revenue_per_customer
+      expression:
+        sql: AGG(orders.revenue) / COUNT(DISTINCT customers.customer_id)
     - name: average_amount
       expression:
         sql: AVG(orders.amount)
 warnings:
 - '[METRIC_NOT_PORTABLE] at datasets[orders].metrics[discount]: the portable expression reads source columns,
   which the metric view does not expose; the metric only evaluates the measure'
-- '[NOT_DEPLOYED] at relationships[orders_to_customers]: the relationship is absent from the metric views'
-- '[NOT_DEPLOYED] at metrics[revenue_per_customer]: the model metric is absent from the metric views and
-  was removed from the rewritten model because its SQL cannot resolve'
-- '[NOT_DEPLOYED] at metrics[average_amount]: the model metric is absent from the metric views'

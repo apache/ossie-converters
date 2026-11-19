@@ -22,7 +22,6 @@ from ossie_databricks.convert import (
     convert_ossie_model_to_databricks,
 )
 from ossie_databricks.deploy import deploy_ossie_model_to_databricks
-from ossie_databricks.import_view import convert_metric_view_to_ossie_model
 from ossie_databricks.result import ConversionError, ConversionWarning, Result, WarningCode
 from ossie_databricks.wrap import wrap_metric_view_in_ossie_model
 
@@ -31,7 +30,6 @@ __all__ = [
     "ConversionWarning",
     "Result",
     "WarningCode",
-    "convert_metric_view_to_ossie_model",
     "convert_ossie_model_from_databricks",
     "convert_ossie_model_to_databricks",
     "deploy_ossie_model_to_databricks",
