@@ -94,6 +94,18 @@ _PORTABLE_CALLS = frozenset(
     {"MEASURE", "DATE_PART", "IFF", "ZEROIFNULL", "NULLIFZERO", "TO_DATE", "TO_TIMESTAMP"}
 )
 
+# Operators with the same meaning in both languages. An operator outside this set (a
+# Databricks bitwise `^`/`&`/`|`/`~`/`<<`/`>>`, which other engines read as exponentiation
+# or something else) has no verified Ossie form and is left untranslated with a warning.
+_PORTABLE_OPERATORS: frozenset[type[exp.Expression]] = frozenset(
+    {
+        exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.IntDiv, exp.Neg, exp.Paren,
+        exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ,
+        exp.And, exp.Or, exp.Not, exp.Is, exp.In, exp.Between, exp.Like, exp.ILike, exp.Escape,
+        exp.DPipe,
+    }
+)  # fmt: skip
+
 # Ossie datetime format tokens and their Databricks patterns, longest token first.
 # EXPERIMENTAL in the Ossie specification; Databricks to Ossie is not translated.
 _FORMAT_TOKENS = (
@@ -198,22 +210,29 @@ def _call_name(node: exp.Expression) -> str | None:
     return node.name.upper() if isinstance(node, exp.Anonymous) else None
 
 
-def _unsupported_functions(tree: exp.Expression) -> list[str]:
-    return sorted(
-        {
-            _call_name(node) or node.sql_name()
-            for node in tree.find_all(exp.Func)
-            # sqlglot models AND and OR as functions.
-            if not isinstance(node, exp.Connector)
-            and type(node) not in _PORTABLE
-            and _call_name(node) not in _PORTABLE_CALLS
-        }
-    )
+def _unsupported(tree: exp.Expression) -> list[str]:
+    """Functions and operators with no verified translation."""
+    functions = {
+        _call_name(node) or node.sql_name()
+        for node in tree.find_all(exp.Func)
+        # sqlglot models AND and OR as functions.
+        if not isinstance(node, exp.Connector)
+        and type(node) not in _PORTABLE
+        and _call_name(node) not in _PORTABLE_CALLS
+    }
+    operators = {
+        type(node).__name__
+        for node in tree.walk()
+        if isinstance(node, (exp.Binary, exp.Unary))
+        and not isinstance(node, exp.Func)
+        and type(node) not in _PORTABLE_OPERATORS
+    }
+    return sorted(functions | operators)
 
 
 def translate(tree: exp.Expression, target: str) -> str:
     """Print `tree` in `target`, OSSIE_SQL_2026 or DATABRICKS."""
-    unsupported = _unsupported_functions(tree)
+    unsupported = _unsupported(tree)
     if unsupported:
         raise Untranslatable(f"no verified translation for {', '.join(unsupported)}")
     if target == DATABRICKS:

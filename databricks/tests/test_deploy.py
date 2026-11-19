@@ -71,10 +71,27 @@ def test_dataset_name_must_be_a_file_name():
 def test_target_cannot_equal_source():
     # The orders dataset reads main.raw.orders; deploying into main.raw would make the
     # metric view read its own source table.
-    with pytest.raises(ConversionError, match="own source"):
+    with pytest.raises(ConversionError, match="read by a dataset source"):
         deploy_ossie_model_to_databricks(
             fixture("sources.ossie.yaml"), catalog="main", schema="raw"
         )
+
+
+def test_query_source_cannot_read_the_target():
+    # A query source that reads the table the dataset deploys onto is also a collision.
+    model = {
+        "version": "0.3.0.dev0",
+        "name": "q",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "SELECT * FROM main.sales.orders WHERE o_orderstatus = 'F'",
+                "fields": [{"name": "order_id", "expression": {"sql": "o_orderkey"}}],
+            }
+        ],
+    }
+    with pytest.raises(ConversionError, match="read by a dataset source"):
+        deploy_ossie_model_to_databricks(model, catalog="main", schema="sales")
 
 
 def test_multi_table_query_source_is_not_a_collision():

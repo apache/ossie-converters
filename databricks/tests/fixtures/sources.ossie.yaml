@@ -28,7 +28,7 @@ datasets:
   - name: customer_totals
     source: |
       SELECT o_custkey, SUM(o_totalprice) AS total
-      FROM main.sales.orders
+      FROM main.raw.orders
       GROUP BY o_custkey;
     fields:
       - name: customer_id

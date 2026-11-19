@@ -148,6 +148,11 @@ UNTRANSLATABLE = [
     ("to_date(s, 'yyyy-MM-dd')", DATABRICKS),
     ("date_format(d, 'yyyy')", DATABRICKS),
     ("percentile_cont(0.5) WITHIN GROUP (ORDER BY x)", DATABRICKS),
+    # Databricks `^` is bitwise XOR; other engines read it as exponentiation, so it has no
+    # verified Ossie form. Operators are checked like functions.
+    ("a ^ b", DATABRICKS),
+    ("a & b", DATABRICKS),
+    ("a << 2", DATABRICKS),
 ]
 
 
