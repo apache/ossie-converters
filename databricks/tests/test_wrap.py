@@ -37,3 +37,19 @@ def test_dataset_name():
     dataset = yaml.safe_load(result.value)["datasets"][0]
     assert dataset["name"] == "sales"
     assert dataset["source"] == "main.sales.orders"
+
+
+def test_reserved_names_are_quoted():
+    # A reserved name is quoted in its normalized form, whether a dimension name or a column
+    # that a measure reads.
+    view = {
+        "version": "1.1",
+        "source": "main.sales.orders",
+        "dimensions": [{"name": "order", "expr": "`order`"}],
+        "measures": [{"name": "orders", "expr": "COUNT(`order`)"}],
+    }
+    dataset = yaml.safe_load(wrap_metric_view_in_ossie_model("main.sales.v", view).value)[
+        "datasets"
+    ][0]
+    assert dataset["fields"][0]["expression"] == {"sql": '"ORDER"'}
+    assert dataset["metrics"][0]["expression"]["sql"] == 'COUNT("ORDER")'

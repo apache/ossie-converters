@@ -200,6 +200,44 @@ def test_input_with_an_accidental_ansi_fallback_cannot_claim_dialect_only_covera
     )
 
 
+def test_input_with_a_primary_sql_slot_cannot_claim_dialect_only_coverage():
+    name = "dialect-snowflake-only"
+    data = document(name)
+    data["datasets"][0]["fields"][0]["expression"]["sql"] = "order_id"
+    assert (
+        check_document(data, "dialect", regression(name).assertions, input_stage=True)[
+            "grade"
+        ]
+        == "FAIL"
+    )
+
+
+def _move_dialects_to_sql(data):
+    for element in data["datasets"][0]["fields"] + data["metrics"]:
+        expression = element["expression"]
+        expression["sql"] = expression.pop("dialects")[0]["expression"]
+
+
+def test_primary_sql_slot_carries_the_ossie_sql_dialect():
+    name = "dialect-ossie-sql-2026-only"
+    data = document(name)
+    _move_dialects_to_sql(data)
+    assert check_document(data, "dialect", regression(name).assertions)["grade"] == "OK"
+    data["metrics"][0]["expression"]["sql"] = "SUM(orders.order_id)"
+    assert (
+        check_document(data, "dialect", regression(name).assertions)["grade"] == "FAIL"
+    )
+
+
+@pytest.mark.parametrize("name", ["dialect-databricks-only", "dialect-snowflake-only"])
+def test_primary_sql_slot_cannot_stand_in_for_a_vendor_dialect(name):
+    data = document(name)
+    _move_dialects_to_sql(data)
+    result = check_document(data, "dialect", regression(name).assertions)
+    assert result["grade"] == "FAIL"
+    assert any(check["error"] == "missing expression" for check in result["checks"])
+
+
 def test_primary_key_becoming_unique_is_reported_as_a_role_change():
     name = "keys-single"
     data = document(name)
