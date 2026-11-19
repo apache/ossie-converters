@@ -120,6 +120,10 @@ NATIVE_SHAPES = {
         (
             "dbt",
             "databricks",
+            # The Databricks converter's native artifact is an Ossie model: Databricks
+            # reads Ossie models directly, so "to databricks" is a no-op and the round
+            # trip stays in Ossie documents.
+            "ossie",
             "gooddata",
             "lookml",
             "microsoft",

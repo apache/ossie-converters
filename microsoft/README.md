@@ -28,8 +28,8 @@ The converter targets Ossie `0.3.0.dev0`. Vendor-specific state is stored in
 `nonportable_extensions` entries whose `data` values are structured objects, not
 JSON-encoded strings. To migrate an older document, update `version`, rename
 `custom_extensions` to `nonportable_extensions` at every level, and parse each
-JSON-encoded `data` value into an object. Legacy `custom_extensions` and string-valued
-Power BI extension data are rejected on export.
+JSON-encoded `data` value into an object. Flat inputs with legacy
+`custom_extensions` or string-valued Power BI extension data are rejected on export.
 
 Microsoft tests use a [snapshot of the 0.3 schema](tests/fixtures/ossie-schema-0.3.0.dev0.json)
 from [apache/ossie at `aa500d3`](https://github.com/apache/ossie/blob/aa500d37894c3d62c96cdce4192cbecea4d7f06a/core-spec/ossie-schema.json).
@@ -37,12 +37,18 @@ Microsoft CI checks the snapshot and validates output with that revision's valid
 The shared Ossie submodule remains on 0.2 for converters that have not migrated;
 cross-converter interoperability with those converters requires a spec migration.
 
-Each Ossie JSON/YAML document contains one model, with `name`, `datasets`,
-`relationships`, and `metrics` at the root alongside `version`. Legacy
-`semantic_model` wrappers must be unwrapped before conversion; split documents
-containing multiple models into separate files. Because the Ossie schema requires at
-least one dataset, importing a Power BI model fails explicitly when every table is
-malformed or excluded from the vendor-neutral model.
+Power BI imports write one flat Ossie model with `name`, `datasets`, `relationships`,
+and `metrics` at the root alongside `version`. Power BI exports also accept an Ossie
+`0.1.1` document with one model in a `semantic_model` array, as returned by
+[Snowflake Semantic Views](https://docs.snowflake.com/en/sql-reference/functions/system_read_ossie_yaml_from_semantic_view).
+This version-specific compatibility path normalizes legacy extensions before
+export. It accepts the 0.1.1 schema's `vendor_name`/`data` properties and
+`vendor`/`content` aliases retained for older caller inputs. The test fixture is
+synthetic and uses the schema's names. Root `dialects` and `vendors` declarations
+are discarded with warnings, and malformed extension entries raise a conversion error.
+Split documents containing multiple models into separate files. Because the Ossie
+schema requires at least one dataset, importing a Power BI model fails explicitly
+when every table is malformed or excluded from the vendor-neutral model.
 
 ## Installation
 

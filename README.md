@@ -48,8 +48,10 @@ Contributions follow the Apache Ossie
 
 Converters use the [flat core format](https://github.com/apache/ossie/tree/main/core-spec): one model per JSON/YAML document,
 with `name`, `datasets`, `relationships`, and `metrics` at the root alongside
-`version`. Legacy `semantic_model` arrays or object wrappers must be migrated
-before conversion; see the [migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
+`version`. Migrate legacy `semantic_model` wrappers before conversion unless the
+target converter explicitly supports them. The [Microsoft converter](microsoft/README.md)
+accepts the single-model `0.1.1` array returned by Snowflake Semantic Views. See the
+[migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
 For catalog exports, write separate documents rather than wrapping multiple
 models in one file. Ontology documents retain their embedded `semantic_model`
 property as defined by the ontology schema.
@@ -92,7 +94,7 @@ Read an Ossie semantic model and produce the equivalent vendor-specific represen
 - Ossie → Snowflake semantic model definition
 - Ossie → dbt `semantic_models` YAML
 - Ossie → Tableau data source / Salesforce semantic layer
-- Ossie → Databricks semantic layer definition
+- Ossie → Databricks Unity Catalog metric views
 - Ossie → LookML (Looker / BigQuery)
 
 ### Import (Vendor → Apache Ossie)

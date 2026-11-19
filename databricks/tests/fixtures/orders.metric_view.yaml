@@ -1,0 +1,48 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Measures over dimensions, over a source column that a dimension exposes, over a source column
+# that no dimension exposes, over another measure, and with a window.
+version: 1.1
+source: main.sales.orders
+comment: Orders
+dimensions:
+  - name: order_date
+    expr: o_orderdate
+    display_name: Order date
+    synonyms: [purchase date]
+  - name: status
+    expr: o_orderstatus
+  - name: amount
+    expr: o_totalprice
+measures:
+  - name: revenue
+    expr: SUM(amount)
+    comment: Sum of the order prices
+  - name: open_revenue
+    expr: SUM(o_totalprice) FILTER (WHERE status = 'O')
+  - name: discount
+    expr: SUM(o_discount)
+  - name: big_orders
+    expr: count_if(amount > 100)
+  - name: revenue_per_order
+    expr: MEASURE(revenue) / COUNT(1)
+  - name: trailing_revenue
+    expr: SUM(amount)
+    window:
+      - order: order_date
+        range: trailing 7 day

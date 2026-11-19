@@ -48,15 +48,15 @@ converters:
       requires_env: OSSIE_CUBE_REPO
       command: [node, '{root}/cube/tools/cube_compile.js', '{files}']
   databricks:
-    cwd: databricks/java
-    toolchain: maven
-    prepare: [mvn, -B, -DskipTests, package]
-    import: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, import, '{input}', -o, '{output}']
-    export: [java, -jar, target/ossie-databricks-converter-0.1.0-SNAPSHOT.jar, export, '{input}', -o, '{output}']
-    native_format: databricks
+    cwd: databricks
+    toolchain: uv
+    prepare: [uv, sync, --no-dev]
+    import: [uv, run, --no-sync, ossie-databricks, from-databricks, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-databricks, to-databricks, '{input}', -o, '{output}']
+    native_format: ossie
     output: file
     fixtures:
-      tpcds: databricks/java/src/test/resources/ossie_tpcds_metric_view.yaml
+      sales: interop/fixtures/databricks/sales.ossie.yaml
   dbt:
     cwd: dbt
     toolchain: uv
@@ -233,27 +233,20 @@ converters:
     output: file
     fixtures:
       finance: wisdom-semantic-view/tests/fixtures/finance/snowflake/cfo_cockpit.before.yaml
-regressions:
-  cube-databricks-tpcds:
-    source: cube
-    fixture: tpcds
-    via: databricks
-    expectations: interop/fixtures/bindings/tpcds.yaml
-  cube-databricks-metric-bindings:
-    source: cube
-    fixture: metric-bindings
-    via: databricks
-    expectations: interop/fixtures/bindings/sales.yaml
+regressions: {}
 document_regressions:
+  # Databricks reads Ossie natively, so the pass-through convert keeps a model's existing
+  # DATABRICKS dialect but never translates a foreign dialect into it. Databricks is a
+  # target for the databricks-only dialect contract, not the snowflake/ossie-sql ones.
   dialect-databricks-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-databricks-only/input.yaml
-    targets: &dialect_targets [cube, databricks, dbt, omni, sigma]
+    targets: [cube, databricks, dbt, omni, sigma]
     expectations: interop/fixtures/contracts/dialect-databricks-only/expectations.yaml
   dialect-snowflake-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-snowflake-only/input.yaml
-    targets: *dialect_targets
+    targets: &dialect_targets [cube, dbt, omni, sigma]
     expectations: interop/fixtures/contracts/dialect-snowflake-only/expectations.yaml
   dialect-ossie-sql-2026-only:
     category: dialect

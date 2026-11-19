@@ -34,6 +34,18 @@ OSSIE_DATATYPES = frozenset({
     "Date", "Time", "DateTime", "DateTimeTz", "Opaque",
 })
 
+
+#: The datatypes from which `Dimension.is_time` defaults to `true`.
+#:
+#: core-spec/spec.md, "DataType and `is_time`: type vs. role": "it defaults to
+#: `true` if `datatype` is one of `Date`, `Time`, `DateTime`, `DateTimeTz`, and
+#: `false` otherwise. Explicit `is_time` always wins." ThoughtSpot derives the
+#: same default from the column's own type and offers no flag to override it,
+#: so this set is what decides whether an explicit `is_time` is carried for
+#: free or lost.
+TEMPORAL_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
+
+
 #: Ossie datatype -> the TML `data_type` written for it.
 _TO_TML = {
     "String": "VARCHAR",

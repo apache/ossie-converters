@@ -106,7 +106,18 @@ A metric is placed in the view of the first dataset it qualifies a column with (
 
 ## Dialect selection
 
-For each field and metric the converter prefers the `BIGQUERY` dialect expression, then `ANSI_SQL`, then `OSSIE_SQL_2026` (the portable Ossie dialect, which is ANSI-based), consistent with the dialect-selection contract in [`../README.md`](../README.md). `BIGQUERY` expressions are read as BigQuery; `ANSI_SQL` and `OSSIE_SQL_2026` are read with sqlglot's default ANSI dialect and transpiled, because the two disagree: `"Customer ID"` is an identifier in ANSI and a string literal in BigQuery, and `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`. If none is present, the field/metric is skipped with a warning.
+For each field and metric the converter prefers the `BIGQUERY` dialect expression,
+then `ANSI_SQL`, then `OSSIE_SQL_2026`. A nonblank primary `expression.sql`
+supplies the `OSSIE_SQL_2026` expression and takes precedence over a conflicting
+tagged entry of that dialect. It also supports expressions with only `sql`.
+`BIGQUERY` expressions are read as BigQuery. `ANSI_SQL` and `OSSIE_SQL_2026`
+use sqlglot's default ANSI dialect and are transpiled to BigQuery SQL.
+For example, `"Customer ID"` is an identifier in ANSI and a string literal in
+BigQuery, and `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`.
+Blank expressions are ignored, so a blank tagged entry falls back to the next
+supported expression. If only unsupported or blank dialect entries remain, the
+field/metric is skipped with a warning. An expression with no `dialects` and
+no nonblank `sql` is an error.
 
 The converter also runs on `ANSI_SQL`-only models — see the canonical [TPC-DS example](../ossie/examples/tpcds_semantic_model.yaml), which the test suite converts and parses back with [lkml](https://github.com/joshtemple/lkml) to check the output is well-formed LookML.
 

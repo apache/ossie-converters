@@ -87,8 +87,7 @@ def native(files):
 
 def test_export_accepts_unmodified_databricks_converter_fixture():
     path = (
-        Path(__file__).parents[2]
-        / "databricks/java/src/test/resources/ossie_fixtureA_ossie.yaml"
+        Path(__file__).parent / "fixtures" / "legacy_databricks_ossie.yaml"
     )
     files, issues = convert_ossie_to_cube(path.read_text())
     cubes = native(files)
@@ -315,8 +314,7 @@ def test_lossy_export_compiles_including_restored_views(loss):
 @cube_gate
 def test_legacy_databricks_document_compiles_without_fixture_repairs():
     path = (
-        Path(__file__).parents[2]
-        / "databricks/java/src/test/resources/ossie_fixtureA_ossie.yaml"
+        Path(__file__).parent / "fixtures" / "legacy_databricks_ossie.yaml"
     )
     files, _ = convert_ossie_to_cube(path.read_text())
     assert_cube_compiles(files, "original Databricks document with physical keys")
