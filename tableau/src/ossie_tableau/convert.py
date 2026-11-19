@@ -326,6 +326,11 @@ def _sql_col(name: str, wh: Warehouse | None = None) -> str:
     return name if not needs_quote(name, wh) else '"' + name.replace('"', '""') + '"'
 
 
+def _wh_ident(name: str, wh: Warehouse, force: bool = False) -> str:
+    """`name` as an identifier in the warehouse's own SQL (backticks on BigQuery); `_sql_col` is for ANSI_SQL expressions."""
+    return sqlglot.exp.to_identifier(name, quoted=force or needs_quote(name, wh)).sql(wh.sqlglot_dialect)
+
+
 def _quote_path(src: str, wh: Warehouse) -> str:
     """Quote each segment of a plain `db.schema.table` source whose case the warehouse would fold; custom SQL is left as is."""
     if wh.fold is None or not src or re.match(r"(?is)^\(?\s*(select|with)\b", src.strip()) or '"' in src or "`" in src:
@@ -519,7 +524,7 @@ def _union_source(rel: ET.Element, losses: list[Loss], conns: dict[str, dict] | 
     if members and all(colsets):
         allcols = sorted({c for cs in colsets for c in cs})
         op = " UNION ALL " if rel.get("all") == "true" else " UNION "
-        q = lambda c: '"' + c.replace('"', '""') + '"'  # noqa: E731
+        q = lambda c: _wh_ident(c, wh, force=True)  # noqa: E731
         sel = [f"SELECT {', '.join(q(c) if c in cs else 'NULL AS ' + q(c) for c in allcols)} FROM {src}" for cs, src in zip(colsets, sources)]
         losses.append(Loss("union", name, f"{len(members)} member(s) with differing columns ({', '.join(sources)}) combined into an explicit "
                            f"NULL-padded {op.strip()} over {len(allcols)} column(s); Tableau's 'Table Name' and 'Sheet' columns are not produced"))
@@ -1384,7 +1389,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
             if ref in resolve:
                 t, remote = resolve[ref]
                 tabs.add(t.name)
-                subs.append(f"({_sql_col(remote, wh)})")
+                subs.append(f"({_wh_ident(remote, wh)})")
             elif (k := internal_of.get(ref)) in emitted:
                 et, ename, _dt = emitted[k]
                 ef = next((x for x in ds_fields[et.name] if x.name == ename), None)
@@ -1392,7 +1397,10 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 if d is None:
                     return False
                 tabs.add(et.name)
-                subs.append(f"({d.expression})")
+                sub = d.expression
+                if d.dialect == OssieDialect.ANSI_SQL and wh.sqlglot_dialect:  # ANSI "x" is a string literal on BigQuery
+                    sub = sqlglot.parse_one(sub).sql(dialect=wh.sqlglot_dialect)
+                subs.append(f"({sub})")
             else:
                 return False
         if len(tabs) > 1 or not tabs:

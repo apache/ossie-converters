@@ -606,3 +606,24 @@ def test_tableau_internal_columns_are_not_emitted_as_fields():
             "<column name='[:Measure Names]' datatype='string' role='dimension'/>")
     r = convert_datasource(ds(rel(), cols))
     assert [f.name for f in r.document.datasets[0].fields] == ["Amt"]
+
+
+def _bq_expr(r, name):
+    return next(d.expression for d in _fields_by_name(r)[name].expression.dialects if d.dialect.value == "BIGQUERY")
+
+
+def test_rawsql_on_bigquery_quotes_columns_with_backticks():
+    from ossie_tableau.warehouse import BIGQUERY
+    base = rel() + recs("orders", [("start", "string"), ("odd col", "real")])
+    cols = (calc("RAWSQL_STR('UPPER(%1)', [start])", "string", caption="Up")
+            + "<column name='[B]' caption='Bin' datatype='integer' role='dimension'><calculation class='bin' formula='[odd col]' size='5'/></column>"
+            + calc("RAWSQL_REAL('%1 + 1', [B])", name="Calculation_2", caption="BinRaw"))
+    r = convert_datasource(ds(base, cols), warehouse=BIGQUERY)
+    assert _bq_expr(r, "Up") == "UPPER((`start`))"
+    assert '"' not in _bq_expr(r, "BinRaw") and "`odd col`" in _bq_expr(r, "BinRaw")
+
+
+def test_union_with_differing_columns_on_bigquery_uses_backticks():
+    from ossie_tableau.warehouse import BIGQUERY
+    r = convert_datasource(ds(_union([("start", "string")], [("y", "string")])), warehouse=BIGQUERY)
+    assert r.document.datasets[0].source == "SELECT `start`, NULL AS `y` FROM s.a UNION ALL SELECT NULL AS `start`, `y` FROM s.b"
