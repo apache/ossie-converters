@@ -211,10 +211,23 @@ def _strip_qualifier(column):
 
 
 def _find_metric(document, name):
+    """The metric the grader names ``name``, and the lower-cased name of its home
+    dataset. A model-scoped metric has no home; a dataset-scoped metric
+    (``datasets[].metrics``) is named ``dataset.metric``, as the grader keys it."""
     metrics = document.get("metrics") or []
-    return next(
+    metric = next(
         (m for m in metrics if isinstance(m, dict) and m.get("name") == name), None
     )
+    if metric is not None or "." not in name:
+        return metric, None
+    dataset_name, metric_name = name.split(".", 1)
+    for dataset in document.get("datasets") or []:
+        if not isinstance(dataset, dict) or dataset.get("name") != dataset_name:
+            continue
+        for metric in dataset.get("metrics") or []:
+            if isinstance(metric, dict) and metric.get("name") == metric_name:
+                return metric, dataset_name.lower()
+    return None, None
 
 
 def _datasets(document):
@@ -232,14 +245,18 @@ def _datasets(document):
     return result
 
 
-def _resolve_dataset(tree, datasets):
-    """The one dataset a metric reads: by qualifier, or the dataset owning a bare name."""
+def _resolve_dataset(tree, datasets, home=None):
+    """The one dataset a metric reads: by qualifier, or the dataset owning a bare name.
+    In a dataset-scoped metric a bare name is the home dataset's, as the spec reads it."""
     from sqlglot import exp
 
     used = set()
     for column in tree.find_all(exp.Column):
         if column.table:
             used.add(column.table.lower())
+            continue
+        if home is not None:
+            used.add(home)
             continue
         owners = [
             key
@@ -309,14 +326,14 @@ def _prepare(document, metric_name, prefer=None):
     """Resolve one document's metric to a single dataset and build that dataset's view."""
     from sqlglot import exp
 
-    metric = _find_metric(document, metric_name)
+    metric, home = _find_metric(document, metric_name)
     if metric is None:
         raise NotRunnable("not returned under the same name")
     tag, text = _portable_text(metric.get("expression"), prefer)
     if text is None:
         raise NotRunnable("vendor dialect: no ANSI_SQL or OSSIE_SQL_2026 expression")
     tree = _parse(text, f"metric {metric_name!r}")
-    dataset_name, fields = _resolve_dataset(tree, _datasets(document))
+    dataset_name, fields = _resolve_dataset(tree, _datasets(document), home)
     view, columns = _build_view(fields)
     known = {name.lower() for name in view}
     for column in tree.find_all(exp.Column):

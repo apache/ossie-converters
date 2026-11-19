@@ -493,6 +493,83 @@ def test_main_reports_an_unreadable_document_as_a_harness_error(tmp_path, capsys
     assert "error:" in capsys.readouterr().err
 
 
+def _scoped(authored, returned, metric_name="total"):
+    """Two documents whose metric lives in ``datasets[].metrics`` of ``sales``, a
+    second dataset declaring a shared ``amount``, and a grade naming the metric
+    ``sales.<metric>`` as the grader does since apache/ossie#631. The pinned grader
+    may not key it that way yet, so the grade is built here."""
+
+    def document(expression):
+        doc = _sales(AMOUNT_STATUS, "SUM(amount)")
+        doc.pop("metrics")
+        doc["datasets"][0]["metrics"] = [
+            {
+                "name": metric_name,
+                "expression": {
+                    "dialects": [{"dialect": "ANSI_SQL", "expression": expression}]
+                },
+            }
+        ]
+        doc["datasets"].append(
+            {
+                "name": "refunds",
+                "source": "db.refunds",
+                "fields": [
+                    {
+                        "name": "amount",
+                        "expression": {
+                            "dialects": [
+                                {"dialect": "ANSI_SQL", "expression": "amount"}
+                            ]
+                        },
+                        "datatype": "Decimal",
+                    }
+                ],
+            }
+        )
+        return doc
+
+    graded = grade.Report()
+    graded.findings = [
+        grade.Finding("metric", f"sales.{metric_name}", grade.REWRITTEN, detail="")
+    ]
+    return document(authored), document(returned), graded
+
+
+@requires_engine
+def test_a_dataset_scoped_metric_is_found_and_run():
+    # A bare name in a dataset-scoped metric is the home dataset's, even though
+    # ``refunds`` declares ``amount`` too.
+    src, returned, graded = _scoped(
+        "SUM(amount)", "SUM(CASE WHEN status = 'x' THEN amount END)"
+    )
+    (finding,) = execute.check(src, returned, graded=graded).findings
+    assert finding.name == "sales.total"
+    assert finding.outcome == execute.DIFFERENT
+
+
+@requires_engine
+def test_a_dataset_scoped_metric_requalified_is_same():
+    src, returned, graded = _scoped("SUM(amount)", "SUM(sales.amount)")
+    (finding,) = execute.check(src, returned, graded=graded).findings
+    assert finding.outcome == execute.SAME_ON_TEST_DATA
+
+
+@requires_engine
+def test_a_dataset_scoped_metric_reading_another_dataset_is_not_run():
+    src, returned, graded = _scoped("SUM(amount)", "SUM(refunds.amount)")
+    (finding,) = execute.check(src, returned, graded=graded).findings
+    assert finding.outcome == execute.NOT_RUN
+    assert "authored over 'sales', returned over 'refunds'" in finding.detail
+
+
+def test_a_dataset_scoped_metric_missing_on_return_is_not_run():
+    src, returned, graded = _scoped("SUM(amount)", "SUM(amount)")
+    returned["datasets"][0]["metrics"][0]["name"] = "renamed"
+    (finding,) = execute.check(src, returned, graded=graded).findings
+    assert finding.outcome == execute.NOT_RUN
+
+
 def test_a_precomputed_grade_is_used_as_given():
     src = _fixture("m0/m0_sum_bare.ossie.yaml")
     returned = _fixture("m0/m0_ansi_qualified.ossie.yaml")
