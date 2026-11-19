@@ -55,15 +55,18 @@ def deploy_ossie_model_to_databricks(
     _ossie.check(model, "the input")
     result: Result[dict[str, str]] = Result({})
     deployed = copy.deepcopy(model)
-    _reject_source_target_collisions(deployed, catalog=catalog, schema=schema)
+    targets = {
+        dataset["name"]: exp.table_(dataset["name"], db=schema, catalog=catalog)
+        for dataset in deployed["datasets"]
+    }
+    _reject_source_target_collisions(deployed, targets, catalog=catalog, schema=schema)
     files = {}
     for dataset in deployed["datasets"]:
         name = dataset["name"]
         if "/" in name or "\\" in name or name in (".", ".."):
             raise ConversionError(f"the dataset name {name!r} cannot be a file name")
         view = metric_view.from_dataset(dataset, result)
-        view_table = exp.table_(name, db=schema, catalog=catalog)
-        view_name = view_table.sql(dialect="databricks")
+        view_name = targets[name].sql(dialect="databricks")
         files[f"metric_views/{name}.yaml"] = f"# Metric view: {view_name}\n{_ossie.dump(view)}"
         dataset["source"] = view_name
         # An object without a dimension or measure keeps its expression as it is.
@@ -84,54 +87,51 @@ def deploy_ossie_model_to_databricks(
 
 
 def _reject_source_target_collisions(
-    model: Mapping[str, Any], *, catalog: str, schema: str
+    model: Mapping[str, Any], targets: Mapping[str, exp.Table], *, catalog: str, schema: str
 ) -> None:
     """Reject deploying a dataset onto a table that any dataset source reads.
 
-    A metric view must not read its own target. That includes a plain table source equal to
-    the target and a query source whose FROM/JOIN reads the target table.
+    A metric view must not read its own target. That includes a table source equal to the
+    target, with or without time travel, and a query source whose FROM/JOIN reads it. A name
+    without its catalog or schema may resolve to the target catalog or schema, so it is
+    compared as if it did.
     """
-    targets = {}
-    for dataset in model["datasets"]:
-        view_table = exp.table_(dataset["name"], db=schema, catalog=catalog)
-        targets[_table_key(view_table)] = view_table.sql(dialect="databricks")
+    owners = {_table_key(table, catalog, schema): name for name, table in targets.items()}
     for dataset in model["datasets"]:
         for table in _source_tables(dataset.get("source")):
-            target = targets.get(_table_key(table))
-            if target is not None:
+            owner = owners.get(_table_key(table, catalog, schema))
+            if owner is not None:
                 raise ConversionError(
-                    f"the metric view target {target} is read by a dataset source; "
-                    "deploy to a different catalog or schema"
+                    f"the source of the dataset {dataset['name']} reads "
+                    f"{targets[owner].sql(dialect='databricks')}, the metric view target of "
+                    f"the dataset {owner}; deploy to a different catalog or schema"
                 )
 
 
-def _table_key(table: exp.Table) -> tuple[str, str, str]:
-    return (table.catalog.lower(), table.db.lower(), table.name.lower())
-
-
-def _is_three_part(table: Any) -> bool:
-    return (
-        isinstance(table, exp.Table)
-        and len(table.parts) == 3
-        and all(isinstance(part, exp.Identifier) for part in table.parts)
-    )
+def _table_key(table: exp.Table, catalog: str, schema: str) -> tuple[str, str, str]:
+    """The catalog, schema and name of `table`, a missing part taken from those given."""
+    return ((table.catalog or catalog).lower(), (table.db or schema).lower(), table.name.lower())
 
 
 def _source_tables(source: Any) -> list[exp.Table]:
-    """The three-part tables a dataset source reads, whether a table name or a query."""
+    """The tables a dataset source reads, whether a table name or a query."""
     if not isinstance(source, str):
         return []
-    try:
-        table = sqlglot.parse_one(source, read="databricks", into=exp.Table)
-        if _is_three_part(table):
-            return [table]
-    except (ParseError, TokenError):
-        pass
-    try:
-        tree = sqlglot.parse_one(source, read="databricks")
-    except (ParseError, TokenError):
-        return []
-    return [table for table in tree.find_all(exp.Table) if _is_three_part(table)]
+    # A table name, possibly with time travel, reads as a column or not at all on its own.
+    for text in (source, f"SELECT * FROM {source}"):
+        try:
+            tree = sqlglot.parse_one(text, read="databricks")
+        except (ParseError, TokenError):
+            continue
+        if isinstance(tree, exp.Query):
+            ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+            return [
+                table
+                for table in tree.find_all(exp.Table)
+                if isinstance(table.this, exp.Identifier)
+                and (table.db or table.name.lower() not in ctes)
+            ]
+    return []
 
 
 def _deployed_metric(

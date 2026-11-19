@@ -70,11 +70,59 @@ def test_dataset_name_must_be_a_file_name():
 
 def test_target_cannot_equal_source():
     # The orders dataset reads main.raw.orders; deploying into main.raw would make the
-    # metric view read its own source table.
-    with pytest.raises(ConversionError, match="read by a dataset source"):
+    # metric view read its own source table. The error names the dataset that reads it.
+    with pytest.raises(
+        ConversionError,
+        match="the source of the dataset orders reads main.raw.orders, the metric view target "
+        "of the dataset orders",
+    ):
         deploy_ossie_model_to_databricks(
             fixture("sources.ossie.yaml"), catalog="main", schema="raw"
         )
+
+
+def _one_dataset(source):
+    return {
+        "version": "0.3.0.dev0",
+        "name": "q",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": source,
+                "fields": [{"name": "order_id", "expression": {"sql": "o_orderkey"}}],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A name without its catalog or schema may resolve to the target.
+        "sales.orders",
+        "ORDERS",
+        "SELECT * FROM sales.orders",
+        # Time travel still reads the table.
+        "main.sales.orders VERSION AS OF 3",
+        "main.sales.orders TIMESTAMP AS OF '2024-01-01'",
+    ],
+)
+def test_partial_and_time_travel_sources_cannot_read_the_target(source):
+    with pytest.raises(ConversionError, match="the metric view target of the dataset orders"):
+        _deploy(_one_dataset(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "raw.orders",
+        "other.sales.orders",
+        # A common table expression named like the target is not the target.
+        "WITH orders AS (SELECT * FROM main.raw.orders) SELECT * FROM orders",
+    ],
+)
+def test_other_tables_are_not_a_collision(source):
+    assert "metric_views/orders.yaml" in _deploy(_one_dataset(source)).value
 
 
 def test_query_source_cannot_read_the_target():
@@ -90,7 +138,7 @@ def test_query_source_cannot_read_the_target():
             }
         ],
     }
-    with pytest.raises(ConversionError, match="read by a dataset source"):
+    with pytest.raises(ConversionError, match="the metric view target of the dataset orders"):
         deploy_ossie_model_to_databricks(model, catalog="main", schema="sales")
 
 

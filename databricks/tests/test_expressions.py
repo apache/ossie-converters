@@ -48,6 +48,7 @@ TO_DATABRICKS = [
     ("COALESCE(x, 0) / NULLIF(y, 0)", "COALESCE(x, 0) / NULLIF(y, 0)"),
     ("IFNULL(x, 0)", "COALESCE(x, 0)"),
     ("IF(c, 1, 2)", "IF(c, 1, 2)"),
+    ("IF(c, TRUE, FALSE)", "IF(c, TRUE, FALSE)"),
     ("IFF(c, 1, 2)", "IFF(c, 1, 2)"),
     ("NVL2(x, 1, 2)", "NVL2(x, 1, 2)"),
     ("ZEROIFNULL(x)", "ZEROIFNULL(x)"),
@@ -113,9 +114,12 @@ FROM_DATABRICKS = [
     ("SUM(x) / COUNT(DISTINCT y)", "SUM(x) / COUNT(DISTINCT y)"),
     ("`Order Date` || 'it\\'s'", "\"Order Date\" || 'it''s'"),
     # A backtick name that is a regular identifier prints unquoted (case-insensitive match);
-    # a reserved name keeps its quotes.
+    # a reserved name is quoted in its normalized form, which Ossie matches like a bare name.
     ("date_trunc('week', `o_orderdate`)", "DATE_TRUNC('WEEK', o_orderdate)"),
-    ("`order`", '"order"'),
+    ("`order`", '"ORDER"'),
+    ("SUM(`Date`)", 'SUM("DATE")'),
+    # Bare, these read as calls returning the session role or user.
+    ("`current_role` || `system_user`", '"CURRENT_ROLE" || "SYSTEM_USER"'),
     # Databricks integer division becomes Ossie's TRUNC(x / y, 0), operands translated too.
     ("qty DIV 2", "TRUNC(qty / 2, 0)"),
     ("MEASURE(x) DIV 2", "TRUNC(AGG(x) / 2, 0)"),
@@ -153,6 +157,14 @@ UNTRANSLATABLE = [
     ("a ^ b", DATABRICKS),
     ("a & b", DATABRICKS),
     ("a << 2", DATABRICKS),
+    # DIV is Databricks integer division, not an Ossie operator.
+    ("a DIV b", OSSIE),
+    # Syntax outside the verified set: Databricks arrays count from 0, Ossie has no
+    # subqueries, and Ossie adds intervals with DATEADD.
+    ("x[0]", DATABRICKS),
+    ("x IN (SELECT y FROM t)", DATABRICKS),
+    ("(SELECT MAX(y) FROM t)", DATABRICKS),
+    ("x + INTERVAL 3 DAY", DATABRICKS),
 ]
 
 
@@ -182,6 +194,14 @@ def test_ansi_sql_parses_like_ossie_sql():
     assert translate(parse('"a b" + 1', "ANSI_SQL"), DATABRICKS) == "`a b` + 1"
 
 
+def test_ansi_sql_keeps_the_engine_null_ordering():
+    # Ossie's NULL ordering is the OSSIE_SQL_2026 default only; ANSI_SQL leaves the placement
+    # to the engine, here Databricks.
+    tree = parse("RANK() OVER (ORDER BY b)", "ANSI_SQL")
+    assert translate(tree, DATABRICKS) == "RANK() OVER (ORDER BY b)"
+    assert translate(tree, OSSIE) == "RANK() OVER (ORDER BY b NULLS FIRST)"
+
+
 def test_analysis():
     tree = parse("SUM(x) + MEASURE(m) + LAG(y) OVER (ORDER BY z)", DATABRICKS)
     assert has_window(tree)
@@ -194,3 +214,6 @@ def test_names():
     assert measure_reference("Net Revenue", DATABRICKS) == "MEASURE(source.`Net Revenue`)"
     assert identifier("Order Date", OSSIE) == '"Order Date"'
     assert identifier("amount", OSSIE) == "amount"
+    # A name built in code is quoted like a parsed one when it is a reserved word.
+    assert identifier("current_date", OSSIE) == '"CURRENT_DATE"'
+    assert measure_reference("order", OSSIE) == 'AGG("ORDER")'

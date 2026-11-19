@@ -37,27 +37,73 @@ OSSIE = "OSSIE_SQL_2026"
 DATABRICKS = "DATABRICKS"
 
 # A name that may be written without quotes. A Databricks backtick name is case-insensitive,
-# so an unnecessary quote (a backtick name becomes a double-quoted one) forces case-sensitive
-# matching in Ossie and stops matching the column; printing a regular identifier bare keeps
-# the match. A reserved word still needs its quotes, so it is never dropped. The ANSI and
-# Databricks reserved sets are spelled out because sqlglot's keyword table stores multi-word
-# phrases ("ORDER BY") and omits many reserved words.
+# so its quote is dropped when Databricks text is read: a double-quoted Ossie name would match
+# case-sensitively and stop matching the column. A bare reserved word reads as a keyword, or
+# as a call such as CURRENT_ROLE, so the Ossie printer quotes it in its normalized (upper
+# case) form, which Ossie matches like the bare name. Quoting more names than needed only
+# changes the spelling, so the set also holds every word sqlglot reads as a keyword, which the
+# Ossie validator could not parse bare.
 _REGULAR_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_RESERVED = {
-    "ALL", "ALTER", "AND", "ANTI", "ANY", "ARRAY", "AS", "ASC", "AUTHORIZATION", "BETWEEN",
-    "BOTH", "BY", "CASE", "CAST", "CHECK", "COLLATE", "COLUMN", "CONSTRAINT", "CREATE", "CROSS",
-    "CUBE", "CURRENT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER",
-    "DELETE", "DESC", "DESCRIBE", "DISTINCT", "DROP", "ELSE", "END", "ESCAPE", "EXCEPT",
-    "EXISTS", "FALSE", "FETCH", "FILTER", "FOR", "FOREIGN", "FROM", "FULL", "FUNCTION", "GLOBAL",
-    "GRANT", "GROUP", "GROUPING", "HAVING", "IN", "INNER", "INSERT", "INTERSECT", "INTERVAL",
-    "INTO", "IS", "JOIN", "LATERAL", "LEADING", "LEFT", "LIKE", "LIMIT", "LOCAL", "NATURAL",
-    "NOT", "NULL", "OF", "ON", "ONLY", "OR", "ORDER", "OUTER", "OVERLAPS", "PARTITION",
-    "PERCENT", "PRIMARY", "RANGE", "REFERENCES", "RIGHT", "ROLLUP", "ROW", "ROWS", "SELECT",
-    "SEMI", "SESSION_USER", "SET", "SOME", "START", "TABLE", "THEN", "TIME", "TO", "TRAILING",
-    "TRUE", "TRUNCATE", "UNION", "UNIQUE", "UNKNOWN", "UPDATE", "USER", "USING", "VALUES",
-    "WHEN", "WHERE", "WINDOW", "WITH",
-}  # fmt: skip
-_RESERVED |= {keyword.upper() for keyword in Databricks.Tokenizer.KEYWORDS if " " not in keyword}
+_SQL_2016_RESERVED = frozenset(
+    {
+        "ABS", "ACOS", "ALL", "ALLOCATE", "ALTER", "AND", "ANY", "ARE", "ARRAY", "ARRAY_AGG",
+        "ARRAY_MAX_CARDINALITY", "AS", "ASENSITIVE", "ASIN", "ASYMMETRIC", "AT", "ATAN",
+        "ATOMIC", "AUTHORIZATION", "AVG", "BEGIN", "BEGIN_FRAME", "BEGIN_PARTITION", "BETWEEN",
+        "BIGINT", "BINARY", "BLOB", "BOOLEAN", "BOTH", "BY", "CALL", "CALLED", "CARDINALITY",
+        "CASCADED", "CASE", "CAST", "CEIL", "CEILING", "CHAR", "CHARACTER", "CHARACTER_LENGTH",
+        "CHAR_LENGTH", "CHECK", "CLASSIFIER", "CLOB", "CLOSE", "COALESCE", "COLLATE",
+        "COLLECT", "COLUMN", "COMMIT", "CONDITION", "CONNECT", "CONSTRAINT", "CONTAINS",
+        "CONVERT", "COPY", "CORR", "CORRESPONDING", "COS", "COSH", "COUNT", "COVAR_POP",
+        "COVAR_SAMP", "CREATE", "CROSS", "CUBE", "CUME_DIST", "CURRENT", "CURRENT_CATALOG",
+        "CURRENT_DATE", "CURRENT_DEFAULT_TRANSFORM_GROUP", "CURRENT_PATH", "CURRENT_ROLE",
+        "CURRENT_ROW", "CURRENT_SCHEMA", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+        "CURRENT_TRANSFORM_GROUP_FOR_TYPE", "CURRENT_USER", "CURSOR", "CYCLE", "DATE", "DAY",
+        "DEALLOCATE", "DEC", "DECFLOAT", "DECIMAL", "DECLARE", "DEFAULT", "DEFINE", "DELETE",
+        "DENSE_RANK", "DEREF", "DESCRIBE", "DETERMINISTIC", "DISCONNECT", "DISTINCT", "DOUBLE",
+        "DROP", "DYNAMIC", "EACH", "ELEMENT", "ELSE", "EMPTY", "END", "END_FRAME",
+        "END_PARTITION", "EQUALS", "ESCAPE", "EVERY", "EXCEPT", "EXEC", "EXECUTE", "EXISTS",
+        "EXP", "EXTERNAL", "EXTRACT", "FALSE", "FETCH", "FILTER", "FIRST_VALUE", "FLOAT",
+        "FLOOR", "FOR", "FOREIGN", "FRAME_ROW", "FREE", "FROM", "FULL", "FUNCTION", "FUSION",
+        "GET", "GLOBAL", "GRANT", "GROUP", "GROUPING", "GROUPS", "HAVING", "HOLD", "HOUR",
+        "IDENTITY", "IN", "INDICATOR", "INITIAL", "INNER", "INOUT", "INSENSITIVE", "INSERT",
+        "INT", "INTEGER", "INTERSECT", "INTERSECTION", "INTERVAL", "INTO", "IS", "JOIN",
+        "JSON_ARRAY", "JSON_ARRAYAGG", "JSON_EXISTS", "JSON_OBJECT", "JSON_OBJECTAGG",
+        "JSON_QUERY", "JSON_TABLE", "JSON_TABLE_PRIMITIVE", "JSON_VALUE", "LAG", "LANGUAGE",
+        "LARGE", "LAST_VALUE", "LATERAL", "LEAD", "LEADING", "LEFT", "LIKE", "LIKE_REGEX",
+        "LISTAGG", "LN", "LOCAL", "LOCALTIME", "LOCALTIMESTAMP", "LOG", "LOG10", "LOWER",
+        "MATCH", "MATCHES", "MATCH_NUMBER", "MATCH_RECOGNIZE", "MAX", "MEMBER", "MERGE",
+        "METHOD", "MIN", "MINUTE", "MOD", "MODIFIES", "MODULE", "MONTH", "MULTISET",
+        "NATIONAL", "NATURAL", "NCHAR", "NCLOB", "NEW", "NO", "NONE", "NORMALIZE", "NOT",
+        "NTH_VALUE", "NTILE", "NULL", "NULLIF", "NUMERIC", "OCCURRENCES_REGEX", "OCTET_LENGTH",
+        "OF", "OFFSET", "OLD", "OMIT", "ON", "ONE", "ONLY", "OPEN", "OR", "ORDER", "OUT",
+        "OUTER", "OVER", "OVERLAPS", "OVERLAY", "PARAMETER", "PARTITION", "PATTERN", "PER",
+        "PERCENT", "PERCENTILE_CONT", "PERCENTILE_DISC", "PERCENT_RANK", "PERIOD", "PORTION",
+        "POSITION", "POSITION_REGEX", "POWER", "PRECEDES", "PRECISION", "PREPARE", "PRIMARY",
+        "PROCEDURE", "PTF", "RANGE", "RANK", "READS", "REAL", "RECURSIVE", "REF", "REFERENCES",
+        "REFERENCING", "REGR_AVGX", "REGR_AVGY", "REGR_COUNT", "REGR_INTERCEPT", "REGR_R2",
+        "REGR_SLOPE", "REGR_SXX", "REGR_SXY", "REGR_SYY", "RELEASE", "RESULT", "RETURN",
+        "RETURNS", "REVOKE", "RIGHT", "ROLLBACK", "ROLLUP", "ROW", "ROWS", "ROW_NUMBER",
+        "RUNNING", "SAVEPOINT", "SCOPE", "SCROLL", "SEARCH", "SECOND", "SEEK", "SELECT",
+        "SENSITIVE", "SESSION_USER", "SET", "SHOW", "SIMILAR", "SIN", "SINH", "SKIP",
+        "SMALLINT", "SOME", "SPECIFIC", "SPECIFICTYPE", "SQL", "SQLEXCEPTION", "SQLSTATE",
+        "SQLWARNING", "SQRT", "START", "STATIC", "STDDEV_POP", "STDDEV_SAMP", "SUBMULTISET",
+        "SUBSET", "SUBSTRING", "SUBSTRING_REGEX", "SUCCEEDS", "SUM", "SYMMETRIC", "SYSTEM",
+        "SYSTEM_TIME", "SYSTEM_USER", "TABLE", "TABLESAMPLE", "TAN", "TANH", "THEN", "TIME",
+        "TIMESTAMP", "TIMEZONE_HOUR", "TIMEZONE_MINUTE", "TO", "TRAILING", "TRANSLATE",
+        "TRANSLATE_REGEX", "TRANSLATION", "TREAT", "TRIGGER", "TRIM", "TRIM_ARRAY", "TRUE",
+        "TRUNCATE", "UESCAPE", "UNION", "UNIQUE", "UNKNOWN", "UNNEST", "UPDATE", "UPPER",
+        "USER", "USING", "VALUE", "VALUES", "VALUE_OF", "VARBINARY", "VARCHAR", "VARYING",
+        "VAR_POP", "VAR_SAMP", "VERSIONING", "WHEN", "WHENEVER", "WHERE", "WIDTH_BUCKET",
+        "WINDOW", "WITH", "WITHIN", "WITHOUT", "YEAR",
+    }
+)  # fmt: skip
+_RESERVED = (
+    _SQL_2016_RESERVED
+    # Reserved in Databricks SQL only.
+    | {"ANTI", "ASC", "DESC", "LIMIT", "SEMI"}
+    # sqlglot's keyword table also holds multi-word phrases ("ORDER BY"), which no name matches.
+    | {keyword.upper() for keyword in Databricks.Tokenizer.KEYWORDS if " " not in keyword}
+)
 
 
 class Untranslatable(Exception):
@@ -99,12 +145,26 @@ _PORTABLE_CALLS = frozenset(
 # or something else) has no verified Ossie form and is left untranslated with a warning.
 _PORTABLE_OPERATORS: frozenset[type[exp.Expression]] = frozenset(
     {
-        exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.IntDiv, exp.Neg, exp.Paren,
+        exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.Neg, exp.Paren,
         exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ,
         exp.And, exp.Or, exp.Not, exp.Is, exp.In, exp.Between, exp.Like, exp.ILike, exp.Escape,
         exp.DPipe,
     }
 )  # fmt: skip
+
+# The other nodes a translated tree may hold. Anything else, such as an array subscript `x[0]`
+# (Databricks counts from 0) or a subquery, which Ossie does not allow, is left untranslated.
+_PORTABLE_SYNTAX: frozenset[type[exp.Expression]] = frozenset(
+    {
+        exp.Column, exp.Identifier, exp.Star, exp.Literal, exp.Boolean, exp.Null, exp.Var,
+        exp.DataType, exp.DataTypeParam, exp.Distinct, exp.Filter, exp.Where, exp.Window,
+        exp.WindowSpec, exp.Order, exp.Ordered,
+    }
+)  # fmt: skip
+
+# Databricks integer division `x DIV y` has an Ossie form, TRUNC(x / y, 0), but DIV is not an
+# Ossie operator, so it is translated only from Databricks.
+_FROM_DATABRICKS_ONLY: frozenset[type[exp.Expression]] = frozenset({exp.IntDiv})
 
 # Ossie datetime format tokens and their Databricks patterns, longest token first.
 # EXPERIMENTAL in the Ossie specification; Databricks to Ossie is not translated.
@@ -138,11 +198,13 @@ class _DatabricksSql(Databricks):
 
 
 class _OssieParse(sqlglot.Dialect):
-    """Default spelling for reading OSSIE_SQL_2026 and ANSI_SQL, with Ossie's NULL ordering.
+    """Default spelling for reading OSSIE_SQL_2026, with Ossie's NULL ordering.
 
-    Ossie orders NULLs last for ASC and first for DESC (the ANSI default), the reverse of
-    the sqlglot default. Reading with it records a bare ORDER BY item's implied placement
-    with Ossie's meaning, so a translation keeps it instead of flipping it.
+    Ossie orders NULLs last for ASC and first for DESC, the reverse of the sqlglot default.
+    Reading with it records a bare ORDER BY item's implied placement with Ossie's meaning, so
+    a translation keeps it instead of flipping it. The specification gives this default to
+    OSSIE_SQL_2026 only: ANSI_SQL leaves the placement to the engine, here Databricks, whose
+    placement the sqlglot default already reads.
     """
 
     NULL_ORDERING = "nulls_are_large"
@@ -178,23 +240,30 @@ class _OssieSql(Databricks):
             ),
         }
 
+        def identifier_sql(self, expression: exp.Identifier) -> str:
+            # A name parsed from Databricks text or built from a name, both unquoted.
+            if not expression.quoted and expression.name.upper() in _RESERVED:
+                expression = exp.to_identifier(expression.name.upper(), quoted=True)
+            return super().identifier_sql(expression)
+
 
 def parse(text: str, dialect: str) -> exp.Expression:
     """Parse `text` as the Ossie validator does for `dialect`."""
     try:
-        # OSSIE_SQL_2026 and ANSI_SQL map to the default dialect; read them with Ossie's
+        # The validator reads OSSIE_SQL_2026 with the default dialect; read it with Ossie's
         # NULL ordering so a bare window ORDER BY keeps its meaning across a translation.
-        read = _ossie.sqlglot_dialect(dialect) or _OssieParse
+        read = _OssieParse if dialect == OSSIE else _ossie.sqlglot_dialect(dialect)
         tree = sqlglot.parse_one(text, read=read)
     except (ParseError, TokenError, KeyError) as error:
         raise Untranslatable(f"cannot parse {text!r} as {dialect}") from error
     tree = tree.transform(_normalize_dateadd)
     if dialect == DATABRICKS:
         # Databricks identifiers are case-insensitive, so a backtick quote on a regular name
-        # is unnecessary; drop it so the name stays case-insensitive after translation. ANSI
-        # and OSSIE_SQL quotes are case-sensitive and intentional, so they are left alone.
-        for identifier_node in tree.find_all(exp.Identifier):
-            _drop_unneeded_quotes(identifier_node)
+        # only marks a reserved word, which the Ossie printer quotes again. ANSI and
+        # OSSIE_SQL quotes are case-sensitive and intentional, so they are left alone.
+        for node in tree.find_all(exp.Identifier):
+            if node.quoted and _REGULAR_IDENTIFIER.fullmatch(node.name):
+                node.set("quoted", False)
     return tree
 
 
@@ -210,43 +279,30 @@ def _call_name(node: exp.Expression) -> str | None:
     return node.name.upper() if isinstance(node, exp.Anonymous) else None
 
 
-def _unsupported(tree: exp.Expression) -> list[str]:
-    """Functions and operators with no verified translation."""
-    functions = {
-        _call_name(node) or node.sql_name()
-        for node in tree.find_all(exp.Func)
-        # sqlglot models AND and OR as functions.
-        if not isinstance(node, exp.Connector)
-        and type(node) not in _PORTABLE
-        and _call_name(node) not in _PORTABLE_CALLS
-    }
-    operators = {
-        type(node).__name__
-        for node in tree.walk()
-        if isinstance(node, (exp.Binary, exp.Unary))
-        and not isinstance(node, exp.Func)
-        and type(node) not in _PORTABLE_OPERATORS
-    }
-    return sorted(functions | operators)
+def _unsupported(tree: exp.Expression, target: str) -> list[str]:
+    """Functions, operators and other syntax with no verified translation to `target`."""
+    portable = _PORTABLE | _PORTABLE_OPERATORS | _PORTABLE_SYNTAX
+    if target == OSSIE:
+        portable |= _FROM_DATABRICKS_ONLY
+    return sorted(
+        {
+            (_call_name(node) or node.sql_name())
+            if isinstance(node, exp.Func)
+            else type(node).__name__
+            for node in tree.walk()
+            if type(node) not in portable and _call_name(node) not in _PORTABLE_CALLS
+        }
+    )
 
 
 def translate(tree: exp.Expression, target: str) -> str:
     """Print `tree` in `target`, OSSIE_SQL_2026 or DATABRICKS."""
-    unsupported = _unsupported(tree)
+    unsupported = _unsupported(tree, target)
     if unsupported:
         raise Untranslatable(f"no verified translation for {', '.join(unsupported)}")
     if target == DATABRICKS:
         return tree.copy().transform(_to_databricks).sql(dialect=_DatabricksSql)
     return tree.copy().transform(_to_ossie).sql(dialect=_OssieSql)
-
-
-def _drop_unneeded_quotes(node: exp.Identifier) -> None:
-    if (
-        node.quoted
-        and _REGULAR_IDENTIFIER.fullmatch(node.this)
-        and node.this.upper() not in _RESERVED
-    ):
-        node.set("quoted", False)
 
 
 def _to_databricks(node: exp.Expression) -> exp.Expression:
