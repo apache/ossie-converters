@@ -15,11 +15,12 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 
 import pytest
 import yaml
 
-from ossie_microsoft._common import OSSIE_VERSION, make_expression, read_stash
+from ossie_microsoft._common import OSSIE_VERSION, make_expression, read_stash, write_stash
 from ossie_microsoft.cli import main
 
 
@@ -269,3 +270,50 @@ def test_report_file_write_error_is_reported(tmp_path, capsys):
     assert "Error writing conversion report:" in errors
     assert "Error: [Errno 2]" in errors
     assert str(source) in errors
+
+
+@pytest.mark.parametrize("quiet", [False, True])
+def test_strict_export_reports_and_warns_for_every_dropped_dataset_metric(tmp_path, capsys, quiet):
+    model = {"name": "shop", "version": OSSIE_VERSION, "datasets": [{
+        "name": "Sales", "source": "Sales", "fields": [{"name": "id", "datatype": "Integer"}],
+        "metrics": [{"name": name, "expression": make_expression("COUNTROWS(Sales)", "DAX")}
+                    for name in ("line_count", "other_count")],
+    }]}
+    write_stash(model["datasets"][0], {"partitions": [{"name": "Sales", "mode": "import",
+                "source": {"type": "m", "expression": "#table({\"id\"}, {{1}})"}}]})
+    source, report = tmp_path / "source.yaml", tmp_path / "report.json"
+    source.write_text(yaml.safe_dump(model), encoding="utf-8")
+    args = ["export", "-i", str(source), "--strict", "--report", str(report)]
+    if quiet:
+        args.append("--quiet")
+    assert main(args) == 1
+    recorded = json.loads(report.read_text())
+    assert recorded["completed"] is True
+    assert len(recorded["warnings"]) == 2
+    for name in ("line_count", "other_count"):
+        assert any(name in warning for warning in recorded["warnings"])
+        assert any(e.get("name") == name and e["status"] == "dropped"
+                   for e in recorded["entries"])
+    stderr = capsys.readouterr().err
+    assert ("dataset-scoped metric" not in stderr) if quiet else ("dataset-scoped metric" in stderr)
+
+
+@pytest.mark.parametrize("direction", ["import", "export"])
+def test_output_write_failure_is_a_controlled_error_in_the_report(tmp_path, capsys, direction):
+    if direction == "import":
+        source = Path(__file__).parent / "fixtures" / "sales_model.bim"
+    else:
+        source = tmp_path / "source.yaml"
+        source.write_text(yaml.safe_dump({"version": OSSIE_VERSION, "name": "m", "datasets": [
+            {"name": "Sales", "source": "Sales", "fields": [{"name": "id", "datatype": "Integer"}]}
+        ]}))
+    report = tmp_path / "report.json"
+    output = tmp_path / "missing" / "model"
+    assert main([direction, "-i", str(source), "-o", str(output), "--report", str(report)]) == 1
+    recorded = json.loads(report.read_text())
+    assert recorded["completed"] is False
+    assert str(output) in recorded["error"]
+    assert recorded["entries"]
+    stderr = capsys.readouterr().err
+    assert "Error:" in stderr
+    assert "Traceback" not in stderr

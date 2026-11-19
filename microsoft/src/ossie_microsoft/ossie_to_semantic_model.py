@@ -281,6 +281,9 @@ def _convert_dataset(dataset, source_path):
         "metric", f"{source_path}/metrics", dataset.get("metrics"), "dropped",
         reason="unsupported_dataset_metric",
     )
+    for metric in dataset.get("metrics") or []:
+        metric_name = metric.get("name", "<unnamed>") if isinstance(metric, dict) else "<unnamed>"
+        warn(scope, f"dataset-scoped metric '{metric_name}' is not supported; skipped")
 
     key_columns = _key_columns(dataset, scope)
     unique_columns = _unique_columns(dataset, scope)

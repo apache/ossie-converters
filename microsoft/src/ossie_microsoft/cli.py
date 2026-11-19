@@ -191,6 +191,11 @@ def main(argv=None):
         with collect_entries(entries), warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             out = handler(args)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as fh:
+                fh.write(out)
+        else:
+            sys.stdout.write(out)
     except (ConversionError, TypeError, ValueError, OSError, yaml.YAMLError) as e:
         error = str(e)
     finally:
@@ -209,12 +214,6 @@ def main(argv=None):
             return 1
     if error is not None:
         return 1
-
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as fh:
-            fh.write(out)
-    else:
-        sys.stdout.write(out)
 
     if counter.count and not args.quiet:
         print(
