@@ -18,7 +18,7 @@
 """Access to the Ossie checkout: its validator, its YAML loader, and its dialect table.
 
 The package reuses `validation/validate.py` instead of re-implementing Ossie's checks. The
-checkout is `$OSSIE_REPO`, or else the `ossie` submodule of this repository.
+validator comes from `$OSSIE_REPO`, the installed bundle, or the source checkout.
 """
 
 import importlib.util
@@ -37,7 +37,12 @@ from ossie_databricks.result import ConversionError
 
 @cache
 def _validator() -> ModuleType:
-    candidates = [os.environ.get("OSSIE_REPO"), Path(__file__).resolve().parents[3] / "ossie"]
+    here = Path(__file__).resolve()
+    candidates = [
+        os.environ.get("OSSIE_REPO"),
+        here.parent / "_vendor" / "ossie",
+        here.parents[3] / "ossie",
+    ]
     for root in filter(None, candidates):
         script = Path(root) / "validation" / "validate.py"
         if script.is_file():
