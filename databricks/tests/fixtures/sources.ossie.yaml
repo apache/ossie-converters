@@ -20,7 +20,7 @@ version: 0.3.0.dev0
 name: sources
 datasets:
   - name: orders
-    source: main.sales.orders
+    source: main.raw.orders
     fields:
       - name: order_id
         expression:
@@ -28,7 +28,7 @@ datasets:
   - name: customer_totals
     source: |
       SELECT o_custkey, SUM(o_totalprice) AS total
-      FROM main.sales.orders
+      FROM main.raw.orders
       GROUP BY o_custkey;
     fields:
       - name: customer_id
