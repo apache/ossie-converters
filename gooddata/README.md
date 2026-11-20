@@ -32,7 +32,7 @@ legacy `semantic_model` wrappers before conversion; see the
 
 - **GoodData → Ossie**: Convert a GoodData declarative LDM JSON to Ossie semantic model YAML
 - **Ossie → GoodData**: Convert an Ossie semantic model YAML to GoodData declarative LDM JSON
-- Preserves GoodData-specific metadata (labels, date granularities, geo types) via Ossie custom_extensions
+- Preserves GoodData-specific metadata (labels, date granularities, geo types) via Ossie nonportable_extensions
 - Generates dual-dialect expressions (ANSI_SQL + MAQL) for fields
 
 ## Usage

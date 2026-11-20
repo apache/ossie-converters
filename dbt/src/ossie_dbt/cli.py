@@ -63,11 +63,11 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
         "owned by exactly one semantic model"
     ),
     ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION: (
-        "its DBT custom_extensions data is not a JSON object, or its meta is not an object, "
+        "its DBT nonportable_extensions data is not a JSON object, or its meta is not an object, "
         "so config.meta could not be restored"
     ),
     ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION: (
-        "more than one DBT custom_extensions entry carried meta, so only the first "
+        "more than one DBT nonportable_extensions entry carried meta, so only the first "
         "was restored to config.meta"
     ),
 }

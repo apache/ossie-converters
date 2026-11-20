@@ -1198,7 +1198,7 @@ def _aml_value(value: Any, where: str) -> str:
         return "[" + ", ".join(_aml_value(member, where) for member in value) + "]"
     raise ConversionError(
         f"{where}: the stash holds {type(value).__name__}, which this converter cannot "
-        f"write as AML. Drop the key from custom_extensions, or add a spelling for it"
+        f"write as AML. Drop the key from nonportable_extensions, or add a spelling for it"
     )
 
 

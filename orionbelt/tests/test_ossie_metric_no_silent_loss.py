@@ -313,9 +313,9 @@ class TestRestoredMetricMetadata:
     def test_preserved_metric_keeps_dialect_and_vendor_on_the_metric(self) -> None:
         # MDX metric carrying a GOODDATA custom extension. After Ossie -> OBML ->
         # Ossie the metric round-trips with its dialect on expression.dialects[]
-        # and its vendor on custom_extensions - the schema-valid homes.
+        # and its vendor on nonportable_extensions - the schema-valid homes.
         metric = _metric("Cube Metric", "MDX", "[Measures].[Amount]")
-        metric["custom_extensions"] = [{"vendor_name": "GOODDATA", "data": "{}"}]
+        metric["nonportable_extensions"] = [{"vendor_name": "GOODDATA", "data": "{}"}]
         ossie = _ossie_model([metric])
 
         obml = conv.OssietoOBML(ossie).convert()
@@ -325,7 +325,7 @@ class TestRestoredMetricMetadata:
             m for m in ossie_again["metrics"] if m["name"] == "Cube Metric"
         )
         assert [d["dialect"] for d in restored["expression"]["dialects"]] == ["MDX"]
-        assert any(e["vendor_name"] == "GOODDATA" for e in restored["custom_extensions"])
+        assert any(e["vendor_name"] == "GOODDATA" for e in restored["nonportable_extensions"])
 
     def test_no_root_dialects_or_vendors_emitted(self) -> None:
         # The output must stay schema-conformant: no root-level dialects/vendors,

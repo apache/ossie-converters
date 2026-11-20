@@ -18,12 +18,11 @@
 """Tests for Ossie ↔ OBML static filter roundtrip.
 
 Validates that model-level static filters survive the OBML → Ossie → OBML
-roundtrip via custom_extensions preservation.
+roundtrip via nonportable_extensions preservation.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import ossie_orionbelt.converter as conv
@@ -92,16 +91,16 @@ _OBML_WITH_FILTERS: dict[str, Any] = {
 
 
 class TestOBMLtoOssieFilters:
-    """OBML → Ossie preserves static filters in custom_extensions."""
+    """OBML → Ossie preserves static filters in nonportable_extensions."""
 
     def test_filters_in_custom_extensions(self):
         converter = conv.OBMLtoOssie(_OBML_WITH_FILTERS)
         ossie = converter.convert()
         sem = ossie
-        exts = sem.get("custom_extensions", [])
+        exts = sem.get("nonportable_extensions", [])
         assert len(exts) >= 1
         common = next(e for e in exts if e["vendor_name"] == "ORIONBELT")
-        data = json.loads(common["data"])
+        data = common["data"]
         assert "obml_filters" in data
         assert len(data["obml_filters"]) == 2
         assert data["obml_filters"][0]["operator"] == "equals"
@@ -112,13 +111,13 @@ class TestOBMLtoOssieFilters:
         converter = conv.OBMLtoOssie(obml)
         ossie = converter.convert()
         sem = ossie
-        common = next(e for e in sem["custom_extensions"] if e["vendor_name"] == "ORIONBELT")
-        data = json.loads(common["data"])
+        common = next(e for e in sem["nonportable_extensions"] if e["vendor_name"] == "ORIONBELT")
+        data = common["data"]
         assert "obml_filters" not in data
 
 
 class TestOssietoOBMLFilters:
-    """Ossie → OBML restores static filters from custom_extensions."""
+    """Ossie → OBML restores static filters from nonportable_extensions."""
 
     def test_filters_restored(self):
         converter = conv.OBMLtoOssie(_OBML_WITH_FILTERS)

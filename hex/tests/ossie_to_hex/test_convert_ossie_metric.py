@@ -17,7 +17,7 @@
 
 import pytest
 from inline_snapshot import snapshot
-from ossie import OssieAIContextObject, OssieCustomExtension
+from ossie import OssieAIContextObject, OssieNonportableExtension
 
 from ossie_hex.hex import HexDataType
 from ossie_hex.ossie_to_hex.context import (
@@ -99,12 +99,12 @@ def test_warns_about_ai_context(ctx: ExportContext) -> None:
 
 
 def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
-    custom_extension = OssieCustomExtension(vendor_name="foo", data="bar")
+    custom_extension = OssieNonportableExtension(vendor_name="foo", data={"foo": "bar"})
     foo = Quick.metric(
         "foo",
         "Integer",
         [("OSSIE_SQL_2026", "bar.baz")],
-        custom_extensions=[custom_extension],
+        nonportable_extensions=[custom_extension],
     )
 
     result = convert_ossie_metric(foo, ctx=ctx)

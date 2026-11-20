@@ -103,7 +103,7 @@ are stable:
   remapped when the domain is imported; all IDs are derived deterministically from names,
   so re-runs produce identical output.
 - Not representable in wisdom (dropped with warnings): extra semantic models beyond the
-  first, `unique_keys`, `custom_extensions`, and `ai_context` on fields/metrics (plus
+  first, `unique_keys`, `nonportable_extensions`, and `ai_context` on fields/metrics (plus
   synonyms/examples anywhere).
 
 ## Known limitations

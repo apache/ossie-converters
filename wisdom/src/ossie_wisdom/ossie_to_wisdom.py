@@ -133,15 +133,15 @@ class OssieToWisdomConverter:
         return ConverterResult(output=export, issues=issues)
 
     def _report_custom_extensions(self, model: OssieSemanticModel, issues: List[ConverterIssue]) -> None:
-        elements = [(model.name, model.custom_extensions)]
+        elements = [(model.name, model.nonportable_extensions)]
         for dataset in model.datasets:
-            elements.append((dataset.name, dataset.custom_extensions))
+            elements.append((dataset.name, dataset.nonportable_extensions))
             for field in dataset.fields or []:
-                elements.append((f"{dataset.name}.{field.name}", field.custom_extensions))
+                elements.append((f"{dataset.name}.{field.name}", field.nonportable_extensions))
         for relationship in model.relationships or []:
-            elements.append((relationship.name, relationship.custom_extensions))
+            elements.append((relationship.name, relationship.nonportable_extensions))
         for metric in model.metrics or []:
-            elements.append((metric.name, metric.custom_extensions))
+            elements.append((metric.name, metric.nonportable_extensions))
         for name, extensions in elements:
             if extensions:
                 issues.append(

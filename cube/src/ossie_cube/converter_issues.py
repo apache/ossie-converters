@@ -84,7 +84,7 @@ class IssueType(Enum):
 
     # A Cube property of a projected view, cube or published member that a view
     # projection does not carry -- an access policy, pre-aggregations, drill members.
-    # The lossless import would preserve it in custom_extensions; a projection carries
+    # The lossless import would preserve it in nonportable_extensions; a projection carries
     # only the view's public surface, so it is gone from the output.
     DROPPED_FROM_PROJECTION = "DROPPED_FROM_PROJECTION"
 

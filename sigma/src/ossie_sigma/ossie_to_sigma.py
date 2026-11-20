@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Optional, Union
 from uuid import NAMESPACE_URL, uuid5
 
@@ -42,7 +41,7 @@ from ossie_sigma.expression_utils import (
 from ossie_sigma.sigma_formula import sql_to_sigma_formula
 from ossie_sigma.spec_keys import MODEL_LEVEL_SPEC_KEYS
 
-# Objects a `SIGMA` custom_extensions vendor entry can be attached to.
+# Objects a `SIGMA` nonportable_extensions vendor entry can be attached to.
 _SigmaExtensionHost = Union[OssieDataset, OssieField, OssieMetric, OssieRelationship, OssieDocument]
 
 _ID_NAMESPACE = uuid5(NAMESPACE_URL, "ossie.apache.org/converters/sigma")
@@ -61,7 +60,7 @@ _SCHEMA_VERSION = 1
 # default way. That always works. Whether we should pick a date format ourselves (for
 # example "2026-11-10") is a separate decision for later; see apache/ossie-converters#147.
 #
-# If the model already carries a format of its own (kept in custom_extensions), that one
+# If the model already carries a format of its own (kept in nonportable_extensions), that one
 # is still used.
 _NUMERIC_DATATYPE_TO_FORMAT_KIND = {
     "Integer": "number",
@@ -74,7 +73,7 @@ def _stable_id(*parts: str) -> str:
     """Deterministic id for an object with no preserved native Sigma id.
 
     Only used for datasets/fields/relationships that originate purely in Ossie (no
-    ``SIGMA`` custom_extensions carrying a native id) — anything previously
+    ``SIGMA`` nonportable_extensions carrying a native id) — anything previously
     round-tripped through Sigma keeps its real id instead, since Sigma ids are
     referenced by other objects (controls, other data models) that this converter
     cannot see or update.
@@ -83,17 +82,9 @@ def _stable_id(*parts: str) -> str:
 
 
 def _sigma_ext(item: _SigmaExtensionHost) -> Optional[dict[str, Any]]:
-    for ext in item.custom_extensions or []:
+    for ext in item.nonportable_extensions or []:
         if ext.vendor_name == OssieVendor.SIGMA.value:
-            try:
-                data = json.loads(ext.data)
-            except json.JSONDecodeError:
-                return None
-            # A hand-edited or foreign-tool-produced document could carry a SIGMA
-            # custom_extension whose `data` is valid JSON but not an object (e.g. a
-            # list or a bare string); treat that the same as no extension at all
-            # rather than returning something callers' `.get(...)` calls don't expect.
-            return data if isinstance(data, dict) else None
+            return ext.data
     return None
 
 
@@ -158,7 +149,7 @@ class OssieToSigmaConverter:
         spec: dict[str, Any] = {"kind": "data-model", "name": model.name}
         if model.description:
             spec["description"] = model.description
-        # Restores every model-level spec key captured into custom_extensions on the
+        # Restores every model-level spec key captured into nonportable_extensions on the
         # way in (see sigma_to_ossie._MODEL_LEVEL_SPEC_KEYS, the same tuple), not just
         # the identity/versioning keys, so createdAt/createdBy/updatedAt/updatedBy/
         # ownerId/url round-trip losslessly instead of being silently dropped.
@@ -297,7 +288,7 @@ class OssieToSigmaConverter:
         if "unique_keys_raw" in ext:
             # Preserved verbatim from the Sigma -> Ossie direction: it may contain
             # entries that never resolved to a modeled field (kept only in Ossie's
-            # custom_extensions, not in primary_key) or raw warehouse column
+            # nonportable_extensions, not in primary_key) or raw warehouse column
             # references, neither of which `field_ids` can reconstruct.
             element["uniqueKeys"] = ext["unique_keys_raw"]
         elif dataset.primary_key:

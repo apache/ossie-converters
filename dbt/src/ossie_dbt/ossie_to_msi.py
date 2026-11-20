@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -23,7 +22,7 @@ import sqlglot
 from sqlglot import exp
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDataType,
     OssieDialect,
@@ -198,7 +197,7 @@ class OssieToMSIConverter:
                 )
             )
 
-        config, config_issues = self._config_from_custom_extensions(dataset.custom_extensions, dataset.name)
+        config, config_issues = self._config_from_custom_extensions(dataset.nonportable_extensions, dataset.name)
         issues.extend(config_issues)
         return (
             PydanticSemanticModel(
@@ -215,7 +214,7 @@ class OssieToMSIConverter:
 
     @staticmethod
     def _config_from_custom_extensions(
-        custom_extensions: Optional[List[OssieCustomExtension]],
+        nonportable_extensions: Optional[List[OssieNonportableExtension]],
         element_name: str,
         datatype: Optional[OssieDataType] = None,
     ) -> Tuple[Optional[PydanticSemanticLayerElementConfig], List[ConverterIssue]]:
@@ -236,14 +235,10 @@ class OssieToMSIConverter:
         """
         issues: List[ConverterIssue] = []
         restored: Optional[Dict[str, Any]] = None
-        for ext in custom_extensions or []:
+        for ext in nonportable_extensions or []:
             if ext.vendor_name != OssieVendor.DBT.value:
                 continue
-            try:
-                payload = json.loads(ext.data)
-            except (ValueError, RecursionError):
-                # RecursionError: nesting too deep to decode.
-                payload = None
+            payload = ext.data
             if isinstance(payload, dict) and "meta" not in payload:
                 continue
             meta = payload.get("meta") if isinstance(payload, dict) else None
@@ -308,7 +303,7 @@ class OssieToMSIConverter:
         Aggregation info lives on metrics (`metric_aggregation_params`), not on
         semantic model measures, so there is no measure classification step.
         """
-        config, issues = self._config_from_custom_extensions(field.custom_extensions, field.name, field.datatype)
+        config, issues = self._config_from_custom_extensions(field.nonportable_extensions, field.name, field.datatype)
         if field.name in primary_key_cols:
             entities.append(
                 PydanticEntity(
@@ -393,7 +388,7 @@ class OssieToMSIConverter:
                 )
                 continue
             config, config_issues = self._config_from_custom_extensions(
-                metric.custom_extensions, metric.name, metric.datatype
+                metric.nonportable_extensions, metric.name, metric.datatype
             )
             # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
             reserved_names = set(taken_names)
