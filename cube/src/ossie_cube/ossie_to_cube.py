@@ -1876,11 +1876,21 @@ class _MetricReferences:
         """
         whole = context if context is not None else text
         units = date_unit_spans(whole, source_dialect) if context_offset is not None else []
-        unit_marker = "__ossie_unit_"
-        while unit_marker in whole:
-            unit_marker += "alt_"
         attributed = {name: f"{cube}.{name}"
                       for name, cube in self._fields_in(whole, source_dialect).items()}
+        unit_marker = "__ossie_unit_"
+        if units:
+            # Avoid markers present in the expression or introduced by field/reference rewriting.
+            avoid = [
+                whole,
+                *attributed.values(),
+                *self._tables.datasets.values(),
+                *(v for mapping in (self._tables.references, self._tables.columns,
+                                    self._tables.inline_sql)
+                  for fields in mapping.values() for v in fields.values()),
+            ]
+            while any(unit_marker in s for s in avoid):
+                unit_marker += "alt_"
         masks, substitutions = {}, {}
         for i, (written, key) in enumerate(
                 sorted(self._referenced_in(whole, source_dialect).items())):
