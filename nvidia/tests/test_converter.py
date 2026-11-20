@@ -1341,6 +1341,40 @@ def test_calculated_metric_field_is_inlined_on_export() -> None:
     assert "orders.amount" not in analysis["sql"]
 
 
+def test_calculated_metric_field_round_trips_on_import() -> None:
+    native_yaml = convert_ossie_to_auto_ontology(
+        yaml.safe_dump(
+            _orders_with_amount_metric("o_totalprice / 100.0"), sort_keys=False
+        )
+    )
+    model = yaml.safe_load(convert_auto_ontology_to_ossie(native_yaml))
+
+    assert (
+        model["metrics"][0]["expression"]["dialects"][0]["expression"]
+        == "SUM(orders.amount)"
+    )
+
+
+def test_inlined_formula_maps_to_the_calculated_field_not_its_source_column() -> None:
+    ossie = _orders_with_amount_metric("o_totalprice / 100.0")
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    orders["fields"].append(
+        {
+            "name": "price",
+            "expression": {
+                "dialects": [{"dialect": "ANSI_SQL", "expression": "o_totalprice"}]
+            },
+        }
+    )
+    native_yaml = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie, sort_keys=False))
+    model = yaml.safe_load(convert_auto_ontology_to_ossie(native_yaml))
+
+    assert (
+        model["metrics"][0]["expression"]["dialects"][0]["expression"]
+        == "SUM(orders.amount)"
+    )
+
+
 def test_keys_and_relationships_may_name_columns_or_fields() -> None:
     """Earlier exports and other tools name physical columns; both import alike."""
     by_field = yaml.safe_load(
@@ -1571,7 +1605,7 @@ def test_sql_only_field_and_metric_are_read_from_their_sql() -> None:
     converted = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie))
 
     assert "orders.net_total * 1.1" in converted
-    assert "SUM(" in converted
+    assert "SUM((orders.net_total * 1.1))" in converted
 
 
 def test_catalog_only_auto_ontology_has_no_representable_terms() -> None:

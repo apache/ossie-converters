@@ -1578,18 +1578,25 @@ def _substitute_columns_with_fields(
     sql: str,
     datasets: Iterable[Mapping[str, Any]],
 ) -> str:
-    """Replace pass-through source columns in *sql* with the fields that read them.
+    """Replace source SQL in *sql* with the fields that read it.
 
-    Import of ``SUM(orders.o_totalprice)`` becomes ``SUM(orders.amount)`` when
-    ``amount`` is the field whose expression is that column.
+    Pass-through: ``SUM(orders.o_totalprice)`` becomes ``SUM(orders.amount)``
+    when ``amount`` is the field whose expression is that column.
+
+    Calculated: ``SUM((orders.o_totalprice / 100.0))`` becomes
+    ``SUM(orders.amount)`` when ``amount`` is ``o_totalprice / 100.0``. The
+    whole inlined tree is replaced first so an inner column is not mapped to a
+    different pass-through field.
     """
     parsed = _parse_sql(sql)
     if parsed is None:
         return sql
+    dataset_list = list(datasets)
+    changed = _replace_inlined_field_expressions(parsed, dataset_list)
     by_dataset = {
-        str(dataset["name"]): _field_names_by_column(dataset) for dataset in datasets
+        str(dataset["name"]): _field_names_by_column(dataset)
+        for dataset in dataset_list
     }
-    changed = False
     for column in parsed.find_all(exp.Column):
         if not column.table or _is_date_part_unit(column):
             continue
@@ -1598,6 +1605,72 @@ def _substitute_columns_with_fields(
             column.set("this", exp.to_identifier(field))
             changed = True
     return parsed.sql() if changed else sql
+
+
+def _field_expression_sql(field: Mapping[str, Any]) -> str | None:
+    expression = field.get("expression")
+    if not isinstance(expression, dict):
+        return None
+    dialects = expression.get("dialects") or []
+    if (
+        dialects
+        and isinstance(dialects[0], dict)
+        and dialects[0].get("expression") is not None
+    ):
+        return str(dialects[0]["expression"])
+    return None
+
+
+def _calculated_field_tree(
+    field_expr: str, dataset_name: str, table_name: str
+) -> exp.Expression | None:
+    """The tree export inlines for a non-pass-through field, or ``None``."""
+    if _simple_source_column(field_expr, dataset_name, table_name):
+        return None
+    inlined = _parse_sql(field_expr)
+    if inlined is None or isinstance(inlined, exp.Query):
+        return None
+    _qualify_source_columns(inlined, dataset_name, table_name, dataset_name)
+    if isinstance(inlined, (exp.Column, exp.Literal)):
+        return None
+    return exp.Paren(this=inlined)
+
+
+def _replace_inlined_field_expressions(
+    parsed: exp.Expression, datasets: list[Mapping[str, Any]]
+) -> bool:
+    """Replace inlined field trees with ``dataset.field``, longest first."""
+    targets: list[tuple[int, exp.Expression, exp.Column]] = []
+    for dataset in datasets:
+        dataset_name = str(dataset["name"])
+        source = str(dataset.get("source") or "")
+        table_name = source.rsplit(".", 1)[-1]
+        for field in dataset.get("fields") or []:
+            if not isinstance(field, dict) or not field.get("name"):
+                continue
+            field_expr = _field_expression_sql(field)
+            if field_expr is None:
+                continue
+            tree = _calculated_field_tree(field_expr, dataset_name, table_name)
+            if tree is None:
+                continue
+            replacement = exp.Column(
+                this=exp.to_identifier(str(field["name"])),
+                table=exp.to_identifier(dataset_name),
+            )
+            targets.append((len(tree.sql()), tree, replacement))
+            if tree.this is not None:
+                targets.append((len(tree.this.sql()), tree.this, replacement))
+    targets.sort(key=lambda item: item[0], reverse=True)
+    changed = False
+    for _, target, replacement in targets:
+        while True:
+            match = next((node for node in parsed.walk() if node == target), None)
+            if match is None:
+                break
+            match.replace(replacement.copy())
+            changed = True
+    return changed
 
 
 def _relationships_from_auto_ontology(
