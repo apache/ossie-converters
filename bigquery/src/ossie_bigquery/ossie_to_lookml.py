@@ -60,13 +60,16 @@ _SQLGLOT_DIALECTS = {"BIGQUERY": "bigquery", "ANSI_SQL": None, "OSSIE_SQL_2026":
 # Ossie DATEADD/DATEDIFF take a unit as the first argument. sqlglot's default
 # reader treats that unit as a column, so _qualify would emit ${TABLE}.day and
 # BigQuery has no DATEADD. Canonical names are the BigQuery DATE_ADD /
-# DATE_DIFF date_part values.
+# DATE_DIFF date_part values. HOUR/MINUTE/SECOND need TIMESTAMP_ADD /
+# TIMESTAMP_DIFF; they are not rewritten to DATE_ADD/DATE_DIFF.
 _DATE_PARTS = {
     "YEAR": "YEAR", "YEARS": "YEAR", "YY": "YEAR", "YYYY": "YEAR",
     "QUARTER": "QUARTER", "QUARTERS": "QUARTER",
     "MONTH": "MONTH", "MONTHS": "MONTH", "MM": "MONTH",
     "WEEK": "WEEK", "WEEKS": "WEEK",
     "DAY": "DAY", "DAYS": "DAY", "DD": "DAY", "D": "DAY",
+}
+_TIMESTAMP_PARTS = {
     "HOUR": "HOUR", "HOURS": "HOUR", "HH": "HOUR",
     "MINUTE": "MINUTE", "MINUTES": "MINUTE", "MI": "MINUTE",
     "SECOND": "SECOND", "SECONDS": "SECOND", "SS": "SECOND",
@@ -742,59 +745,113 @@ def _parse(expr, dialect, context):
 
 def _prepare_tree(tree, expr, dialect, context):
     """Maps Ossie date functions to BigQuery and warns on leftover calls."""
-    tree = tree.transform(lambda node: _rewrite_ossie_date_function(node, expr))
+    tree = _rewrite_ossie_date_functions(tree, expr, dialect, context)
     if dialect != "BIGQUERY":
         _warn_unknown_functions(tree, context)
     return tree
 
 
-def _rewrite_ossie_date_function(node, original):
+def _rewrite_ossie_date_functions(tree, original, dialect, context):
+    """Rewrite DATEADD/DATEDIFF bottom-up so nested calls are rewritten too.
+
+    sqlglot ``transform`` does not walk children of a replaced node, so a
+    DATEADD whose amount is a DATEDIFF would keep the inner call in the
+    default-reader shape.
+    """
+    root = tree
+    for node in reversed(list(tree.walk())):
+        replacement = _rewrite_ossie_date_function(node, original, dialect, context)
+        if replacement is node:
+            continue
+        if node is root:
+            root = replacement
+        else:
+            node.replace(replacement)
+    return root
+
+
+def _rewrite_ossie_date_function(node, original, dialect, context):
     """DATEADD(part, n, d) -> DATE_ADD(d, INTERVAL n PART);
     DATEDIFF(part, start, end) -> DATE_DIFF(end, start, PART)."""
     if isinstance(node, exp.Anonymous):
         name = str(node.this).upper()
         args = list(node.expressions)
         if name in _DATE_ADD_NAMES and len(args) == 3:
-            unit, amount, value = args
-            part = _date_part_name(unit)
-            if part:
-                return exp.DateAdd(this=value, expression=amount, unit=exp.var(part))
+            return _rewrite_date_add(args[0], args[1], args[2], context) or node
         if name in _DATE_DIFF_NAMES and len(args) == 3:
-            unit, start, end = args
-            part = _date_part_name(unit)
-            if part:
-                return exp.DateDiff(this=end, expression=start, unit=exp.var(part))
+            return _rewrite_date_diff(args[0], args[1], args[2], original, context) or node
         return node
-    if isinstance(node, exp.DateDiff):
+    if isinstance(node, exp.DateDiff) and dialect != "BIGQUERY":
         # Default reader: DATEDIFF(day, start, end) has this=day (a column)
-        # and unit=END_DATE (the end date, not a date part).
+        # and unit=END_DATE (the end date, not a date part). Skip on BIGQUERY
+        # so DATE_DIFF(day, first_day, ISOWEEK) stays a column named day.
+        if _timestamp_part_name(node.this):
+            _warn_unmapped_time_unit("DATEDIFF", node.this, context)
+            return node
         part = _date_part_name(node.this)
         if part and not _date_part_name(node.args.get("unit")):
-            end = _column_from_unit(node.args.get("unit"), original)
+            end = _end_from_unit(node.args.get("unit"), original)
             return exp.DateDiff(
                 this=end, expression=node.expression, unit=exp.var(part)
             )
     return node
 
 
-def _date_part_name(node):
-    """Canonical BigQuery date part when `node` is a unit, else None."""
+def _rewrite_date_add(unit, amount, value, context):
+    if _timestamp_part_name(unit):
+        _warn_unmapped_time_unit("DATEADD", unit, context)
+        return None
+    part = _date_part_name(unit)
+    if not part:
+        return None
+    return exp.DateAdd(this=value, expression=amount, unit=exp.var(part))
+
+
+def _rewrite_date_diff(unit, start, end, original, context):
+    if _timestamp_part_name(unit):
+        _warn_unmapped_time_unit("DATEDIFF", unit, context)
+        return None
+    part = _date_part_name(unit)
+    if not part:
+        return None
+    return exp.DateDiff(this=end, expression=start, unit=exp.var(part))
+
+
+def _part_token(node):
     if node is None:
         return None
     if isinstance(node, exp.Literal) and node.is_string:
-        name = str(node.this)
-    elif isinstance(node, exp.Column) and not node.table:
-        name = node.name
-    elif isinstance(node, (exp.Var, exp.Identifier)):
-        name = node.name
-    else:
-        return None
-    return _DATE_PARTS.get(name.upper())
+        return str(node.this)
+    if isinstance(node, exp.Column) and not node.table:
+        return node.name
+    if isinstance(node, (exp.Var, exp.Identifier)):
+        return node.name
+    return None
 
 
-def _column_from_unit(unit, original):
-    """Rebuilds the end-date column sqlglot stored as a date-part unit."""
-    if isinstance(unit, exp.Column):
+def _date_part_name(node):
+    """Canonical BigQuery DATE_ADD/DATE_DIFF part when `node` is a unit."""
+    token = _part_token(node)
+    return _DATE_PARTS.get(token.upper()) if token else None
+
+
+def _timestamp_part_name(node):
+    """HOUR/MINUTE/SECOND: BigQuery DATE_ADD/DATE_DIFF reject these."""
+    token = _part_token(node)
+    return _TIMESTAMP_PARTS.get(token.upper()) if token else None
+
+
+def _warn_unmapped_time_unit(func, unit, context):
+    part = _timestamp_part_name(unit)
+    warnings.warn(
+        f"{context}: {func} {part} has no BigQuery DATE_ADD/DATE_DIFF spelling; "
+        f"emitted as-is until TIMESTAMP_ADD/TIMESTAMP_DIFF is mapped"
+    )
+
+
+def _end_from_unit(unit, original):
+    """Rebuilds the DATEDIFF end date sqlglot stored as a date-part unit."""
+    if isinstance(unit, (exp.Literal, exp.Column)):
         return unit
     if isinstance(unit, exp.Var):
         name = unit.name
@@ -804,12 +861,32 @@ def _column_from_unit(unit, original):
         name = unit
     else:
         return unit
+    if _is_date_literal(name, original):
+        return exp.Literal.string(name)
     match = re.search(r"(?i)\b" + re.escape(name) + r"\b", original or "")
     return exp.column(match.group(0) if match else name)
 
 
+def _is_date_literal(name, original):
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T].*)?", name):
+        return True
+    return bool(
+        original and re.search(r"(['\"])" + re.escape(name) + r"\1", original)
+    )
+
+
+def _anonymous_time_unit_call(node):
+    name = str(node.this).upper()
+    args = list(node.expressions)
+    return (
+        name in _DATE_ADD_NAMES | _DATE_DIFF_NAMES
+        and len(args) == 3
+        and _timestamp_part_name(args[0]) is not None
+    )
+
+
 def _warn_unknown_functions(tree, context):
-    """Warns when a portable call has no BigQuery function of that name.
+    """Warns when a portable call was not given a BigQuery spelling.
 
     Typed nodes (SUM, DATE_TRUNC, the rewritten DATE_ADD / DATE_DIFF) already
     have a BigQuery spelling. sqlglot leaves everything else as Anonymous.
@@ -817,11 +894,11 @@ def _warn_unknown_functions(tree, context):
     names = sorted({
         str(node.this).upper()
         for node in tree.find_all(exp.Anonymous)
-        if node.this
+        if node.this and not _anonymous_time_unit_call(node)
     })
     for name in names:
         warnings.warn(
-            f"{context}: {name} is not a BigQuery function; emitted as-is"
+            f"{context}: {name} was not translated to BigQuery; emitted as-is"
         )
 
 
