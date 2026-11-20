@@ -197,3 +197,5 @@ m.where(delay := Delay.ref(), Airport, delay == avg(Flight.departure_delay).per(
 m.where(delay := Delay.ref(), Airport, delay == avg(Flight.arrival_delay).per(Airport).where(Airport == Flight.route.destination)).define(Airport.average_arrival_delay(delay))
 m.where(delay := Delay.ref(), Route, delay == avg(Flight.departure_delay).per(Route).where(Flight.route(Route))).define(Route.average_departure_delay(delay))
 m.where(delay := Delay.ref(), Route, delay == avg(Flight.arrival_delay).per(Route).where(Flight.route(Route))).define(Route.average_arrival_delay(delay))
+m.where(Route, Route.destination(Airport)).require(m.not_(Route.departure(Airport)))
+m.where(Route, Route.departure(Airport)).require(m.not_(Route.destination(Airport)))

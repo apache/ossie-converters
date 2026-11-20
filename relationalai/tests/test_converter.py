@@ -624,3 +624,146 @@ def test_object_mappings_differing_only_in_nested_referents_both_create(tmp_path
     assert len(created) == 2, f"expected a Desk creation rule per column, got: {created}"
     assert any("PRIMARYNR" in rule for rule in created), created
     assert any("BACKUPNR" in rule for rule in created), created
+
+
+def test_parsed_requires_become_scoped_requirements(tmp_path):
+    import ast
+    import json
+
+    from relationalai.semantics.metamodel.comparison import metamodels_diff
+    from relationalai.semantics.metamodel.metamodel import Lookup, Require
+
+    specification = {
+        "version": "0.3.0.dev0",
+        "name": "Requirements",
+        "requires": ["COUNT[Code] <= 2"],
+        "ontology": [
+            {
+                "concept": "Account", "type": "EntityType",
+                "relationships": [{
+                    "name": "holds", "roles": [{"concept": "Code", "name": "balance"}],
+                    "verbalizes": ["{Account} holds {Code:balance}"],
+                    "requires": [
+                        "balance <= 100 AND balance != 0", "balance == 1 OR balance == 2",
+                        "balance <= 'x'", "balance == 1 OR balance == 'x'", "balance",
+                    ],
+                }],
+            },
+            {
+                "concept": "Code", "type": "ValueType", "extends": ["Integer"],
+                "requires": ["Code == 1 OR Code == 2"],
+                "relationships": [{
+                    "name": "links", "roles": [{"concept": "Code", "name": "target"}],
+                    "verbalizes": ["{Code} links {Code:target}"],
+                    "requires": ["Code != target", "1 == 2"],
+                }],
+            },
+        ],
+    }
+    path = tmp_path / "requirements.json"
+    path.write_text(json.dumps(specification))
+    pyrel.Model.all_models.clear()
+    with pytest.warns(UserWarning, match="Unsupported requires") as warnings:
+        model = OssieToRelationalAIConverter.convert(
+            OssieParser().parse(path), table_provider=declared_table,
+        )
+    messages = [str(item.message) for item in warnings if str(item.message).startswith("Unsupported requires")]
+    assert len(messages) == 6
+    for scope, reason in [
+        ("on ontology", "ontology-level"),
+        ("on Code:", "finite instance relation"),
+        ("on Code.links:", "must reference a scoped value"),
+        ("on Account.holds:", "literal is incompatible"),
+        ("on Account.holds:", "reference must be an operand"),
+    ]:
+        assert any(scope in message and reason in message for message in messages)
+    metamodel = model.base_model().to_metamodel()
+    Typer().infer_model(metamodel)
+    requirements = [
+        node for node in metamodel.root.body if isinstance(node, Require) and node.domain.body
+    ]
+    assert len(requirements) == 4
+    assert all(requirement.check.body for requirement in requirements)
+    ring = next(
+        requirement for requirement in requirements
+        if any(isinstance(task, Lookup) and task.relation.name == "links" for task in requirement.domain.body)
+    )
+    relation = next(task for task in ring.domain.body if isinstance(task, Lookup) and task.relation.name == "links")
+    inequality = next(task for task in ring.check.body if isinstance(task, Lookup) and task.relation.name == "!=")
+    assert relation.args[0] != relation.args[1]
+    assert relation.args == inequality.args
+
+    source = to_pyrel(metamodel)
+    emitted = [
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "require"
+    ]
+    assert len(emitted) == 2, source
+    assert all("holds" in ast.unparse(call.func.value) for call in emitted)
+    assert any(
+        isinstance(arg, ast.Compare)
+        and isinstance(arg.ops[0], (ast.LtE, ast.GtE))
+        and any(isinstance(node, ast.Constant) and node.value == 100 for node in ast.walk(arg))
+        for call in emitted for arg in call.args
+    )
+    assert any(isinstance(arg, ast.Compare) and isinstance(arg.ops[0], ast.NotEq)
+               for call in emitted for arg in call.args)
+    assert {1, 2} <= {node.value for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Constant)}
+    namespace = {}
+    pyrel.Model.all_models.clear()
+    exec(compile(source, "generated_requires.py", "exec"), namespace)
+    rebuilt = namespace["m"].to_metamodel()
+    Typer().infer_model(rebuilt)
+    # The source generator drops the value-only links requirement.
+    # The SDK comparator also omits it, so assert both task counts explicitly.
+    assert sum(isinstance(node, Require) and bool(node.domain.body) for node in rebuilt.root.body) == 3
+    assert metamodels_diff(metamodel, rebuilt) == []
+
+
+
+def test_entity_requires_emit_unary_predicates_and_warn_on_repeated_entity_roles(tmp_path):
+    import ast
+    import json
+
+    from relationalai.semantics.metamodel.comparison import metamodels_diff
+
+    specification = {
+        "version": "0.3.0.dev0",
+        "name": "EntityRequirements",
+        "ontology": [{
+            "concept": "Account", "type": "EntityType",
+            "requires": ["Account.active", "EXISTS(Account.registered)"],
+            "relationships": [
+                {"name": "active", "verbalizes": ["{Account} is active"]},
+                {"name": "registered", "verbalizes": ["{Account} is registered"]},
+                {
+                    "name": "follows",
+                    "roles": [{"concept": "Account", "name": "peer"}],
+                    "verbalizes": ["{Account} follows {Account:peer}"],
+                    "multiplicity": "ManyToOne",
+                    "requires": ["Account != peer"],
+                },
+            ],
+        }],
+    }
+    path = tmp_path / "entity-requirements.json"
+    path.write_text(json.dumps(specification))
+    pyrel.Model.all_models.clear()
+    with pytest.warns(UserWarning, match=r"on Account.follows:.*repeated entity roles"):
+        model = OssieToRelationalAIConverter.convert(OssieParser().parse(path), table_provider=declared_table)
+    metamodel = model.base_model().to_metamodel()
+    source = to_pyrel(metamodel)
+    calls = [
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "require"
+    ]
+    assert len(calls) == 2, source
+    checks = [ast.unparse(arg) for call in calls for arg in call.args]
+    assert any("active" in check for check in checks), source
+    assert any("registered" in check for check in checks), source
+    namespace = {}
+    pyrel.Model.all_models.clear()
+    exec(compile(source, "generated_entity_requires.py", "exec"), namespace)
+    rebuilt = namespace["m"].to_metamodel()
+    Typer().infer_model(rebuilt)
+    assert metamodels_diff(metamodel, rebuilt) == []
