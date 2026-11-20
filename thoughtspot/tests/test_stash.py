@@ -35,11 +35,12 @@ from ossie_thoughtspot.errors import ConversionError
 
 
 def test_write_stash_serialises_data_as_a_json_string_not_an_object():
-    # ossie-schema.json types `data` as "string". The reader also accepts the
-    # object form apache/ossie#522 proposes, and the asymmetry is deliberate:
-    # readers move first, writers only once the spec does. Do not "fix" this by
-    # making the writer emit an object -- that would make our output invalid
-    # against the schema in force.
+    # The ossie-schema.json this repository pins types `data` as "string". The
+    # reader also accepts the object form apache/ossie#522 introduced, and the
+    # asymmetry is deliberate: readers move first, writers only once the pinned
+    # schema does. Do not "fix" this by making the writer emit an object before
+    # the `ossie` submodule moves -- that would make our output invalid against
+    # the schema in force here.
     obj = stash.write_stash({}, {"join_type": "LEFT_OUTER"})
     entry = obj["custom_extensions"][0]
     assert entry["vendor_name"] == VENDOR_KEY
