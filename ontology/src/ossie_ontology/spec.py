@@ -120,7 +120,16 @@ class DialectExpression(OssieObject):
 class Expression(OssieObject):
     """Multi-dialect expression carrier — same logical expression rendered in
     one or more dialects (e.g. ANSI_SQL + SNOWFLAKE)."""
+    sql: str | None = None
     dialects: list[DialectExpression] = Field(default_factory=list)
+
+
+# Logical data type of a field or metric (core spec, "Data types"). Omitted
+# when the type is unknown.
+DataType = Literal[
+    "String", "Integer", "Decimal", "Float", "Boolean",
+    "Date", "Time", "DateTime", "DateTimeTz", "Opaque",
+]
 
 
 class Dimension(OssieObject):
@@ -136,7 +145,7 @@ class DatasetField(OssieObject):
     dimension: Dimension | None = None
     label: str | None = None
     description: str | None = None
-    datatype: str | None = None
+    datatype: DataType | None = None
     ai_context: AiContext | None = None
     custom_extensions: list[CustomExtension] = Field(default_factory=list)
 
@@ -151,6 +160,7 @@ class Dataset(OssieObject):
     description: str | None = None
     ai_context: AiContext | None = None
     fields: list[DatasetField] = Field(default_factory=list)
+    metrics: list[Metric] = Field(default_factory=list)
     custom_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
@@ -173,14 +183,18 @@ class Metric(OssieObject):
     name: str
     expression: Expression
     description: str | None = None
-    datatype: str | None = None
+    datatype: DataType | None = None
     ai_context: AiContext | None = None
     custom_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
+# The core semantic model version this package reads and writes.
+CoreVersion = Literal["0.3.0.dev0"]
+
+
 class SemanticModel(OssieObject):
     """Complete core document embedded under OntologyMapping.semantic_model."""
-    version: Literal["0.2.0.dev0"]
+    version: CoreVersion
     name: str
     description: str | None = None
     ai_context: AiContext | None = None

@@ -24,7 +24,7 @@ relationships, and ``OssieAIContext`` annotations -> AI context.
 Power BI constructs with no Apache Ossie counterpart -- format strings, display folders,
 perspectives, row-level security, KPIs, hierarchies, partitions, calculation groups,
 cross-filter direction and so on -- are not discarded. They are preserved verbatim in a
-``POWER_BI`` ``custom_extensions`` entry so that
+``POWER_BI`` ``nonportable_extensions`` entry so that
 :mod:`ossie_microsoft.ossie_to_semantic_model` can rebuild them, per the round-trip
 guidance in the repository ``README.md``. Anything that genuinely cannot be represented is
 reported through :func:`ossie_microsoft._common.warn`.
@@ -39,6 +39,7 @@ from ._common import (
     AUTO_DATE_TABLE_RE,
     DIALECT_ANSI,
     DIALECT_DAX,
+    DIALECT_OSSIE_SQL,
     IDENTIFIER_RE,
     OSSIE_TO_TMSL_DATATYPE,
     OSSIE_VERSION,
@@ -58,6 +59,7 @@ from ._common import (
     warn_unsupported,
     write_stash,
 )
+from ._dax_to_sql import translate_measure
 
 # What happens to a TMSL construct Apache Ossie cannot express: it survives a round trip
 # back to Power BI, but it is invisible to any other consumer of the document.
@@ -102,13 +104,18 @@ _RELATIONSHIP_CONSUMED = frozenset(
         "isActive",
     }
 )
-def convert_semantic_model_to_ossie(semantic_model: dict | str) -> str:
+def convert_semantic_model_to_ossie(semantic_model: dict | str, translate_dax: bool = False) -> str:
     """Convert a Power BI semantic model into an Apache Ossie semantic model.
 
     Args:
         semantic_model: A ``model.bim`` document, either parsed (a TMSL mapping) or as
             JSON text, or a single TMDL document as text. TMDL input requires the
             optional ``tom`` extra.
+        translate_dax: When true, DAX measures with an exact ``OSSIE_SQL_2026`` form
+            (see ``_dax_to_sql``) are translated, with the original DAX
+            kept as a fallback dialect; measures that cannot be translated safely are
+            kept as DAX with a diagnostic. Off by default, so the default output is
+            unchanged.
 
     Returns:
         The Apache Ossie document serialized as YAML.
@@ -117,7 +124,7 @@ def convert_semantic_model_to_ossie(semantic_model: dict | str) -> str:
         TypeError: if `semantic_model` is neither a parsed TMSL document nor text.
         ValueError: if the document has no ``model`` object.
     """
-    return dump_yaml(build_ossie_document(_as_tmsl(semantic_model)))
+    return dump_yaml(build_ossie_document(_as_tmsl(semantic_model), translate_dax=translate_dax))
 
 
 def _as_tmsl(semantic_model):
@@ -139,8 +146,13 @@ def _as_tmsl(semantic_model):
     return deserialize_tmdl(semantic_model)
 
 
-def build_ossie_document(bim_file):
-    """Convert a parsed ``model.bim`` document into an Apache Ossie document (dict)."""
+def build_ossie_document(bim_file, translate_dax=False):
+    """Convert a parsed ``model.bim`` document into an Apache Ossie document (dict).
+
+    When ``translate_dax`` is true, measures are translated to ``OSSIE_SQL_2026``
+    where the translation is exact (see ``_dax_to_sql``); otherwise every
+    measure is kept as DAX, which is the default.
+    """
     if not isinstance(bim_file, dict):
         raise TypeError("bim_file must be a parsed model.bim document (dict)")
 
@@ -176,7 +188,10 @@ def build_ossie_document(bim_file):
         semantic_model["relationships"] = relationships
 
     metric_tables = [table for table in all_tables if _is_measure_table(table)]
-    metrics, excluded_measures = _convert_metrics(metric_tables)
+    resolve_field = _build_field_resolver(semantic_model["datasets"]) if translate_dax else None
+    metrics, excluded_measures = _convert_metrics(
+        metric_tables, translate_dax=translate_dax, resolve_field=resolve_field
+    )
     excluded_tables = _strip_converted_measures(excluded_tables, metrics)
     if metrics:
         semantic_model["metrics"] = metrics
@@ -299,7 +314,7 @@ def _convert_table(table):
     if fields:
         dataset["fields"] = fields
 
-    # Stashes are written last so `custom_extensions` sorts after the core properties.
+    # Stashes are written last so `nonportable_extensions` sorts after the core properties.
     for field, column_stash in field_stashes:
         write_stash(field, column_stash)
 
@@ -491,10 +506,76 @@ def _map_datatype(tmsl_type, format_string, scope):
 # ---------------------------------------------------------------------------
 
 
-def _convert_metrics(tables):
+def _build_field_resolver(datasets):
+    """Return a resolver mapping a DAX (table, column) to an Ossie (dataset, field, datatype).
+
+    A Power BI measure addresses a column as ``'Table'[Column]`` by the model names,
+    which the converter uses verbatim as the dataset and field names. So a reference
+    resolves exactly when that dataset carries that field; anything else (an unknown
+    column, a measure table, a column that was not exported) does not resolve, and the
+    translator keeps the measure as DAX. The field's ``datatype`` (None when the model
+    gives none) tells the translator whether an aggregate over it is a number.
+    """
+    known = {}
+    for dataset in datasets or []:
+        dataset_name = dataset.get("name")
+        if not dataset_name:
+            continue
+        for field in dataset.get("fields") or []:
+            field_name = field.get("name")
+            if field_name:
+                known[(dataset_name, field_name)] = field.get("datatype")
+
+    def resolve(table, column):
+        if (table, column) not in known:
+            return None
+        return table, column, known[(table, column)]
+
+    return resolve
+
+
+def _measure_expression(dax_expression, scope, translate_dax, resolve_field, measures=None):
+    """Build a metric's expression from a DAX measure body.
+
+    By default, and whenever a measure cannot be translated safely, the DAX is kept
+    verbatim as the sole dialect. When translation is on and succeeds, the metric
+    carries ``OSSIE_SQL_2026`` as the primary dialect with the original DAX kept as a
+    fallback, so no information is lost and a reader that trusts only DAX still has it.
+    ``measures`` maps the model's measure names to their DAX, so a reference to another
+    measure can be expanded.
+    """
+    if not translate_dax or resolve_field is None:
+        return make_expression(dax_expression, DIALECT_DAX)
+
+    sql, reason = translate_measure(dax_expression, resolve_field, measures)
+    if sql is None:
+        warn(scope, f"DAX measure kept as-is; not translated to OSSIE_SQL_2026 ({reason})")
+        return make_expression(dax_expression, DIALECT_DAX)
+
+    return {
+        "dialects": [
+            {"dialect": DIALECT_OSSIE_SQL, "expression": sql},
+            {"dialect": DIALECT_DAX, "expression": dax_expression},
+        ]
+    }
+
+
+def _measure_bodies(tables):
+    """Map every measure name in ``tables`` to its DAX, for expanding measure references."""
+    bodies = {}
+    for table in tables:
+        for measure in table.get("measures") or []:
+            if isinstance(measure, dict) and measure.get("name"):
+                expression = measure.get("expression")
+                bodies[measure["name"]] = text(expression) if expression is not None else ""
+    return bodies
+
+
+def _convert_metrics(tables, translate_dax=False, resolve_field=None):
     metrics = []
     excluded = []
     seen = set()
+    measures = _measure_bodies(tables) if translate_dax else None
     for table in tables:
         for index, measure in enumerate(table.get("measures") or []):
             if not isinstance(measure, dict) or not measure.get("name"):
@@ -511,7 +592,7 @@ def _convert_metrics(tables):
                 warn(
                     scope,
                     "measure has no expression; excluded from the Apache Ossie model "
-                    "and preserved in custom_extensions",
+                    "and preserved in nonportable_extensions",
                 )
                 excluded.append(
                     {"table": table["name"], "measure": measure, "index": index}
@@ -526,7 +607,12 @@ def _convert_metrics(tables):
                 warn(scope, f"duplicate measure name; renamed to '{name}'")
             seen.add(name)
 
-            metric = {"name": name, "expression": make_expression(expression, DIALECT_DAX)}
+            metric = {
+                "name": name,
+                "expression": _measure_expression(
+                    expression, scope, translate_dax, resolve_field, measures
+                ),
+            }
             if measure.get("description"):
                 metric["description"] = text(measure["description"])
             # A measure's result type is inferred from its DAX, so it is reported for
@@ -725,14 +811,24 @@ def _split_ai_context(obj, consumed):
 
 
 def _decode_ai_context(value):
-    """Decode JSON objects and arrays while leaving scalar annotation text unchanged."""
+    """Decode schema-compatible JSON objects, retaining other annotation text."""
     if not isinstance(value, str):
         return value
     try:
         decoded = json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return value
-    return decoded if isinstance(decoded, (dict, list)) else value
+    if not isinstance(decoded, dict):
+        return value
+    if "instructions" in decoded and not isinstance(decoded["instructions"], str):
+        return value
+    for key in ("synonyms", "examples"):
+        if key in decoded and (
+            not isinstance(decoded[key], list)
+            or any(not isinstance(item, str) for item in decoded[key])
+        ):
+            return value
+    return decoded
 
 
 def _stash_model(
@@ -761,15 +857,15 @@ def _stash_model(
         for table in excluded_tables:
             if table["name"] in metric_home_tables:
                 # The table is not a dataset, but its measures are first-class metrics,
-                # so only the table definition stays in custom_extensions.
+                # so only the table definition stays in nonportable_extensions.
                 detail = (
                     "excluded from the Apache Ossie model as a dataset; its measures are "
                     "exported as Apache Ossie metrics and the table definition is "
-                    "preserved in custom_extensions"
+                    "preserved in nonportable_extensions"
                 )
             else:
                 detail = (
-                    "excluded from the Apache Ossie model and preserved in custom_extensions"
+                    "excluded from the Apache Ossie model and preserved in nonportable_extensions"
                 )
             warn(f"table '{table['name']}'", f"{_exclusion_reason(table)}; {detail}")
     if excluded_relationships:

@@ -37,15 +37,28 @@ git clone --recurse-submodules https://github.com/apache/ossie-converters.git
 git submodule update --init
 ```
 
+Repository-level cross-converter acceptance and pairwise checks live in
+[`interop/`](interop/README.md). The matrix registers all 24 converter projects,
+with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
+
+The Microsoft converter also has an optional
+[vendor-specific live validation helper](microsoft/README.md#optional-live-engine-validation).
+`ossie_microsoft.engine` deploys exported Power BI models to Microsoft Fabric and asks
+Microsoft's engine to compile and evaluate their DAX against generated sample data.
+It does not implement Ossie's Layer 2/3 query semantics or establish cross-vendor
+query-result equivalence.
+
 Contributions follow the Apache Ossie
 [contribution guide](https://github.com/apache/ossie/blob/main/CONTRIBUTING.md).
 
 ## Document format
 
-Converters use the flat `0.2.0.dev0` core format: one model per JSON/YAML document,
+Converters use the [flat core format](https://github.com/apache/ossie/tree/main/core-spec): one model per JSON/YAML document,
 with `name`, `datasets`, `relationships`, and `metrics` at the root alongside
-`version`. Legacy `semantic_model` arrays or object wrappers must be migrated
-before conversion; see the [migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
+`version`. Migrate legacy `semantic_model` wrappers before conversion unless the
+target converter explicitly supports them. The [Microsoft converter](microsoft/README.md)
+accepts the single-model `0.1.1` array returned by Snowflake Semantic Views. See the
+[migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
 For catalog exports, write separate documents rather than wrapping multiple
 models in one file. Ontology documents retain their embedded `semantic_model`
 property as defined by the ontology schema.
@@ -88,7 +101,8 @@ Read an Ossie semantic model and produce the equivalent vendor-specific represen
 - Ossie → Snowflake semantic model definition
 - Ossie → dbt `semantic_models` YAML
 - Ossie → Tableau data source / Salesforce semantic layer
-- Ossie → Databricks semantic layer definition
+- Ossie → Databricks Unity Catalog metric views
+- Ossie → LookML (Looker / BigQuery)
 
 ### Import (Vendor → Apache Ossie)
 
@@ -104,6 +118,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `SALESFORCE` | Salesforce / Tableau semantic layer |
 | `DBT` | dbt semantic models |
 | `DATABRICKS` | Databricks semantic layer |
+| `BIGQUERY` | Looker / LookML (Google Cloud semantic layer over BigQuery) |
 | `OMNI` | Omni semantic model |
 | `WISDOM` | WisdomAI domain |
 | `NVIDIA_AUTO_ONTOLOGY` | NVIDIA Auto Ontology model document YAML (formerly `NVIDIA_GSF`) |
@@ -112,6 +127,8 @@ The Ossie specification currently defines extensions for the following vendors:
 | `CUBE` | Cube data model |
 | `HEX` | Hex semantic project |
 | `HOLISTICS` | Holistics AML dataset |
+| `LIGHTDASH` | Lightdash semantic layer (model files, or dbt `meta`) |
+| `ATACCAMA` | Ataccama ONE catalog metadata |
 
 [`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped spoke. It reads one Snowflake semantic view, writes one Ossie document, writes a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. It does not call `snowflake` (Cortex Analyst export only) or `wisdom` (that spoke drops synonyms and field or metric `ai_context`).
 
@@ -297,7 +314,7 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 | Composite primary keys | Ensure the vendor format supports composite keys; if not, flatten or document the limitation |
 | Cross-dataset metrics referencing multiple tables | Ensure all referenced datasets exist and relationships are defined; resolve qualified column names |
 | Custom extensions with unknown vendor | Ignore (do not discard) — preserve for round-tripping |
-| `ai_context` on a vendor that doesn't support it | Store in a `custom_extension` with `vendor_name: COMMON` to preserve for round-tripping |
+| `ai_context` on a vendor that doesn't support it | Store in a `custom_extension` under the converter's own vendor name (see [`extensions/vendors.md`](https://github.com/apache/ossie/blob/main/extensions/vendors.md)) to preserve for round-tripping; there is no shared cross-vendor token |
 
 ### Round-Trip Fidelity
 

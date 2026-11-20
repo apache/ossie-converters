@@ -15,18 +15,27 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 from dataclasses import dataclass
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import sqlglot
+from sqlglot import exp
 
 from ossie import (
+    OssieCustomExtension,
     OssieDataset,
+    OssieDataType,
     OssieDialect,
+    OssieDialectExpression,
     OssieDocument,
     OssieExpression,
     OssieField,
     OssieSemanticModel,
+    OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
+from ossie_dbt.ratio_helpers import mark_ratio_helpers
 from ossie_dbt.expression_utils import (
     ROW_COUNT_EXPR,
     _extract_agg_info,
@@ -37,6 +46,9 @@ from ossie_dbt.expression_utils import (
     _try_parse_ratio,
 )
 
+from metricflow_semantic_interfaces.implementations.element_config import (
+    PydanticSemanticLayerElementConfig,
+)
 from metricflow_semantic_interfaces.implementations.elements.dimension import (
     PydanticDimension,
     PydanticDimensionTypeParams,
@@ -77,6 +89,27 @@ class _KeySets:
     foreign: Set[str]
 
 
+def _unique_metric_name(base: str, taken_names: Set[str]) -> str:
+    """Return `base`, or `base_2`, `base_3`, … if taken, and record the result in `taken_names`."""
+    name, suffix = base, 2
+    while name in taken_names:
+        name, suffix = f"{base}_{suffix}", suffix + 1
+    taken_names.add(name)
+    return name
+
+
+def _with_ossie_datatype(meta: Dict[str, Any], datatype: Optional[OssieDataType]) -> Dict[str, Any]:
+    """Return `meta` with `ossie.datatype` replaced by the element's Ossie datatype, when both are set.
+
+    dbt -> Ossie reads `meta.ossie.datatype` when MetricFlow has no native datatype. A stale copy
+    left in `meta` would replace an edited or conflicting Ossie datatype on the next pass.
+    """
+    ossie_meta = meta.get("ossie")
+    if datatype is None or not isinstance(ossie_meta, dict) or "datatype" not in ossie_meta:
+        return meta
+    return {**meta, "ossie": {**ossie_meta, "datatype": datatype.value}}
+
+
 class _UnresolvedRowCountDataset(Exception):
     """A row-count expression that cannot be safely converted into a metric.
 
@@ -84,6 +117,10 @@ class _UnresolvedRowCountDataset(Exception):
     more than one dataset, or a qualifier matching none or several), or it is a form with no sensible
     translation at all, such as ``COUNT(DISTINCT *)``.
     """
+
+
+class _UnsupportedMetricExpression(Exception):
+    """An expression that cannot be represented without inventing MetricFlow semantics."""
 
 
 class OssieToMSIConverter:
@@ -102,8 +139,10 @@ class OssieToMSIConverter:
     * Metric expressions are parsed with sqlglot:
       - single-agg patterns (`SUM(col)`, `COUNT(DISTINCT col)`, …) → SIMPLE
         metric with `metric_aggregation_params` (no measure reference needed)
-      - `(expr_a) / (expr_b)` → RATIO (with auto-generated sub-metrics)
-      - anything else → SIMPLE with the raw expression stored in `expr`
+      - `(expr_a) / (expr_b)` → RATIO (with auto-generated sub-metrics named
+        `<metric>_numerator` / `<metric>_denominator`, suffixed `_2`, `_3`, … on a name clash)
+      - expressions that cannot be represented without changing aggregation
+        semantics are dropped with a ConverterIssue
     """
 
     def __init__(self, dialect: OssieDialect = OssieDialect.ANSI_SQL) -> None:
@@ -111,10 +150,14 @@ class OssieToMSIConverter:
 
     def convert(self, document: OssieDocument) -> ConverterResult[PydanticSemanticManifest]:
         semantic_models: List[PydanticSemanticModel] = []
+        issues: List[ConverterIssue] = []
 
         for dataset in document.datasets:
-            semantic_models.append(self._convert_dataset(dataset, document))
-        metrics, issues = self._convert_metrics(document)
+            model, dataset_issues = self._convert_dataset(dataset, document)
+            semantic_models.append(model)
+            issues.extend(dataset_issues)
+        metrics, metric_issues = self._convert_metrics(document)
+        issues.extend(metric_issues)
 
         return ConverterResult(
             output=PydanticSemanticManifest(
@@ -133,33 +176,89 @@ class OssieToMSIConverter:
         self,
         dataset: OssieDataset,
         ossie_sm: OssieSemanticModel,
-    ) -> PydanticSemanticModel:
+    ) -> Tuple[PydanticSemanticModel, List[ConverterIssue]]:
         key_sets = self._build_key_sets(dataset, ossie_sm)
 
         entities: List[PydanticEntity] = []
         dimensions: List[PydanticDimension] = []
+        issues: List[ConverterIssue] = []
 
         for field in dataset.fields or []:
             expr = self._get_expression(field.expression)
-            self._classify_field(
-                field,
-                expr,
-                expr if expr != field.name else None,
-                key_sets.primary,
-                key_sets.unique,
-                key_sets.foreign,
-                entities,
-                dimensions,
+            issues.extend(
+                self._classify_field(
+                    field,
+                    expr,
+                    expr if expr != field.name else None,
+                    key_sets.primary,
+                    key_sets.unique,
+                    key_sets.foreign,
+                    entities,
+                    dimensions,
+                )
             )
 
-        return PydanticSemanticModel(
-            name=dataset.name,
-            node_relation=self._parse_source(dataset.source),
-            description=dataset.description,
-            entities=entities,
-            dimensions=dimensions,
-            measures=[],
+        config, config_issues = self._config_from_custom_extensions(dataset.custom_extensions, dataset.name)
+        issues.extend(config_issues)
+        return (
+            PydanticSemanticModel(
+                name=dataset.name,
+                node_relation=self._parse_source(dataset.source),
+                description=dataset.description,
+                entities=entities,
+                dimensions=dimensions,
+                measures=[],
+                config=config,
+            ),
+            issues,
         )
+
+    @staticmethod
+    def _config_from_custom_extensions(
+        custom_extensions: Optional[List[OssieCustomExtension]],
+        element_name: str,
+        datatype: Optional[OssieDataType] = None,
+    ) -> Tuple[Optional[PydanticSemanticLayerElementConfig], List[ConverterIssue]]:
+        """Reconstruct MSI `config.meta` from the `DBT` entry that dbt -> Ossie writes (#42).
+
+        That entry's `data` is a JSON object with `config.meta` under its `meta` key. A `DBT`
+        entry without a `meta` key holds other dbt config, such as `materialized` or `tags`,
+        and is left alone, like the extensions of other vendors. An empty `meta` is treated
+        as absent, as it is in the other direction.
+
+        Ossie documents are external input, so a `DBT` vendor name does not guarantee this
+        converter wrote the entry. Data that is not a JSON object, or whose `meta` is not an
+        object, is skipped and recorded as `INVALID_DBT_CUSTOM_EXTENSION` rather than
+        failing the conversion.
+
+        `datatype` is the element's Ossie datatype; it replaces a `meta.ossie.datatype`
+        carried in the entry (see `_with_ossie_datatype`).
+        """
+        issues: List[ConverterIssue] = []
+        restored: Optional[Dict[str, Any]] = None
+        for ext in custom_extensions or []:
+            if ext.vendor_name != OssieVendor.DBT.value:
+                continue
+            try:
+                payload = json.loads(ext.data)
+            except (ValueError, RecursionError):
+                # RecursionError: nesting too deep to decode.
+                payload = None
+            if isinstance(payload, dict) and "meta" not in payload:
+                continue
+            meta = payload.get("meta") if isinstance(payload, dict) else None
+            if not isinstance(meta, dict):
+                issues.append(ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, element_name))
+                continue
+            if not meta:
+                continue
+            if restored is None:
+                restored = meta
+            else:
+                issues.append(ConverterIssue(ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION, element_name))
+        if restored is None:
+            return None, issues
+        return PydanticSemanticLayerElementConfig(meta=_with_ossie_datatype(restored, datatype)), issues
 
     @staticmethod
     def _build_key_sets(dataset: OssieDataset, ossie_sm: OssieSemanticModel) -> _KeySets:
@@ -196,7 +295,7 @@ class OssieToMSIConverter:
         foreign_key_cols: Set[str],
         entities: List[PydanticEntity],
         dimensions: List[PydanticDimension],
-    ) -> None:
+    ) -> List[ConverterIssue]:
         """Classify a single Ossie field and append it to the appropriate list.
 
         Classification order (first match wins):
@@ -209,6 +308,7 @@ class OssieToMSIConverter:
         Aggregation info lives on metrics (`metric_aggregation_params`), not on
         semantic model measures, so there is no measure classification step.
         """
+        config, issues = self._config_from_custom_extensions(field.custom_extensions, field.name, field.datatype)
         if field.name in primary_key_cols:
             entities.append(
                 PydanticEntity(
@@ -218,10 +318,10 @@ class OssieToMSIConverter:
                     description=field.description,
                     label=field.label,
                     role=None,
-                    config=None,
+                    config=config,
                 )
             )
-            return
+            return issues
         if field.name in unique_key_cols:
             entities.append(
                 PydanticEntity(
@@ -231,10 +331,10 @@ class OssieToMSIConverter:
                     description=field.description,
                     label=field.label,
                     role=None,
-                    config=None,
+                    config=config,
                 )
             )
-            return
+            return issues
         if field.name in foreign_key_cols:
             entities.append(
                 PydanticEntity(
@@ -244,10 +344,10 @@ class OssieToMSIConverter:
                     description=field.description,
                     label=field.label,
                     role=None,
-                    config=None,
+                    config=config,
                 )
             )
-            return
+            return issues
         if field.is_time_dimension():
             # Ossie carries no granularity metadata; default to DAY.
             dimensions.append(
@@ -258,10 +358,10 @@ class OssieToMSIConverter:
                     expr=expr_or_none,
                     description=field.description,
                     label=field.label,
-                    config=None,
+                    config=config,
                 )
             )
-            return
+            return issues
         dimensions.append(
             PydanticDimension(
                 name=field.name,
@@ -270,9 +370,10 @@ class OssieToMSIConverter:
                 expr=expr_or_none,
                 description=field.description,
                 label=field.label,
-                config=None,
+                config=config,
             )
         )
+        return issues
 
     # ------------------------------------------------------------------
     # Metric conversion
@@ -281,15 +382,46 @@ class OssieToMSIConverter:
     def _convert_metrics(self, ossie_sm: OssieSemanticModel) -> Tuple[List[PydanticMetric], List[ConverterIssue]]:
         metrics: List[PydanticMetric] = []
         issues: List[ConverterIssue] = []
+        # Names of document metrics and of sub-metrics generated so far; generated names must not reuse them.
+        taken_names: Set[str] = {metric.name for metric in ossie_sm.metrics or []}
         for metric in ossie_sm.metrics or []:
-            expr_str = self._get_expression(metric.expression)
+            dialect_expr = self._get_dialect_expression(metric.expression, sql_only=True)
+            dialect = self._sql_dialect(dialect_expr.dialect) if dialect_expr is not None else None
+            if dialect_expr is None or dialect is None:
+                issues.append(
+                    ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
+                )
+                continue
+            config, config_issues = self._config_from_custom_extensions(
+                metric.custom_extensions, metric.name, metric.datatype
+            )
+            # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
+            reserved_names = set(taken_names)
             try:
-                metrics.extend(self._convert_metric(metric.name, expr_str, metric.description, ossie_sm.datasets))
+                converted = self._convert_metric(
+                    metric.name,
+                    dialect_expr.expression,
+                    metric.description,
+                    ossie_sm.datasets,
+                    dialect,
+                    taken_names=reserved_names,
+                    config=config,
+                )
+                # Sign after restoring user metadata; never replace that metadata.
+                mark_ratio_helpers(converted)
+                metrics.extend(converted)
+                taken_names = reserved_names
             except _UnresolvedRowCountDataset:
                 # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.ROW_COUNT_METRIC_DROPPED, element_name=metric.name)
                 )
+            except _UnsupportedMetricExpression:
+                issues.append(
+                    ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
+                )
+            else:
+                issues.extend(config_issues)
         return metrics, issues
 
     def _convert_metric(
@@ -298,6 +430,10 @@ class OssieToMSIConverter:
         expr_str: str,
         description: Optional[str],
         datasets: List[OssieDataset],
+        dialect: str = "",
+        *,
+        taken_names: Optional[Set[str]] = None,
+        config: Optional[PydanticSemanticLayerElementConfig] = None,
     ) -> List[PydanticMetric]:
         """Return one or more PydanticMetric objects for the given Ossie expression.
 
@@ -305,18 +441,22 @@ class OssieToMSIConverter:
         and column expression directly — no intermediate measure is created.
 
         Multiple metrics are returned when a RATIO metric requires auto-generated
-        sub-metrics for its numerator and denominator.
+        sub-metrics for its numerator and denominator. Helpers remain public,
+        while the owning ratio carries provenance alongside its restored metadata.
+        Their names are added to `taken_names`, which holds every name already in use.
         """
+        if taken_names is None:
+            taken_names = {name}
         # --- SIMPLE: single aggregation ---
-        agg_result = _extract_agg_info(expr_str)
+        agg_result = _extract_agg_info(expr_str, dialect)
         if agg_result is not None:
             agg, col, percentile, use_discrete = agg_result
             is_row_count = agg is AggregationType.COUNT and col == ROW_COUNT_EXPR
             if is_row_count or (agg is AggregationType.SUM and _is_constant_expr(col)):
                 # A constant, not a column: it must not go through the column → dataset lookup.
-                semantic_model_name = self._find_dataset_for_row_count(expr_str, datasets)
+                semantic_model_name = self._find_dataset_for_row_count(expr_str, datasets, dialect)
             else:
-                semantic_model_name = self._find_dataset_for_col(expr_str, col, datasets)
+                semantic_model_name = self._find_dataset_for_col(expr_str, datasets, dialect)
             agg_params = (
                 PydanticMeasureAggregationParameters(
                     percentile=percentile,
@@ -342,18 +482,21 @@ class OssieToMSIConverter:
                     ),
                     filter=None,
                     metadata=None,
-                    config=None,
+                    config=config,
                 )
             ]
 
         # --- RATIO: (num_expr) / (den_expr) ---
-        ratio_result = _try_parse_ratio(expr_str)
+        ratio_result = _try_parse_ratio(expr_str, dialect)
         if ratio_result is not None:
             num_expr, den_expr = ratio_result
-            num_name = f"{name}__numerator"
-            den_name = f"{name}__denominator"
-            num_metrics = self._convert_metric(num_name, num_expr, None, datasets)
-            den_metrics = self._convert_metric(den_name, den_expr, None, datasets)
+            # MetricFlow rejects names containing a double underscore, so use a single one.
+            num_name = _unique_metric_name(f"{name}_numerator", taken_names)
+            den_name = _unique_metric_name(f"{name}_denominator", taken_names)
+            # Helpers are converter-generated. Copying the author's meta onto them
+            # would duplicate it on the next dbt -> Ossie pass.
+            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect, taken_names=taken_names)
+            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect, taken_names=taken_names)
             ratio_metric = PydanticMetric(
                 name=name,
                 description=description,
@@ -364,41 +507,14 @@ class OssieToMSIConverter:
                 ),
                 filter=None,
                 metadata=None,
-                config=None,
+                config=config,
             )
             return [*num_metrics, *den_metrics, ratio_metric]
 
-        # COUNT(DISTINCT *) / COUNT(DISTINCT 1) / ..., anywhere in the expression (bare, wrapped in
-        # parens, or combined with other operations): not a column count and not a row count either
-        # (it answers whether any row exists, 0 or 1). Drop rather than fall back to a raw SUM of it,
-        # which MetricFlow cannot run and which would guess a dataset the way a row count must not.
-        if _contains_distinct_row_count(expr_str):
+        if _contains_distinct_row_count(expr_str, dialect):
             raise _UnresolvedRowCountDataset(f"{expr_str!r} has no sensible SIMPLE or RATIO translation")
 
-        # --- Fallback: complex expression that can't be decomposed ---
-        # Store the raw expression in `expr` with a best-guess aggregation type.
-        # The caller is responsible for reviewing and correcting these metrics.
-        fallback_dataset = datasets[0].name if datasets else ""
-        return [
-            PydanticMetric(
-                name=name,
-                description=description,
-                type=MetricType.SIMPLE,
-                type_params=PydanticMetricTypeParams(
-                    expr=expr_str,
-                    metric_aggregation_params=PydanticMetricAggregationParams(
-                        semantic_model=fallback_dataset,
-                        agg=AggregationType.SUM,
-                        agg_params=None,
-                        agg_time_dimension=None,
-                        non_additive_dimension=None,
-                    ),
-                ),
-                filter=None,
-                metadata=None,
-                config=None,
-            )
-        ]
+        raise _UnsupportedMetricExpression(expr_str)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -407,35 +523,71 @@ class OssieToMSIConverter:
     def _find_dataset_for_col(
         self,
         raw_expr_str: str,
-        bare_col: str,
         datasets: List[OssieDataset],
+        dialect: str = "",
     ) -> str:
-        """Determine which dataset a column belongs to for `metric_aggregation_params.semantic_model`.
+        """Resolve every referenced column to one model, never a rendered scalar body."""
+        columns = list(sqlglot.parse_one(raw_expr_str, read=dialect).find_all(exp.Column))
+        qualifiers = {
+            ".".join(part.name for part in column.parts[:-1])
+            for column in columns
+            if len(column.parts) > 1
+        }
+        owners: Set[str] = set()
+        for column in columns:
+            if len(column.parts) > 1:
+                qualifier = ".".join(part.name for part in column.parts[:-1])
+                matches = [dataset.name for dataset in datasets if dataset.name == qualifier]
+                if not matches:
+                    matches = [
+                        dataset.name for dataset in datasets
+                        if _strip_qualifier(dataset.name) == _strip_qualifier(qualifier)
+                    ]
+                if not matches and not any(part.args.get("quoted") for part in column.parts[:-1]):
+                    matches = [
+                        dataset.name for dataset in datasets
+                        if _strip_qualifier(dataset.name).casefold() == _strip_qualifier(qualifier).casefold()
+                    ]
+                if not matches and len(datasets) == 1 and len(qualifiers) == 1:
+                    matches = [datasets[0].name]
+            else:
+                matches = [
+                    dataset.name for dataset in datasets
+                    if any(self._field_matches_column(field, column) for field in dataset.fields or [])
+                ]
+                if not matches and len(datasets) == 1:
+                    matches = [datasets[0].name]
+            if len(matches) != 1:
+                raise _UnsupportedMetricExpression(
+                    f"{column.sql(dialect=dialect)!r} does not identify one semantic model"
+                )
+            owners.add(matches[0])
+        if not columns and len(datasets) == 1:
+            return datasets[0].name
+        if len(owners) != 1:
+            raise _UnsupportedMetricExpression(
+                f"{raw_expr_str!r} does not identify one semantic model"
+            )
+        return owners.pop()
 
-        For qualified references like `SUM(orders.amount)` the qualifier is used directly.
-        For unqualified references the datasets are scanned for a matching field name.
-        Falls back to the first dataset's name if no match is found.
-        """
-        # Check for a dataset qualifier in the raw expression (e.g. "orders.amount").
-        # Parse column references instead of splitting the rendered inner expression,
-        # which may be a compound CASE expression for SUM_BOOLEAN metrics.
-        dataset_qualifier = _get_dataset_qualifier(raw_expr_str)
-        if dataset_qualifier:
-            return dataset_qualifier
-
-        # Scan datasets for a field whose name or expression matches the bare column
-        for dataset in datasets:
-            for field in dataset.fields or []:
-                if field.name == bare_col:
-                    return dataset.name
-                field_expr = self._get_expression(field.expression)
-                if _strip_qualifier(field_expr) == bare_col:
-                    return dataset.name
-
-        return datasets[0].name if datasets else ""
+    def _field_matches_column(self, field: OssieField, column: exp.Column) -> bool:
+        if field.name == column.name:
+            return True
+        dialect_expr = self._get_dialect_expression(field.expression, sql_only=True)
+        if dialect_expr is None:
+            return False
+        try:
+            field_expr = sqlglot.parse_one(
+                dialect_expr.expression, read=self._sql_dialect(dialect_expr.dialect)
+            )
+        except sqlglot.errors.SqlglotError:
+            return False
+        return isinstance(field_expr, exp.Column) and field_expr.name == column.name
 
     @staticmethod
-    def _find_dataset_for_row_count(raw_expr_str: str, datasets: List[OssieDataset]) -> str:
+    def _find_dataset_for_row_count(
+        raw_expr_str: str, datasets: List[OssieDataset], dialect: str = ""
+    ) -> str:
         """Determine which dataset a ``COUNT(*)`` counts the rows of.
 
         Only the qualifier decides: ``COUNT(orders.*)`` names ``orders`` (a schema prefix such as
@@ -444,7 +596,7 @@ class OssieToMSIConverter:
         Raises ``_UnresolvedRowCountDataset`` when no single dataset can be determined.
         """
         dataset_names = [dataset.name for dataset in datasets]
-        qualifier = _get_dataset_qualifier(raw_expr_str)
+        qualifier = _get_dataset_qualifier(raw_expr_str, dialect)
         if qualifier is None:
             if len(dataset_names) == 1:
                 return dataset_names[0]
@@ -462,12 +614,21 @@ class OssieToMSIConverter:
         )
 
     def _get_expression(self, ossie_expr: OssieExpression) -> str:
-        """Return the expression string for the preferred dialect.
+        """Return the expression string for the preferred dialect."""
+        dialect_expr = self._get_dialect_expression(ossie_expr)
+        return dialect_expr.expression if dialect_expr is not None else ""
 
-        Preference order: the converter's dialect, then OSSIE_SQL_2026, then the
+    def _get_dialect_expression(
+        self, ossie_expr: OssieExpression, sql_only: bool = False
+    ) -> Optional[OssieDialectExpression]:
+        """Return the expression for the preferred dialect.
+
+        Preference order: the converter's dialect, then the top-level ``sql``
+        (which wins over an OSSIE_SQL_2026 entry), then OSSIE_SQL_2026, then the
         first entry available. OSSIE_SQL_2026 is Ossie's portable expression
         language, based on ANSI SQL:2003 Core, so it is treated as an ANSI_SQL
         equivalent rather than left to the positional fallback.
+        With ``sql_only``, non-SQL entries are excluded before applying that order.
 
         `dialects` has no `uniqueItems` constraint, so one dialect may appear
         more than once. The first entry wins in that case, as it already does
@@ -475,17 +636,49 @@ class OssieToMSIConverter:
         OSSIE_SQL_2026 match because the converter's dialect outranks it and
         may still appear further down the list.
         """
-        ossie_sql_expr: Optional[str] = None
+        # The top-level `sql` is written in OSSIE_SQL_2026 and wins over an OSSIE_SQL_2026 entry.
+        ossie_sql_expr: Optional[OssieDialectExpression] = (
+            OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression=ossie_expr.sql)
+            if ossie_expr.sql is not None
+            else None
+        )
+        first_expr: Optional[OssieDialectExpression] = ossie_sql_expr
 
-        for dialect_expr in ossie_expr.dialects:
-            if dialect_expr.dialect is self._dialect:
-                return dialect_expr.expression
-            if dialect_expr.dialect is OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
-                ossie_sql_expr = dialect_expr.expression
+        for dialect_expr in ossie_expr.dialects or []:
+            if sql_only and self._sql_dialect(dialect_expr.dialect) is None:
+                continue
+            if first_expr is None:
+                first_expr = dialect_expr
+            if dialect_expr.dialect == self._dialect:
+                return dialect_expr
+            if dialect_expr.dialect == OssieDialect.OSSIE_SQL_2026 and ossie_sql_expr is None:
+                ossie_sql_expr = dialect_expr
 
         if ossie_sql_expr is not None:
             return ossie_sql_expr
-        return ossie_expr.dialects[0].expression if ossie_expr.dialects else ""
+        return first_expr
+
+    @staticmethod
+    def _sql_dialect(dialect: str) -> Optional[str]:
+        # SQLGlot also registers non-SQL expression languages; those are not SQL fallbacks.
+        if dialect in {
+            OssieDialect.DAX,
+            OssieDialect.MDX,
+            OssieDialect.MAQL,
+            OssieDialect.TABLEAU,
+            OssieDialect.SIGMA,
+            OssieDialect.THOUGHTSPOT,
+        }:
+            return None
+        # The portable core's DATEADD/DATEDIFF unit-first syntax matches this reader.
+        if dialect in {OssieDialect.ANSI_SQL, OssieDialect.OSSIE_SQL_2026}:
+            return "snowflake"
+        reader = dialect.lower()
+        try:
+            sqlglot.Dialect.get_or_raise(reader)
+        except ValueError:
+            return None
+        return reader
 
     @staticmethod
     def _parse_source(source: str) -> PydanticNodeRelation:

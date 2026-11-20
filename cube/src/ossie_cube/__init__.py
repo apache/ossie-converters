@@ -30,8 +30,8 @@ string}.
 
 from ._common import ConversionError
 from .converter_issues import ConverterIssue, IssueLog, IssueType
-from .cube_to_osi import convert_cube_to_ossie
-from .osi_to_cube import convert_ossie_to_cube
+from .cube_to_ossie import convert_cube_to_ossie
+from .ossie_to_cube import convert_ossie_to_cube
 from .view_projection import convert_cube_view_to_ossie
 
 __all__ = [

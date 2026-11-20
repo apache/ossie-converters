@@ -116,27 +116,76 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 
 ### Conversion notes
 
+A RATIO metric becomes `(numerator) / NULLIF(denominator, 0)`: MetricFlow returns NULL for a group whose
+denominator is 0, and the Ossie expression does the same rather than leave division by zero to the engine.
+
 **MSI → Ossie** is lossy in the following ways, each recorded as a `ConverterIssue` in the result:
 
 | Issue type | Reason |
 |---|---|
 | `CONVERSION_METRIC_DROPPED` | Ossie has no conversion-funnel metric type |
-| `PRIVATE_METRIC_DROPPED` | Ossie has no visibility modifiers |
+| `PRIVATE_METRIC_DROPPED` | Ossie has no visibility modifiers. Every dropped private metric is reported, even when its expression is also inlined into a ratio. |
 | `NATURAL_ENTITY_DROPPED` | Ossie has no natural-key entity type |
 | `CUMULATIVE_SEMANTICS_LOSS` | Window/grain semantics cannot be expressed in an Ossie expression string; the base aggregation is preserved |
+| `NON_PORTABLE_METRIC_SEMANTICS` | A metric uses window, grain, offset, time-spine, or conversion semantics that Ossie cannot represent; the metric is dropped |
 | `AMBIGUOUS_REFERENCE_METRIC_DROPPED` | An input metric is listed more than once under one reference with differing filters, so the expression reference is ambiguous; give each occurrence a distinct alias |
 | `CONSTANT_METRIC_SEMANTIC_MODEL_LOSS` | A metric over a constant, such as a row count (`SUM(1)`), has no column to carry its semantic model; recorded when the manifest has more than one, since converting it back will refuse it |
 
-**Ossie → MSI** reconstructs a best-effort MSI manifest from Ossie's simpler schema. Nothing is dropped for supported inputs, but Ossie carries less structural information than MSI, so the converter makes the following choices:
+Ossie `datatype` attributes use native MetricFlow datatype annotations when present,
+falling back to `config.meta.ossie.datatype` annotations on dimensions, entities,
+measures, and metrics in source dbt models, carried into `semantic_manifest.json`
+by `dbt parse`.
+
+A non-empty `config.meta` on a semantic model, dimension, entity, measure, or metric
+is carried as one `DBT` `custom_extensions` entry on the matching Ossie dataset, field,
+or metric, with `data` set to `{"meta": {...}}`. Values JSON cannot represent, such as
+dates, are written as strings.
+
+**Ossie → MSI** reconstructs a best-effort MSI manifest from Ossie's simpler schema. Nothing is dropped for supported inputs apart from the `custom_extensions` noted below, but Ossie carries less structural information than MSI, so the converter makes the following choices:
 
 - Composite primary and unique keys are rejected because MSI entities cannot preserve grouped key semantics
 - Single aggregations (`SUM(col)`, `COUNT(DISTINCT col)`, etc.) → SIMPLE metric with `metric_aggregation_params`
 - `COUNT(*)` / `COUNT(<dataset>.*)` → `count` SIMPLE metric with `expr: '1'`, because MetricFlow cannot render a bare `*` inside a count. The counted dataset comes from the qualifier, so with more than one dataset write `COUNT(orders.*)`; a bare `COUNT(*)`, or a qualifier that matches no dataset, is skipped with a `ROW_COUNT_METRIC_DROPPED` warning
 - `SUM(<constant>)` (e.g. `SUM(1)`) keeps its constant, but has no column to place it in a dataset: with more than one dataset it is skipped with `ROW_COUNT_METRIC_DROPPED`
 - `COUNT(DISTINCT *)`, `COUNT(DISTINCT 1)` and the like, anywhere in an expression, are skipped with `ROW_COUNT_METRIC_DROPPED`: they count whether any row exists, not how many
-- `(expr_a) / (expr_b)` → RATIO metric with auto-generated sub-metrics
-- Anything else → SIMPLE metric with the raw expression stored verbatim
+- `(expr_a) / (expr_b)` or `(expr_a) / NULLIF(expr_b, 0)` → RATIO metric with auto-generated SIMPLE sub-metrics named `<metric>_numerator` and `<metric>_denominator` (MetricFlow rejects names with a double underscore); if a name is already taken, `_2`, `_3`, … is appended. Generated helpers remain public and directly queryable, preserving compatibility with existing MetricFlow queries and saved queries. The owning ratio carries versioned `config.meta.ossie.generated_ratio_helpers` provenance (helper names and a signature of the complete generated definitions). Reverse conversion folds away helpers only when that family is unchanged, has no external metric or saved-query references, and exports without conversion issues. Missing, malformed, stale, or stripped provenance conservatively retains helpers; names alone never identify generated metrics. Legacy unmarked projects therefore retain their existing output. Private metrics always report `PRIVATE_METRIC_DROPPED`; inlining cannot preserve their visibility contract.
+- A root aggregate over a scalar SQL expression (for example,
+  `SUM(CASE WHEN ... THEN amount ELSE 0 END)`) → SIMPLE metric with the
+  scalar expression in `expr` and the root function in `agg`
+- Compound expressions resolve each referenced column independently. All columns
+  must identify one dataset; ambiguous unqualified or cross-dataset references
+  are refused. A sole unknown qualifier is accepted as an alias only in a
+  single-dataset document; multiple unknown qualifiers are never collapsed.
+- Field and metric dialect selection skips non-SQL entries, then prefers the configured
+  dialect, the top-level `sql` (portable `OSSIE_SQL_2026`, which wins over an
+  `OSSIE_SQL_2026` entry), and the first available SQLGlot-readable SQL entry.
+  Parsing and rendering retain that dialect through ratio decomposition.
+  The ANSI/portable core uses SQLGlot's Snowflake reader for its unit-first
+  `DATEADD`/`DATEDIFF` syntax; this is syntax handling, not Snowflake execution.
+- The explicit safe scalar AST set covers the core specification's date
+  arithmetic/extraction, string manipulation/search, mathematical, conditional
+  and cast categories, including interval and tuple operands. Unknown/custom
+  functions, nested aggregates, windows and subqueries remain unsupported;
+  function support does not imply support for every core aggregate.
+- Expressions that cannot be decomposed without changing aggregation semantics,
+  and non-SQL measure expressions such as DAX, are dropped with an
+  `UNSUPPORTED_METRIC_EXPRESSION` issue
 - Time dimensions always receive `TimeGranularity.DAY` (Ossie carries no granularity field)
+- A `DBT` `custom_extensions` entry whose `data` has a `meta` object is restored to `config.meta` on the matching semantic model, entity, dimension, or metric. When the element has an Ossie `datatype`, it replaces any `meta.ossie.datatype` in the entry, so an edited datatype is not undone on the next dbt → Ossie pass
+- `DBT` entries without a `meta` key (dbt config such as `materialized`), entries with an empty `meta`, other vendors' entries, and model- and relationship-level `custom_extensions` are not carried into the manifest
+- A `DBT` entry whose `data` is not a JSON object, or whose `meta` is not an object, is skipped with `INVALID_DBT_CUSTOM_EXTENSION`; the rest of the element still converts
+- When more than one `DBT` entry on the same element carries `meta`, the first is kept and the others are ignored with `DUPLICATE_DBT_CUSTOM_EXTENSION`
+
+### Generated ratio helper provenance
+
+New helper families use provenance version 2. Signatures reuse MetricFlow's
+COUNT-to-SUM, boolean-SUM, and MEDIAN-to-percentile rules on a private copy,
+so the raw converter API and the CLI's dbt manifest parser agree, including
+later round trips that re-express a COUNT as a boolean aggregation. This does
+not make the helpers private or rewrite their emitted definitions. All other
+semantic fields and external-consumer checks remain part of the conservative
+retention contract. Version 1 markers are accepted only when their exact original
+definitions still match; otherwise helpers are retained rather than guessed.
 
 ## Development
 

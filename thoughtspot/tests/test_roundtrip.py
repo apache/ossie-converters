@@ -509,7 +509,7 @@ def test_tpcds_physical_fields_translate_to_their_warehouse_column_even_when_the
     assert _dialects(return_amt)[PORTABLE_DIALECT] == "RETURN_AMT"
 
 
-def test_tpcds_known_unportable_metrics_have_no_portable_sibling_and_an_issue():
+def test_tpcds_metrics_are_portable_exactly_when_their_shape_allows():
     _, ossie_result, _ = _tml_roundtrip("tpcds")
     model = ossie_result.model
 
@@ -519,11 +519,16 @@ def test_tpcds_known_unportable_metrics_have_no_portable_sibling_and_an_issue():
     assert PORTABLE_DIALECT not in _dialects(profit_margin)
     assert "metric:profit_margin" in _issue_refs(ossie_result.issues, "TS-EXPR-FORMULA-REFERENCE")
 
-    # A bare aggregate call over a physical column: still a function call,
-    # not a bare column reference, so it is THOUGHTSPOT-only too.
+    # NOT here any more: a bare aggregate over a column the model surfaces.
+    # `total_sales` is `sum ( [store_sales::ss_ext_sales_price] )` over a
+    # declared field, and it now composes a portable sibling
+    # (apache/ossie-converters#30). Asserted positively so this test cannot
+    # pass by the metric quietly disappearing.
     total_sales = _metric(model, "total_sales")
-    assert PORTABLE_DIALECT not in _dialects(total_sales)
-    assert "metric:total_sales" in _issue_refs(ossie_result.issues, "TS-EXPR-THOUGHTSPOT-ONLY")
+    assert PORTABLE_DIALECT in _dialects(total_sales)
+    assert "metric:total_sales" not in _issue_refs(
+        ossie_result.issues, "TS-EXPR-THOUGHTSPOT-ONLY"
+    )
 
     # A physical column reference the model never surfaces as a field
     # resolves to nothing at all, which is a different unportable reason
@@ -1396,3 +1401,84 @@ class TestAnAbsentAggregationDefaultsToSum:
         assert "TS-METRIC-AGGREGATION-DEFAULT-UNRESOLVED" in [
             i["code"] for i in result.issues.as_dicts()
         ], "declining to apply the default must be reported, not silent"
+
+
+class TestADeclinedSumDefaultSurvivesTheReturnTrip:
+    """A MEASURE column with no `aggregation` whose type SUM is meaningless
+    over (VARCHAR, DATE, BOOL) has the implicit default declined on the way
+    out. Declining is only half the job.
+
+    The source carries no `aggregation` key, and an absent key means SUM to
+    ThoughtSpot. So emitting the metric unaggregated and recording nothing
+    else puts the SUM straight back on import, and the Ossie document in
+    between disagrees with both ends of the trip. @jbonofre asked for exactly
+    this test reviewing apache/ossie-converters#18.
+    """
+
+    @staticmethod
+    def _documents(data_type):
+        table = TmlDocument(kind="table", guid=None, body={
+            "name": "ORDERS", "db": "SALES", "schema": "PUBLIC",
+            "db_table": "ORDERS", "connection": {"name": "wh"},
+            "columns": [{"name": "Status Code", "db_column_name": "status_code",
+                         "properties": {"column_type": "MEASURE"},
+                         "db_column_properties": {"data_type": data_type}}]})
+        model = TmlDocument(kind="model", guid=None, body={
+            "name": "m", "model_tables": [{"name": "ORDERS"}],
+            "columns": [{"name": "Status Code", "column_id": "ORDERS::Status Code",
+                         "properties": {"column_type": "MEASURE"}}]})
+        return DocumentSet(model=model, tables=(table,))
+
+    def _returned_column(self, data_type):
+        forward = tml_to_ossie.convert(self._documents(data_type))
+        result = ossie_to_thoughtspot.convert(forward.model)
+        documents = getattr(result, "documents", None) or getattr(result, "document_set", None)
+        model = (documents.model if hasattr(documents, "model")
+                 else next(d for d in documents if d.kind in ("model", "worksheet")))
+        return next(c for c in model.body["columns"] if c["name"] == "Status Code")
+
+    @pytest.mark.parametrize("data_type", ["VARCHAR", "DATE", "BOOL"])
+    def test_the_returned_column_says_none_rather_than_nothing(self, data_type):
+        column = self._returned_column(data_type)
+        assert column["properties"].get("aggregation") == "NONE", (
+            f"returned {column['properties']!r}; an absent key means SUM to "
+            f"ThoughtSpot, so the declined default would come straight back"
+        )
+
+    @pytest.mark.parametrize("data_type", ["INT64", "DOUBLE"])
+    def test_a_numeric_column_comes_back_saying_sum(self, data_type):
+        """The symmetry worth naming: BOTH cases return an explicit key.
+
+        A numeric column gets the default applied, the expression becomes
+        `sum ( ... )`, and the reverse direction derives `aggregation: SUM`
+        from it -- behaviour that predates this change (verified against the
+        branch point). So the source's absent key becomes an explicit SUM,
+        which is semantically what absent already meant.
+
+        The non-summable case returns `NONE` by the same logic, reached a
+        different way: not derived from the expression, but recorded because
+        the default was declined. Neither is byte-identical to a source that
+        said nothing; both say out loud what ThoughtSpot would otherwise
+        infer, and they differ precisely where the inference should.
+        """
+        column = self._returned_column(data_type)
+        assert column["properties"].get("aggregation") == "SUM", column["properties"]
+
+    def test_this_deliberately_does_not_reproduce_the_source_byte_for_byte(self):
+        """Recorded because it is a judgement, not an oversight.
+
+        The source has no `aggregation` key and the return has
+        `aggregation: NONE`, so this one column does not round-trip
+        identically. That is the point: a MEASURE column ThoughtSpot would SUM
+        over a VARCHAR is not a model that works, and reproducing it exactly
+        would hand back the same broken one. If this assertion ever has to
+        change, the trade-off above is what is being changed.
+        """
+        source = self._documents("VARCHAR").model.body["columns"][0]
+        assert "aggregation" not in source["properties"]
+        assert self._returned_column("VARCHAR")["properties"]["aggregation"] == "NONE"
+        # And the numeric column is not byte-identical either, for a reason
+        # that predates this change -- so "the return states the aggregation
+        # explicitly" is the existing convention here, not a new exception
+        # carved out for the declined case.
+        assert self._returned_column("INT64")["properties"]["aggregation"] == "SUM"

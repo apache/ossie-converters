@@ -18,6 +18,7 @@
 """Command-line interface for the Microsoft Power BI <-> Apache Ossie converter.
 
     ossie-microsoft import -i model.bim   [-o model.yaml]
+    ossie-microsoft import -i Report.pbip [-o model.yaml]
     ossie-microsoft export -i model.yaml  [-o model.bim]
 
 With no ``-o``, the result is written to stdout.
@@ -33,19 +34,26 @@ import json
 import logging
 import sys
 import warnings
+from pathlib import Path
 
 import yaml
 
 from ._common import LOGGER, ConversionError
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
+from .pbip import import_powerbi_project, reraise_tom_load_failure
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
 
 
 class _CountingHandler(logging.Handler):
-    """Counts reported conversion issues so the CLI can summarize and exit on them."""
+    """Counts reported conversion issues so the CLI can summarize and exit on them.
+
+    Conversion issues are reported at WARNING and above. Lower records (such as the
+    DEBUG list of TMDL documents a project import loads) reach this handler when the
+    package logger is set to DEBUG; they are not issues, so the handler's level skips
+    them and a clean conversion still passes --strict."""
 
     def __init__(self, quiet):
-        super().__init__()
+        super().__init__(level=logging.WARNING)
         self.count = 0
         self.quiet = quiet
 
@@ -96,10 +104,22 @@ def _build_parser():
     imp = sub.add_parser(
         "import",
         parents=[sub_flags],
-        help="Power BI semantic model (TMSL model.bim) -> Apache Ossie semantic model",
+        help="Power BI semantic model -> Apache Ossie semantic model",
     )
-    imp.add_argument("-i", "--input", required=True, help="model.bim (TMSL JSON) file")
+    imp.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        help="model.bim, a .pbip file, a .SemanticModel folder, or its definition folder",
+    )
     imp.add_argument("-o", "--output", help="output Apache Ossie YAML (default: stdout)")
+    imp.add_argument(
+        "--translate-dax",
+        action="store_true",
+        default=False,
+        help="translate DAX measures to OSSIE_SQL_2026 where the translation is exact "
+        "(see _dax_to_sql), keeping the original DAX as a fallback (default: off, keep DAX only)",
+    )
 
     exp = sub.add_parser(
         "export",
@@ -112,8 +132,19 @@ def _build_parser():
 
 
 def _run_import(args):
-    with open(args.input, encoding="utf-8-sig") as fh:
-        return convert_semantic_model_to_ossie(json.load(fh))
+    path = Path(args.input)
+    if path.is_dir() or path.suffix.lower() == ".pbip":
+        return import_powerbi_project(path, translate_dax=args.translate_dax)
+    text = path.read_text(encoding="utf-8-sig")
+    stripped = text.lstrip("\ufeff").lstrip()
+    if path.suffix.lower() == ".bim" or stripped.startswith("{"):
+        return convert_semantic_model_to_ossie(
+            json.loads(stripped), translate_dax=args.translate_dax
+        )
+    try:
+        return convert_semantic_model_to_ossie(text, translate_dax=args.translate_dax)
+    except Exception as exc:
+        reraise_tom_load_failure(exc)
 
 
 def _run_export(args):

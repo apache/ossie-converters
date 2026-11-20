@@ -613,3 +613,237 @@ class TestEveryGroupedAggregateIsRecognisedAsAlreadyAggregated:
                 if entry["dialect"] == "THOUGHTSPOT":
                     return entry["expression"]
         raise AssertionError("no THOUGHTSPOT dialect entry was emitted")
+
+
+class TestTheSumDefaultOnlyAppliesWhereSumMeansSomething:
+    """ThoughtSpot's implicit SUM for a MEASURE column with no `aggregation`
+    is correct for a number and nonsense for anything else: a VARCHAR or DATE
+    column marked MEASURE came out as `sum ( [t::col] )`, which is not a valid
+    metric and which nothing warned about.
+
+    Raised by @jbonofre reviewing apache/ossie#463, as the cost of the default
+    that PR introduced.
+    """
+
+    @staticmethod
+    def _table_with(data_type):
+        def lookup(name):
+            if name != "ORDERS":
+                return None
+            return {"name": "ORDERS", "columns": [
+                {"name": "C", "db_column_name": "C",
+                 "db_column_properties": {"data_type": data_type}},
+            ]}
+        return lookup
+
+    @staticmethod
+    def _convert(lookup, properties, log):
+        return convert_metric(
+            {"name": "C", "column_id": "ORDERS::C", "properties": properties},
+            {}, lookup, _resolve, log,
+        )
+
+    @staticmethod
+    def _thoughtspot(metric):
+        return next(
+            e["expression"] for e in metric["expression"]["dialects"]
+            if e["dialect"] == "THOUGHTSPOT"
+        )
+
+    @pytest.mark.parametrize("data_type", ["INT64", "DOUBLE", "FLOAT"])
+    def test_a_numeric_column_still_gets_the_default(self, data_type):
+        log = IssueLog()
+        metric = self._convert(
+            self._table_with(data_type), {"column_type": "MEASURE"}, log,
+        )
+        assert self._thoughtspot(metric) == "sum ( [ORDERS::C] )"
+        assert not [i for i in log.as_dicts() if "NOT-SUMMABLE" in i["code"]]
+
+    @pytest.mark.parametrize("data_type", ["VARCHAR", "DATE", "BOOL"])
+    def test_a_non_summable_column_declines_the_default_and_says_so(self, data_type):
+        log = IssueLog()
+        metric = self._convert(
+            self._table_with(data_type), {"column_type": "MEASURE"}, log,
+        )
+        assert self._thoughtspot(metric) == "[ORDERS::C]", "SUM was composed anyway"
+        codes = [i["code"] for i in log.as_dicts()]
+        assert "TS-METRIC-AGGREGATION-DEFAULT-NOT-SUMMABLE" in codes, codes
+
+    @pytest.mark.parametrize(
+        "aggregation,emitted",
+        # The emitted spelling is TML's, not the enum's: COUNT_DISTINCT is
+        # written `unique count`. Asserting the literal keeps this test honest
+        # about what actually reaches a document.
+        [("COUNT", "count"), ("COUNT_DISTINCT", "unique count"),
+         ("SUM", "sum"), ("MIN", "min")],
+    )
+    def test_an_explicit_aggregation_is_never_second_guessed(self, aggregation, emitted):
+        # The author said so. `count ( [t::name] )` over a VARCHAR is ordinary,
+        # and even an odd choice is an instruction rather than a default.
+        log = IssueLog()
+        metric = self._convert(
+            self._table_with("VARCHAR"),
+            {"column_type": "MEASURE", "aggregation": aggregation}, log,
+        )
+        assert self._thoughtspot(metric) == f"{emitted} ( [ORDERS::C] )"
+        assert not [i for i in log.as_dicts() if "NOT-SUMMABLE" in i["code"]]
+
+    def test_an_undeclared_type_keeps_the_default(self):
+        """The guard declines only on a type it can READ and knows is not
+        summable. Withholding the default because a column declares no type
+        would reintroduce the raw-per-row bug the default exists to fix -- the
+        default's whole premise is that ThoughtSpot sums when nothing says
+        otherwise, and 'no declared type' is not 'not a number'.
+        """
+        def lookup(name):
+            return {"name": "ORDERS", "columns": [{"name": "C", "db_column_name": "C"}]}
+
+        log = IssueLog()
+        metric = self._convert(lookup, {"column_type": "MEASURE"}, log)
+        assert self._thoughtspot(metric) == "sum ( [ORDERS::C] )"
+        assert not [i for i in log.as_dicts() if "NOT-SUMMABLE" in i["code"]]
+
+    def test_the_decline_does_not_duplicate_the_unmapped_datatype_warning(self):
+        # The guard reads the physical datatype, and so does `_metric_datatype`
+        # right after it. Reading it twice against the real log would report an
+        # unmappable type twice for one column.
+        def lookup(name):
+            return {"name": "ORDERS", "columns": [
+                {"name": "C", "db_column_name": "C",
+                 "db_column_properties": {"data_type": "NOT_A_REAL_TYPE"}},
+            ]}
+
+        log = IssueLog()
+        self._convert(lookup, {"column_type": "MEASURE"}, log)
+        unmapped = [i for i in log.as_dicts() if "DATATYPE-UNMAPPED" in i["code"]]
+        assert len(unmapped) <= 1, unmapped
+
+
+class TestTheSummabilityAllowListIsComplete:
+    """@jbonofre's review of apache/ossie-converters#18 asked whether an
+    allow-list can lose a real numeric measure: if some numeric TML type maps
+    to an Ossie type outside `_SUMMABLE_DATATYPES`, its SUM default is declined
+    and the column comes back as raw per-row values -- the exact bug the
+    default exists to prevent, in the silent direction.
+
+    The answer is no, and this is the table-driven check he asked for: it walks
+    the WHOLE TML -> Ossie map rather than a sample, so adding a numeric type
+    to `datatypes._TO_OSSIE` without adding its Ossie name to
+    `_SUMMABLE_DATATYPES` fails here.
+    """
+
+    #: Which TML types are numeric is a fact about ThoughtSpot, stated once.
+    NUMERIC_TML_TYPES = {"INT64", "DOUBLE", "FLOAT"}
+
+    def test_every_numeric_tml_type_maps_into_the_summable_set(self):
+        from ossie_thoughtspot import datatypes
+        from ossie_thoughtspot.tml_to_ossie import _SUMMABLE_DATATYPES
+
+        unknown = self.NUMERIC_TML_TYPES - set(datatypes._TO_OSSIE)
+        assert not unknown, f"NUMERIC_TML_TYPES names types the map does not have: {unknown}"
+        lost = {
+            tml_type: datatypes._TO_OSSIE[tml_type]
+            for tml_type in self.NUMERIC_TML_TYPES
+            if datatypes._TO_OSSIE[tml_type] not in _SUMMABLE_DATATYPES
+        }
+        assert not lost, (
+            f"these numeric TML types map outside _SUMMABLE_DATATYPES, so a real "
+            f"numeric measure would silently lose its SUM default: {lost}"
+        )
+
+    def test_every_non_numeric_tml_type_maps_outside_it(self):
+        # The other half: a type that is not numeric must not be summable, or
+        # the guard passes something it should have declined.
+        from ossie_thoughtspot import datatypes
+        from ossie_thoughtspot.tml_to_ossie import _SUMMABLE_DATATYPES
+
+        wrong = {
+            tml_type: ossie
+            for tml_type, ossie in datatypes._TO_OSSIE.items()
+            if tml_type not in self.NUMERIC_TML_TYPES and ossie in _SUMMABLE_DATATYPES
+        }
+        assert not wrong, f"non-numeric TML types treated as summable: {wrong}"
+
+    @pytest.mark.parametrize("tml_type", sorted({"INT64", "DOUBLE", "FLOAT"}))
+    def test_a_numeric_column_end_to_end_keeps_its_sum(self, tml_type):
+        # The map check above is static. This drives the real code path, so a
+        # guard that reads the type differently from `_TO_OSSIE` is caught too.
+        def lookup(_name):
+            return {"name": "ORDERS", "columns": [
+                {"name": "C", "db_column_name": "C",
+                 "db_column_properties": {"data_type": tml_type}}]}
+
+        metric = convert_metric(
+            {"name": "C", "column_id": "ORDERS::C",
+             "properties": {"column_type": "MEASURE"}},
+            {}, lookup, _resolve, IssueLog(),
+        )
+        emitted = next(e["expression"] for e in metric["expression"]["dialects"]
+                       if e["dialect"] == "THOUGHTSPOT")
+        assert emitted == "sum ( [ORDERS::C] )", emitted
+
+    def test_an_unmapped_type_keeps_the_default_rather_than_declining(self):
+        # Why the allow-list cannot lose a numeric even in principle: the guard
+        # declines only on a type it RECOGNISES as non-summable. A type outside
+        # the map reads as unknown, and unknown keeps the default. A deny-list
+        # would behave identically here; the allow-list is not the risk.
+        def lookup(_name):
+            return {"name": "ORDERS", "columns": [
+                {"name": "C", "db_column_name": "C",
+                 "db_column_properties": {"data_type": "NUMBER"}}]}
+
+        log = IssueLog()
+        metric = convert_metric(
+            {"name": "C", "column_id": "ORDERS::C",
+             "properties": {"column_type": "MEASURE"}},
+            {}, lookup, _resolve, log,
+        )
+        emitted = next(e["expression"] for e in metric["expression"]["dialects"]
+                       if e["dialect"] == "THOUGHTSPOT")
+        assert emitted == "sum ( [ORDERS::C] )", emitted
+        assert not [i for i in log.as_dicts() if "NOT-SUMMABLE" in i["code"]]
+
+
+class TestAnUntypedFormulaSaysSoWhenItTakesTheDefault:
+    """A formula declares no datatype anywhere in TML, so the summability guard
+    cannot follow it: `sum ( concat ( ... ) )` is composable and uncheckable.
+
+    Declining instead would mean never defaulting any scalar formula, since
+    none is ever typed -- so it composes and reports that it could not check.
+    Raised by @jbonofre reviewing apache/ossie-converters#18.
+    """
+
+    @staticmethod
+    def _lookup(_name):
+        return {"name": "ORDERS", "columns": [
+            {"name": "First", "db_column_name": "F",
+             "db_column_properties": {"data_type": "VARCHAR"}}]}
+
+    def _convert(self, properties, log, expr="concat ( [ORDERS::First] , 'x' )"):
+        return convert_metric(
+            {"name": "M", "formula_id": "f1", "properties": properties},
+            {"f1": {"id": "f1", "name": "M", "expr": expr}},
+            self._lookup, _resolve, log,
+        )
+
+    def test_a_defaulted_scalar_formula_composes_and_reports(self):
+        log = IssueLog()
+        metric = self._convert({"column_type": "MEASURE"}, log)
+        emitted = next(e["expression"] for e in metric["expression"]["dialects"]
+                       if e["dialect"] == "THOUGHTSPOT")
+        assert emitted == "sum ( concat ( [ORDERS::First] , 'x' ) )"
+        codes = [i["code"] for i in log.as_dicts()]
+        assert "TS-METRIC-AGGREGATION-DEFAULT-UNTYPED-FORMULA" in codes, codes
+
+    def test_an_explicit_aggregation_is_not_reported(self):
+        # The author said so; only the implicit default is uncheckable.
+        log = IssueLog()
+        self._convert({"column_type": "MEASURE", "aggregation": "SUM"}, log)
+        assert not [i for i in log.as_dicts() if "UNTYPED-FORMULA" in i["code"]]
+
+    def test_a_formula_that_already_aggregates_is_not_reported(self):
+        # It never reaches the compose branch, so there is no default to warn
+        # about -- warning here would fire on the commonest shape there is.
+        log = IssueLog()
+        self._convert({"column_type": "MEASURE"}, log, expr="sum ( [ORDERS::First] )")
+        assert not [i for i in log.as_dicts() if "UNTYPED-FORMULA" in i["code"]]

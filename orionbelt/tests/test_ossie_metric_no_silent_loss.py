@@ -43,7 +43,7 @@ import ossie_orionbelt.converter as conv
 def _ossie_model(metrics: list[dict[str, Any]]) -> dict[str, Any]:
     """Minimal single-dataset Ossie v0.2 model carrying the given metrics."""
     return {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [
             {

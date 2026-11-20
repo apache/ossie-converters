@@ -366,3 +366,22 @@ def test_relationship_with_missing_keys_is_dropped():
     assert not (result.output.relationships or [])
     assert any(i.issue_type is ConverterIssueType.RELATIONSHIP_DROPPED for i in result.issues)
 
+
+@pytest.mark.parametrize("kind", ["datetime", "date"])
+def test_date_and_time_format_kinds_import_as_datetime(kind):
+    # "datetime" is the kind Sigma accepts. "date" is kept so Ossie files written by older
+    # versions of this converter still import as a date and time.
+    spec = load_fixture("fixtureA_sigma.json")
+    for element in spec["pages"][0]["elements"]:
+        for column in element.get("columns", []):
+            if column.get("id") == "colCreatedAt":
+                column["format"]["kind"] = kind
+    result = SigmaToOssieConverter().convert(spec)
+
+    orders = next(d for d in result.output.datasets if d.name == "Orders")
+    created_at = next(f for f in orders.fields if f.name == "Created At")
+    assert created_at.datatype == "DateTime"
+    assert not any(
+        i.issue_type is ConverterIssueType.OPAQUE_DATATYPE and i.element_name == "Orders.Created At"
+        for i in result.issues
+    )

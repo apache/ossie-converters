@@ -40,9 +40,13 @@ class TestExpressionEntries:
         # A reconstruction from a parsed (name, args) shape would normalise this to
         # `sum ( [ORDERS::Amount] )` and break exact-string equality on the way back.
         log = IssueLog()
-        out = expression_entries("sum([ORDERS::Amount])", _resolve, log, object_ref="f")
+        out = expression_entries(
+            "sum([ORDERS::Amount])", _resolve, log, object_ref="f", kind="metric"
+        )
         assert out[0] == {"dialect": "THOUGHTSPOT", "expression": "sum([ORDERS::Amount])"}
-        assert [e["dialect"] for e in out] == ["THOUGHTSPOT"]
+        # The portable sibling composed beside it is normalised; the verbatim
+        # entry is not, which is the whole point of this test.
+        assert out[1]["expression"] == "SUM(orders.amount)"
 
     def test_a_computed_expression_gets_a_thoughtspot_entry_and_an_issue(self):
         log = IssueLog()
@@ -155,6 +159,10 @@ class TestExpressionEntriesVerbatimUnderAdversarialInput:
         assert isinstance(out[0]["expression"], str)
 
 
+#: Portable as a metric, not as a field -- see the aggregate row below.
+METRIC_ONLY = object()
+
+
 class TestPortableSiblingTruthTable:
     """When exactly does a portable ANSI_SQL sibling appear? One row per input shape,
     plus a sweep confirming none of the non-portable shapes ever produces one anyway
@@ -166,14 +174,29 @@ class TestPortableSiblingTruthTable:
         "reference the resolver cannot resolve": ("[MISSING::Col]", False),
         "expression with a runtime parameter": ("[ORDERS::Amount] * [Growth Rate]", False),
         "expression with a formula cross-reference": ("sum ( [formula_Margin] )", False),
-        "single function call": ("sum([ORDERS::Amount])", False),
+        # One catalog aggregate over one resolvable reference: portable since
+        # apache/ossie-converters#30, but only as a METRIC. A field is a
+        # row-level attribute, so an aggregate has no honest field expression
+        # (apache/ossie-converters#209). Everything below it is a call too, and
+        # each is non-portable for a DIFFERENT reason, so they are listed
+        # separately rather than as one "function call" row.
+        "single aggregate over a resolvable reference": ("sum([ORDERS::Amount])", METRIC_ONLY),
+        "single aggregate, two arguments": (
+            "sum_if([ORDERS::Amount] > 1, [ORDERS::Amount])", False),
+        "single aggregate over an unresolvable reference": ("sum([MISSING::Col])", False),
+        "single aggregate wrapping another call": (
+            "sum ( round ( [ORDERS::Amount] , 2 ) )", False),
+        "single call that is not an aggregate": ("round([ORDERS::Amount], 2)", False),
         "compound expression": ("[ORDERS::Amount] + [ORDERS::Tax]", False),
     }
 
+    @pytest.mark.parametrize("kind", ["field", "metric"])
     @pytest.mark.parametrize("expr,expect_portable", CASES.values(), ids=CASES.keys())
-    def test_portability_per_case(self, expr, expect_portable):
+    def test_portability_per_case(self, expr, expect_portable, kind):
+        if expect_portable is METRIC_ONLY:
+            expect_portable = kind == "metric"
         log = IssueLog()
-        out = expression_entries(expr, _resolve, log, object_ref="f")
+        out = expression_entries(expr, _resolve, log, object_ref="f", kind=kind)
         dialects = [e["dialect"] for e in out]
         if expect_portable:
             assert dialects == ["THOUGHTSPOT", "ANSI_SQL"]
@@ -185,12 +208,15 @@ class TestPortableSiblingTruthTable:
     def test_no_non_portable_case_produces_a_portable_sibling(self):
         # The inverse check: sweep every case this table declares non-portable and
         # confirm none of them slipped an ANSI_SQL entry in anyway.
-        for expr, expect_portable in self.CASES.values():
-            if expect_portable:
-                continue
-            log = IssueLog()
-            out = expression_entries(expr, _resolve, log, object_ref="f")
-            assert "ANSI_SQL" not in [e["dialect"] for e in out], expr
+        for kind in ("field", "metric"):
+            for expr, expect_portable in self.CASES.values():
+                if expect_portable is METRIC_ONLY:
+                    expect_portable = kind == "metric"
+                if expect_portable:
+                    continue
+                log = IssueLog()
+                out = expression_entries(expr, _resolve, log, object_ref="f", kind=kind)
+                assert "ANSI_SQL" not in [e["dialect"] for e in out], (expr, kind)
 
 
 class TestAttributeDataset:
@@ -805,27 +831,67 @@ class TestPortableIdentifierQuoting:
             portable = next(e["expression"] for e in out if e["dialect"] == "ANSI_SQL")
             assert portable == word, portable
 
-    def test_the_reserved_set_still_covers_every_word_sqlglot_rejects(self):
-        """`_SQL_RESERVED` is a literal, so it can go stale when sqlglot moves.
-        This re-derives the oracle from the installed sqlglot and fails if a
-        word it now rejects would still be emitted bare -- loudly, at test
-        time, rather than as an expression the validator turns away.
+    @pytest.mark.parametrize(
+        "word",
+        ["CURRENT_DATE", "CURRENT_TIMESTAMP", "SESSION_USER", "LOCALTIME",
+         "current_date"],
+    )
+    def test_a_niladic_function_column_is_quoted(self, word):
+        """`SELECT CURRENT_DATE` is valid SQL everywhere and returns today's
+        date, not the column of that name. Emitted bare, a ThoughtSpot column
+        called `CURRENT_DATE` reports the wrong value and nothing complains --
+        no parser rejects it, so only reading the answer reveals it.
+
+        That makes this the worst of the three classes `_SQL_RESERVED` covers,
+        and the reason the guard below asks whether a word parses *as a
+        column* rather than merely whether it parses.
         """
         sqlglot = pytest.importorskip("sqlglot")
+        from sqlglot import exp
+
+        out = expression_entries(
+            "[T::C]", self._resolver("orders", word),
+            IssueLog(), object_ref="f", kind="field",
+        )
+        portable = next(e["expression"] for e in out if e["dialect"] == "ANSI_SQL")
+        assert portable == f'"{word}"', portable
+        parsed = sqlglot.parse_one(f"SELECT {portable}").expressions[0]
+        assert isinstance(parsed, exp.Column), (
+            f"{portable} parsed as {type(parsed).__name__}, not a column"
+        )
+
+    def test_the_reserved_set_still_covers_every_word_that_is_not_a_column(self):
+        """`_SQL_RESERVED` is a literal, so it can go stale when sqlglot moves.
+        This re-derives the oracle from the installed sqlglot and fails if any
+        word it would emit bare does not actually read as a column reference.
+
+        The oracle is deliberately **"parses as a `Column`"**, not "parses".
+        The first version of this guard asked only whether parsing succeeded,
+        and every niladic function sailed through it while being exactly the
+        bug: `SELECT CURRENT_DATE` parses beautifully, into a `CurrentDate`
+        node. Asking the weaker question is what let that class ship.
+        """
+        sqlglot = pytest.importorskip("sqlglot")
+        from sqlglot import exp
         from sqlglot.tokens import Tokenizer
 
         from ossie_thoughtspot.tml_to_ossie import _sql_identifier
 
-        missed = []
+        missed = {}
         for word in Tokenizer.KEYWORDS:
             if not word.replace("_", "").isalpha():
                 continue
             try:
-                sqlglot.parse_one(f"SELECT {word}")
+                items = sqlglot.parse_one(f"SELECT {word}").expressions
             except Exception:
-                if _sql_identifier(word) == word:
-                    missed.append(word)
+                reads_as = "a parse error"
+            else:
+                if len(items) == 1 and isinstance(items[0], exp.Column):
+                    continue
+                reads_as = type(items[0]).__name__ if items else "nothing"
+            if _sql_identifier(word) == word:
+                missed[word] = reads_as
         assert not missed, (
-            f"sqlglot rejects these as a bare column reference but "
-            f"_SQL_RESERVED does not cover them: {sorted(missed)}"
+            f"_SQL_RESERVED would emit these bare, but each reads as something "
+            f"other than a column: {dict(sorted(missed.items()))}"
         )

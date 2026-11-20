@@ -41,6 +41,10 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
     ConverterIssueType.PRIVATE_METRIC_DROPPED: "Ossie has no visibility modifiers",
     ConverterIssueType.NATURAL_ENTITY_DROPPED: "Ossie has no natural-key entity type",
     ConverterIssueType.CUMULATIVE_SEMANTICS_LOSS: "Ossie expressions cannot represent window or grain semantics; the base aggregation was preserved",
+    ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS: (
+        "the metric uses window, grain, offset, time-spine, or conversion semantics "
+        "that Ossie cannot represent in an expression string"
+    ),
     ConverterIssueType.CONSTANT_METRIC_SEMANTIC_MODEL_LOSS: (
         "its expression is a constant such as SUM(1), which has no column to say which semantic model it "
         "counts; with more than one dataset, converting it back to dbt will refuse it"
@@ -54,6 +58,18 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
         "an input metric is listed more than once under one reference with differing filters, "
         "so the expression reference is ambiguous; give each occurrence a distinct alias"
     ),
+    ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION: (
+        "MetricFlow SIMPLE metrics require one supported aggregation over a safe scalar expression "
+        "owned by exactly one semantic model"
+    ),
+    ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION: (
+        "its DBT custom_extensions data is not a JSON object, or its meta is not an object, "
+        "so config.meta could not be restored"
+    ),
+    ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION: (
+        "more than one DBT custom_extensions entry carried meta, so only the first "
+        "was restored to config.meta"
+    ),
 }
 
 _DROPPED_ISSUE_TYPES = {
@@ -62,6 +78,8 @@ _DROPPED_ISSUE_TYPES = {
     ConverterIssueType.NATURAL_ENTITY_DROPPED,
     ConverterIssueType.ROW_COUNT_METRIC_DROPPED,
     ConverterIssueType.AMBIGUOUS_REFERENCE_METRIC_DROPPED,
+    ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION,
+    ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS,
 }
 
 

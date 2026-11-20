@@ -151,6 +151,45 @@ def test_legacy_wrappers_are_rejected(wrapper, include_root_model):
         convert_ossie_to_semantic_model(document)
 
 
+def test_0_1_1_wrapper_accepts_root_dialect_and_vendor_declarations():
+    model = _minimal()
+    document = {
+        "version": "0.1.1",
+        "dialects": ["ANSI_SQL"],
+        "vendors": ["SNOWFLAKE"],
+        "semantic_model": [model],
+    }
+
+    with pytest.warns(UserWarning, match="declaration is discarded") as recorded:
+        result = convert_ossie_to_semantic_model(document)
+    assert {str(w.message) for w in recorded if "declaration is discarded" in str(w.message)} == {
+        "[document] legacy root 'dialects' declaration is discarded during migration",
+        "[document] legacy root 'vendors' declaration is discarded during migration",
+    }
+    assert result == _convert(model)
+    assert "version" not in model
+
+
+@pytest.mark.parametrize("wrapper", [None, [], _minimal(), [None], [_minimal(), _minimal()]])
+def test_0_1_1_wrapper_requires_exactly_one_model_object(wrapper):
+    document = {"version": "0.1.1", "semantic_model": wrapper}
+    with pytest.raises(ValueError, match="exactly one model object"):
+        convert_ossie_to_semantic_model(document)
+
+
+def test_0_1_1_wrapper_rejects_model_properties_at_the_root():
+    document = {"version": "0.1.1", "semantic_model": [_minimal()], "name": "another"}
+    with pytest.raises(ValueError, match="model properties inside 'semantic_model'"):
+        convert_ossie_to_semantic_model(document)
+
+
+@pytest.mark.parametrize("property_name", ["version", "semantic_model", "dialects", "vendors"])
+def test_0_1_1_wrapper_rejects_document_properties_inside_the_model(property_name):
+    document = {"version": "0.1.1", "semantic_model": [_minimal(**{property_name: []})]}
+    with pytest.raises(ValueError, match="document properties outside its model"):
+        convert_ossie_to_semantic_model(document)
+
+
 @pytest.mark.parametrize("property_name", ["dialects", "vendors"])
 def test_removed_root_metadata_is_rejected(property_name):
     document = {"version": OSSIE_VERSION, **_minimal(), property_name: []}
@@ -248,7 +287,7 @@ def test_without_generated_direct_lake_partitions_compatibility_behavior_is_pres
 
     assert _convert(semantic_model)["compatibilityLevel"] == 1500
 
-    semantic_model["custom_extensions"] = []
+    semantic_model["nonportable_extensions"] = []
     assert (
         _convert(semantic_model)["compatibilityLevel"]
         == DEFAULT_COMPATIBILITY_LEVEL
@@ -818,6 +857,96 @@ def test_an_ossie_sql_metric_is_translated_to_dax():
     assert _metric_dax("SUM(c)", "OSSIE_SQL_2026") == "SUM('T'[C])"
 
 
+def _metric_dax_for(expression):
+    """Convert a single-metric model with the given expression object; return its DAX."""
+    semantic_model = _minimal(metrics=[{"name": "M", "expression": expression}])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bim = _convert(semantic_model)
+    measures = _table(bim, "T").get("measures") or []
+    return measures[0]["expression"] if measures else None
+
+
+def test_a_portable_sql_metric_is_translated_to_dax():
+    assert _metric_dax_for({"sql": "SUM(c)"}) == "SUM('T'[C])"
+
+
+def test_the_portable_sql_form_wins_over_an_ossie_sql_dialect_entry():
+    expression = {
+        "sql": "SUM(c)",
+        "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "MIN(c)"}],
+    }
+    assert _metric_dax_for(expression) == "SUM('T'[C])"
+
+
+def test_the_portable_sql_form_wins_over_a_stale_ansi_sql_entry():
+    # The spec's examples carry `sql` plus an ANSI_SQL "default" copy; if only `sql`
+    # was edited, exporting the ANSI text would silently use the stale expression.
+    semantic_model = _minimal(
+        metrics=[
+            {
+                "name": "M",
+                "expression": {
+                    "sql": "SUM(c)",
+                    "dialects": [{"dialect": "ANSI_SQL", "expression": "MIN(c)"}],
+                },
+            }
+        ]
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bim = _convert(semantic_model)
+    measure = _table(bim, "T")["measures"][0]
+    assert measure["expression"] == "SUM('T'[C])"
+    assert _annotation(measure, "OssieExpressionDialect") == "OSSIE_SQL_2026"
+
+
+def test_a_dialect_entry_named_sql_is_opaque_not_the_portable_form():
+    # Any non-empty string is a valid dialect name, so `dialect: sql` is an opaque
+    # dialect like any other: the ANSI_SQL entry is exported, as without `sql` support.
+    semantic_model = _minimal(
+        metrics=[
+            {
+                "name": "M",
+                "expression": {
+                    "dialects": [
+                        {"dialect": "sql", "expression": "SUM(c)"},
+                        {"dialect": "ANSI_SQL", "expression": "MIN(c)"},
+                    ]
+                },
+            }
+        ]
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bim = _convert(semantic_model)
+    measure = _table(bim, "T")["measures"][0]
+    assert measure["expression"] == "MIN('T'[C])"
+    assert _annotation(measure, "OssieExpressionDialect") == "ANSI_SQL"
+
+
+def test_a_dax_variant_is_still_preferred_over_the_portable_sql_form():
+    expression = {
+        "sql": "SUM(c)",
+        "dialects": [{"dialect": "DAX", "expression": "SUMX('T', 'T'[C])"}],
+    }
+    assert _metric_dax_for(expression) == "SUMX('T', 'T'[C])"
+
+
+def test_a_portable_sql_field_becomes_a_source_column():
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["fields"][0]["expression"] = {"sql": "c"}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bim = _convert(semantic_model)
+    assert _column(_table(bim, "T"), "C")["sourceColumn"] == "c"
+
+
+def test_a_non_string_portable_sql_form_is_rejected():
+    with pytest.raises(ConversionError, match="sql must be a string"):
+        _metric_dax_for({"sql": 42})
+
+
 @pytest.mark.parametrize(
     ("dialects", "expected_dax", "expected_dialect"),
     [
@@ -923,27 +1052,41 @@ def test_dax_is_preferred_over_ossie_sql():
     assert "annotations" not in measure
 
 
-@pytest.mark.parametrize("dialect", ["ANSI_SQL", "OSSIE_SQL_2026"])
-def test_all_tpcds_example_metrics_translate_to_dax(dialect):
-    repo_root = Path(__file__).resolve().parents[2] / "ossie"
-    ossie = yaml.safe_load(
-        (repo_root / "examples" / "tpcds_semantic_model.yaml").read_text(encoding="utf-8")
+def _core_schema():
+    return json.loads(
+        (FIXTURES / "ossie-schema-0.3.0.dev0.json").read_text(encoding="utf-8")
     )
-    if dialect == "OSSIE_SQL_2026":
-        for dataset in ossie["datasets"]:
-            for field in dataset["fields"]:
-                for entry in field["expression"]["dialects"]:
-                    if entry["dialect"] == "ANSI_SQL":
-                        entry["dialect"] = dialect
-        for metric in ossie["metrics"]:
-            for entry in metric["expression"]["dialects"]:
-                if entry["dialect"] == "ANSI_SQL":
-                    entry["dialect"] = dialect
 
-    schema = json.loads(
-        (repo_root / "core-spec" / "ossie-schema.json").read_text(encoding="utf-8")
-    )
+
+def test_the_tpcds_example_in_the_sql_form_is_valid_against_the_spec(tpcds_osi):
+    schema = _core_schema()
+    ossie = tpcds_osi
+    for element in [f for d in ossie["datasets"] for f in d["fields"]] + ossie["metrics"]:
+        element["expression"] = _sql_form(element["expression"])
     jsonschema.validate(ossie, schema)
+
+
+def _sql_form(expression):
+    """Use portable SQL directly, or rewrite a legacy example's ANSI_SQL entry."""
+    if "sql" in expression:
+        return {"sql": expression["sql"]}
+    text = next(e["expression"] for e in expression["dialects"] if e["dialect"] == "ANSI_SQL")
+    return {"sql": text}
+
+
+@pytest.mark.parametrize("form", ["ANSI_SQL", "OSSIE_SQL_2026", "sql"])
+def test_all_tpcds_example_metrics_translate_to_dax(form, tpcds_osi):
+    ossie = tpcds_osi
+    elements = [field for dataset in ossie["datasets"] for field in dataset["fields"]]
+    elements += ossie["metrics"]
+    for element in elements:
+        expression = _sql_form(element["expression"])
+        element["expression"] = (
+            expression if form == "sql" else make_expression(expression["sql"], form)
+        )
+    # The portable `sql` form reads as OSSIE_SQL_2026.
+    dialect = "OSSIE_SQL_2026" if form == "sql" else form
+    jsonschema.validate(ossie, _core_schema())
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -1157,13 +1300,68 @@ def test_a_legacy_relationship_stash_keeps_non_cardinality_metadata():
 def test_another_vendors_extensions_are_reported_as_dropped():
     semantic_model = _minimal()
     write_stash_for_other_vendor(semantic_model["datasets"][0])
-    with pytest.warns(UserWarning, match="vendor 'DATABRICKS'"):
+    with pytest.warns(
+        UserWarning, match="foreign nonportable_extensions for vendor 'DATABRICKS'"
+    ):
         _convert(semantic_model)
 
 
+@pytest.mark.parametrize(("extension", "vendor"), [
+    ({"vendor_name": None, "vendor": "SNOWFLAKE"}, "SNOWFLAKE"),
+    ({"vendor_name": "", "vendor": "SNOWFLAKE"}, "SNOWFLAKE"),
+    ({}, "<unknown>"),
+])
+def test_legacy_extension_vendor_is_reported_in_warning(extension, vendor):
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["custom_extensions"] = [extension]
+    document = {"version": "0.1.1", "semantic_model": [semantic_model]}
+    with pytest.warns(UserWarning, match=f"vendor '{vendor}'"):
+        convert_ossie_to_semantic_model(document)
+    assert semantic_model["datasets"][0]["custom_extensions"] == [extension]
+
+
+def test_wrapped_native_extension_is_replayed():
+    model = _minimal(custom_extensions=[{
+        "vendor": "POWER_BI", "content": '{"culture":"fr-FR"}',
+    }])
+    result = convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+    assert result["model"]["culture"] == "fr-FR"
+
+
+def test_wrapped_field_extension_is_replayed_without_mutating_input():
+    model = _minimal()
+    field = model["datasets"][0]["fields"][0]
+    extension = {"vendor_name": "POWER_BI", "data": '{"formatString":"0.00"}'}
+    field["custom_extensions"] = [extension]
+    result = convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+    assert _column(_table(result, "T"), "C")["formatString"] == "0.00"
+    assert field["custom_extensions"] == [extension]
+    assert "nonportable_extensions" not in field
+
+
+@pytest.mark.parametrize("entry", [None, 42, "invalid"])
+def test_wrapped_non_mapping_extension_is_rejected(entry):
+    model = _minimal(custom_extensions=[entry])
+    with pytest.raises(ConversionError, match="entries must be mappings"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
+@pytest.mark.parametrize("payload_key", ["data", "content"])
+def test_wrapped_invalid_native_json_is_rejected(payload_key):
+    model = _minimal(custom_extensions=[{"vendor_name": "POWER_BI", payload_key: "{invalid"}])
+    with pytest.raises(ConversionError, match="invalid JSON"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
+def test_wrapped_mixed_extension_formats_are_rejected():
+    model = _minimal(custom_extensions=[], nonportable_extensions=[])
+    with pytest.raises(ConversionError, match="cannot mix legacy and current extensions"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
 def write_stash_for_other_vendor(obj):
-    obj.setdefault("custom_extensions", []).append(
-        {"vendor_name": "DATABRICKS", "data": "{}"}
+    obj.setdefault("nonportable_extensions", []).append(
+        {"vendor_name": "DATABRICKS", "data": {}}
     )
 
 
@@ -1210,20 +1408,43 @@ def test_cli_round_trip(tmp_path):
     assert bim_path.read_text(encoding="utf-8").endswith("\n")
 
 
+def test_cli_exports_a_wrapped_snowflake_0_1_1_model(tmp_path, capsys):
+    from ossie_microsoft.cli import main
+
+    source = FIXTURES / "snowflake_semantic_view_0_1_1.yaml"
+    output = tmp_path / "model.bim"
+    assert main(["export", "-i", str(source), "-o", str(output)]) == 0
+
+    bim = json.loads(output.read_text(encoding="utf-8"))
+    assert bim["name"] == "retail_sales"
+    assert bim["model"]["description"] == "Retail orders and revenue"
+    orders = _table(bim, "orders")
+    assert orders["partitions"][0]["source"]["entityName"] == "sales_orders"
+    assert _column(orders, "order_id")["isKey"] is True
+    assert _column(orders, "net_amount")["sourceColumn"] == "net_amount"
+    assert orders["measures"][0]["name"] == "net_revenue"
+    assert orders["measures"][0]["expression"] == "SUM('orders'[net_amount])"
+    diagnostics = capsys.readouterr().err
+    assert "vendor 'SNOWFLAKE'" in diagnostics
+    assert "targets Apache Ossie spec" not in diagnostics
+
+
 def test_cli_export_reports_errors_without_traceback(tmp_path, capsys):
     from ossie_microsoft.cli import main
 
     bad = tmp_path / "bad.yaml"
-    bad.write_text("version: 0.2.0.dev0\n", encoding="utf-8")
+    bad.write_text("version: 0.3.0.dev0\n", encoding="utf-8")
     assert main(["export", "-i", str(bad)]) == 1
     assert "Error:" in capsys.readouterr().err
 
 
-def test_stash_data_that_is_not_json_is_rejected():
+def test_stash_data_that_is_a_json_string_is_rejected():
     from ossie_microsoft import ConversionError
 
     semantic_model = _minimal()
-    semantic_model["custom_extensions"] = [{"vendor_name": "POWER_BI", "data": "{oops"}]
+    semantic_model["nonportable_extensions"] = [
+        {"vendor_name": "POWER_BI", "data": '{"lineageTag": "abc"}'}
+    ]
     with pytest.raises(ConversionError):
         _convert(semantic_model)
 
@@ -1231,7 +1452,9 @@ def test_stash_data_that_is_not_json_is_rejected():
 def test_a_written_stash_round_trips():
     obj = {}
     write_stash(obj, {"a": 1})
-    assert yaml.safe_load(json.dumps(obj))["custom_extensions"][0]["vendor_name"] == "POWER_BI"
+    restored = yaml.safe_load(yaml.safe_dump(obj))
+    assert restored["nonportable_extensions"][0]["data"] == {"_v": 2, "a": 1}
+    assert read_stash(restored) == {"a": 1}
 
 
 def test_import_export_is_stable_across_two_passes(bim):
@@ -1501,8 +1724,8 @@ def test_a_stash_written_by_a_newer_converter_is_refused():
     from ossie_microsoft._common import STASH_VERSION, VENDOR, ConversionError
 
     obj = {
-        "custom_extensions": [
-            {"vendor_name": VENDOR, "data": json.dumps({"_v": STASH_VERSION + 1})}
+        "nonportable_extensions": [
+            {"vendor_name": VENDOR, "data": {"_v": STASH_VERSION + 1}}
         ]
     }
     with pytest.raises(ConversionError, match="newer converter"):
@@ -1513,8 +1736,8 @@ def test_a_stash_with_a_non_integer_version_is_refused():
     from ossie_microsoft._common import VENDOR, ConversionError
 
     obj = {
-        "custom_extensions": [
-            {"vendor_name": VENDOR, "data": json.dumps({"_v": "1"})}
+        "nonportable_extensions": [
+            {"vendor_name": VENDOR, "data": {"_v": "1"}}
         ]
     }
     with pytest.raises(ConversionError, match="non-integer version"):
@@ -1525,10 +1748,10 @@ def test_a_stash_this_converter_understands_is_replayed():
     from ossie_microsoft._common import STASH_VERSION, VENDOR
 
     obj = {
-        "custom_extensions": [
+        "nonportable_extensions": [
             {
                 "vendor_name": VENDOR,
-                "data": json.dumps({"_v": STASH_VERSION, "lineageTag": "abc"}),
+                "data": {"_v": STASH_VERSION, "lineageTag": "abc"},
             }
         ]
     }

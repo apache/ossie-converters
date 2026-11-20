@@ -129,7 +129,7 @@ During OBML → Ossie conversion, the `customExtensions` with `vendor: "Ossie"` 
 
 ### 2.5 OBML-Specific Features (Not Representable in Ossie)
 
-These OBML features have no direct Ossie equivalent. Where possible, metadata is preserved in Ossie `ai_context` or `custom_extensions` (with `vendor_name: "COMMON"` and `obml_`-prefixed keys) for lossless roundtrip:
+These OBML features have no direct Ossie equivalent. Where possible, metadata is preserved in Ossie `ai_context` or `custom_extensions` (with `vendor_name: "ORIONBELT"` and `obml_`-prefixed keys; documents written earlier under `COMMON` are still read) for lossless roundtrip:
 
 - Secondary joins with `pathName` (preserved in relationship `ai_context`)
 - `allowFanOut` — preserved in metric `custom_extensions` (`obml_allow_fan_out`)
@@ -176,7 +176,7 @@ These OBML features have no direct Ossie equivalent. Where possible, metadata is
 6. Leave out what has no faithful expression, with a warning; each exported measure or metric also carries its full OBML definition (`obml_definition`), which the reverse trip restores instead of re-parsing the SQL
 7. Map OBML dimension metadata into `field.dimension.is_time` flags
 8. Preserve secondary join info in relationship `ai_context`
-9. Store OBML-specific type info in `custom_extensions` with `vendor_name: "COMMON"`
+9. Store OBML-specific type info in `custom_extensions` with `vendor_name: "ORIONBELT"`
 
 ## 4. Validation
 

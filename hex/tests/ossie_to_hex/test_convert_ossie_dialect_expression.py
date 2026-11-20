@@ -25,7 +25,7 @@ from tests.ossie_to_hex.utils import Quick
 
 
 def test_converts_without_resolver() -> None:
-    dialect_expression = Quick.dialect_expression("ANSI_SQL", "amount")
+    dialect_expression = Quick.dialect_expression("OSSIE_SQL_2026", "amount")
     ctx = ExportContext()
     result = convert_ossie_dialect_expression(dialect_expression, resolve=None, ctx=ctx)
     assert result == snapshot("amount")
@@ -33,7 +33,7 @@ def test_converts_without_resolver() -> None:
 
 
 def test_converts_with_no_references() -> None:
-    dialect_expression = Quick.dialect_expression("ANSI_SQL", "SUM(1)")
+    dialect_expression = Quick.dialect_expression("OSSIE_SQL_2026", "SUM(1)")
     ctx = ExportContext()
     references: list[tuple[str, str]] = []
 
@@ -53,7 +53,9 @@ def test_converts_with_no_references() -> None:
 
 
 def test_converts_with_one_qualified_reference() -> None:
-    dialect_expression = Quick.dialect_expression("ANSI_SQL", "SUM(orders.amount)")
+    dialect_expression = Quick.dialect_expression(
+        "OSSIE_SQL_2026", "SUM(orders.amount)"
+    )
     ctx = ExportContext()
     references: list[tuple[str, str]] = []
 
@@ -74,7 +76,7 @@ def test_converts_with_one_qualified_reference() -> None:
 
 def test_converts_with_many_qualified_references() -> None:
     dialect_expression = Quick.dialect_expression(
-        "ANSI_SQL",
+        "OSSIE_SQL_2026",
         "SUM(orders.amount) + customers.id",
     )
     ctx = ExportContext()
