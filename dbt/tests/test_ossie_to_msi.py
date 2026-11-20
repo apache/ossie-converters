@@ -979,6 +979,27 @@ class TestOssieToMSIDatasetScopedMetrics:
             assert params is not None
             assert params.semantic_model == "orders"
 
+    def test_ratio_helpers_carry_provenance_and_fold_back(self) -> None:
+        """A dataset ratio is marked like a model-level one, so the reverse pass folds its helpers away."""
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                orders_metrics=[_ossie_metric("avg_order_amount", "SUM(amount) / COUNT(order_id)")]
+            )
+        )
+        forward = OssieToMSIConverter().convert(doc)
+
+        assert forward.issues == []
+        (ratio,) = [metric for metric in forward.output.metrics if metric.type == MetricType.RATIO]
+        assert ratio.config is not None
+        assert ratio.config.meta["ossie"]["generated_ratio_helpers"]["names"] == [
+            "avg_order_amount_numerator",
+            "avg_order_amount_denominator",
+        ]
+
+        backward = MSIToOssieConverter().convert(forward.output)
+        assert backward.issues == []
+        assert [metric.name for metric in backward.output.metrics or []] == ["avg_order_amount"]
+
     def test_name_taken_by_a_model_metric_is_dropped_with_issue(self) -> None:
         doc = _ossie_doc(
             datasets=self._orders_and_returns(orders_metrics=[_ossie_metric("total", "SUM(amount)")]),
@@ -1143,6 +1164,33 @@ class TestOssieToMSIDatasetScopedMetrics:
 
         assert result.output.metrics == []
         assert result.issues == [ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "orders.total")]
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "AGG(source.total_revenue)",
+            "agg(SOURCE.total_revenue)",
+            "AGG(source.total_revenue) / COUNT(DISTINCT order_id)",
+            "SUM(amount) / NULLIF(AGG(source.total_revenue), 0)",
+            "COALESCE(AGG(source.total_revenue), 0)",
+        ],
+        ids=["alone", "case_insensitive", "ratio_numerator", "ratio_denominator", "scalar_wrapper"],
+    )
+    def test_source_measure_is_dropped_with_issue(self, expression: str) -> None:
+        """`AGG(source.measure)` needs a measure relation as the source (apache/ossie#726).
+
+        A MetricFlow semantic model reads a plain table, and the spec forbids replacing
+        AGG with an ordinary aggregate, so the metric is dropped.
+        """
+        doc = _ossie_doc(
+            datasets=self._orders_and_returns(
+                orders_metrics=[_ossie_metric("revenue", expression, dialect=OssieDialect.OSSIE_SQL_2026)]
+            )
+        )
+        result = OssieToMSIConverter().convert(doc)
+
+        assert result.output.metrics == []
+        assert result.issues == [ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, "orders.revenue")]
 
 
 class TestOssieToMSIDialectSelection:

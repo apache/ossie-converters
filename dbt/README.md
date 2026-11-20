@@ -155,9 +155,12 @@ dates, are written as strings.
   (the `source` qualifier is case insensitive) becomes `column` on that dataset, unless
   the dataset declares a field named `source`. Any other qualifier except the dataset's
   own name, such as another dataset's name, is skipped with an
-  `UNSUPPORTED_METRIC_EXPRESSION` warning. MetricFlow metric names are unique across the
-  manifest, so a dataset metric whose name is already used by a model-level metric or
-  by an earlier dataset's metric is skipped with a `DUPLICATE_METRIC_NAME_DROPPED` warning
+  `UNSUPPORTED_METRIC_EXPRESSION` warning. A metric that evaluates a source measure
+  with `AGG(source.measure)` is also skipped with that warning: it needs a source that
+  is a measure relation, and a MetricFlow semantic model reads a plain table. MetricFlow
+  metric names are unique across the manifest, so a dataset metric whose name is already
+  used by a model-level metric or by an earlier dataset's metric is skipped with a
+  `DUPLICATE_METRIC_NAME_DROPPED` warning
 - A root aggregate over a scalar SQL expression (for example,
   `SUM(CASE WHEN ... THEN amount ELSE 0 END)`) → SIMPLE metric with the
   scalar expression in `expr` and the root function in `agg`
