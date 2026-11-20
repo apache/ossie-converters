@@ -198,6 +198,7 @@ def _ossie_dataset(
     unique_keys: list[list[str]] | None = None,
     description: str | None = None,
     custom_extensions: list[OssieCustomExtension] | None = None,
+    metrics: list[OssieMetric] | None = None,
 ) -> OssieDataset:
     return OssieDataset(
         name=name,
@@ -207,6 +208,7 @@ def _ossie_dataset(
         unique_keys=unique_keys,
         description=description,
         custom_extensions=custom_extensions,
+        metrics=metrics,
     )
 
 

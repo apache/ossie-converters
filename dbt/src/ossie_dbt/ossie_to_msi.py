@@ -31,6 +31,7 @@ from ossie import (
     OssieDocument,
     OssieExpression,
     OssieField,
+    OssieMetric,
     OssieSemanticModel,
     OssieVendor,
 )
@@ -382,47 +383,81 @@ class OssieToMSIConverter:
     def _convert_metrics(self, ossie_sm: OssieSemanticModel) -> Tuple[List[PydanticMetric], List[ConverterIssue]]:
         metrics: List[PydanticMetric] = []
         issues: List[ConverterIssue] = []
+        # Dataset-scoped metrics reference their own dataset's fields by unqualified name and its
+        # source columns as `source.column`, so each one is resolved against that dataset alone.
+        # MetricFlow metric names are global, but the spec only makes them unique within a dataset,
+        # so a name that is already taken is dropped.
+        to_convert: List[Tuple[OssieMetric, str, List[OssieDataset], bool]] = [
+            (metric, metric.name, ossie_sm.datasets, False) for metric in ossie_sm.metrics or []
+        ]
+        declared_names: Set[str] = {metric.name for metric in ossie_sm.metrics or []}
+        for dataset in ossie_sm.datasets:
+            for metric in dataset.metrics or []:
+                element_name = f"{dataset.name}.{metric.name}"
+                if metric.name in declared_names:
+                    issues.append(ConverterIssue(ConverterIssueType.DUPLICATE_METRIC_NAME_DROPPED, element_name))
+                    continue
+                declared_names.add(metric.name)
+                to_convert.append((metric, element_name, [dataset], True))
+
         # Names of document metrics and of sub-metrics generated so far; generated names must not reuse them.
-        taken_names: Set[str] = {metric.name for metric in ossie_sm.metrics or []}
-        for metric in ossie_sm.metrics or []:
-            dialect_expr = self._get_dialect_expression(metric.expression, sql_only=True)
-            dialect = self._sql_dialect(dialect_expr.dialect) if dialect_expr is not None else None
-            if dialect_expr is None or dialect is None:
-                issues.append(
-                    ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
-                )
-                continue
-            config, config_issues = self._config_from_custom_extensions(
-                metric.custom_extensions, metric.name, metric.datatype
+        taken_names = set(declared_names)
+        for metric, element_name, datasets, dataset_scoped in to_convert:
+            self._append_metric(
+                metric, element_name, datasets, metrics, issues, taken_names, dataset_scoped=dataset_scoped
             )
-            # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
-            reserved_names = set(taken_names)
-            try:
-                converted = self._convert_metric(
-                    metric.name,
-                    dialect_expr.expression,
-                    metric.description,
-                    ossie_sm.datasets,
-                    dialect,
-                    taken_names=reserved_names,
-                    config=config,
-                )
-                # Sign after restoring user metadata; never replace that metadata.
-                mark_ratio_helpers(converted)
-                metrics.extend(converted)
-                taken_names = reserved_names
-            except _UnresolvedRowCountDataset:
-                # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
-                issues.append(
-                    ConverterIssue(issue_type=ConverterIssueType.ROW_COUNT_METRIC_DROPPED, element_name=metric.name)
-                )
-            except _UnsupportedMetricExpression:
-                issues.append(
-                    ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, metric.name)
-                )
-            else:
-                issues.extend(config_issues)
         return metrics, issues
+
+    def _append_metric(
+        self,
+        metric: OssieMetric,
+        element_name: str,
+        datasets: List[OssieDataset],
+        metrics: List[PydanticMetric],
+        issues: List[ConverterIssue],
+        taken_names: Set[str],
+        *,
+        dataset_scoped: bool = False,
+    ) -> None:
+        """Convert one Ossie metric against *datasets*, adding it to *metrics* or an issue to *issues*.
+
+        Names of generated sub-metrics are added to *taken_names*. A *dataset_scoped* metric is
+        declared on the single dataset in *datasets*.
+        """
+        dialect_expr = self._get_dialect_expression(metric.expression, sql_only=True)
+        dialect = self._sql_dialect(dialect_expr.dialect) if dialect_expr is not None else None
+        if dialect_expr is None or dialect is None:
+            issues.append(ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, element_name))
+            return
+        config, config_issues = self._config_from_custom_extensions(
+            metric.custom_extensions, element_name, metric.datatype
+        )
+        # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
+        reserved_names = set(taken_names)
+        try:
+            converted = self._convert_metric(
+                metric.name,
+                dialect_expr.expression,
+                metric.description,
+                datasets,
+                dialect,
+                taken_names=reserved_names,
+                config=config,
+                dataset_scoped=dataset_scoped,
+            )
+            # Sign after restoring user metadata; never replace that metadata.
+            mark_ratio_helpers(converted)
+            metrics.extend(converted)
+            taken_names.update(reserved_names)
+        except _UnresolvedRowCountDataset:
+            # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
+            issues.append(
+                ConverterIssue(issue_type=ConverterIssueType.ROW_COUNT_METRIC_DROPPED, element_name=element_name)
+            )
+        except _UnsupportedMetricExpression:
+            issues.append(ConverterIssue(ConverterIssueType.UNSUPPORTED_METRIC_EXPRESSION, element_name))
+        else:
+            issues.extend(config_issues)
 
     def _convert_metric(
         self,
@@ -434,6 +469,7 @@ class OssieToMSIConverter:
         *,
         taken_names: Optional[Set[str]] = None,
         config: Optional[PydanticSemanticLayerElementConfig] = None,
+        dataset_scoped: bool = False,
     ) -> List[PydanticMetric]:
         """Return one or more PydanticMetric objects for the given Ossie expression.
 
@@ -456,7 +492,9 @@ class OssieToMSIConverter:
                 # A constant, not a column: it must not go through the column → dataset lookup.
                 semantic_model_name = self._find_dataset_for_row_count(expr_str, datasets, dialect)
             else:
-                semantic_model_name = self._find_dataset_for_col(expr_str, datasets, dialect)
+                semantic_model_name = self._find_dataset_for_col(
+                    expr_str, datasets, dialect, dataset_scoped=dataset_scoped
+                )
             agg_params = (
                 PydanticMeasureAggregationParameters(
                     percentile=percentile,
@@ -495,8 +533,12 @@ class OssieToMSIConverter:
             den_name = _unique_metric_name(f"{name}_denominator", taken_names)
             # Helpers are converter-generated. Copying the author's meta onto them
             # would duplicate it on the next dbt -> Ossie pass.
-            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect, taken_names=taken_names)
-            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect, taken_names=taken_names)
+            num_metrics = self._convert_metric(
+                num_name, num_expr, None, datasets, dialect, taken_names=taken_names, dataset_scoped=dataset_scoped
+            )
+            den_metrics = self._convert_metric(
+                den_name, den_expr, None, datasets, dialect, taken_names=taken_names, dataset_scoped=dataset_scoped
+            )
             ratio_metric = PydanticMetric(
                 name=name,
                 description=description,
@@ -525,8 +567,14 @@ class OssieToMSIConverter:
         raw_expr_str: str,
         datasets: List[OssieDataset],
         dialect: str = "",
+        *,
+        dataset_scoped: bool = False,
     ) -> str:
-        """Resolve every referenced column to one model, never a rendered scalar body."""
+        """Resolve every referenced column to one model, never a rendered scalar body.
+
+        A *dataset_scoped* expression resolves within the single dataset in *datasets*: a column
+        qualifier must be `source` (a column of its source) or the dataset's own name.
+        """
         columns = list(sqlglot.parse_one(raw_expr_str, read=dialect).find_all(exp.Column))
         qualifiers = {
             ".".join(part.name for part in column.parts[:-1])
@@ -535,7 +583,13 @@ class OssieToMSIConverter:
         }
         owners: Set[str] = set()
         for column in columns:
-            if len(column.parts) > 1:
+            if dataset_scoped and len(column.parts) == 2 and column.parts[0].name.casefold() == "source":
+                # `source.column` is a column of the dataset's source, whatever the case of `source`.
+                # A field named `source` takes the name, and a field is not something to qualify with.
+                (dataset,) = datasets
+                declares_source = any(field.name.casefold() == "source" for field in dataset.fields or [])
+                matches = [] if declares_source else [dataset.name]
+            elif len(column.parts) > 1:
                 qualifier = ".".join(part.name for part in column.parts[:-1])
                 matches = [dataset.name for dataset in datasets if dataset.name == qualifier]
                 if not matches:
@@ -548,7 +602,9 @@ class OssieToMSIConverter:
                         dataset.name for dataset in datasets
                         if _strip_qualifier(dataset.name).casefold() == _strip_qualifier(qualifier).casefold()
                     ]
-                if not matches and len(datasets) == 1 and len(qualifiers) == 1:
+                # With one dataset in the model, a lone unknown qualifier is taken to name it. A
+                # dataset metric gets no such fallback: another dataset's name must not resolve here.
+                if not matches and not dataset_scoped and len(datasets) == 1 and len(qualifiers) == 1:
                     matches = [datasets[0].name]
             else:
                 matches = [
