@@ -47,6 +47,8 @@ from interop.runner import Runner, exit_code
 ROOT = Path(__file__).resolve().parents[2]
 # Every dialect the contract reads, so a new row is exercised without a test edit.
 SQL_DIALECTS = sorted(_DIALECTS)
+# These quote an identifier with backticks. In BigQuery a double-quoted token is a string.
+BACKTICK_DIALECTS = {"BIGQUERY", "DATABRICKS"}
 
 
 def regression(name):
@@ -180,7 +182,7 @@ def test_sigma_return_requires_matching_sql_beside_native_formula(sql, expected)
 )
 @pytest.mark.parametrize("qualifier", ["ORDERS", "OrDeRs", '"orders"'])
 def test_self_qualifier_ownership_normalizes_unquoted_case(dialect, qualifier):
-    if dialect == "DATABRICKS":
+    if dialect in BACKTICK_DIALECTS:
         qualifier = qualifier.replace('"', "`")
     name = "dialect-databricks-only"
     data = document(name)
@@ -200,7 +202,7 @@ def test_self_qualifier_ownership_normalizes_unquoted_case(dialect, qualifier):
     "qualifier", ['"ORDERS"', '"OrDeRs"', "customers", "analytics.orders"]
 )
 def test_qualifier_case_normalization_cannot_hide_other_owners(dialect, qualifier):
-    if dialect == "DATABRICKS":
+    if dialect in BACKTICK_DIALECTS:
         qualifier = qualifier.replace('"', "`")
     name = "dialect-databricks-only"
     data = document(name)
