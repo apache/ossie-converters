@@ -71,6 +71,39 @@ do; the CLI writes them to the output folder and replaces existing files only wi
   measure has no window, and no input comes from a `one_to_many` join. Parameters must have
   defaults; portable expressions use the defaults.
 
+## Metric view joins and Ossie relationships
+
+A metric view is one dataset, even when its definition joins several source tables.
+Its dimensions and measures are evaluated over that view's joined rows. Ossie relationships
+connect separate datasets; they do not turn those datasets into one joined row set or assign
+all aggregates the grain of a particular source table.
+
+For example, suppose Orders contains exactly two rows and States contains exactly one row,
+with both orders referring to that state and no null values. In a metric view joining Orders to States, `COUNT(*)`, `COUNT(order_id)` and `COUNT(state_name)` each
+count two joined rows. In an Ossie model with separate Orders and States datasets,
+`COUNT(Orders.order_id)` counts two orders while `COUNT(States.state_name)` counts one state.
+`COUNT(*)` has no model-level dataset to count. Declaring a many-to-one relationship does
+not make these aggregate definitions interchangeable.
+
+`wrap` preserves this boundary by keeping the metric view as the dataset's `source`, rather
+than reconstructing datasets over its source tables. Consumers can evaluate a measure's
+portable `sql` over that dataset when a verified portable definition is available. Consumers
+that support Databricks pass-through SQL can use the retained
+`DATABRICKS: MEASURE(source.<measure>)` expression to evaluate the native measure. This
+retains measures that require metric-view evaluation, including window measures. It does
+not claim those measures have equivalent portable SQL. The portability checks described
+above still apply, including parameter defaults and restrictions on one-to-many inputs.
+
+Conversion and deployment serve different purposes:
+
+- `to-databricks` and `from-databricks` preserve the model's dataset and relationship
+  boundaries; filling portable expressions does not flatten joins into relationships.
+- `deploy` emits one metric view per dataset and rewrites the model to read those views.
+  Relationships and model-scoped metrics remain in the Ossie model; they are not deployed
+  as metric-view joins or measures.
+- `wrap` exposes an existing metric view as one dataset. It does not import its joins as
+  relationships between the underlying source tables.
+
 ## Expressions
 
 Expressions are translated in two places: `from-databricks` and `wrap` translate Databricks or
