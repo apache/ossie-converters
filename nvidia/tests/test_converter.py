@@ -1233,7 +1233,7 @@ def test_display_names_become_identifiers_and_come_back() -> None:
     assert "ai_context" not in datasets["customer_orders"]
     assert (
         model["metrics"][0]["expression"]["dialects"][0]["expression"]
-        == "SUM(customer_orders.subtotal) / COUNT(DISTINCT customers.customer_id)"
+        == "SUM(customer_orders.subtotal) / COUNT(DISTINCT customers.customer_number)"
     )
     restored = yaml.safe_load(convert_ossie_to_auto_ontology(ossie))
     assert restored["semantic_layer"] == native["semantic_layer"]
@@ -1257,6 +1257,122 @@ def test_keys_and_relationships_name_the_fields_that_read_them() -> None:
             "to_columns": ["customer_number"],
         }
     ]
+
+
+def _orders_with_amount_metric(expression: str) -> dict[str, Any]:
+    ossie = yaml.safe_load(_ossie_yaml())
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    orders["fields"].append(
+        {
+            "name": "amount",
+            "expression": {
+                "dialects": [{"dialect": "ANSI_SQL", "expression": expression}]
+            },
+        }
+    )
+    ossie["metrics"] = [
+        {
+            "name": "total_amount",
+            "expression": {
+                "dialects": [
+                    {"dialect": "ANSI_SQL", "expression": "SUM(orders.amount)"}
+                ]
+            },
+        }
+    ]
+    return ossie
+
+
+def _orders_table(native: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        table
+        for database in native["data_layer"]["databases"]
+        for schema in database["schemas"]
+        for table in schema["tables"]
+        if table["name"] == "orders"
+    )
+
+
+def test_metric_field_refs_become_source_columns_on_export() -> None:
+    native = yaml.safe_load(
+        convert_ossie_to_auto_ontology(
+            yaml.safe_dump(_orders_with_amount_metric("o_totalprice"), sort_keys=False)
+        )
+    )
+    column_names = {column["name"] for column in _orders_table(native)["columns"]}
+    analysis = native["semantic_layer"]["custom_analyses"][0]
+
+    assert "o_totalprice" in column_names
+    assert "amount" not in column_names
+    assert "o_totalprice" in analysis["sql"]
+    assert "orders.amount" not in analysis["sql"]
+
+
+def test_metric_source_columns_become_fields_on_import() -> None:
+    native_yaml = convert_ossie_to_auto_ontology(
+        yaml.safe_dump(_orders_with_amount_metric("o_totalprice"), sort_keys=False)
+    )
+    model = yaml.safe_load(convert_auto_ontology_to_ossie(native_yaml))
+    orders = next(dataset for dataset in model["datasets"] if dataset["name"] == "orders")
+    amount = next(field for field in orders["fields"] if field["name"] == "amount")
+
+    assert amount["expression"]["dialects"][0]["expression"] == "o_totalprice"
+    assert (
+        model["metrics"][0]["expression"]["dialects"][0]["expression"]
+        == "SUM(orders.amount)"
+    )
+
+
+def test_calculated_metric_field_is_inlined_on_export() -> None:
+    native = yaml.safe_load(
+        convert_ossie_to_auto_ontology(
+            yaml.safe_dump(
+                _orders_with_amount_metric("o_totalprice / 100.0"), sort_keys=False
+            )
+        )
+    )
+    column_names = {column["name"] for column in _orders_table(native)["columns"]}
+    analysis = native["semantic_layer"]["custom_analyses"][0]
+
+    assert "o_totalprice" in column_names
+    assert "amount" not in column_names
+    assert "o_totalprice" in analysis["sql"]
+    assert "/ 100" in analysis["sql"]
+    assert "orders.amount" not in analysis["sql"]
+
+
+def test_calculated_metric_field_round_trips_on_import() -> None:
+    native_yaml = convert_ossie_to_auto_ontology(
+        yaml.safe_dump(
+            _orders_with_amount_metric("o_totalprice / 100.0"), sort_keys=False
+        )
+    )
+    model = yaml.safe_load(convert_auto_ontology_to_ossie(native_yaml))
+
+    assert (
+        model["metrics"][0]["expression"]["dialects"][0]["expression"]
+        == "SUM(orders.amount)"
+    )
+
+
+def test_inlined_formula_maps_to_the_calculated_field_not_its_source_column() -> None:
+    ossie = _orders_with_amount_metric("o_totalprice / 100.0")
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    orders["fields"].append(
+        {
+            "name": "price",
+            "expression": {
+                "dialects": [{"dialect": "ANSI_SQL", "expression": "o_totalprice"}]
+            },
+        }
+    )
+    native_yaml = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie, sort_keys=False))
+    model = yaml.safe_load(convert_auto_ontology_to_ossie(native_yaml))
+
+    assert (
+        model["metrics"][0]["expression"]["dialects"][0]["expression"]
+        == "SUM(orders.amount)"
+    )
 
 
 def test_keys_and_relationships_may_name_columns_or_fields() -> None:
@@ -1489,7 +1605,7 @@ def test_sql_only_field_and_metric_are_read_from_their_sql() -> None:
     converted = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie))
 
     assert "orders.net_total * 1.1" in converted
-    assert "SUM(orders.net_total)" in converted
+    assert "SUM((orders.net_total * 1.1))" in converted
 
 
 def test_catalog_only_auto_ontology_has_no_representable_terms() -> None:
