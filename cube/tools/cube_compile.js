@@ -71,8 +71,9 @@ try {
 const { prepareCompiler } = require(path.join(compilerDist, 'compiler/PrepareCompiler'));
 
 const files = process.argv.slice(2);
+const queries = files[0] === '--databricks-queries' ? files.splice(0, 2)[1] : null;
 if (!files.length) {
-  console.log('usage: cube_compile.js <model file> [...]');
+  console.log('usage: cube_compile.js [--databricks-queries <json>] <model file> [...]');
   process.exit(2);
 }
 
@@ -112,12 +113,26 @@ for (const f of dataSchemaFiles) {
   seen.set(f.fileName, true);
 }
 
-const { compiler } = prepareCompiler(
+const compilers = prepareCompiler(
   { localPath: () => root, dataSchemaFiles: () => Promise.resolve(dataSchemaFiles) },
   { adapter: 'postgres' });
 
-compiler.compile()
-  .then(() => console.log('COMPILED OK'))
+compilers.compiler.compile()
+  .then(() => {
+    if (!queries) {
+      console.log('COMPILED OK');
+      return;
+    }
+    const { DatabricksQuery } = require(path.join(
+      repo, 'packages/cubejs-databricks-jdbc-driver/dist/src/DatabricksQuery'));
+    const requests = JSON.parse(fs.readFileSync(queries, 'utf8'));
+    const result = Object.fromEntries(Object.entries(requests).map(([name, query]) => [
+      name, new DatabricksQuery(compilers, {
+        ...query, timezone: 'UTC', useNativeSqlPlanner: false,
+      }).buildSqlAndParams(),
+    ]));
+    console.log(JSON.stringify(result));
+  })
   .catch((e) => {
     // Cube's compile errors are the useful part; the stack is noise here.
     console.log(`COMPILE FAILED\n${String((e && e.message) || e)}`);

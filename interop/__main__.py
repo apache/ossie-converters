@@ -55,6 +55,11 @@ def main(argv=None):
         "--native", action="store_true", help="attempt optional native compiler gates"
     )
     parser.add_argument(
+        "--live-databricks",
+        action="store_true",
+        help="compare TPC-DS Metric View and Cube query results on a Databricks SQL warehouse",
+    )
+    parser.add_argument(
         "--strict",
         action="store_true",
         help="exit 1 for failed, empty, or skipped required checks",
@@ -126,6 +131,7 @@ def main(argv=None):
             timeout=args.timeout,
             prepare=not args.no_prepare,
             native=args.native,
+            live_databricks=args.live_databricks,
         )
         report = runner.run()
     except (Exception, SystemExit) as error:
