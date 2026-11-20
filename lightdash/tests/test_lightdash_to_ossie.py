@@ -15,8 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import json
-
 import pytest
 
 from ossie import OssieDataType, OssieDialect
@@ -152,9 +150,9 @@ SCHEMA_YML = {
 
 
 def _raw_lightdash_data(element):
-    for extension in element.custom_extensions or []:
+    for extension in element.nonportable_extensions or []:
         if extension.vendor_name.upper() == "LIGHTDASH":
-            return json.loads(extension.data)
+            return extension.data
     return {}
 
 

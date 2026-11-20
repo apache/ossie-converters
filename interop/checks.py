@@ -78,9 +78,9 @@ def inventory(data):
 
 def _extensions(value):
     if isinstance(value, dict):
-        yield from value.get("custom_extensions") or []
+        yield from value.get("nonportable_extensions") or []
         for key, child in value.items():
-            if key != "custom_extensions":
+            if key != "nonportable_extensions":
                 yield from _extensions(child)
     elif isinstance(value, list):
         for child in value:
@@ -309,10 +309,9 @@ def compare_inventory(before, after):
         result = Counter()
 
         def extensions(node, *owner):
-            for extension in node.get("custom_extensions") or []:
-                result[
-                    ("extension", *owner, extension["vendor_name"], extension["data"])
-                ] += 1
+            for extension in node.get("nonportable_extensions") or []:
+                data = json.dumps(extension["data"], sort_keys=True)
+                result[("extension", *owner, extension["vendor_name"], data)] += 1
 
         extensions(data, "model")
         for ds in data.get("datasets") or []:

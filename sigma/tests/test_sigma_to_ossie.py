@@ -92,13 +92,13 @@ def test_unmapped_spec_keys_survive_as_native_residue():
     model = SigmaToOssieConverter().convert(spec).output
 
     basic = next(d for d in model.datasets if d.name == "Basic")
-    dataset_ext = json.loads(basic.custom_extensions[0].data)
+    dataset_ext = basic.nonportable_extensions[0].data
     assert dataset_ext["native"]["someFutureElementKey"] == ["not", "yet", "modeled"]
 
-    field_ext = json.loads(basic.fields[0].custom_extensions[0].data)
+    field_ext = basic.fields[0].nonportable_extensions[0].data
     assert field_ext["native"]["someFutureColumnKey"] == {"a": 1}
 
-    model_ext = json.loads(model.custom_extensions[0].data)
+    model_ext = model.nonportable_extensions[0].data
     assert model_ext["native"]["someFutureTopLevelKey"] == {"round": "trips"}
 
 
@@ -143,7 +143,7 @@ def test_all_filter_kinds_are_preserved_with_an_issue():
     model = result.output
 
     events = next(d for d in model.datasets if d.name == "Events")
-    filters = json.loads(events.custom_extensions[0].data)["native"]["filters"]
+    filters = events.nonportable_extensions[0].data["native"]["filters"]
     assert {f["kind"] for f in filters} == {
         "number-range",
         "date-range",
@@ -204,7 +204,7 @@ def test_native_ids_and_page_metadata_preserved_in_custom_extensions():
     model = result.output
 
     orders = next(d for d in model.datasets if d.name == "Orders")
-    ext = json.loads(orders.custom_extensions[0].data)
+    ext = orders.nonportable_extensions[0].data
     assert ext["id"] == "elemOrders"
     assert ext["page_id"] == "pageA"
 
@@ -224,9 +224,9 @@ def test_model_level_metadata_is_captured_into_custom_extensions():
     result = SigmaToOssieConverter().convert(spec)
     model = result.output
 
-    model_ext = json.loads(model.custom_extensions[0].data)
+    model_ext = model.nonportable_extensions[0].data
     for key in ("createdAt", "createdBy", "updatedAt", "updatedBy", "ownerId", "url"):
-        assert model_ext[key] == spec[key], f"expected {key!r} to be captured in model-level custom_extensions"
+        assert model_ext[key] == spec[key], f"expected {key!r} to be captured in model-level nonportable_extensions"
 
 
 def test_element_with_no_id_is_dropped_with_a_converter_issue():
@@ -300,7 +300,7 @@ def test_unresolvable_unique_key_is_dropped_but_preserved_as_native_residue():
     assert dataset.primary_key is None
     assert any(i.issue_type is ConverterIssueType.UNIQUE_KEY_COLUMN_UNRESOLVED for i in result.issues)
 
-    dataset_ext = json.loads(dataset.custom_extensions[0].data)
+    dataset_ext = dataset.nonportable_extensions[0].data
     assert dataset_ext["unique_keys_raw"] == ["inode-nope/DOES_NOT_EXIST"]
 
 

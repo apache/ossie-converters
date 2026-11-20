@@ -19,7 +19,6 @@ from dataclasses import dataclass
 
 from ossie import (
     OssieAIContext,
-    OssieCustomExtension,
     OssieDataset,
     OssieDataType,
     OssieDialect,
@@ -28,6 +27,7 @@ from ossie import (
     OssieExpression,
     OssieField,
     OssieMetric,
+    OssieNonportableExtension,
     OssieRelationship,
     OssieSemanticModel,
 )
@@ -71,7 +71,7 @@ class Quick:
         label: str | None = None,
         dimension: OssieDimension | None = None,
         ai_context: OssieAIContext | None = None,
-        custom_extensions: list[OssieCustomExtension] | None = None,
+        nonportable_extensions: list[OssieNonportableExtension] | None = None,
     ) -> OssieField:
         return OssieField(
             name=name,
@@ -81,7 +81,7 @@ class Quick:
             label=label,
             description=description,
             ai_context=ai_context,
-            custom_extensions=custom_extensions,
+            nonportable_extensions=nonportable_extensions,
         )
 
     @staticmethod
@@ -94,7 +94,7 @@ class Quick:
         primary_key: list[str] | None = None,
         unique_keys: list[list[str]] | None = None,
         ai_context: OssieAIContext | None = None,
-        custom_extensions: list[OssieCustomExtension] | None = None,
+        nonportable_extensions: list[OssieNonportableExtension] | None = None,
     ) -> OssieDataset:
         return OssieDataset(
             name=name,
@@ -107,7 +107,7 @@ class Quick:
             primary_key=primary_key,
             unique_keys=unique_keys,
             ai_context=ai_context,
-            custom_extensions=custom_extensions,
+            nonportable_extensions=nonportable_extensions,
         )
 
     @staticmethod
@@ -118,7 +118,7 @@ class Quick:
         *,
         description: str | None = None,
         ai_context: OssieAIContext | None = None,
-        custom_extensions: list[OssieCustomExtension] | None = None,
+        nonportable_extensions: list[OssieNonportableExtension] | None = None,
     ) -> OssieMetric:
         return OssieMetric(
             name=name,
@@ -126,7 +126,7 @@ class Quick:
             expression=Quick.expression(expression),
             description=description,
             ai_context=ai_context,
-            custom_extensions=custom_extensions,
+            nonportable_extensions=nonportable_extensions,
         )
 
     @staticmethod
@@ -138,7 +138,7 @@ class Quick:
         to_columns: list[str],
         *,
         ai_context: OssieAIContext | None = None,
-        custom_extensions: list[OssieCustomExtension] | None = None,
+        nonportable_extensions: list[OssieNonportableExtension] | None = None,
     ) -> OssieRelationship:
         return OssieRelationship(
             name=name,
@@ -147,7 +147,7 @@ class Quick:
             from_columns=from_columns,
             to_columns=to_columns,
             ai_context=ai_context,
-            custom_extensions=custom_extensions,
+            nonportable_extensions=nonportable_extensions,
         )
 
     @staticmethod
@@ -159,7 +159,7 @@ class Quick:
         *,
         description: str | None = None,
         ai_context: OssieAIContext | None = None,
-        custom_extensions: list[OssieCustomExtension] | None = None,
+        nonportable_extensions: list[OssieNonportableExtension] | None = None,
     ) -> OssieSemanticModel:
         return OssieSemanticModel(
             name=name,
@@ -168,5 +168,5 @@ class Quick:
             relationships=relationships,
             description=description,
             ai_context=ai_context,
-            custom_extensions=custom_extensions,
+            nonportable_extensions=nonportable_extensions,
         )

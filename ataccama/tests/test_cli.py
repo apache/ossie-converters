@@ -227,7 +227,7 @@ def test_the_document_names_the_tenant_used_to_connect(client, tmp_path: Path, m
 
     _run(tmp_path, "--source-urn", SOURCE_URN)
 
-    assert '"tenant": "other-tenant"' in (tmp_path / "out.yaml").read_text()
+    assert "tenant: other-tenant" in (tmp_path / "out.yaml").read_text()
 
 
 def test_an_explicit_token_url_is_passed_through(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

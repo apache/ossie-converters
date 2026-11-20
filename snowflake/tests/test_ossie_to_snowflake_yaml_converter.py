@@ -994,12 +994,12 @@ class TestConvertOssieToSnowflake:
 
 class TestWarnDroppedFields:
     def test_custom_extensions_warned(self):
-        source = {"custom_extensions": [{"vendor_name": "X", "data": "{}"}]}
+        source = {"nonportable_extensions": [{"vendor_name": "X", "data": {}}]}
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             _warn_dropped_fields(source, "model")
         assert len(w) == 1
-        assert "custom_extensions" in str(w[0].message)
+        assert "nonportable_extensions" in str(w[0].message)
 
     def test_label_warned(self):
         source = {"label": "My Label"}
@@ -1044,13 +1044,13 @@ class TestWarnDroppedFields:
         assert len(w) == 0
 
     def test_multiple_dropped_fields_single_warning(self):
-        source = {"label": "L", "custom_extensions": [{}], "version": "1"}
+        source = {"label": "L", "nonportable_extensions": [{}], "version": "1"}
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             _warn_dropped_fields(source, "model")
         assert len(w) == 1
         msg = str(w[0].message)
-        assert "custom_extensions" in msg
+        assert "nonportable_extensions" in msg
         assert "label" in msg
         assert "version" in msg
 
@@ -1062,13 +1062,13 @@ class TestWarnDroppedFields:
 class TestDroppedFieldsEndToEnd:
     def test_custom_extensions_dropped_with_warning(self):
         model = _minimal_model(
-            custom_extensions=[{"vendor_name": "X", "data": "{}"}]
+            nonportable_extensions=[{"vendor_name": "X", "data": {}}]
         )
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
-        assert "custom_extensions" not in result
-        assert any("custom_extensions" in str(x.message) for x in w)
+        assert "nonportable_extensions" not in result
+        assert any("nonportable_extensions" in str(x.message) for x in w)
 
     def test_model_level_ai_context_dropped_with_warning(self):
         model = _minimal_model(

@@ -200,9 +200,9 @@ datasets:
   - name: date_dim
     source: date_dim
     description: Date dimension with calendar attributes
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: GOODDATA
-        data: '{"date_dimension": true, "granularities": ["DAY", "WEEK", "MONTH", "QUARTER", "YEAR"]}'
+        data: {"date_dimension": true, "granularities": ["DAY", "WEEK", "MONTH", "QUARTER", "YEAR"]}
 
 relationships:
   - name: store_sales_to_date_dim

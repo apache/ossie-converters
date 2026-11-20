@@ -94,8 +94,8 @@ class TestOssieFirstRoundTrip:
     def test_no_column_name_stash(self) -> None:
         back = conv.OBMLtoOssie(conv.OssietoOBML(_ossie()).convert()).convert()
         for field in _dataset(back)["fields"]:
-            for ext in field.get("custom_extensions", []):
-                assert "obml_column_name" not in json.loads(ext["data"])
+            for ext in field.get("nonportable_extensions", []):
+                assert "obml_column_name" not in ext["data"]
 
 
 class TestLegacyCodeNamedExport:
@@ -114,10 +114,10 @@ class TestLegacyCodeNamedExport:
                         {
                             "name": "order_id",
                             "expression": _expr("order_id"),
-                            "custom_extensions": [
+                            "nonportable_extensions": [
                                 {
                                     "vendor_name": "ORIONBELT",
-                                    "data": json.dumps({"obml_column_name": "Order ID"}),
+                                    "data": {"obml_column_name": "Order ID"},
                                 }
                             ],
                         }
@@ -136,8 +136,8 @@ def _legacy_field(code: str, column: str) -> dict[str, Any]:
     return {
         "name": code,
         "expression": _expr(code),
-        "custom_extensions": [
-            {"vendor_name": "ORIONBELT", "data": json.dumps({"obml_column_name": column})}
+        "nonportable_extensions": [
+            {"vendor_name": "ORIONBELT", "data": {"obml_column_name": column}}
         ],
     }
 
