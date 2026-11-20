@@ -281,6 +281,12 @@ def test_wisdom_counts_computed_fields_and_measures_without_physical_columns(
     assert native_content(output, "wisdom", "file")["members"] == 1
 
 
+def test_snowflake_counts_top_level_metrics(tmp_path):
+    output = tmp_path / "native.yaml"
+    output.write_text("metrics:\n- name: revenue\n  expr: SUM(amount)\n")
+    assert native_content(output, "snowflake", "file")["members"] == 1
+
+
 def test_sigma_counts_metrics_without_physical_columns(tmp_path):
     output = tmp_path / "native.json"
     output.write_text(
