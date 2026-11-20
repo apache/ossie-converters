@@ -136,7 +136,7 @@
   - name: users_a
     source: schema.table
     primary_key:
-    - user_id
+    - user
     fields:
     - name: user
       expression:
@@ -146,7 +146,7 @@
   - name: users_b
     source: schema.table
     unique_keys:
-    - - user_id
+    - - user
     fields:
     - name: user
       expression:
@@ -166,23 +166,23 @@
     from: users_a
     to: users_b
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   - name: orders__users_a__user
     from: orders
     to: users_a
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   - name: orders__users_b__user
     from: orders
     to: users_b
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   
   '''
 # ---
