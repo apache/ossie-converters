@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ossie_gooddata.datatype_mapping import gooddata_to_ossie_datatype
@@ -48,7 +47,7 @@ def gooddata_to_ossie(
         model: Parsed GoodData declarative model.
         model_name: Name for the Ossie semantic model.
         model_description: Description for the Ossie semantic model.
-        data_source_id: Data source ID to include in custom_extensions.
+        data_source_id: Data source ID to include in nonportable_extensions.
 
     Returns:
         Ossie semantic model as a dict (ready to serialize to YAML).
@@ -81,17 +80,17 @@ def gooddata_to_ossie(
     if ossie_relationships:
         semantic_model["relationships"] = ossie_relationships
 
-    # Model-level custom_extensions for GoodData workspace metadata
+    # Model-level nonportable_extensions for GoodData workspace metadata
     extensions = []
     if data_source_id:
         extensions.append(
             {
                 "vendor_name": "GOODDATA",
-                "data": json.dumps({"data_source_id": data_source_id}),
+                "data": {"data_source_id": data_source_id},
             }
         )
     if extensions:
-        semantic_model["custom_extensions"] = extensions
+        semantic_model["nonportable_extensions"] = extensions
 
     return {
         "version": OSSIE_VERSION,
@@ -149,13 +148,13 @@ def _convert_date_instance(di: GdDateInstance) -> dict[str, Any]:
     if di.title != di.id:
         ossie_ds["ai_context"] = {"synonyms": [di.title]}
 
-    # Store date-specific metadata in custom_extensions
+    # Store date-specific metadata in nonportable_extensions
     ext_data: dict[str, Any] = {
         "date_dimension": True,
         "granularities": di.granularities,
     }
-    ossie_ds["custom_extensions"] = [
-        {"vendor_name": "GOODDATA", "data": json.dumps(ext_data)},
+    ossie_ds["nonportable_extensions"] = [
+        {"vendor_name": "GOODDATA", "data": ext_data},
     ]
 
     return ossie_ds
@@ -181,12 +180,12 @@ def _convert_attribute(attr: GdAttribute, dataset_id: str) -> dict[str, Any]:
     if attr.title != attr.source_column:
         ossie_field.setdefault("ai_context", {})["synonyms"] = [attr.title]
 
-    # Store GoodData-specific attribute metadata in custom_extensions
+    # Store GoodData-specific attribute metadata in nonportable_extensions
     ext = _build_attribute_extension(attr)
     if datatype == "Opaque":
         ext["source_column_data_type"] = attr.source_column_data_type
     if ext:
-        ossie_field["custom_extensions"] = [{"vendor_name": "GOODDATA", "data": json.dumps(ext)}]
+        ossie_field["nonportable_extensions"] = [{"vendor_name": "GOODDATA", "data": ext}]
 
     return ossie_field
 
@@ -210,10 +209,10 @@ def _convert_fact(fact: GdFact, dataset_id: str) -> dict[str, Any]:
     if fact.title != fact.source_column:
         ossie_field.setdefault("ai_context", {})["synonyms"] = [fact.title]
     if datatype == "Opaque":
-        ossie_field["custom_extensions"] = [
+        ossie_field["nonportable_extensions"] = [
             {
                 "vendor_name": "GOODDATA",
-                "data": json.dumps({"source_column_data_type": fact.source_column_data_type}),
+                "data": {"source_column_data_type": fact.source_column_data_type},
             }
         ]
 
@@ -258,8 +257,8 @@ def _convert_reference(
         "to_columns": to_columns,
     }
     if ref.multivalue:
-        rel["custom_extensions"] = [
-            {"vendor_name": "GOODDATA", "data": json.dumps({"multivalue": True})},
+        rel["nonportable_extensions"] = [
+            {"vendor_name": "GOODDATA", "data": {"multivalue": True}},
         ]
     return rel
 

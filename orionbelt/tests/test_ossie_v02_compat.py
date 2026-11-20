@@ -22,8 +22,8 @@ Covers the v2.6 spec bump from Ossie v0.1.1 → v0.2.0.dev0:
 - Emitted ``version`` is the v0.2 constant
 - Dialects and vendors are represented per expression and extension, not at the root
 - Dataset ``primary_key`` is promoted from per-column ``primaryKey: true``
-- Dataset ``unique_keys`` round-trips lossly via OBSL custom_extensions
-- Field ``label`` round-trips via OBSL custom_extensions
+- Dataset ``unique_keys`` round-trips lossly via OBSL nonportable_extensions
+- Field ``label`` round-trips via OBSL nonportable_extensions
 - Legacy v0.1.1 inputs are normalized in place by the shim
 - Every emitted document validates against the resolved v0.2 core schema
 """
@@ -54,12 +54,12 @@ def schema_validator() -> Any:
 
 
 def _collect_vendor_names(ossie: dict[str, Any]) -> set[str]:
-    """Every ``custom_extensions[].vendor_name`` anywhere in an Ossie document."""
+    """Every ``nonportable_extensions[].vendor_name`` anywhere in an Ossie document."""
     found: set[str] = set()
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
-            for ext in node.get("custom_extensions", []) or []:
+            for ext in node.get("nonportable_extensions", []) or []:
                 if isinstance(ext, dict) and ext.get("vendor_name"):
                     found.add(ext["vendor_name"])
             for v in node.values():
@@ -186,7 +186,7 @@ class TestEmittedVersion:
             assert "ANSI_SQL" in tags
 
     def test_vendor_tagged_per_entity_not_root(self) -> None:
-        # ORIONBELT tags our roundtrip metadata in per-entity custom_extensions,
+        # ORIONBELT tags our roundtrip metadata in per-entity nonportable_extensions,
         # not a root array. The OBML field label round-trips as a *native* Ossie
         # field label (no vendor tag needed).
         ossie = conv.OBMLtoOssie(_OBML_WITH_PK_AND_LABEL).convert()

@@ -75,7 +75,7 @@ def _field(dataset: OssieDataset, name: str) -> OssieField:
 
 
 def _ext(obj: OssieDataset | OssieField | OssieDocument) -> dict[str, Any]:
-    return json.loads((obj.custom_extensions or [])[0].data)
+    return (obj.nonportable_extensions or [])[0].data
 
 
 def _schema_errors(document: OssieDocument) -> list[str]:

@@ -33,7 +33,7 @@ from ossie_gooddata.ossie_to_gooddata import (
 def _field_with_extension(datatype: str | None, extension_type: str) -> dict:
     field = {
         "name": "value",
-        "custom_extensions": [
+        "nonportable_extensions": [
             {
                 "vendor_name": "GOODDATA",
                 "data": {"source_column_data_type": extension_type},
@@ -100,10 +100,10 @@ def test_opaque_restores_exact_gooddata_extension_type():
     field = {
         "name": "value",
         "datatype": "Opaque",
-        "custom_extensions": [
+        "nonportable_extensions": [
             {
                 "vendor_name": "GOODDATA",
-                "data": '{"source_column_data_type": "CUSTOM_TYPE"}',
+                "data": {"source_column_data_type": "CUSTOM_TYPE"},
             }
         ],
     }

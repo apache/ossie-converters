@@ -25,15 +25,15 @@
      tests/test_reference_docs_current.py fails the suite if this file
      drifts from what the generator currently produces. -->
 
-# The `custom_extensions[THOUGHTSPOT]` Payload
+# The `nonportable_extensions[THOUGHTSPOT]` Payload
 
-TML carries properties Ossie's core specification has no field for. `TML -> Ossie` stashes each one under a single `custom_extensions` entry attached to the Ossie object it came from; `Ossie -> TML` reads the same entry back. This page is generated from `constants.py`'s own key vocabulary and `STASH_KEY_CLASSIFICATION` — the table `test_stash_key_classification.py` enforces every key read on the `Ossie -> TML` direction must appear in.
+TML carries properties Ossie's core specification has no field for. `TML -> Ossie` stashes each one under a single `nonportable_extensions` entry attached to the Ossie object it came from; `Ossie -> TML` reads the same entry back. This page is generated from `constants.py`'s own key vocabulary and `STASH_KEY_CLASSIFICATION` — the table `test_stash_key_classification.py` enforces every key read on the `Ossie -> TML` direction must appear in.
 
 ## Envelope
 
-Every `custom_extensions` entry this converter writes uses `vendor_name` `THOUGHTSPOT`. `data` is a single JSON-encoded string (never a nested object) whose own top-level `_v` field is the shape version (`1` today) — bumped only when the payload's shape changes, never for a value change; an unrecognised version is a hard failure rather than a silent misread.
+Every `nonportable_extensions` entry this converter writes uses `vendor_name` `THOUGHTSPOT`. `data` is an object whose own top-level `_v` field is the shape version (`1` today) — bumped only when the payload's shape changes, never for a value change; an unrecognised version is a hard failure rather than a silent misread.
 
-The reader is wider than the writer, deliberately. It takes the entry list from either `custom_extensions` or `nonportable_extensions` — the name apache/ossie#522 renames the field to, without accepting the old one — and takes `data` as either the JSON string above or a mapping (the object form of the same change). A document may use either name with either shape. What this converter *writes* stays the name and shape described above, except that a document already using the new name is kept on it rather than moved; a document carrying both names is refused.
+The reader is wider than the writer, deliberately. It takes the entry list from either `nonportable_extensions` or `custom_extensions` — the name before apache/ossie#522 renamed the field — and takes `data` as either the object above or a JSON string (the shape before the same change). A document may use either name with either shape. What this converter *writes* is the name and shape described above, except that a document still using the old name is kept on it, with JSON-string `data`, rather than moved; a document carrying both names is refused.
 
 ## Payload keys
 

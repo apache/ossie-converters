@@ -33,7 +33,7 @@ from metricflow_semantic_interfaces.implementations.metric import (
 )
 from metricflow_semantic_interfaces.implementations.saved_query import PydanticSavedQuery, PydanticSavedQueryQueryParams
 from metricflow_semantic_interfaces.type_enums import AggregationType, DataType, MetricType
-from ossie import OssieCustomExtension, OssieVendor
+from ossie import OssieNonportableExtension, OssieVendor
 from ossie_dbt.converter_issues import ConverterIssueType
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from ossie_dbt.ossie_to_msi import OssieToMSIConverter
@@ -66,8 +66,8 @@ IDS = [
 
 
 def _document(expression=EXPRESSIONS[0], collision=False):
-    extension = OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps({"meta": USER_META}))
-    metrics = [_ossie_metric("avg", expression, custom_extensions=[extension])]
+    extension = OssieNonportableExtension(vendor_name=OssieVendor.DBT.value, data={"meta": USER_META})
+    metrics = [_ossie_metric("avg", expression, nonportable_extensions=[extension])]
     if collision:
         metrics.append(_ossie_metric("avg_numerator", "SUM(orders.amount)"))
     return _ossie_doc(
@@ -128,7 +128,7 @@ def test_real_cli_three_round_trips_do_not_grow_helpers(tmp_path, expression):
         output = yaml.safe_load(target.read_text())
         observed.append([m["name"] for m in output["metrics"]])
         metric = next(m for m in output["metrics"] if m["name"] == "avg")
-        meta = json.loads(metric["custom_extensions"][0]["data"])["meta"]
+        meta = metric["nonportable_extensions"][0]["data"]["meta"]
         assert meta["team"] == USER_META["team"]
         assert meta["ossie"]["owner"] == USER_META["ossie"]["owner"]
         sql = metric["expression"]["dialects"][0]["expression"]

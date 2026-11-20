@@ -171,9 +171,9 @@ datasets:
         expression: ss_ticket_number
     datatype: String
     dimension: {}
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: CUBE
-      data: '{"_v": 1, "public": false}'
+      data: {"_v": 1, "public": false}
   primary_key:
   - ss_item_sk
   - ss_ticket_number
@@ -542,12 +542,12 @@ metrics:
     - sales per employee
     - employee productivity
     - revenue per employee
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: CUBE
-    data: '{"_v": 1, "integer_sum_grain": ["store"]}'
-custom_extensions:
+    data: {"_v": 1, "integer_sum_grain": ["store"]}
+nonportable_extensions:
 - vendor_name: SALESFORCE
-  data: |
+  data:
     {
       "tableau_workbook_id": "tpcds_retail_dashboard",
       "einstein_enabled": true,
@@ -562,4 +562,4 @@ custom_extensions:
       }
     }
 - vendor_name: DBT
-  data: '{"project_name": "tpcds_analytics", "models_path": "models/semantic"}'
+  data: {"project_name": "tpcds_analytics", "models_path": "models/semantic"}
