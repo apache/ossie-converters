@@ -560,17 +560,23 @@ relationships:
 metrics:
 - name: total_sales
   expression:
+    sql: SUM(store_sales.ss_ext_sales_price)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] )
+    - dialect: ANSI_SQL
+      expression: SUM(store_sales.ss_ext_sales_price)
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "formula_id": "formula_total_sales"}'
 - name: total_profit
   expression:
+    sql: SUM(store_sales.ss_net_profit)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_net_profit] )
+    - dialect: ANSI_SQL
+      expression: SUM(store_sales.ss_net_profit)
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "formula_id": "formula_total_profit"}'
@@ -585,9 +591,12 @@ metrics:
     data: '{"_v": 1, "formula_id": "formula_customer_lifetime_value"}'
 - name: sales_by_brand
   expression:
+    sql: SUM(store_sales.ss_ext_sales_price)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] )
+    - dialect: ANSI_SQL
+      expression: SUM(store_sales.ss_ext_sales_price)
   custom_extensions:
   - vendor_name: THOUGHTSPOT
     data: '{"_v": 1, "formula_id": "formula_sales_by_brand"}'

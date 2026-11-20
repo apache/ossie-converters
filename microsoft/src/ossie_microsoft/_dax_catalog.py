@@ -467,6 +467,15 @@ _SPEC_GAP_FEATURES = {
     "hierarchy": "parent-child hierarchies",
 }
 
+# Refusals whose reason is not the one of their tier. EARLIER and EARLIEST read a
+# row context outside the current one (the outer one, or the outermost), which only
+# nested row iteration such as a calculated column inside an iterator has; a measure
+# has none, so they have nothing to translate to.
+_REFUSE_BY_FUNCTION = {
+    "EARLIER": "refers to an outer row context, which a measure does not have",
+    "EARLIEST": "refers to the outermost row context, which a measure does not have",
+}
+
 _REFUSE_BY_TIER = {
     "T5": "depends on the filter context, which has no declaration-scoped OSSIE_SQL_2026 form",
     "T6": "operates on tables, which a metric expression cannot express",
@@ -501,5 +510,7 @@ def refusal_reason(name):
         )
     if verdict == "N/A":
         return f"{function} is not part of a portable semantic model"
-    detail = _REFUSE_BY_TIER.get(tier, "has no faithful OSSIE_SQL_2026 equivalent")
+    detail = _REFUSE_BY_FUNCTION.get(function) or _REFUSE_BY_TIER.get(
+        tier, "has no faithful OSSIE_SQL_2026 equivalent"
+    )
     return f"{function} {detail}"

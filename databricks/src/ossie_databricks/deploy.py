@@ -26,7 +26,9 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
+import sqlglot
 from sqlglot import exp
+from sqlglot.errors import ParseError, TokenError
 
 from ossie_databricks import _ossie, metric_view
 from ossie_databricks.expressions import (
@@ -53,13 +55,15 @@ def deploy_ossie_model_to_databricks(
     _ossie.check(model, "the input")
     result: Result[dict[str, str]] = Result({})
     deployed = copy.deepcopy(model)
+    _reject_source_target_collisions(deployed, catalog=catalog, schema=schema)
     files = {}
     for dataset in deployed["datasets"]:
         name = dataset["name"]
         if "/" in name or "\\" in name or name in (".", ".."):
             raise ConversionError(f"the dataset name {name!r} cannot be a file name")
         view = metric_view.from_dataset(dataset, result)
-        view_name = exp.table_(name, db=schema, catalog=catalog).sql(dialect="databricks")
+        view_table = exp.table_(name, db=schema, catalog=catalog)
+        view_name = view_table.sql(dialect="databricks")
         files[f"metric_views/{name}.yaml"] = f"# Metric view: {view_name}\n{_ossie.dump(view)}"
         dataset["source"] = view_name
         # An object without a dimension or measure keeps its expression as it is.
@@ -77,6 +81,57 @@ def deploy_ossie_model_to_databricks(
 
     result.value = files
     return result
+
+
+def _reject_source_target_collisions(
+    model: Mapping[str, Any], *, catalog: str, schema: str
+) -> None:
+    """Reject deploying a dataset onto a table that any dataset source reads.
+
+    A metric view must not read its own target. That includes a plain table source equal to
+    the target and a query source whose FROM/JOIN reads the target table.
+    """
+    targets = {}
+    for dataset in model["datasets"]:
+        view_table = exp.table_(dataset["name"], db=schema, catalog=catalog)
+        targets[_table_key(view_table)] = view_table.sql(dialect="databricks")
+    for dataset in model["datasets"]:
+        for table in _source_tables(dataset.get("source")):
+            target = targets.get(_table_key(table))
+            if target is not None:
+                raise ConversionError(
+                    f"the metric view target {target} is read by a dataset source; "
+                    "deploy to a different catalog or schema"
+                )
+
+
+def _table_key(table: exp.Table) -> tuple[str, str, str]:
+    return (table.catalog.lower(), table.db.lower(), table.name.lower())
+
+
+def _is_three_part(table: Any) -> bool:
+    return (
+        isinstance(table, exp.Table)
+        and len(table.parts) == 3
+        and all(isinstance(part, exp.Identifier) for part in table.parts)
+    )
+
+
+def _source_tables(source: Any) -> list[exp.Table]:
+    """The three-part tables a dataset source reads, whether a table name or a query."""
+    if not isinstance(source, str):
+        return []
+    try:
+        table = sqlglot.parse_one(source, read="databricks", into=exp.Table)
+        if _is_three_part(table):
+            return [table]
+    except (ParseError, TokenError):
+        pass
+    try:
+        tree = sqlglot.parse_one(source, read="databricks")
+    except (ParseError, TokenError):
+        return []
+    return [table for table in tree.find_all(exp.Table) if _is_three_part(table)]
 
 
 def _deployed_metric(
