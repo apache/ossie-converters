@@ -309,11 +309,12 @@ def expression_entries(
     Both are logged when both are present in the same expression, each under its own
     code, rather than one masking the other.
 
-    `kind` names the Ossie object this expression belongs to ("field" or "metric") —
-    used only in issue text, so a metric's non-portability issue reads "...evaluate
-    this metric" rather than the field-shaped default. `object_ref` already carries
-    this distinction (`field:...` vs `metric:...`); `kind` exists so the message
-    itself agrees with it instead of contradicting it.
+    `kind` names the Ossie object this expression belongs to ("field" or "metric").
+    It decides whether the portable reference is dataset-qualified (a metric's is,
+    a field's is not), and it keeps the issue text in agreement with `object_ref`,
+    so a metric's non-portability issue reads "...evaluate this metric" rather than
+    the field-shaped default. What the reference names is the resolver's call: a
+    field's resolver returns the warehouse column, a metric's the field identifier.
     """
     entries: list[dict[str, str]] = [{"dialect": DIALECT, "expression": expr}]
 
@@ -393,11 +394,17 @@ def expression_entries(
         # `Dim_Customer.Customer_Name` is therefore neither runnable SQL (no such
         # table) nor a resolvable logical reference (no such field). 211 of 612
         # emitted references were in that state, every one of them on a field.
-        dataset_name, warehouse_column = target
-        column_sql = _sql_identifier(warehouse_column)
+        #
+        # A METRIC's second half is therefore the FIELD, not the column: a
+        # model-scoped metric references `dataset.field` and cannot reference
+        # source columns. `convert_metric` is handed a resolver that returns
+        # the field identifier (`resolve_field` in `convert()`), so `target`
+        # carries whichever half this expression's scope refers to.
+        dataset_name, reference = target
+        reference_sql = _sql_identifier(reference)
         portable = (
-            column_sql if kind == "field"
-            else f"{_sql_identifier(dataset_name)}.{column_sql}"
+            reference_sql if kind == "field"
+            else f"{_sql_identifier(dataset_name)}.{reference_sql}"
         )
         entries.append({"dialect": PORTABLE_DIALECT, "expression": portable})
         return entries
@@ -442,19 +449,22 @@ def expression_object(entries: list[dict[str, str]]) -> dict:
     alone, so a consumer that reads only `sql` -- which the spec invites --
     previously saw nothing portable from this converter at all.
 
-    Additive, deliberately. `PORTABLE_DIALECT` is `ANSI_SQL` rather than
-    `OSSIE_SQL_2026` on the emit side because a survey of this repository
-    found omni and sigma drop a metric carrying only `OSSIE_SQL_2026`
-    (apache/ossie-converters#22); moving the expression into `sql` instead of
-    copying it would reintroduce exactly that loss. The one string is valid in
-    both places -- apache/ossie#450 established the two dialects parse
-    identically, which is also what lets a `sql` field (OSSIE_SQL_2026 by
-    definition) carry text composed as ANSI.
+    Additive, deliberately. Not every reader in this repository reads `sql`
+    yet -- snowflake skips an expression that has only `sql` and no dialect
+    entries -- so moving the expression out of `dialects[ANSI_SQL]` rather
+    than copying it would lose it there. Why that entry is tagged `ANSI_SQL`
+    and not `OSSIE_SQL_2026` is a separate question, answered at
+    `PORTABLE_DIALECT`. The one string is valid in both places --
+    apache/ossie#450 established the two dialects parse identically, which is
+    also what lets a `sql` field (OSSIE_SQL_2026 by definition) carry text
+    composed as ANSI.
 
     `sql` is omitted entirely when there is no portable entry. An absent
-    `sql` says "no portable form exists", which is true and is already
-    reported under `TS-EXPR-THOUGHTSPOT-ONLY`; an empty one would be a claim
-    about the expression rather than an admission about it.
+    `sql` says "no portable form exists", which is true and which
+    `expression_entries` has already reported, under whichever of
+    `TS-EXPR-THOUGHTSPOT-ONLY`, `TS-EXPR-UNRESOLVED`, `TS-EXPR-PARAM` or
+    `TS-EXPR-FORMULA-REFERENCE` applies; an empty one would be a claim about
+    the expression rather than an admission about it.
 
     The THOUGHTSPOT entry is untouched and still outranks `sql` on the way
     back in (`ossie_to_thoughtspot.portable_expression_entries` returns
@@ -2883,7 +2893,7 @@ def convert(document_set: DocumentSet) -> OssieConversion:
 
         Two callers want two different halves, which is why this returns the
         pair rather than a joined string: `expression_entries` emits the
-        warehouse column as the portable expression, and `attribute_dataset`
+        warehouse column as a field's portable expression, and `attribute_dataset`
         uses the dataset name to decide which dataset a formula belongs to.
         Returning `"dataset.column"` meant the second caller re-parsed a string
         the first one then emitted whole -- and emitting it whole was the
@@ -2959,6 +2969,9 @@ def convert(document_set: DocumentSet) -> OssieConversion:
     # -- see `_index_attribute_columns` for why it is no longer read from
     # `attribute_index` itself.
     built_field_names: dict[tuple[str, str], str] = {}
+    # Columns that built no field, converted as metrics once every field
+    # exists -- see `resolve_field` below for why metrics cannot go first.
+    pending_metric_columns: list[tuple[dict, str, dict]] = []
 
     for column in model_columns:
         display_name = column.get("name", "<unnamed>")
@@ -2966,9 +2979,6 @@ def convert(document_set: DocumentSet) -> OssieConversion:
         try:
             field = convert_field(
                 column, formulas, table_lookup, resolve, log, field_name_allocator
-            )
-            metric = None if field is not None else convert_metric(
-                column, formulas, table_lookup, resolve, log, metric_name_allocator
             )
         except ValueError as exc:
             log.add(
@@ -3035,6 +3045,45 @@ def convert(document_set: DocumentSet) -> OssieConversion:
                     ),
                     object_ref=f"field:{display_name}",
                 )
+            continue
+
+        pending_metric_columns.append((column, display_name, properties))
+
+    def resolve_field(table: str, column: str) -> tuple[str, str] | None:
+        """`(dataset name, field name)` for a metric's `[TABLE::Column]` reference.
+
+        A model-scoped metric references fields as `dataset.field` and cannot
+        reference source columns (core-spec "Metric Scoping", rule 5), so a
+        metric's portable expression names the field the model surfaces the
+        column as -- not the warehouse column `resolve` returns for a field's
+        own expression. The two differ whenever a column's display name does
+        not normalise to its `db_column_name` (`revenue` over `REV_AMT`), and
+        `SUM(ORDERS.REV_AMT)` then resolved to nothing, here or anywhere else.
+
+        The name is read from `built_field_names`, the identifier the field
+        was actually built under after collision handling, which is why every
+        field is built before the first metric: a metric listed ahead of the
+        field that surfaces its column would otherwise find no name yet.
+        """
+        if resolve(table, column) is None:
+            return None
+        field_name = built_field_names.get((table, column))
+        if field_name is None:
+            return None
+        return table, field_name
+
+    for column, display_name, properties in pending_metric_columns:
+        try:
+            metric = convert_metric(
+                column, formulas, table_lookup, resolve_field, log, metric_name_allocator
+            )
+        except ValueError as exc:
+            log.add(
+                code="TS-COLUMN-REF-MALFORMED",
+                severity=Severity.WARNING,
+                message=f"column {display_name!r} could not be converted: {exc}",
+                object_ref=f"field:{display_name}",
+            )
             continue
 
         if metric is not None:

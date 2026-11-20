@@ -229,14 +229,13 @@ class TestAliasPrefix:
         # proof `resolve()` keys off the alias end to end, not just the
         # column_id -> field mapping. The dataset qualifier preserves the
         # alias's exact case (Dataset-level mapping's "name...exactly,
-        # case-sensitive" rule); the column itself is the WAREHOUSE name
-        # ("CITY", from _column("City", "CITY", ...)), not the Ossie
-        # field's own display-derived identifier ("ship_city") -- a bare
-        # reference's portable sibling names the physical column, per the
-        # mapping document.
+        # case-sensitive" rule). The second half is the Ossie FIELD
+        # ("ship_city"), not the warehouse column ("CITY", from
+        # _column("City", "CITY", ...)): a model-scoped metric references
+        # `dataset.field` and cannot reference source columns.
         metric = semantic_model["metrics"][0]
         dialects = {d["dialect"]: d["expression"] for d in metric["expression"]["dialects"]}
-        assert dialects["ANSI_SQL"] == "COUNT(DISTINCT ShippingAddress.CITY)"
+        assert dialects["ANSI_SQL"] == "COUNT(DISTINCT ShippingAddress.ship_city)"
 
         # No unresolved-reference issue should have fired for the aliased column.
         assert not any(i["code"] == "TS-EXPR-UNRESOLVED" for i in result.issues.as_dicts())
