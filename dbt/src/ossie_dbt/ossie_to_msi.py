@@ -35,7 +35,7 @@ from ossie import (
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_dbt.ratio_helpers import mark_ratio_helpers
+from ossie_dbt.ratio_helpers import mark_ratio_helpers, without_ratio_helper_provenance
 from ossie_dbt.expression_utils import (
     ROW_COUNT_EXPR,
     _extract_agg_info,
@@ -233,6 +233,9 @@ class OssieToMSIConverter:
 
         `datatype` is the element's Ossie datatype; it replaces a `meta.ossie.datatype`
         carried in the entry (see `_with_ossie_datatype`).
+
+        Generated ratio helper provenance carried in the entry is dropped. Each ratio is
+        signed afresh, and a copy left on a metric that is no longer a ratio would be stale.
         """
         issues: List[ConverterIssue] = []
         restored: Optional[Dict[str, Any]] = None
@@ -250,6 +253,7 @@ class OssieToMSIConverter:
             if not isinstance(meta, dict):
                 issues.append(ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, element_name))
                 continue
+            meta = without_ratio_helper_provenance(meta)
             if not meta:
                 continue
             if restored is None:
