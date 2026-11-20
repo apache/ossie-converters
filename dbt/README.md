@@ -116,6 +116,14 @@ manifest_json = result.output.model_dump_json(by_alias=True, exclude_none=True, 
 
 ### Conversion notes
 
+The exporter writes supported portable expressions as `expression.sql` in
+`OSSIE_SQL_2026`. Other dbt expressions use the existing dialect-tagged
+representation. Pass a warehouse dialect to `MSIToOssieConverter(dialect=...)`
+to label output for that warehouse.
+Ossie defines portable division as fractional. Authored division stays in the
+dialect-tagged form because it may have integer semantics in the source warehouse.
+The converter can use portable division for the operator it generates for a dbt ratio.
+
 A RATIO metric becomes `(numerator) / NULLIF(denominator, 0)`: MetricFlow returns NULL for a group whose
 denominator is 0, and the Ossie expression does the same rather than leave division by zero to the engine.
 

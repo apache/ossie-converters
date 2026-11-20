@@ -131,7 +131,8 @@ def test_real_cli_three_round_trips_do_not_grow_helpers(tmp_path, expression):
         meta = metric["nonportable_extensions"][0]["data"]["meta"]
         assert meta["team"] == USER_META["team"]
         assert meta["ossie"]["owner"] == USER_META["ossie"]["owner"]
-        sql = metric["expression"]["dialects"][0]["expression"]
+        metric_expression = metric["expression"]
+        sql = metric_expression.get("sql") or metric_expression["dialects"][0]["expression"]
         # SQLite returns NULL for a raw division by zero too, so numeric
         # equivalence alone does not prove upstream #163 was preserved.
         assert "NULLIF(" in sql.upper(), sql

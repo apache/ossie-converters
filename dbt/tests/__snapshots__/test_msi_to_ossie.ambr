@@ -25,45 +25,29 @@
     fields:
     - name: revenue
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: amount
+        sql: amount
     - name: cost
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: cost_amount
+        sql: cost_amount
     - name: expenses
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: expense_amount
+        sql: expense_amount
   metrics:
   - name: revenue
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.revenue)
+      sql: SUM(orders.revenue)
   - name: cost
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.cost)
+      sql: SUM(orders.cost)
   - name: expenses
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.expenses)
+      sql: SUM(orders.expenses)
   - name: gross_profit
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.revenue) - SUM(orders.cost)
+      sql: SUM(orders.revenue) - SUM(orders.cost)
   - name: net_profit
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: (SUM(orders.revenue) - SUM(orders.cost)) - SUM(orders.expenses)
+      sql: (SUM(orders.revenue) - SUM(orders.cost)) - SUM(orders.expenses)
   
   '''
 # ---
@@ -77,9 +61,7 @@
     fields:
     - name: revenue
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: amount
+        sql: amount
     - name: order_count
       expression:
         dialects:
@@ -87,15 +69,11 @@
           expression: CASE WHEN order_id IS NOT NULL THEN 1 ELSE 0 END
     - name: order_id
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: order_id
+        sql: order_id
   metrics:
   - name: revenue
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.revenue)
+      sql: SUM(orders.revenue)
   - name: order_count
     expression:
       dialects:
@@ -120,30 +98,22 @@
     fields:
     - name: status
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: status
+        sql: status
       dimension:
         is_time: false
     - name: region
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: region
+        sql: region
       dimension:
         is_time: false
     - name: revenue
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: amount
+        sql: amount
   metrics:
   - name: paid_intl_revenue
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(CASE WHEN (orders.status = 'paid') AND (orders.region = 'intl')
-          THEN orders.revenue END)
+      sql: SUM(CASE WHEN (orders.status = 'paid') AND (orders.region = 'intl') THEN
+        orders.revenue END)
   
   '''
 # ---
@@ -155,53 +125,47 @@
   - name: users_a
     source: schema.table
     primary_key:
-    - user_id
+    - user
     fields:
     - name: user
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: user_id
+        sql: user_id
   - name: users_b
     source: schema.table
     unique_keys:
-    - - user_id
+    - - user
     fields:
     - name: user
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: user_id
+        sql: user_id
   - name: orders
     source: schema.table
     fields:
     - name: user
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: user_id
+        sql: user_id
   relationships:
   - name: users_a__users_b__user
     from: users_a
     to: users_b
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   - name: orders__users_a__user
     from: orders
     to: users_a
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   - name: orders__users_b__user
     from: orders
     to: users_b
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   
   '''
 # ---
