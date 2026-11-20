@@ -55,27 +55,22 @@ def _databricks_only(model):
     return model
 
 
-# `from-databricks` moves a portable expression into the primary `sql` slot. The pinned
-# `ossie` submodule's grader (Nov 2026) scores a qualified OSSIE_SQL reference in `sql` as
-# vendor-only, while apache/ossie `main` treats `sql` as the primary portable form. Remove
-# this xfail once the submodule bumps to the sql-primary portability spec (it will XPASS).
-_SQL_PRIMARY_DRIFT = "m0_ossiesql_qualified.ossie.yaml"
-_ROUND_TRIP_LADDER = [
-    pytest.param(
-        path,
-        id=path.name,
-        marks=pytest.mark.xfail(
-            reason="pinned ossie submodule grades a qualified OSSIE_SQL `sql` as vendor-only; "
-            "passes against apache/ossie main (sql-primary portability)",
-        ),
-    )
-    if path.name == _SQL_PRIMARY_DRIFT
-    else pytest.param(path, id=path.name)
-    for path in LADDER
-]
+# The M6 rung (DATEDIFF, DATE_TRUNC) shows two converter gaps: the round trip
+# upper-cases the DATE_TRUNC unit, which the grader scores as REWRITTEN, and
+# `translate` has no verified DATABRICKS form for DATEDIFF.
+_DATE_SCALARS = "m6_date_scalars.ossie.yaml"
 
 
-@pytest.mark.parametrize("path", _ROUND_TRIP_LADDER)
+def _ladder(reason):
+    return [
+        pytest.param(path, id=path.name, marks=pytest.mark.xfail(strict=True, reason=reason))
+        if path.name == _DATE_SCALARS
+        else pytest.param(path, id=path.name)
+        for path in LADDER
+    ]
+
+
+@pytest.mark.parametrize("path", _ladder("the round trip upper-cases the DATE_TRUNC unit"))
 def test_round_trip_is_portable(path):
     model = yaml.safe_load(path.read_text())
     native = convert_ossie_model_to_databricks(model)
@@ -86,7 +81,7 @@ def test_round_trip_is_portable(path):
     assert {finding.outcome for finding in report.findings} == {"PORTABLE"}
 
 
-@pytest.mark.parametrize("path", LADDER, ids=lambda path: path.name)
+@pytest.mark.parametrize("path", _ladder("no verified DATABRICKS translation for DATEDIFF"))
 def test_databricks_only_model_becomes_portable(path):
     model = yaml.safe_load(path.read_text())
     back = convert_ossie_model_from_databricks(_databricks_only(model))
