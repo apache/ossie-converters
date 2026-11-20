@@ -2290,14 +2290,18 @@ def _join_entry_for_unrepresentable(entry: dict, log: IssueLog) -> tuple[str, di
 def _is_stashed_formula(entry: object, *keys: str) -> bool:
     """Whether a stashed formula entry is a mapping whose `keys` all hold text.
 
-    An absent or empty key counts as text: the loops in `build_model` fall back
+    An absent or null key counts as text: the loops in `build_model` fall back
     to a default for it, and an explicit `name: null` is one the forward
     direction can write (`tml_to_ossie` takes the display name from
     `column.get("name", ...)`). Reading it as malformed dropped a formula that
     was restored as `<unnamed>` before this check existed.
+
+    Only null, though. `0`, `false` and an empty list are values, not absences,
+    and reading them through `or ""` emitted a formula with an empty expression
+    and no issue.
     """
     return isinstance(entry, dict) and all(
-        isinstance(entry.get(key) or "", str) for key in keys
+        isinstance(entry.get(key), (str, type(None))) for key in keys
     )
 
 
@@ -2567,7 +2571,10 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
                     "name, expression and stashed formula name are all text, "
                     "so it is skipped; the formula it described is not restored"
                 ),
-                object_ref=object_ref,
+                # Not `object_ref`: this loop rebinds it to each formula it
+                # restores, so after the first one it names the previous
+                # formula, not this entry.
+                object_ref=f"model:{model_name}",
             )
             continue
         # A formula spanning two or more Ossie datasets has no single

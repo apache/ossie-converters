@@ -122,6 +122,20 @@ def find_forbidden_key(value: Any, forbidden: frozenset[str] | None = None) -> s
     return None
 
 
+def to_json_types(raw: dict) -> dict:
+    """A copy of `raw` holding only what JSON holds.
+
+    Raises TypeError or ValueError otherwise: for a date, set or binary value,
+    which has no JSON form, and for NaN or an infinity, which Python would
+    write as the `NaN` and `Infinity` tokens a strict JSON parser refuses.
+
+    Shared by `read_stash` and `vendor_check.check` so the two cannot disagree
+    about a payload: a checker that cleared what our reader aborts on would
+    clear a document we cannot convert.
+    """
+    return json.loads(json.dumps(raw, allow_nan=False))
+
+
 def read_stash(obj: dict) -> dict[str, Any]:
     """Return this object's parsed THOUGHTSPOT payload, or {} if it has none.
 
@@ -201,7 +215,7 @@ def read_stash(obj: dict) -> dict[str, Any]:
             # can know which keys were meant as strings. The three readers
             # that require one check for themselves and say so.
             try:
-                parsed = json.loads(json.dumps(raw))
+                parsed = to_json_types(raw)
             except (TypeError, ValueError) as exc:
                 raise ConversionError(
                     f"THOUGHTSPOT {field} payload on "

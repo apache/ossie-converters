@@ -136,6 +136,23 @@ class TestReadStashNormalisesTheObjectForm:
             stash.read_stash(obj)
         assert "not JSON-representable" in str(excinfo.value)
 
+    @pytest.mark.parametrize("written", [".nan", ".inf", "-.inf"])
+    def test_nan_and_infinity_are_refused_by_name(self, written):
+        # Before: `json.dumps` allows them by default, so they passed this
+        # check and `write_stash` wrote the `NaN` and `Infinity` tokens a
+        # strict JSON parser refuses.
+        obj = _yaml.load(
+            "name: orders\n"
+            "custom_extensions:\n"
+            "  - vendor_name: THOUGHTSPOT\n"
+            "    data:\n"
+            "      _v: 1\n"
+            f"      alias: {written}\n"
+        )
+        with pytest.raises(ConversionError, match="orders") as excinfo:
+            stash.read_stash(obj)
+        assert "not JSON-representable" in str(excinfo.value)
+
     def test_the_payload_returned_is_not_a_reference_into_the_document(self):
         # Before: `parsed = raw` handed back the caller's own dict, and what
         # read_stash returns is put straight into TML bodies.
@@ -280,6 +297,48 @@ class TestARetypedStringIsReportedNotCrashedOn:
         tables = [build_table(model["datasets"][0], IssueLog())]
         build_model(model, tables, log)
         assert "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED" not in _codes(log)
+
+    @pytest.mark.parametrize(
+        "formula",
+        [
+            {"name": "Zero", "expr": 0},
+            {"name": "Zero", "expr": False},
+            {"name": "Zero", "expr": []},
+            {"name": 0, "expr": "1"},
+            {"name": "Zero", "expr": "1", FIELD_STASH_FORMULA_NAME: 0},
+        ],
+    )
+    def test_a_falsy_non_text_value_is_malformed_not_absent(self, formula):
+        # Before: `or ""` read these as absent, so `expr: 0` emitted a formula
+        # with an empty expression and no issue.
+        model = _model_with_unattributed_formula(formula)
+        log = IssueLog()
+        body = _build_model_body(model, log)
+        assert "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED" in _codes(log)
+        assert body.get("formulas", []) == []
+
+    def test_a_falsy_non_text_unsurfaced_expression_is_malformed_too(self):
+        model = _model_with_stashed_formulas(
+            MODEL_STASH_UNSURFACED_FORMULAS,
+            [{"id": "formula_zero", "name": "Zero", "expr": 0}],
+        )
+        log = IssueLog()
+        body = _build_model_body(model, log)
+        assert "TS-MODEL-UNSURFACED-FORMULA-MALFORMED" in _codes(log)
+        assert body.get("formulas", []) == []
+
+    def test_a_malformed_formula_after_a_restored_one_is_reported_on_the_model(self):
+        # Before: the issue took `object_ref` from the previous iteration, so
+        # it pointed at "formula:Revenue", the valid formula.
+        model = _model_with_stashed_formulas(
+            MODEL_STASH_UNATTRIBUTED_FORMULAS,
+            [{"name": "Revenue", "expr": "1 + 1"}, {"name": 2024, "expr": "2"}],
+        )
+        log = IssueLog()
+        _build_model_body(model, log)
+        [issue] = [i for i in log.issues
+                   if i.code == "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED"]
+        assert issue.object_ref == "model:sales"
 
     def test_an_explicitly_null_name_is_restored_as_unnamed(self):
         # In the string form, which is what `tml_to_ossie` writes: it takes the

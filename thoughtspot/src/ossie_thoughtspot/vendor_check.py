@@ -32,8 +32,9 @@ Three deliberate boundaries:
   conversion that cannot proceed on a payload it cannot trust. A validator is
   the opposite job -- name everything wrong with the document in one pass -- so
   the two readers answer the same questions and end differently. The duplication
-  is one `_v` comparison and one scan; sharing the *code* would mean sharing the
-  control flow, which is the part that has to differ.
+  is one `_v` comparison, one scan and one representability check, the last two
+  shared functions; sharing the *code* would mean sharing the control flow,
+  which is the part that has to differ.
 * **It does not name the object.** The hook prefixes every message with the
   vendor and the site (`[Vendor THOUGHTSPOT] Field 'orders.amount' in model
   'sales': ...`), so a message that repeated the name would print it twice.
@@ -47,7 +48,7 @@ Three deliberate boundaries:
 from typing import Any
 
 from .constants import STASH_VERSION
-from .stash import find_forbidden_key
+from .stash import find_forbidden_key, to_json_types
 
 
 def check(payload: Any, site: Any = None) -> list[str]:
@@ -98,5 +99,12 @@ def check(payload: Any, site: Any = None) -> list[str]:
             f"payload carries instance-local identity key {forbidden!r}, which "
             f"does not travel in a portable document"
         )
+
+    try:
+        to_json_types(payload)
+    except (TypeError, ValueError) as exc:
+        # A date, set or binary value, or NaN or an infinity: what a YAML
+        # loader can hand over and `read_stash` refuses, by the same function.
+        findings.append(f"payload is not JSON-representable: {exc}")
 
     return findings
