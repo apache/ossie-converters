@@ -341,11 +341,11 @@ class MSIToOssieConverter:
         unique_keys: List[List[str]] = []
 
         for entity in entities:
-            col = entity.expr if entity.expr is not None else entity.name
+            # Keys reference declared dataset fields, not their source expressions.
             if entity.type is EntityType.PRIMARY:
-                primary_key = [col]
+                primary_key = [entity.name]
             elif entity.type is EntityType.UNIQUE:
-                unique_keys.append([col])
+                unique_keys.append([entity.name])
 
         return primary_key, unique_keys
 
@@ -577,8 +577,8 @@ class MSIToOssieConverter:
                         ConverterIssue(issue_type=ConverterIssueType.NATURAL_ENTITY_DROPPED, element_name=entity.name)
                     )
                     continue
-                col = entity.expr if entity.expr is not None else entity.name
-                index[entity.name].append(_EntityEntry(dataset=sm.name, col=col, entity_type=entity.type))
+                # The entity's expression stays on its field; relationships name the field itself.
+                index[entity.name].append(_EntityEntry(dataset=sm.name, col=entity.name, entity_type=entity.type))
         return dict(index), issues
 
     @staticmethod
