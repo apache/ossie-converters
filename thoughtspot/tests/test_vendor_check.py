@@ -16,6 +16,7 @@
 # under the License.
 
 """The THOUGHTSPOT vendor validator (apache/ossie#697's `check`)."""
+import datetime
 import json
 
 import pytest
@@ -121,6 +122,32 @@ class TestTheThreeThingsItReports:
         # the first. This is the behaviour that separates it from read_stash.
         found = vendor_check.check({"_v": 999, "guid": "abc"}, _Site())
         assert len(found) == 2
+
+
+class TestWhatTheReaderCannotHoldIsReported:
+    """A payload `read_stash` refuses as not JSON-representable.
+
+    A YAML loader hands over dates, sets and binary values, and NaN and the
+    infinities, none of which JSON holds. Before, the checker cleared every one
+    of them while the reader aborted on it.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [datetime.date(2024, 1, 1), {1, 2}, b"bytes", float("nan"), float("-inf")],
+        ids=["date", "set", "binary", "nan", "infinity"],
+    )
+    def test_reported_by_the_checker_and_refused_by_the_reader(self, value):
+        payload = {"_v": STASH_VERSION, "alias": value}
+        found = vendor_check.check(payload, _Site())
+        assert len(found) == 1
+        assert "not JSON-representable" in found[0]
+
+        obj = {"name": "orders", "custom_extensions": [
+            {"vendor_name": VENDOR_KEY, "data": payload}
+        ]}
+        with pytest.raises(ConversionError, match="not JSON-representable"):
+            stash.read_stash(obj)       # one answer, from both
 
 
 class TestItReportsRatherThanRaises:
