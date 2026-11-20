@@ -28,8 +28,8 @@ import re
 import warnings
 
 import yaml
-from sqlglot import tokenize
-from sqlglot.errors import TokenError
+from sqlglot import exp, parse_one, tokenize
+from sqlglot.errors import ParseError, TokenError
 from sqlglot.tokens import TokenType
 
 
@@ -245,6 +245,10 @@ def _convert_dataset(dataset):
         if facts:
             result["facts"] = facts
 
+    table_metrics = _convert_dataset_metrics(dataset)
+    if table_metrics:
+        result["metrics"] = table_metrics
+
     dropped_ai = []
     if isinstance(ai_context, dict):
         non_synonym_keys = [k for k in ai_context if k != "synonyms"]
@@ -256,34 +260,83 @@ def _convert_dataset(dataset):
 
 
 def _convert_metrics(ossie):
-    """Snowflake Cortex Analyst metrics are a flat list. Dataset-scoped Ossie
-    metrics (`datasets[].metrics`) are emitted there alongside model-root
-    metrics. A later metric with the same name is skipped with a warning."""
+    """Model-root Ossie metrics become view-level Snowflake metrics."""
     converted = []
     seen = {}
-    for dataset in ossie.get("datasets") or []:
-        ds_name = dataset.get("name") or "<unnamed>"
-        for metric in dataset.get("metrics") or []:
-            _append_metric(converted, seen, metric, dataset_name=ds_name)
     for metric in ossie.get("metrics") or []:
         _append_metric(converted, seen, metric)
     return converted
 
 
-def _append_metric(converted, seen, metric, dataset_name=None):
-    item = _convert_named_expr(metric, "metric")
+def _convert_dataset_metrics(dataset):
+    """Dataset-scoped Ossie metrics become Snowflake ``tables[].metrics``.
+
+    That list is scoped to the logical table, matching the Snowflake semantic
+    view YAML spec. A later metric on the same table that reuses a name is
+    skipped with a warning.
+    """
+    converted = []
+    seen = {}
+    dataset_name = dataset.get("name") or "<unnamed>"
+    source = dataset.get("source")
+    for metric in dataset.get("metrics") or []:
+        item = _convert_named_expr(metric, "metric")
+        if item is None:
+            continue
+        expr = _table_metric_expr(item["expr"], dataset_name, source, item["name"])
+        if expr is None:
+            continue
+        item["expr"] = expr
+        _append_metric(converted, seen, item, already_converted=True)
+    return converted
+
+
+def _append_metric(converted, seen, metric, already_converted=False):
+    item = metric if already_converted else _convert_named_expr(metric, "metric")
     if item is None:
         return
     name = item["name"]
-    if dataset_name is None:
-        source = f"metric '{name}'"
-    else:
-        source = f"dataset-scoped metric '{dataset_name}.{name}'"
+    source = f"metric '{name}'"
     if name in seen:
         warnings.warn(f"{source} collides with {seen[name]}; skipped")
         return
     seen[name] = source
     converted.append(item)
+
+
+def _local_table_aliases(dataset_name, source):
+    aliases = set()
+    if dataset_name:
+        aliases.add(str(dataset_name))
+    parsed = _parse_source(source) if source else None
+    if isinstance(parsed, dict) and parsed.get("table"):
+        aliases.add(str(parsed["table"]).strip('"'))
+    return {alias.lower() for alias in aliases}
+
+
+def _table_metric_expr(expr, dataset_name, source, metric_name):
+    """Unqualify columns of this table; skip if the expr names another table."""
+    aliases = _local_table_aliases(dataset_name, source)
+    try:
+        tree = parse_one(expr, dialect="snowflake")
+    except (ParseError, TokenError, ValueError):
+        return expr
+    changed = False
+    for column in tree.find_all(exp.Column):
+        table = column.table
+        if not table:
+            continue
+        if table.lower() in aliases:
+            column.set("table", None)
+            changed = True
+            continue
+        warnings.warn(
+            f"Skipping dataset-scoped metric '{dataset_name}.{metric_name}': "
+            f"expression names {table}.{column.name}, which is not a column of "
+            f"table '{dataset_name}'"
+        )
+        return None
+    return tree.sql(dialect="snowflake") if changed else expr
 
 
 def _classify_field(field):

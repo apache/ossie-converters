@@ -801,7 +801,8 @@ class TestConvertOssieToSnowflake:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
-        assert result["metrics"] == [
+        assert "metrics" not in result
+        assert result["tables"][0]["metrics"] == [
             {"name": "total_net_amount", "expr": "SUM(net_amount)"}
         ]
 
@@ -809,20 +810,35 @@ class TestConvertOssieToSnowflake:
         model = _minimal_model(metrics=[_metric("root_count", "COUNT(my_table.col1)")])
         model["datasets"][0]["metrics"] = [_metric("total_net_amount", "SUM(net_amount)")]
         result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
-        assert [m["name"] for m in result["metrics"]] == [
-            "total_net_amount",
-            "root_count",
+        assert result["tables"][0]["metrics"] == [
+            {"name": "total_net_amount", "expr": "SUM(net_amount)"}
         ]
+        assert result["metrics"] == [{"name": "root_count", "expr": "COUNT(my_table.col1)"}]
 
-    def test_dataset_scoped_name_collision_is_skipped_with_warning(self):
+    def test_dataset_and_root_metrics_with_the_same_name_are_both_exported(self):
         model = _minimal_model(metrics=[_metric("total", "SUM(my_table.col1)")])
         model["datasets"][0]["metrics"] = [_metric("total", "SUM(net_amount)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [
+            {"name": "total", "expr": "SUM(net_amount)"}
+        ]
+        assert result["metrics"] == [{"name": "total", "expr": "SUM(my_table.col1)"}]
+
+    def test_dataset_metric_local_qualifier_is_stripped(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(my_table.col1)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [{"name": "total", "expr": "SUM(col1)"}]
+
+    def test_dataset_metric_foreign_qualifier_is_skipped(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(source.quantity)")]
         with pytest.warns(
             UserWarning,
-            match=r"metric 'total' collides with dataset-scoped metric 'my_table\.total'",
+            match=r"dataset-scoped metric 'my_table\.total': expression names source\.quantity",
         ):
             result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
-        assert result["metrics"] == [{"name": "total", "expr": "SUM(net_amount)"}]
+        assert "metrics" not in result["tables"][0]
 
     def test_invalid_yaml_root_raises(self):
         with pytest.raises(OssieConversionError, match="expected a mapping"):
