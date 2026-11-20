@@ -59,7 +59,6 @@ def column(dax, columns=COLUMNS):
         ("LEN([First])", "LENGTH(first_name)"),
         ("UPPER([First])", "UPPER(first_name)"),
         ("LOWER(Customers[First])", "LOWER(first_name)"),
-        ('SUBSTITUTE([First], "a", "b")', "REPLACE(first_name, 'a', 'b')"),
         ('CONCATENATE([First], "!")', "CONCAT(first_name, '!')"),
         ('[First] & "-" & [First]', "CONCAT(CONCAT(first_name, '-'), first_name)"),
         ('LEFT(COALESCE([Last], ""), 1)', "LEFT(COALESCE(last_name, ''), 1)"),
@@ -94,14 +93,13 @@ def test_text_functions_also_work_in_a_measure_on_literals():
 # --- the emitted SQL matches DAX's documented results -------------------------
 
 # DAX: MID("abcdef", 2, 3) = "bcd"; MID past the end = ""; LEN("abc") = 3;
-# SUBSTITUTE replaces every occurrence; UPPER / LOWER; & concatenates.
+# UPPER / LOWER; & concatenates.
 @pytest.mark.parametrize(
     ("dax", "value", "expected"),
     [
         ("MID([First], 2, 3)", "abcdef", "bcd"),
         ("MID([First], 9, 3)", "abcdef", ""),
         ("LEN([First])", "abc", 3),
-        ('SUBSTITUTE([First], "a", "X")', "banana", "bXnXnX"),
         ("UPPER([First])", "MixEd", "MIXED"),
         ("LOWER([First])", "MixEd", "mixed"),
         ('[First] & "!"', "hi", "hi!"),
@@ -131,8 +129,6 @@ def test_emitted_sql_matches_dax_results(dax, value, expected):
         ("LEFT([First], [Visits])", "integer literal counts and positions"),
         ("MID([First], 0, 2)", "(at least 1)"),
         ("LEFT([First], 1.5)", "integer literal counts"),
-        ('SUBSTITUTE([First], "a", "b", 2)', "instance_num"),
-        ('SUBSTITUTE([First], "", "b")', "non-empty literal to find"),
         ("SUM(Customers[Visits])", "SUM in a calculated column ranges over the whole table"),
         ("Orders[Amount]", "column of another table"),
         ("[Joined]", "has a type that is a later tier"),
@@ -140,6 +136,7 @@ def test_emitted_sql_matches_dax_results(dax, value, expected):
         ("[Nope]", "[Nope] is not a column of 'Customers'"),
         ("TRIM([First])", "DAX TRIM also collapses inner runs of spaces"),
         ('EXACT([First], "a")', "DAX EXACT is case-sensitive"),
+        ('SUBSTITUTE([First], "a", "b")', "DAX SUBSTITUTE is case-sensitive"),
         ("VALUE([First])", "DAX VALUE raises an error"),
         ('FIND("a", [First])', "DAX FIND raises an error"),
         ('SEARCH("a", [First])', "DAX SEARCH"),
@@ -148,7 +145,6 @@ def test_emitted_sql_matches_dax_results(dax, value, expected):
         ("MID([First], 1)", "MID takes 3 arguments"),
         ("LEN([First], 1)", "LEN takes 1 argument"),
         ("UPPER()", "UPPER takes 1 argument"),
-        ('SUBSTITUTE([First], "a")', "SUBSTITUTE takes 3 arguments"),
         ('CONCATENATE([First])', "CONCATENATE takes 2 arguments"),
         ("SUM(", "could not be parsed"),
     ],
@@ -157,6 +153,50 @@ def test_calculated_column_refusals(dax, reason):
     sql, why = column(dax)
     assert sql is None
     assert reason in why, why
+
+
+# --- the declared data type ---------------------------------------------------------
+
+# DAX stores a calculated column's value converted to the column's declared data type,
+# so an expression of another kind is not the column's value.
+@pytest.mark.parametrize(
+    ("dax", "declared", "kind"),
+    [
+        ("[Visits]", "text", "number"),
+        ("[First]", "number", "text"),
+        ("[Visits] > 3", "number", "boolean"),
+        ("[Visits]", "dateTime", "number"),
+    ],
+)
+def test_an_expression_of_another_kind_than_the_declared_type_is_refused(dax, declared, kind):
+    sql, reason = translate_column(dax, "Customers", COLUMNS, declared)
+    assert sql is None
+    assert f"the column is declared as {declared} and its expression is a {kind} value" in reason
+
+
+@pytest.mark.parametrize(
+    ("dax", "declared", "sql"),
+    [
+        ("[Visits] * 2", "number", "visits * 2"),
+        ("UPPER([First])", "text", "UPPER(first_name)"),
+        ("[Visits] > 3", "boolean", "COALESCE(visits, 0) > 3"),
+        ("[Visits]", None, "visits"),  # no declared type: the type is the expression's
+        ("BLANK()", "text", "NULL"),  # BLANK fits every type
+    ],
+)
+def test_an_expression_of_the_declared_kind_is_translated(dax, declared, sql):
+    assert translate_column(dax, "Customers", COLUMNS, declared) == (sql, None)
+
+
+def test_a_referenced_column_of_another_kind_than_its_declared_type_is_refused():
+    columns = dict(COLUMNS, VisitsText=RowColumn(None, "[Visits]", "text"))
+    sql, reason = column("UPPER([VisitsText])", columns)
+    assert sql is None
+    assert reason == (
+        "referenced column [VisitsText] is not translated: column [VisitsText] is declared "
+        "as text and its expression is a number value: DAX converts the value to the "
+        "declared type, which is not translated"
+    )
 
 
 def test_a_measure_reference_in_a_calculated_column_is_refused():
@@ -278,6 +318,35 @@ def test_is_nullable_false_is_the_never_blank_precondition(bim):
     assert any(
         "NoteStart" in m and "DAX calculated column kept as-is" in m and "may be BLANK" in m
         for m in messages
+    ), messages
+
+
+def test_a_declared_type_the_expression_does_not_have_keeps_the_dax(bim):
+    # A column declared as text over a number: DAX converts the number to text.
+    model = _with_columns(
+        bim,
+        {"name": "AmountText", "type": "calculated", "dataType": "string",
+         "expression": "[Amount]"},
+        {"name": "AmountTextAgain", "type": "calculated", "dataType": "string",
+         "expression": "[AmountText]"},
+        {"name": "AmountDay", "type": "calculated", "dataType": "dateTime",
+         "expression": "[Amount]"},
+        {"name": "AmountTwice", "type": "calculated", "dataType": "double",
+         "expression": "[Amount] * 2"},
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        document = build_ossie_document(model, translate_dax=True)
+    for name in ("AmountText", "AmountTextAgain", "AmountDay"):
+        assert list(_dialects(_field(document, "Sales", name))) == ["DAX"], name
+    assert _dialects(_field(document, "Sales", "AmountTwice"))["OSSIE_SQL_2026"] == "amount * 2"
+    messages = [str(w.message) for w in caught]
+    assert any(
+        "AmountText'" in m and "is declared as text and its expression is a number value" in m
+        for m in messages
+    ), messages
+    assert any(
+        "AmountDay" in m and "and its expression is a number value" in m for m in messages
     ), messages
 
 

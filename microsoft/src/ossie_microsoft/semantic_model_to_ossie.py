@@ -430,7 +430,7 @@ def _convert_column(column, table_scope, table_name=None, row_columns=None):
         # into SQL, so no expression semantics are invented, unless translation is on
         # and the translation is exact.
         expression = _calculated_column_expression(
-            text(column.get("expression", "")), scope, table_name, row_columns
+            text(column.get("expression", "")), scope, table_name, row_columns, name
         )
     else:
         expression = make_expression(column.get("sourceColumn") or name, DIALECT_ANSI)
@@ -557,21 +557,25 @@ def _row_columns(table):
         if column.get("type") == "rowNumber":
             continue
         calculated = column.get("type") == "calculated"
+        data_type = column.get("dataType")
         columns[column["name"]] = RowColumn(
             source=None if calculated else (column.get("sourceColumn") or column["name"]),
             dax=text(column.get("expression", "")) if calculated else None,
-            kind=_ROW_KINDS.get(column.get("dataType")),
+            # A calculated column keeps the name of a declared type that is none of the
+            # kinds, so an expression of another kind is not taken for it.
+            kind=_ROW_KINDS.get(data_type, data_type if calculated else None),
             # TOM's default is nullable; only an explicit false rules BLANK out.
             nullable=column.get("isNullable") is not False,
         )
     return columns
 
 
-def _calculated_column_expression(dax_expression, scope, table_name, row_columns):
+def _calculated_column_expression(dax_expression, scope, table_name, row_columns, name):
     """Build a calculated column's field expression, like ``_measure_expression``."""
     if row_columns is None:
         return make_expression(dax_expression, DIALECT_DAX)
-    sql, reason = translate_column(dax_expression, table_name, row_columns)
+    declared = row_columns[name].kind
+    sql, reason = translate_column(dax_expression, table_name, row_columns, declared)
     if sql is None:
         warn(
             scope,

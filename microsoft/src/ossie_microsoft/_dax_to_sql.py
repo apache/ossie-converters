@@ -103,8 +103,7 @@ force true division so an engine that truncates integer division gives the same 
 and text functions, again only for arguments that can never be BLANK (a text literal,
 ``COALESCE(x, "")``, a column that is not nullable), for the same reason: ``LEFT`` /
 ``RIGHT`` (count omitted is 1), ``MID`` -> ``SUBSTRING``, ``LEN`` -> ``LENGTH``, ``UPPER``,
-``LOWER``, ``SUBSTITUTE`` -> ``REPLACE`` (all occurrences, with a non-empty literal to
-find), and ``CONCATENATE`` and ``&`` -> ``CONCAT``. Counts and positions must be
+``LOWER``, and ``CONCATENATE`` and ``&`` -> ``CONCAT``. Counts and positions must be
 non-negative integer literals (positions from 1), because DAX raises an error on a
 negative one where SQL engines differ.
 
@@ -119,6 +118,10 @@ of its own table (row context). The same rules apply, plus:
   the same row, so inlining is exact), like a measure reference.
 * A column's TMSL ``isNullable: false`` is the never-BLANK precondition the text and
   math functions need; a column without it may be BLANK.
+* A calculated column stores its expression's value converted to the column's declared
+  ``dataType``. The conversion is not translated, so a column whose expression is of
+  another kind than its declared type (a number in a column declared as text) is
+  refused, and so is a reference to such a column.
 * Refused: an aggregate (in a calculated column it ranges over the whole table, which a
   field expression cannot express), a measure reference (evaluated with context
   transition), a column of another table (needs ``RELATED``, a later tier), and a date or
@@ -149,11 +152,12 @@ What is refused (and why, so the refusal is defensible)
   give: comparing a BLANK date or text needs other rules than ``COALESCE(x, 0)``.
 * ``TRIM``: DAX also collapses inner runs of spaces; the spec's ``TRIM`` removes only
   leading and trailing whitespace, and it does not fix whether ``REGEXP_REPLACE`` replaces
-  every match. ``EXACT`` (whether a text comparison is case-sensitive depends on the
-  engine's collation), ``VALUE`` (DAX raises an error on text that is not a number and
-  parses by locale), ``FIND`` / ``SEARCH`` (an error when not found), ``CONTAINSSTRING``
-  (case-insensitive, with wildcards), and a text function over a number (DAX formats the
-  number as text). A text function over a value that may be BLANK.
+  every match. ``EXACT`` and ``SUBSTITUTE`` (both are case-sensitive in DAX; whether a
+  SQL text comparison or ``REPLACE`` is depends on the engine's collation), ``VALUE``
+  (DAX raises an error on text that is not a number and parses by locale), ``FIND`` /
+  ``SEARCH`` (an error when not found), ``CONTAINSSTRING`` (case-insensitive, with
+  wildcards), and a text function over a number (DAX formats the number as text). A text
+  function over a value that may be BLANK.
 * ``ROUND``: DAX breaks ties half away from zero, and the spec's ``ROUND`` does not say how
   ties are broken. ``CEILING`` / ``FLOOR`` (rounding to a multiple of a significance) and
   ``ROUNDUP``: later tiers. A math function over a value that may be BLANK.
@@ -226,7 +230,7 @@ TRANSLATED_FUNCTIONS = frozenset(_AGGREGATES) | frozenset(
 ) | {
     "DIVIDE", "IF", "IF.EAGER", "SWITCH", "COALESCE", "BLANK", "ISBLANK",
     "TRUE", "FALSE", "AND", "OR", "NOT",
-    "LEFT", "RIGHT", "MID", "LEN", "UPPER", "LOWER", "SUBSTITUTE", "CONCATENATE",
+    "LEFT", "RIGHT", "MID", "LEN", "UPPER", "LOWER", "CONCATENATE",
 }
 
 # A simple identifier: a letter or underscore, then letters, digits, underscores.
@@ -328,6 +332,10 @@ class RowColumn:
     ``dax`` the expression of a calculated column (None for a data column), ``kind`` one
     of ``"number"``, ``"text"``, ``"boolean"`` or None for any other type, and
     ``nullable`` False only when the column is declared ``isNullable: false``.
+
+    For a calculated column ``kind`` is the kind of its declared data type: None when it
+    declares none (its type is then its expression's), and the name of the declared type
+    itself when that type is none of these kinds.
     """
 
     source: str | None
@@ -336,11 +344,13 @@ class RowColumn:
     nullable: bool = True
 
 
-def translate_column(expression, table, columns):
+def translate_column(expression, table, columns, kind=None):
     """Translate a DAX calculated column of ``table`` to an OSSIE_SQL field expression.
 
-    ``columns`` maps each column name of ``table`` to a ``RowColumn``. Returns ``(sql,
-    None)`` on success or ``(None, reason)`` on refusal, like ``translate_measure``.
+    ``columns`` maps each column name of ``table`` to a ``RowColumn``, and ``kind`` is
+    the kind of the column's own declared data type, as in ``RowColumn.kind`` (None when
+    it declares none). Returns ``(sql, None)`` on success or ``(None, reason)`` on
+    refusal, like ``translate_measure``.
     """
     too_deep = "the expression is too deeply nested to translate"
     try:
@@ -351,7 +361,9 @@ def translate_column(expression, table, columns):
         return None, too_deep
     translator = _Translator(None, None, row_table=table, row_columns=columns)
     try:
-        return translator.translate(tree, {}).text, None
+        fragment = translator.translate(tree, {})
+        _check_declared_kind("the column", kind, fragment)
+        return fragment.text, None
     except _RefusedError as refusal:
         return None, str(refusal)
     except RecursionError:
@@ -716,16 +728,6 @@ class _Translator:
         value = self.text(node.args[0], variables, node.name)
         return _Sql(f"{node.name}({value.text})", _ATOM, False, _TEXT)
 
-    def substitute(self, node, variables):
-        if len(node.args) == 4:
-            raise _RefusedError("SUBSTITUTE of one occurrence (instance_num) is a later tier")
-        if len(node.args) != 3:
-            raise _RefusedError("SUBSTITUTE takes 3 arguments")
-        if not isinstance(node.args[1], String) or not node.args[1].value:
-            raise _RefusedError("SUBSTITUTE is translated only with a non-empty literal to find")
-        value, old, new = (self.text(arg, variables, "SUBSTITUTE") for arg in node.args)
-        return _Sql(f"REPLACE({value.text}, {old.text}, {new.text})", _ATOM, False, _TEXT)
-
     def concatenate(self, node, variables):
         if len(node.args) != 2:
             raise _RefusedError("CONCATENATE takes 2 arguments")
@@ -773,7 +775,9 @@ class _Translator:
                 f"referenced column [{name}] could not be parsed ({error})"
             ) from None
         try:
-            return self.translate(tree, {})
+            fragment = self.translate(tree, {})
+            _check_declared_kind(f"column [{name}]", column.kind, fragment)
+            return fragment
         except _RefusedError as refusal:
             if str(refusal).startswith("referenced column ["):
                 raise
@@ -923,7 +927,6 @@ _TEXT_FUNCTIONS = {
     "LEN": "length",
     "UPPER": "letter_case",
     "LOWER": "letter_case",
-    "SUBSTITUTE": "substitute",
     "CONCATENATE": "concatenate",
 }
 
@@ -934,6 +937,8 @@ _TEXT_REFUSED = {
     "replaces every match",
     "EXACT": "DAX EXACT is case-sensitive; whether a SQL text comparison is depends on "
     "the engine's collation, which the spec does not fix",
+    "SUBSTITUTE": "DAX SUBSTITUTE is case-sensitive; whether REPLACE is depends on the "
+    "engine's collation, which the spec does not fix",
     "VALUE": "DAX VALUE raises an error on text that is not a number and parses by "
     "locale; CAST and TRY_CAST each differ from that",
     "FIND": "DAX FIND raises an error when the text is not found (unless NotFoundValue "
@@ -963,6 +968,19 @@ def _is_true(node):
     return (isinstance(node, Name) and node.name.upper() == "TRUE") or (
         isinstance(node, Call) and node.name == "TRUE" and not node.args
     )
+
+
+def _check_declared_kind(subject, declared, fragment):
+    """Refuse a calculated column whose expression is not of its declared kind.
+
+    DAX converts the expression's value to the column's declared data type, and that
+    conversion is not translated. BLANK() fits every type.
+    """
+    if declared is not None and fragment.kind not in (declared, _BLANK):
+        raise _RefusedError(
+            f"{subject} is declared as {declared} and its expression is a {fragment.kind} "
+            "value: DAX converts the value to the declared type, which is not translated"
+        )
 
 
 def _common_kind(fragments):
