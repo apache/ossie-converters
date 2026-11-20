@@ -58,4 +58,7 @@ def sap_ext(obj: Any) -> dict[str, Any]:
 
 
 def sql_of(obj: Any) -> str:
+    """The portable SQL of a field or metric, else its first dialect's expression."""
+    if obj.expression.sql is not None:
+        return obj.expression.sql
     return obj.expression.dialects[0].expression

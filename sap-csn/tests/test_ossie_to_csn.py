@@ -30,13 +30,13 @@ def raw_document(**overrides) -> dict:
     def field(name, datatype="Integer", sql=None, **extra):
         return {
             "name": name,
-            "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql or name}]},
+            "expression": {"sql": sql or name},
             "datatype": datatype,
             **extra,
         }
 
     raw = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": "cust", "source": "db.cust", "primary_key": ["id"], "fields": [field("id"), field("name", "String")]},
@@ -62,7 +62,7 @@ def document(**overrides) -> OssieDocument:
 
 
 def metric(name, sql, **extra):
-    return {"name": name, "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]}, **extra}
+    return {"name": name, "expression": {"sql": sql}, **extra}
 
 
 def convert(doc):
@@ -152,7 +152,45 @@ def test_untranslatable_field_expression_is_reported_and_kept_in_an_annotation()
     assert [i.issue_type for i in issues] == [ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE]
 
 
-def test_field_without_ansi_sql_is_reported():
+@pytest.mark.parametrize(
+    "expression",
+    [
+        # The top-level sql is authoritative, ahead of any tagged entry.
+        {"sql": "qty * price", "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "qty"}]},
+        # Without it, an OSSIE_SQL_2026 entry comes ahead of ANSI_SQL and of other dialects.
+        {
+            "dialects": [
+                {"dialect": "SNOWFLAKE", "expression": "qty::INT"},
+                {"dialect": "ANSI_SQL", "expression": "qty"},
+                {"dialect": "OSSIE_SQL_2026", "expression": "qty * price"},
+            ]
+        },
+        # A blank expression is passed over.
+        {"sql": " ", "dialects": [{"dialect": "ANSI_SQL", "expression": "qty * price"}]},
+    ],
+)
+def test_portable_sql_is_the_expression_exported(expression):
+    raw = raw_document()
+    raw["datasets"][1]["fields"].append({"name": "total", "expression": expression, "datatype": "Decimal"})
+    csn, issues = convert(OssieDocument.model_validate(raw))
+    assert csn["definitions"]["orders"]["elements"]["total"]["value"] == {
+        "xpr": [{"ref": ["qty"]}, "*", {"ref": ["price"]}]
+    }
+    assert issues == []
+
+
+def test_untranslatable_portable_sql_keeps_its_dialect_in_the_annotation():
+    raw = raw_document()
+    raw["datasets"][1]["fields"].append(
+        {"name": "rank", "expression": {"sql": "RANK() OVER (ORDER BY qty)"}, "datatype": "Integer"}
+    )
+    csn, issues = convert(OssieDocument.model_validate(raw))
+    element = csn["definitions"]["orders"]["elements"]["rank"]
+    assert element["@Ossie.sql"] == {"dialect": "OSSIE_SQL_2026", "expression": "RANK() OVER (ORDER BY qty)"}
+    assert [i.issue_type for i in issues] == [ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE]
+
+
+def test_field_without_sql_is_reported():
     doc = document()
     raw = json.loads(doc.to_ossie_json())
     raw["datasets"][1]["fields"].append(
@@ -350,7 +388,7 @@ def test_metric_through_an_ambiguous_association_goes_to_meta():
 
 def test_unreadable_expression_message_carries_no_ansi_escapes():
     raw = raw_document()
-    raw["datasets"][0]["fields"][1]["expression"]["dialects"][0]["expression"] = "this is not sql !!!"
+    raw["datasets"][0]["fields"][1]["expression"]["sql"] = "this is not sql !!!"
     _, issues = convert(OssieDocument.model_validate(raw))
     assert issues and all("\x1b" not in i.detail for i in issues)
 
@@ -448,7 +486,7 @@ def test_dataset_metric_csn_cannot_express_is_carried_on_its_entity(sql, issue):
     assert [(i.issue_type, i.element_name) for i in issues] == [(issue, "orders.m")]
 
 
-def test_dataset_metric_without_ansi_sql_is_carried_on_its_entity():
+def test_dataset_metric_without_sql_is_carried_on_its_entity():
     snowflake = {"name": "m", "expression": {"dialects": [{"dialect": "SNOWFLAKE", "expression": "SUM(qty)"}]}}
     csn, issues = convert(with_dataset_metrics(1, snowflake))
     assert csn["definitions"]["orders"]["@Ossie.metrics"] == [snowflake]

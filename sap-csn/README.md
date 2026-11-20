@@ -46,8 +46,8 @@ uv run pytest
 | element | field; `type` resolves through user-defined types and `type of` references to a CDS built-in, then to an Ossie `datatype` |
 | `key: true` | `primary_key` |
 | `@assert.unique.*` | `unique_keys` |
-| calculated element (`value`) | field expression, translated from CXN to ANSI SQL |
-| `Association` / `Composition` with a target in the document | relationship, from the owning entity to the target |
+| calculated element (`value`) | field expression, translated from CXN to portable SQL (`expression.sql`, `OSSIE_SQL_2026`) |
+| `Association` / `Composition` with a target in the document | relationship, from the owning entity to the target, when every column it joins is a field of its entity |
 | managed association | relationship, plus a field for each generated foreign-key column (`<assoc>_<key>`) |
 | `@Aggregation.default` (`SUM`, `MIN`, `MAX`, `AVG`, `COUNT`, `COUNT_DISTINCT`) | metric over the element |
 | `@Aggregation.default` + `@Ossie.metric: true` | metric over the element's expression; no field. Model-scoped, or dataset-scoped with `@Ossie.datasetMetric: true` |
@@ -60,9 +60,11 @@ Everything else — remaining annotations, `length`/`precision`/`scale`, the `qu
 or `projection` of a view, types, services, actions and the root keys — is kept in a
 `SAP_CSN` custom extension so the document exports back unchanged. So is the original
 CXN of a calculated element: export reuses it as long as the field's expression is still
-the SQL it was rendered as, and translates the SQL afresh once it has been edited.
+the SQL it was rendered as and reaches through the same associations, and translates the
+SQL afresh otherwise (the expression was edited, or an association it went through was
+removed or replaced).
 
-A derived measure whose expression cannot be wrapped in an ANSI SQL aggregate (it does not
+A derived measure whose expression cannot be wrapped in an SQL aggregate (it does not
 parse, or `@Ossie.sql` gives it in another dialect) is kept in the extension and reported as
 `METRIC_NOT_MODELED`, rather than becoming a metric over a column that does not exist.
 
@@ -99,8 +101,11 @@ being aggregated.
 * **A field with no `datatype`** is exported as `cds.String`, because CSN requires a type, and
   reported as `ASSUMED_DATATYPE`.
 
-Only the `ANSI_SQL` dialect is read. A field or metric that has only another dialect is reported
-as `DIALECT_UNAVAILABLE` rather than guessed at.
+Expressions are read as SQL from the top-level `expression.sql` (the authoritative `OSSIE_SQL_2026`
+form), else from an `OSSIE_SQL_2026` entry, else from an `ANSI_SQL` one. A field or metric that
+has only another dialect is reported as `DIALECT_UNAVAILABLE` rather than guessed at, and keeps
+that expression in `@Ossie.sql` (a field) or `meta.ossie.metrics` (a metric). Import writes SQL
+as `expression.sql`; an `@Ossie.sql` annotation comes back in the dialect it names.
 
 ## Limitations
 
@@ -110,7 +115,8 @@ as `DIALECT_UNAVAILABLE` rather than guessed at.
   such; they arrive as plain entities with their annotations preserved.
 * **Not translated:** structured and array-typed elements, virtual elements, `$self` backlink
   associations (the forward association already is the relationship), associations whose target is
-  not in the document, `on` conditions other than a conjunction of column equalities, and
+  not in the document or that join a column which is no field of their target (an Ossie relationship
+  joins fields), `on` conditions other than a conjunction of column equalities, and
   expressions with subqueries, `$session` or `$user`. Each is kept in the `SAP_CSN` extension and
   reported, never dropped silently.
 * **Views.** A view's elements become fields and its `query` is preserved, but the converter does

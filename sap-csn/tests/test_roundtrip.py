@@ -22,8 +22,9 @@ import yaml
 from ossie import OssieDataType, OssieDocument
 
 from ossie_sap_csn import CsnToOssieConverter, OssieToCsnConverter
+from ossie_sap_csn.converter_issues import ConverterIssueType
 
-from .helpers import TPCDS_PATH, by_name, load_fixture, load_tpcds, validate_against_schema
+from .helpers import BOOKS, ORDERS, TPCDS_PATH, by_name, load_fixture, load_tpcds, sql_of, validate_against_schema
 
 
 def load_tpcds_text() -> str:
@@ -101,7 +102,7 @@ def test_tpcds_survives_ossie_csn_ossie():
 
 
 def sql(metric):
-    return metric.expression.dialects[0].expression.replace(" ", "")
+    return sql_of(metric).replace(" ", "")
 
 
 def test_tpcds_metrics_all_survive_whatever_their_home():
@@ -145,11 +146,11 @@ def readings(document):
 
 def test_cast_sql_says_what_the_cds_type_means():
     fields = readings(CsnToOssieConverter().convert(load_fixture("cds_types.csn.json")).output)
-    assert fields["takenAtSeconds"].expression.dialects[0].expression == "CAST(loggedAt AS TIMESTAMP(0))"
-    assert fields["loggedAtFraction"].expression.dialects[0].expression == "CAST(takenAt AS TIMESTAMP)"
-    assert fields["noteText"].expression.dialects[0].expression == "CAST(code AS CLOB)"
-    assert fields["codeShort"].expression.dialects[0].expression == "CAST(note AS VARCHAR(3))"
-    assert fields["amountRounded"].expression.dialects[0].expression == "CAST(amount AS DECIMAL(15, 0))"
+    assert sql_of(fields["takenAtSeconds"]) == "CAST(loggedAt AS TIMESTAMP(0))"
+    assert sql_of(fields["loggedAtFraction"]) == "CAST(takenAt AS TIMESTAMP)"
+    assert sql_of(fields["noteText"]) == "CAST(code AS CLOB)"
+    assert sql_of(fields["codeShort"]) == "CAST(note AS VARCHAR(3))"
+    assert sql_of(fields["amountRounded"]) == "CAST(amount AS DECIMAL(15, 0))"
     assert fields["codeCopy"].datatype == OssieDataType.STRING  # `type of Readings:code`
 
 
@@ -182,11 +183,61 @@ def test_an_edited_expression_is_translated_not_replaced_by_the_kept_cxn():
     raw = json.loads(ossie.to_ossie_json())
     readings_raw = next(d for d in raw["datasets"] if d["name"] == "Readings")
     field = next(f for f in readings_raw["fields"] if f["name"] == "counter32")
-    field["expression"]["dialects"][0]["expression"] = "CAST(counter AS INT) + 1"
+    field["expression"]["sql"] = "CAST(counter AS INT) + 1"
     csn = OssieToCsnConverter().convert(OssieDocument.model_validate(raw)).output
     assert csn["definitions"]["sap.types.Readings"]["elements"]["counter32"]["value"] == {
         "xpr": [{"ref": ["counter"], "cast": {"type": "cds.Integer"}}, "+", {"val": 1}]
     }
+
+
+def bookshop_without(relationship: str, *added: dict) -> OssieDocument:
+    """The imported bookshop with ``relationship`` removed and ``added`` ones in its place."""
+    raw = json.loads(CsnToOssieConverter().convert(load_fixture("bookshop.csn.json")).output.to_ossie_json())
+    raw["relationships"] = [r for r in raw["relationships"] if r["name"] != relationship] + list(added)
+    return OssieDocument.model_validate(raw)
+
+
+def issued(result):
+    return [(i.issue_type, i.element_name) for i in result.issues]
+
+
+def test_kept_cxn_does_not_reach_through_a_removed_association():
+    result = OssieToCsnConverter().convert(bookshop_without("author"))
+    element = result.output["definitions"][BOOKS]["elements"]["authorName"]
+    # Without the association, Books has no path to Authors.name for a calculated element.
+    assert "value" not in element
+    assert element["@Ossie.sql"] == {"dialect": "OSSIE_SQL_2026", "expression": "Authors.name"}
+    assert (ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE, "Books.authorName") in issued(result)
+
+
+def test_kept_cxn_follows_the_association_that_replaced_its_own():
+    writer = {"name": "writer", "from": "Books", "to": "Authors", "from_columns": ["author_ID"], "to_columns": ["ID"]}
+    csn = OssieToCsnConverter().convert(bookshop_without("author", writer)).output
+    assert csn["definitions"][BOOKS]["elements"]["authorName"]["value"] == {"ref": ["writer", "name"]}
+
+
+def test_kept_measure_cxn_does_not_reach_through_a_removed_association():
+    result = OssieToCsnConverter().convert(bookshop_without("book"))
+    assert "amount" not in result.output["definitions"][ORDERS]["elements"]
+    assert [m["name"] for m in result.output["meta"]["ossie"]["metrics"]] == ["amount"]
+    assert (ConverterIssueType.METRIC_NOT_MODELED, "amount") in issued(result)
+
+
+def test_kept_measure_cxn_follows_the_association_that_replaced_its_own():
+    item = {"name": "item", "from": "Orders", "to": "Books", "from_columns": ["book_ID"], "to_columns": ["ID"]}
+    csn = OssieToCsnConverter().convert(bookshop_without("book", item)).output
+    assert csn["definitions"][ORDERS]["elements"]["amount"]["value"] == {
+        "xpr": [{"ref": ["quantity"]}, "*", {"ref": ["item", "price"]}]
+    }
+
+
+def test_untranslatable_portable_sql_comes_back_as_portable_sql():
+    raw = yaml.safe_load(load_tpcds_text())
+    store = next(d for d in raw["datasets"] if d["name"] == "store_sales")
+    store["fields"].append({"name": "rank", "expression": {"sql": "RANK() OVER (ORDER BY ss_quantity)"}})
+    back = CsnToOssieConverter().convert(OssieToCsnConverter().convert(OssieDocument.model_validate(raw)).output).output
+    rank = by_name(by_name(back.datasets)["store_sales"].fields)["rank"]
+    assert rank.expression.model_dump(exclude_none=True) == {"sql": "RANK() OVER (ORDER BY ss_quantity)"}
 
 
 def test_dataset_metrics_csn_cannot_hold_as_measures_survive_the_round_trip():

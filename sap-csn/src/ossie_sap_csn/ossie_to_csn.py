@@ -61,14 +61,34 @@ _IDENTIFIER_UNSAFE = re.compile(r"[^A-Za-z0-9_]")
 _AGG_NODES: dict[type, str] = {exp.Sum: "SUM", exp.Min: "MIN", exp.Max: "MAX", exp.Avg: "AVG", exp.Count: "COUNT"}
 
 
-def _select_sql(expression: Any) -> tuple[Optional[str], Optional[str]]:
-    """The ANSI_SQL expression text, and the first other dialect's text when ANSI_SQL is absent."""
-    other = None
-    for entry in expression.dialects:
-        if entry.dialect.value == "ANSI_SQL":
-            return entry.expression, None
-        other = other or f"{entry.dialect.value}:{entry.expression}"
-    return None, other
+@dataclass(frozen=True)
+class _Selected:
+    """The expression a field or metric is exported from."""
+
+    dialect: str
+    text: str
+
+    @property
+    def sql(self) -> Optional[str]:
+        """The text, when it is SQL this converter can translate."""
+        return self.text if self.dialect.upper() in c.SQL_DIALECTS else None
+
+
+def _select(expression: Any) -> _Selected:
+    """The SQL of ``expression``, else its first expression in another dialect.
+
+    The top-level ``sql`` is the authoritative OSSIE_SQL_2026 form, ahead of an
+    OSSIE_SQL_2026 entry and then an ANSI_SQL one. A blank expression counts only
+    when there is nothing else.
+    """
+    candidates = [] if expression.sql is None else [_Selected(c.PORTABLE_DIALECT, expression.sql)]
+    candidates += [_Selected(entry.dialect, entry.expression) for entry in expression.dialects or []]
+    usable = [s for s in candidates if s.text.strip()] or candidates
+    for dialect in c.SQL_DIALECTS:
+        for selected in usable:
+            if selected.dialect.upper() == dialect:
+                return selected
+    return usable[0]
 
 
 class _Metric:
@@ -109,11 +129,31 @@ def _identifier(name: str) -> str:
     return _IDENTIFIER_UNSAFE.sub("_", name)
 
 
-def _witness(ext: dict[str, Any], sql: Optional[str]) -> Any:
-    """The CXN an import read ``sql`` from, while ``sql`` is still what it rendered as."""
-    if sql is not None and ext.get("value") is not None and ext.get("value_sql") == sql:
-        return ext["value"]
-    return None
+def _paths(node: Any) -> list[list[str]]:
+    """The ``ref`` paths of a CXN expression, left to right, without a ``$self`` head."""
+    if isinstance(node, list):
+        return [path for item in node for path in _paths(item)]
+    if not isinstance(node, dict):
+        return []
+    paths = []
+    if isinstance(node.get("ref"), list):
+        ref = node["ref"]
+        paths.append(ref[1:] if ref and ref[0] in ("$self", "$projection") else ref)
+    return paths + [path for key, value in node.items() if key != "ref" for path in _paths(value)]
+
+
+def _witness(ext: dict[str, Any], sql: Optional[str], translated: dict[str, Any]) -> Any:
+    """The CXN an import read ``sql`` from, while ``sql`` is still what it rendered as.
+
+    SQL cannot tell some CXN apart (a ``cds.Int32`` cast is ``INT``, like ``cds.Integer``),
+    so the kept CXN is the better rendering, but only while it takes the same paths as
+    ``translated``, the CXN of ``sql`` today: an association removed or renamed since
+    the import leaves a path in it that leads nowhere.
+    """
+    kept = ext.get("value")
+    if sql is None or kept is None or ext.get("value_sql") != sql or _paths(kept) != _paths(translated):
+        return None
+    return kept
 
 
 def _column_resolver(dataset_name: str, plans: list[dict[str, Any]]) -> ColumnResolver:
@@ -290,13 +330,14 @@ class OssieToCsnConverter:
                 return exc
 
         for metric in document.metrics or []:
-            sql, other = _select_sql(metric.expression)
+            selected = _select(metric.expression)
+            sql = selected.sql
             if sql is None:
                 issues.append(
                     ConverterIssue(
                         ConverterIssueType.DIALECT_UNAVAILABLE,
                         metric.name,
-                        f"Metric has no ANSI_SQL expression (only {other.split(':')[0]}); "
+                        f"Metric has no SQL expression (only {selected.dialect}); "
                         "carried in meta.ossie.metrics only.",
                     )
                 )
@@ -343,14 +384,15 @@ class OssieToCsnConverter:
         for ds_name, dataset in datasets.items():
             for metric in dataset.metrics or []:
                 where = f"{ds_name}.{metric.name}"
-                sql, other = _select_sql(metric.expression)
+                selected = _select(metric.expression)
+                sql = selected.sql
                 if sql is None:
                     carried[ds_name].append(metric)
                     issues.append(
                         ConverterIssue(
                             ConverterIssueType.DIALECT_UNAVAILABLE,
                             where,
-                            f"Dataset metric has no ANSI_SQL expression (only {other.split(':')[0]}); "
+                            f"Dataset metric has no SQL expression (only {selected.dialect}); "
                             f"carried in an {c.OSSIE_METRICS} annotation only.",
                         )
                     )
@@ -507,28 +549,23 @@ class OssieToCsnConverter:
         if is_key:
             element["key"] = True
 
-        sql, other = _select_sql(field.expression)
-        override: Optional[dict[str, str]] = None
+        selected = _select(field.expression)
+        sql = selected.sql
         if sql is None:
-            dialect, _, text = other.partition(":")
-            override = {"dialect": dialect, "expression": text}
+            element[c.OSSIE_SQL] = {"dialect": selected.dialect, "expression": selected.text}
             issues.append(
                 ConverterIssue(
                     ConverterIssueType.DIALECT_UNAVAILABLE,
                     where,
-                    f"Field has no ANSI_SQL expression (only {dialect}); exported as a plain column "
+                    f"Field has no SQL expression (only {selected.dialect}); exported as a plain column "
                     "with the original expression in an @Ossie.sql annotation.",
                 )
             )
-        elif (witness := _witness(ext, sql)) is not None:
-            element["value"] = witness
         else:
             try:
                 cxn = sql_to_cxn(sql, resolve_column)
-                if cxn != {"ref": [field.name]}:
-                    element["value"] = cxn
             except UnsupportedExpression as exc:
-                override = {"dialect": "ANSI_SQL", "expression": sql}
+                element[c.OSSIE_SQL] = {"dialect": selected.dialect, "expression": sql}
                 issues.append(
                     ConverterIssue(
                         ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE,
@@ -537,8 +574,12 @@ class OssieToCsnConverter:
                         "with the original expression in an @Ossie.sql annotation.",
                     )
                 )
-        if override:
-            element[c.OSSIE_SQL] = override
+            else:
+                witness = _witness(ext, sql, cxn)
+                if witness is not None:
+                    element["value"] = witness
+                elif cxn != {"ref": [field.name]}:
+                    element["value"] = cxn
 
         if field.label:
             element[ext.get("label_key", c.LABEL_KEYS[0])] = field.label
@@ -566,7 +607,7 @@ class OssieToCsnConverter:
         if datatype is None and measure.aggregation in ("COUNT", "COUNT_DISTINCT"):
             datatype = "Integer"
         element: dict[str, Any] = {"type": self._type(datatype, measure_ext.get("type"), where, issues)}
-        witness = _witness(measure_ext, _select_sql(metric.expression)[0])
+        witness = _witness(measure_ext, _select(metric.expression).sql, measure.value)
         element["value"] = measure.value if witness is None else witness
         element[c.AGGREGATION_KEY] = c.enum_annotation(measure.aggregation)
         element[c.OSSIE_METRIC] = True

@@ -22,7 +22,7 @@ import pytest
 from ossie_sap_csn import CsnToOssieConverter, OssieToCsnConverter
 from ossie_sap_csn.converter_issues import ConverterError, ConverterIssueType
 
-from .helpers import BOOKS, ORDERS, by_name, load_fixture, sap_ext, sql_of, validate_against_schema
+from .helpers import BOOKS, by_name, load_fixture, sap_ext, sql_of, validate_against_schema
 
 
 @pytest.fixture(scope="module")
@@ -329,6 +329,54 @@ def test_malformed_on_condition_is_kept_aside_not_a_crash(on):
     assert sap_ext(a)["unmodeled_elements"]["b"]["on"] == on
 
 
+@pytest.mark.parametrize(
+    ("association", "target"),
+    [
+        # B has no element `ghost` at all.
+        ({"on": [{"ref": ["b", "ghost"]}, "=", {"ref": ["b_id"]}]}, {}),
+        # B's `code` is virtual, so not a field, and a relationship joins fields.
+        ({"on": [{"ref": ["b", "code"]}, "=", {"ref": ["b_id"]}]}, {"code": {"type": "cds.Integer", "virtual": True}}),
+        # The managed association's target key is structured, so not a field either.
+        ({}, {"id": {"key": True, "elements": {"x": {"type": "cds.Integer"}}}}),
+    ],
+)
+def test_association_joining_no_field_of_its_target_is_kept_aside(association, target):
+    csn = _two_entities(b={"type": "cds.Association", "target": "B", **association})
+    csn["definitions"]["B"]["elements"].update(target)
+    result = CsnToOssieConverter().convert(csn)
+    assert not result.output.relationships
+    assert [i.element_name for i in issues_of(result, ConverterIssueType.RELATIONSHIP_DROPPED)] == ["A.b"]
+    assert not any(sap_ext(f).get("generated_foreign_key") for f in by_name(result.output.datasets)["A"].fields)
+    validate_against_schema(result.output)
+
+
+def test_association_to_an_entity_defined_later_joins_its_fields():
+    definitions = _two_entities()["definitions"]
+    b = {"kind": "entity", "elements": {**definitions["B"]["elements"], "a": {"type": "cds.Association", "target": "A"}}}
+    # B's association is read before A, the entity whose fields it joins.
+    result = CsnToOssieConverter().convert({"definitions": {"B": b, "A": definitions["A"]}})
+    (relationship,) = result.output.relationships
+    assert (relationship.from_dataset, relationship.to, relationship.from_columns, relationship.to_columns) == (
+        "B", "A", ["a_id"], ["id"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("dialect", "sql", "dialects"),
+    [
+        ("OSSIE_SQL_2026", "RANK() OVER (ORDER BY amount)", None),
+        ("SNOWFLAKE", None, [{"dialect": "SNOWFLAKE", "expression": "RANK() OVER (ORDER BY amount)"}]),
+    ],
+)
+def test_sql_annotation_restores_the_expression_in_its_dialect(dialect, sql, dialects):
+    annotation = {"dialect": dialect, "expression": "RANK() OVER (ORDER BY amount)"}
+    result = CsnToOssieConverter().convert(_two_entities(r={"type": "cds.Integer", "@Ossie.sql": annotation}))
+    expression = by_name(by_name(result.output.datasets)["A"].fields)["r"].expression
+    assert expression.model_dump(exclude_none=True) == {
+        k: v for k, v in {"sql": sql, "dialects": dialects}.items() if v is not None
+    }
+
+
 def test_type_of_reference_resolves_to_the_referenced_type():
     csn = _two_entities(copy={"type": {"ref": ["A", "amount"]}}, loop={"type": {"ref": ["A", "loop"]}})
     result = CsnToOssieConverter().convert(csn)
@@ -345,7 +393,7 @@ def test_type_of_reference_resolves_to_the_referenced_type():
     [
         # An expression the importer cannot parse as SQL.
         {"@Ossie.sql": {"dialect": "ANSI_SQL", "expression": "amount ?: 0"}},
-        # An expression in another dialect cannot be wrapped in an ANSI_SQL aggregate.
+        # An expression in another dialect cannot be wrapped in an SQL aggregate.
         {"@Ossie.sql": {"dialect": "DAX", "expression": "SUMX(A, A[amount])"}},
     ],
 )
@@ -399,7 +447,7 @@ def _with(path, value):
         _with(["definitions", "A", "elements"], [1]),
         _with(["definitions", "A", "elements", "x"], {"type": "cds.Integer", "@Ossie.aiContext": 5}),
         _with(["definitions", "A", "elements", "x"], {"type": "cds.Integer", "@Ossie.customExtensions": [{"nope": 1}]}),
-        _with(["definitions", "A", "elements", "x"], {"type": "cds.Integer", "@Ossie.sql": {"dialect": "NOPE", "expression": "x"}}),
+        _with(["definitions", "A", "elements", "x"], {"type": "cds.Integer", "@Ossie.sql": {"dialect": 5, "expression": "x"}}),
         _with(["definitions", "A", "@Ossie.uniqueKeys"], [5]),
         _with(["definitions", "A", "@Ossie.primaryKey"], [1]),
         _with(["definitions", "A", "@Ossie.metrics"], {"name": "m"}),

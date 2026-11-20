@@ -35,7 +35,7 @@ def test_csn_to_ossie_writes_yaml(tmp_path, monkeypatch, capsys):
     run(monkeypatch, "csn-to-ossie", "-i", str(FIXTURES_DIR / "bookshop.csn.json"), "-o", str(out), "--name", "shop")
     doc = yaml.safe_load(out.read_text())
     assert doc["name"] == "shop"
-    assert doc["version"] == "0.2.0.dev0"
+    assert doc["version"] == "0.3.0.dev0"
     assert "[WARNING] RELATIONSHIP_DROPPED: Authors.books" in capsys.readouterr().err
 
 

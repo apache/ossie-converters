@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Translate between CSN expressions (CXN) and ANSI SQL text.
+"""Translate between CSN expressions (CXN) and SQL text.
 
 CXN is the JSON expression notation CSN uses for calculated elements and view
 columns: ``{"ref": [...]}``, ``{"val": ...}``, ``{"func": ..., "args": [...]}``
@@ -190,7 +190,7 @@ def _node(node: Any, resolve_path: PathResolver, nested_group: bool = False) -> 
 
 
 def cxn_to_sql(node: Any, resolve_path: PathResolver = _no_paths) -> str:
-    """Render one CXN expression as ANSI SQL text."""
+    """Render one CXN expression as SQL text."""
     return _node(node, resolve_path)
 
 
@@ -340,7 +340,7 @@ def _to_cxn(node: exp.Expression, resolve_column: ColumnResolver) -> Any:
 
 
 def sql_to_cxn(sql: str, resolve_column: ColumnResolver) -> dict[str, Any]:
-    """Convert ANSI SQL text into one CXN expression (always an object)."""
+    """Convert SQL text into one CXN expression (always an object)."""
     result = _to_cxn(parse_sql(sql), resolve_column)
     if isinstance(result, str):
         raise UnsupportedExpression("a bare '*' is not an expression")

@@ -67,6 +67,11 @@ META_KEY = "ossie"
 # `meta.creator` export writes when the CSN names no creator of its own.
 CREATOR = "apache-ossie-sap-csn"
 
+# The dialect of a top-level `expression.sql`, and the one this converter writes SQL in.
+PORTABLE_DIALECT = "OSSIE_SQL_2026"
+# Dialects read as SQL. ANSI_SQL is how documents before the portable dialect wrote it.
+SQL_DIALECTS = (PORTABLE_DIALECT, "ANSI_SQL")
+
 # Aggregations `@Aggregation.default` can carry that Ossie metrics express.
 AGGREGATIONS = ("SUM", "MIN", "MAX", "AVG", "COUNT", "COUNT_DISTINCT")
 
