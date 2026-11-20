@@ -518,15 +518,53 @@ def test_wisdom_extension_wins_over_a_conflicting_note():
     ]
 
 
-def test_note_is_not_read_when_wisdom_extension_is_stale():
+def test_note_is_read_when_wisdom_extension_is_stale():
     result, edge = _orders_customers_export(
         ai_context="one-to-one relationship",
         custom_extensions=[
             _wisdom_extension({"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["orders", "users"]})
         ],
     )
-    assert edge["properties"]["relationshipType"] == "MANY_TO_ONE"
-    assert len(_issues_of(result, ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED)) == 1
+    assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
+    assert result.issues == []
+
+
+def test_renamed_dataset_keeps_many_to_many_through_its_note():
+    # Imported as orders MANY_TO_MANY tags, then `tags` was renamed to `order_tags` in Ossie, which
+    # updates `to` but not the WISDOM entry. MANY_TO_ONE would tell Wisdom `to` is unique and fan out joins.
+    document = OssieDocument(
+        name="m",
+        datasets=[
+            OssieDataset(name="orders", source="db.s.orders"),
+            OssieDataset(name="order_tags", source="db.s.order_tags"),
+        ],
+        relationships=[
+            OssieRelationship(
+                name="orders_to_tags",
+                from_dataset="orders",
+                to="order_tags",
+                from_columns=["order_id"],
+                to_columns=["order_id"],
+                ai_context=RELATIONSHIP_TYPE_NOTES["MANY_TO_MANY"],
+                custom_extensions=[
+                    _wisdom_extension({"relationshipType": "MANY_TO_MANY", "normalizedEndpoints": ["orders", "tags"]})
+                ],
+            )
+        ],
+    )
+    result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
+    edge = result.output["domain"]["zsheet_json"]["relationshipGraph"]["relationships"][0]
+    assert edge["properties"]["relationshipType"] == "MANY_TO_MANY"
+    assert result.issues == []
+
+
+@pytest.mark.parametrize("data", ["{}", {"_v": 2, "relationshipType": "ONE_TO_MANY"}])
+def test_unreadable_wisdom_extension_falls_back_to_the_note(data):
+    result, edge = _orders_customers_export(
+        ai_context="one-to-one relationship", custom_extensions=[_wisdom_extension(data)]
+    )
+    assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
+    assert result.issues == []
 
 
 def test_unresolved_metric_attaches_to_first_dataset():

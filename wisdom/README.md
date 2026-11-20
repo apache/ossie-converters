@@ -113,15 +113,16 @@ are stable:
   `ONE_TO_ONE`, `MANY_TO_MANY`, or `ONE_TO_MANY` with the two sides (and their columns)
   swapped back. If `from`/`to` were reversed after import, `ONE_TO_ONE` and `MANY_TO_MANY`
   keep their type, since they mean the same thing either way, and a `ONE_TO_MANY` is
-  exported as `MANY_TO_ONE` in the new direction, since its many side is now `from`. If a
-  recorded dataset is no longer one of the
-  relationship's `from`/`to`, or the entry is malformed, the edge stays `MANY_TO_ONE`
-  with a `RELATIONSHIP_TYPE_UNRESOLVED` warning. The entries read this way are not reported
-  as `CUSTOM_EXTENSION_DROPPED`. Composite keys become compound `AND` join conditions.
-- Documents written before the `WISDOM` extension carry the type only as an `ai_context`
-  note. When a relationship has no `WISDOM` entry, an `ai_context` that is exactly one of
-  the notes (ignoring leading and trailing whitespace), including the older
-  `one-to-many relationship`, still restores the type. A note matching the exported type
+  exported as `MANY_TO_ONE` in the new direction, since its many side is now `from`. The
+  entries read this way are not reported as `CUSTOM_EXTENSION_DROPPED`. Composite keys
+  become compound `AND` join conditions.
+- When the `WISDOM` entry can't be used, the `ai_context` note is read instead. That covers
+  documents written before the extension, entries that are malformed, and entries that no
+  longer match `from`/`to` (for example after a dataset was renamed). A note restores the
+  type when it is exactly one of the notes (ignoring leading and trailing whitespace),
+  including the older `one-to-many relationship`. If neither the entry nor the note gives
+  a type, the edge is exported as `MANY_TO_ONE`, with a `RELATIONSHIP_TYPE_UNRESOLVED`
+  warning when there was an entry it could not use. A note matching the exported type
   is carried by it; any other `ai_context` on a relationship, including a hand-edited
   note, is dropped with an `AI_CONTEXT_DROPPED` warning.
 - Metrics attach to the first dataset their expression references (a

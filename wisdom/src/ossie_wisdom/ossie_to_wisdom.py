@@ -381,22 +381,24 @@ class OssieToWisdomConverter:
                     )
                 )
                 continue
-            relationship_type = "MANY_TO_ONE"
+            relationship_type = None
             extension = self._wisdom_extension(relationship)
             if extension is not None:
                 consumed.add(id(extension))
-                stored_type = self._stored_relationship_type(extension, relationship)
-                if stored_type is not None:
-                    relationship_type = stored_type
-                else:
+                relationship_type = self._stored_relationship_type(extension, relationship)
+            if relationship_type is None and isinstance(relationship.ai_context, str):
+                # Fall back to the note for documents written before the WISDOM extension,
+                # and for entries that are stale or unreadable.
+                relationship_type = _NOTE_RELATIONSHIP_TYPES.get(relationship.ai_context.strip())
+            if relationship_type is None:
+                if extension is not None:
                     issues.append(
                         ConverterIssue(
-                            issue_type=ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED, element_name=relationship.name
+                            issue_type=ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED,
+                            element_name=relationship.name,
                         )
                     )
-            elif isinstance(relationship.ai_context, str):
-                # Documents written before the WISDOM extension carry the type only as a note.
-                relationship_type = _NOTE_RELATIONSHIP_TYPES.get(relationship.ai_context.strip(), relationship_type)
+                relationship_type = "MANY_TO_ONE"
             # A note that states the exported type is carried by relationshipType; anything else is lost.
             if relationship.ai_context is not None and (
                 not isinstance(relationship.ai_context, str)
