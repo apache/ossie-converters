@@ -86,7 +86,7 @@ from ._common import (
 from ._dataset_metric import (count_key_signature, expression_fields, field_signatures,
                               local_columns, origin_signature)
 from .converter_issues import IssueLog, IssueType
-from .expressions import (UnattributableSQL, aggregate_spans, native_tokens,
+from .expressions import (UnattributableSQL, aggregate_spans, date_unit_spans, native_tokens,
                           parse as parse_expression, qualify_bare_columns,
                           replace_bare_identifiers, unqualified_column_names,
                           unsplittable_aggregate_datasets)
@@ -676,7 +676,7 @@ def _geo_half_sql(field, geo, dialect, scope):
     the alias as it crosses)."""
     if geo.get("sql") is not None:
         return geo["sql"]
-    expr, _ = pick_expression(field.get("expression"), dialect)
+    expr, used = pick_expression(field.get("expression"), dialect)
     if expr is None:
         raise ConversionError(
             f"{scope}: geo half '{field.get('name')}' has no stashed sql and no "
@@ -684,7 +684,7 @@ def _geo_half_sql(field, geo, dialect, scope):
     expr = expr.strip()
     if is_simple_identifier(expr):
         return "{CUBE}." + expr
-    return qualify_bare_columns(expr)
+    return qualify_bare_columns(expr, used)
 
 
 def _resolve_dimension_names(ds, dialect, scope):
@@ -819,7 +819,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
             # recommends -- and, unlike a `{member}` reference, it means the same
             # thing whether or not a field shadows the column's name.
             dim["sql"] = qualify_bare_columns(
-                ossie_expr_to_cube_sql(expr, cname, tables))
+                ossie_expr_to_cube_sql(expr, cname, tables), used)
         if stash.get("case") is not None:
             # A `case` dimension carries its conditions instead of `sql`, and Cube
             # rejects a dimension declaring both ("dimensions.size does not match any
@@ -1849,7 +1849,7 @@ class _MetricReferences:
             f"Model '{self._model_name}': metric reference cycle: {named}. Cube "
             f"refuses cyclic member references; break the cycle in the Ossie model.")
 
-    def to_cube_sql(self, text, target, context=None, source_dialect=None):
+    def to_cube_sql(self, text, target, context=None, source_dialect=None, context_offset=None):
         """`ossie_expr_to_cube_sql`, with metric references rendered as measures.
 
         Each referenced name is masked with a sentinel identifier first, so the
@@ -1875,6 +1875,10 @@ class _MetricReferences:
         is, while a genuine bare column in glue text still qualifies.
         """
         whole = context if context is not None else text
+        units = date_unit_spans(whole, source_dialect) if context_offset is not None else []
+        unit_marker = "__ossie_unit_"
+        while unit_marker in whole:
+            unit_marker += "alt_"
         attributed = {name: f"{cube}.{name}"
                       for name, cube in self._fields_in(whole, source_dialect).items()}
         masks, substitutions = {}, {}
@@ -1892,7 +1896,13 @@ class _MetricReferences:
                                                                   reverse=True))))
                           if native else None)
 
-        def convert(fragment):
+        def convert(fragment, offset=None):
+            if offset is not None:
+                for start, end in reversed(units):
+                    if offset <= start and end <= offset + len(fragment):
+                        sentinel = f"{unit_marker}{start}__"
+                        substitutions[sentinel] = whole[start:end]
+                        fragment = fragment[:start - offset] + sentinel + fragment[end - offset:]
             if native_pattern:
                 # Token starts exclude text inside native (including raw/triple)
                 # literals, even if it contains an otherwise identical reference.
@@ -1905,20 +1915,20 @@ class _MetricReferences:
                     return sentinel
                 fragment = native_pattern.sub(replace, fragment)
             fragment = _mask_native_literals(fragment, source_dialect, substitutions)
-            fragment = replace_bare_identifiers(fragment, attributed)
-            fragment = replace_bare_identifiers(fragment, masks)
+            fragment = replace_bare_identifiers(fragment, attributed, source_dialect)
+            fragment = replace_bare_identifiers(fragment, masks, source_dialect)
             return ossie_expr_to_cube_sql(fragment, target, self._tables)
 
-        out = convert(text)
+        out = convert(text, context_offset)
         # Whatever bare identifiers remain are raw columns (the metric references
         # are sentinels at this point), so they get the same `{CUBE}.column`
         # qualification every other generated member SQL does. The names are taken
         # from the converted whole and only *applied* to the fragment, which is the
         # part `qualify_bare_columns` cannot do for itself.
         names = unqualified_column_names(
-            out if context is None else convert(whole), source_dialect)
+            out if context is None else convert(whole, 0), source_dialect)
         out = replace_bare_identifiers(
-            out, {name: "{CUBE}." + name for name in names or ()})
+            out, {name: "{CUBE}." + name for name in names or ()}, source_dialect)
         for sentinel, raw in self._raw_columns.items():
             substitutions[f"{{CUBE}}.{sentinel}"] = raw
             substitutions[sentinel] = raw
@@ -2046,14 +2056,14 @@ def _decompose_measure(expr, spans, mname, fallback, measures_by_cube, plan,
         _place(measures_by_cube, part_target, part, model_name)
 
         out.append(refs.to_cube_sql(expr[cursor:start], fallback, context=expr,
-                                    source_dialect=expression_dialect))
+                                    source_dialect=expression_dialect, context_offset=cursor))
         # `{CUBE.x}` for a part on the same cube as the public measure: an explicit
         # name pins the reference to this cube and breaks if it is extended.
         qualifier = "CUBE" if part_target == fallback else part_target
         out.append("{" + f"{qualifier}.{part_name}" + "}")
         cursor = end
     out.append(refs.to_cube_sql(expr[cursor:], fallback, context=expr,
-                                source_dialect=expression_dialect))
+                                source_dialect=expression_dialect, context_offset=cursor))
     return "".join(out)
 
 

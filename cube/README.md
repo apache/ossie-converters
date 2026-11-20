@@ -239,6 +239,12 @@ quoted references. A composite metric's aggregates stay on the datasets they rea
 so Cube can apply its per-cube fan-out correction. Literals, comments and window
 frames are preserved during this analysis.
 
+For portable `DATEADD(part, amount, date)` and `DATEDIFF(part, start, end)`,
+qualification keeps the date part as a keyword and qualifies the operands. For
+example, `DATEDIFF(day, opened_at, day)` becomes
+`DATEDIFF(day, {CUBE}.opened_at, {CUBE}.day)`: the last `day` is a column.
+Native expressions retain their chosen dialect's argument order.
+
 Cube holds one `sql` per member, so an expression offering **several** dialects cannot
 keep its alternatives natively — the whole expression object is parked and restored, since
 nothing less brings them back. Exports record the native expression's signature.
