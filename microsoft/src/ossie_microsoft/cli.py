@@ -45,10 +45,15 @@ from .semantic_model_to_ossie import convert_semantic_model_to_ossie
 
 
 class _CountingHandler(logging.Handler):
-    """Counts reported conversion issues so the CLI can summarize and exit on them."""
+    """Counts reported conversion issues so the CLI can summarize and exit on them.
+
+    Conversion issues are reported at WARNING and above. Lower records (such as the
+    DEBUG list of TMDL documents a project import loads) reach this handler when the
+    package logger is set to DEBUG; they are not issues, so the handler's level skips
+    them and a clean conversion still passes --strict."""
 
     def __init__(self, quiet):
-        super().__init__()
+        super().__init__(level=logging.WARNING)
         self.count = 0
         self.quiet = quiet
 

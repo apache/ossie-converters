@@ -263,6 +263,27 @@ def test_a_dropped_measure_is_still_reported_when_the_retry_is_silent(monkeypatc
     assert "rejected it" in measure.error
 
 
+@pytest.mark.parametrize("retry", [(None, "Column 'A' cannot be found."), ([{"[v]": 42}], None)])
+def test_embedded_measure_error_retries_expression_without_hiding_failure(monkeypatch, retry):
+    queries = []
+
+    def response(method, url, token, payload=None):
+        query = payload["queries"][0]["query"]
+        queries.append(query)
+        if "[M]" in query:
+            return 200, {"results": [{"error": {"message": "measure M is missing"}}]}, {}
+        rows, error = retry
+        if error:
+            return 200, {"results": [{"error": {"message": error}}]}, {}
+        return 200, {"results": [{"tables": [{"rows": rows}]}]}, {}
+
+    _stub_request(monkeypatch, response)
+    measure = next(f for f in engine.check_model(DOC, "w", "d", "t") if f.kind == "measure")
+    assert any('ROW("v", SUM(T[A]))' in query for query in queries)
+    assert not measure.ok
+    assert measure.error == (retry[1] or "measure M is missing")
+
+
 def test_a_multi_line_expression_is_joined_before_it_is_retried(monkeypatch):
     seen = []
 
@@ -328,6 +349,16 @@ def test_an_empty_response_body_is_none(monkeypatch):
         engine.urllib.request, "urlopen", lambda request: _FakeResponse(204, "", {})
     )
     assert engine._request("DELETE", "https://e/x", "tok")[1] is None
+
+
+def test_non_json_success_response_reports_an_error_without_echoing_the_body(monkeypatch):
+    monkeypatch.setattr(
+        engine.urllib.request, "urlopen",
+        lambda request: _FakeResponse(200, "<html>proxy login page</html>", {}),
+    )
+    assert engine.evaluate("w", "d", "secret-token", "EVALUATE 1") == (
+        None, "invalid JSON response from Power BI",
+    )
 
 
 def test_an_http_error_is_returned_rather_than_raised(monkeypatch):
@@ -644,7 +675,51 @@ def test_evaluate_returns_the_engine_error(monkeypatch):
     )
     rows, error = engine.evaluate("w", "d", "t", "EVALUATE 1")
     assert rows is None
-    assert error == "bad dax"
+    assert error == "HTTP 400: bad dax"
+
+
+def test_evaluate_preserves_transport_errors(monkeypatch):
+    message = "transport error (TimeoutError): timed out"
+    _stub_request(monkeypatch, lambda *a, **k: (None, message, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (None, message)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"message": "query failed"}},
+        {"results": [{"error": {"message": "query failed"}}]},
+        {"results": [{"tables": [{"error": {"message": "query failed"}, "rows": [{"[v]": 1}]}]}]},
+    ],
+)
+def test_evaluate_rejects_errors_inside_successful_http_responses(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (None, "query failed")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        {"results": []},
+        {"results": [{"tables": [{"rows": []}]}, {"tables": [{"rows": []}]}]},
+        {"results": [{"tables": [{}, {}]}]},
+        {"results": [{"tables": [{"rows": {}}]}]},
+        {"results": [{"tables": [{"rows": [1]}]}]},
+    ],
+)
+def test_evaluate_rejects_malformed_results(monkeypatch, body):
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == (
+        None, "unexpected executeQueries response; expected one result table",
+    )
+
+
+@pytest.mark.parametrize("table", [{}, {"rows": []}])
+def test_evaluate_accepts_empty_tables(monkeypatch, table):
+    body = {"results": [{"tables": [table]}]}
+    _stub_request(monkeypatch, lambda *a, **k: (200, body, {}))
+    assert engine.evaluate("w", "d", "t", "EVALUATE 1") == ([], None)
 
 
 # --- orchestration ---------------------------------------------------------
@@ -787,3 +862,35 @@ def test_validate_with_engine_requires_a_workspace():
 def test_validate_with_engine_requires_both_tokens():
     with pytest.raises(engine.EngineUnavailableError, match="token"):
         engine.validate_with_engine({}, workspace="w", fabric_token="", powerbi_token="b")
+
+
+@pytest.mark.parametrize(
+    "stage", ["deploy", "operation", "operation_result", "refresh", "refresh_poll"]
+)
+def test_non_json_success_stops_deployment_and_refresh_without_timeout(monkeypatch, stage):
+    responses = {
+        "deploy": [(200, "<html>secret login</html>", {})],
+        "operation": [(202, "", {"Location": "https://e/operation"}),
+                      (200, "<html>secret login</html>", {})],
+        "operation_result": [(202, "", {"Location": "https://e/operation"}),
+                             (200, '{"status":"Succeeded"}', {}),
+                             (200, "<html>secret login</html>", {})],
+        "refresh": [(200, "<html>secret login</html>", {})],
+        "refresh_poll": [(202, "", {}), (200, "<html>secret login</html>", {})],
+    }[stage]
+    remaining = list(responses)
+    def request(_request):
+        assert remaining, "unexpected extra polling after invalid JSON"
+        return _FakeResponse(*remaining.pop(0))
+    monkeypatch.setattr(engine.urllib.request, "urlopen", request)
+    monkeypatch.setattr(engine.time, "sleep", lambda _delay: None)
+    if stage.startswith("refresh"):
+        error = engine.refresh("w", "d", "secret-token")
+    else:
+        dataset, error = engine.deploy({"model": {}}, "w", "n", "secret-token")
+        assert dataset is None
+    assert "invalid JSON response from Power BI" in error
+    assert "secret" not in error
+    assert "succeeded" not in error.lower()
+    assert "TimedOut" not in error
+    assert not remaining

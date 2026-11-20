@@ -659,6 +659,15 @@ class TestConvertDataset:
         }
         assert "unique_keys" not in result
 
+    def test_unique_key_with_primary_key_columns_reordered_is_dropped(self):
+        ds = {
+            "name": "store_sales",
+            "primary_key": ["ss_item_sk", "ss_ticket_number"],
+            "unique_keys": [["ss_ticket_number", "ss_item_sk"], ["ss_sold_date_sk"]],
+        }
+        result = _convert_dataset(ds)
+        assert result["unique_keys"] == [{"columns": ["ss_sold_date_sk"]}]
+
     def test_unique_keys_kept_without_primary_key(self):
         ds = {"name": "t", "unique_keys": [["id"], ["code"]]}
         result = _convert_dataset(ds)

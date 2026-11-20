@@ -245,6 +245,31 @@ class TestExtractExpression:
         }
         assert _extract_expression(expression, "f") == ("legacy_column", "OSSIE_SQL_2026")
 
+    @pytest.mark.parametrize("blank", ["", "   "])
+    @pytest.mark.parametrize("dialect", ["BIGQUERY", "ANSI_SQL"])
+    def test_blank_tagged_expression_falls_back_to_primary_sql(self, dialect, blank):
+        expression = {"sql": "amount", "dialects": [{"dialect": dialect, "expression": blank}]}
+        assert _extract_expression(expression, "f") == ("amount", "OSSIE_SQL_2026")
+
+    def test_blank_bigquery_expression_falls_back_to_ansi(self):
+        expression = {
+            "dialects": [
+                {"dialect": "BIGQUERY", "expression": " "},
+                {"dialect": "ANSI_SQL", "expression": "amount"},
+            ]
+        }
+        assert _extract_expression(expression, "f") == ("amount", "ANSI_SQL")
+
+    def test_blank_only_dialects_warn_and_skip(self):
+        expression = {"dialects": [{"dialect": "BIGQUERY", "expression": "  "}]}
+        with pytest.warns(UserWarning, match="no usable BigQuery-compatible expression"):
+            assert _extract_expression(expression, "f") == (None, None)
+
+    @pytest.mark.parametrize("primary", ["", "   "])
+    def test_blank_primary_sql_without_dialects_raises(self, primary):
+        with pytest.raises(OssieConversionError, match="Missing expression for f"):
+            _extract_expression({"sql": primary}, "f")
+
     def test_prefers_bigquery_over_ansi(self):
         expression = {
             "dialects": [

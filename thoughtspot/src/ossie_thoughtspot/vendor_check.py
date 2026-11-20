@@ -72,11 +72,17 @@ def check(payload: Any, site: Any = None) -> list[str]:
     findings: list[str] = []
 
     version = payload.get("_v")
-    if version != STASH_VERSION:
+    if isinstance(version, bool) or version != STASH_VERSION:
         # Exact equality, and the same answer stash.read_stash gives. A shape
         # version this converter has never seen must not be read as the
         # current one, and which versions are acceptable is the checker's own
         # contract -- core hands over the decoded value without reading `_v`.
+        #
+        # The bool exclusion mirrors the reader's, and follows it deliberately:
+        # Python reads `True == 1`, so `_v: true` would otherwise pass as
+        # version 1 here while `read_stash` refuses it. The two must give one
+        # answer about one payload -- a checker that passed what our own reader
+        # aborts on would clear a document we cannot convert.
         findings.append(
             f"payload has shape version {version!r}, which this converter does "
             f"not recognise (expected {STASH_VERSION!r})"

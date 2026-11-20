@@ -75,3 +75,18 @@ jobs:
         working-directory: databricks
         run: |
           uv run pytest
+
+      - name: Smoke-test installed wheel
+        working-directory: databricks
+        run: |
+          uv build --out-dir "$RUNNER_TEMP/databricks-dist"
+          uv venv "$RUNNER_TEMP/databricks-wheel"
+          uv pip install --python "$RUNNER_TEMP/databricks-wheel/bin/python" "$RUNNER_TEMP"/databricks-dist/*.whl
+          cd "$RUNNER_TEMP"
+          env -u OSSIE_REPO databricks-wheel/bin/python -c "
+          from ossie_databricks import wrap_metric_view_in_ossie_model
+          result = wrap_metric_view_in_ossie_model(
+              'main.sales.orders', {'version': '1.1', 'source': 'samples.tpch.orders'}
+          )
+          assert 'main.sales.orders' in result.value
+          "

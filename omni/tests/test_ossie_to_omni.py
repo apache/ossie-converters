@@ -414,6 +414,14 @@ def test_unique_keys_restating_primary_key_do_not_warn():
     assert not any("unique_keys" in m for m in msgs)
 
 
+def test_unique_keys_restating_primary_key_in_another_order_do_not_warn():
+    msgs = _warnings_of(minimal(datasets=[
+        {"name": "lines", "source": "db.s.t", "primary_key": ["order_id", "line_no"],
+         "unique_keys": [["line_no", "order_id"]],
+         "fields": [_field("order_id"), _field("line_no")]}]))
+    assert not any("unique_keys" in m for m in msgs)
+
+
 def test_field_without_usable_dialect_warns_and_drops():
     ossie = minimal(datasets=[
         {"name": "orders", "source": "db.s.t",
