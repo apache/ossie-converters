@@ -51,7 +51,6 @@ from ._common import (
     read_stash,
     requalify_self_refs,
     require_str,
-    resolve_identifier,
     snake,
     snake_keys,
     unescape_braces_from_cube,
@@ -71,14 +70,17 @@ from .cube_to_ossie import (
     _column_of,
     _declare_key_fields,
     _decomposed_measure_names,
+    _fanned_out_by,
     _fanned_out_datasets,
     _fanout_unsafe_datasets,
     _is_generated_part,
     _MeasureResolver,
     _metric_names_of,
     _no_cubes_message,
+    _many_to_one_reach,
     _primary_key_of,
     _report_fanout,
+    _unsafe_datasets_of_reads,
     measure_dialect,
     parked_of,
 )
@@ -86,7 +88,7 @@ from .expressions import (
     UnattributableSQL,
     has_top_level_operator,
     qualify_column_paths,
-    unsafe_aggregate_heads,
+    unsafe_aggregate_reads,
 )
 from .import_dialect import validate_imported_expressions, validate_source_dialect
 
@@ -891,26 +893,27 @@ def _report_fanout_of(resolver, tree, reduced, model, measures, issues):
         if reached:
             fanned[name] = f"the one-to-many join path to '{min(reached)}'"
     # The relationship itself is the cause a reader can act on, where there is one.
-    fanned.update(_fanned_out_datasets(model.get("relationships") or []))
+    relationships = model.get("relationships") or []
+    fanned.update(_fanned_out_datasets(relationships))
+    fanned_by = _fanned_out_by(relationships)
+    reach = _many_to_one_reach(relationships)
     names = frozenset(reduced)
     canonical = lookup_map(names)
     for cname, mname in measures:
         expr = resolver.inlined(cname, mname)
         if expr is None:
             continue
-        read = unsafe_aggregate_heads(expr, resolver.source_dialect)
-        if read is None:
+        reads = unsafe_aggregate_reads(expr, resolver.source_dialect, heads=True)
+        if reads is None:
             # Unparseable, so every dataset it names is assumed read.
             datasets = _fanout_unsafe_datasets(
                 expr, cname, names, resolver.source_dialect)
         else:
-            heads, unqualified = read
-            datasets = {resolve_identifier(canonical, h) for h in heads} - {None}
-            if unqualified:
-                datasets.add(cname)
+            datasets = _unsafe_datasets_of_reads(reads, cname, canonical, reach)
         for dataset in sorted(datasets):
             if dataset in fanned:
-                _report_fanout(issues, f"{cname}.{mname}", dataset, fanned[dataset])
+                cause = fanned_by.get(dataset, {}).get(cname) or fanned[dataset]
+                _report_fanout(issues, f"{cname}.{mname}", dataset, cause)
 
 
 def _refuse_mixed_data_sources(vname, tree, cubes):
