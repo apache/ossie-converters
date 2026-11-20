@@ -19,7 +19,7 @@
 # relationship graph. Read by spec/test_corpus and relationalai/tests/test_converter
 # only -- it earns its place by rendering a lot of shapes at once, not by
 # demonstrating any single behaviour.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: snow_tpch
 description: TPC-H ontology with customers, orders, line items, parts, suppliers, nations, and regions, mapped to the KSE.TPCH_SF1 Snowflake schema.
 ontology:
@@ -577,7 +577,7 @@ ontology:
 ontology_mappings:
 - name: snow_tpch_mapping
   semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: TPC-H Snowflake semantic model
     datasets:
     - name: KSE_TPCH_SF1_CUSTOMER

@@ -33,7 +33,7 @@ import pytest
 from ossie_holistics import ossie_to_aml
 from ossie_holistics.errors import ConversionError
 
-VERSION = "0.2.0.dev0"
+VERSION = "0.3.0.dev0"
 EXPRESSION = {"dialects": [{"dialect": "ANSI_SQL", "expression": "x"}]}
 
 

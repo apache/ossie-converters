@@ -736,3 +736,13 @@ def test_a_match_relationship_is_stashed_and_written_back(kind, aml_type):
     assert f"type: '{kind}'" in text
     assert "match: @aql order_items.id >= products.id;;" in text
     assert "rel: items_near_products" in text
+
+def test_clickhouse_dialect_parses_and_rewrites_column_references():
+    from ossie_holistics import sqlrefs
+
+    assert sqlrefs.SQLGLOT_DIALECT["CLICKHOUSE"] == "clickhouse"
+    cols = sqlrefs.columns(
+        "toStartOfMonth(created_at) + nullIf(revenue, 0)",
+        dialect="CLICKHOUSE",
+    )
+    assert [c.name for c in cols] == ["created_at", "revenue"]

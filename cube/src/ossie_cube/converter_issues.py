@@ -72,6 +72,10 @@ class IssueType(Enum):
     # value survives the round trip even though Cube itself cannot read it.
     PARKED_IN_META = "PARKED_IN_META"
 
+    # A saved expression is restored even though its exported native definition
+    # has since been edited in Cube. The saved form remains authoritative.
+    STALE_PARKED_EXPRESSION = "STALE_PARKED_EXPRESSION"
+
     # A value Cube has nowhere to hold *and* that cannot be parked, so it is gone
     # from the output. Distinct from PARKED_IN_META on purpose: a caller gating on
     # issue types has to be able to tell "preserved but invisible to Cube" from

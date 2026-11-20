@@ -36,7 +36,7 @@ import yaml
 from .converter_issues import IssueType
 
 # Ossie semantic model spec version this converter targets (see core-spec).
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
 # Vendor id used for the `custom_extensions` stash.
 VENDOR = "CUBE"
@@ -343,6 +343,14 @@ def measure_signature(measure):
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def native_expression_signature(member):
+    """Fingerprint the native expression without labels or other presentation keys."""
+    keys = {"sql", "type", "filters", "case", "latitude", "longitude", "sub_query",
+            "multi_stage", "time_shift", "rolling_window", "group_by", "reduce_by",
+            "add_group_by"}
+    return measure_signature({k: v for k, v in member.items() if k in keys})
+
+
 def write_stash(obj, data):
     """Attach a CUBE `custom_extensions` entry holding `data` (a dict).
 
@@ -383,8 +391,8 @@ def pick_expression(ossie_expression, preferred=None):
 
     Preference order: the caller-chosen warehouse dialect (Cube passes SQL through to
     the data source, so e.g. SNOWFLAKE SQL is valid on a Snowflake-backed Cube model),
-    then ANSI_SQL, then OSSIE_SQL_2026, then the first dialect on offer that is
-    warehouse SQL.
+    then primary portable SQL, ANSI_SQL, tagged OSSIE_SQL_2026, and the first
+    warehouse SQL alternative.
 
     The last step matters for real interop. Converters commonly emit their own dialect
     and no ANSI: everything from the Databricks converter is `DATABRICKS`. Requiring
@@ -401,11 +409,16 @@ def pick_expression(ossie_expression, preferred=None):
     document order and reporting it keeps the model; the alternatives are parked, so
     nothing is lost on the way back.
     """
+    expression = ossie_expression or {}
     dialects = [(d.get("dialect"), d.get("expression"))
-                for d in (ossie_expression or {}).get("dialects") or []
+                for d in expression.get("dialects") or []
                 if d.get("expression") is not None]
     by_dialect = dict(dialects)
-    for candidate in (preferred, DIALECT_ANSI, DIALECT_OSSIE_SQL):
+    primary = expression.get("sql")
+    if primary is not None:
+        by_dialect[DIALECT_OSSIE_SQL] = primary
+    primary_dialect = DIALECT_OSSIE_SQL if primary is not None else None
+    for candidate in dict.fromkeys((preferred, primary_dialect, DIALECT_ANSI, DIALECT_OSSIE_SQL)):
         if candidate and candidate in by_dialect:
             return _checked_expression(by_dialect[candidate]), candidate
     for dialect, expr in dialects:

@@ -225,10 +225,9 @@ keeps its legacy permissive fallback: unparseable SQL can pass through without a
 syntax-validation error. Other conversion requirements, including column attribution
 checks during view projection, still apply.
 
-Export prefers `ANSI_SQL` with `--dialect` prepending a warehouse dialect (e.g.
-`SNOWFLAKE` for a Snowflake-backed Cube model). `OSSIE_SQL_2026`, Ossie's portable
-SQL, is ANSI-compatible and taken next; its label is kept in `meta.ossie.dialect` so
-re-import hands it back unchanged.
+Export prefers an explicitly selected `--dialect`, then primary
+`expression.sql`, then `ANSI_SQL` and tagged `OSSIE_SQL_2026`. The primary
+expression and its alternatives are stored in Cube metadata for re-import.
 
 Failing those, export falls back to the **first** dialect on offer that is warehouse SQL
 (`SNOWFLAKE`, `DATABRICKS`, `BIGQUERY`), records which one in `meta.ossie.dialect`, and
@@ -242,7 +241,14 @@ frames are preserved during this analysis.
 
 Cube holds one `sql` per member, so an expression offering **several** dialects cannot
 keep its alternatives natively — the whole expression object is parked and restored, since
-nothing less brings them back. This is what
+nothing less brings them back. Exports record the native expression's signature.
+If its SQL, type, filters or evaluation settings change in Cube, import reports
+`STALE_PARKED_EXPRESSION` before restoring the saved Ossie expression. Description,
+title and other presentation edits do not trigger this warning. Remove
+`meta.ossie.expression` to import the current native definition. Editing the saved
+expression does not refresh the native signature, so import can still warn even
+when both definitions were edited consistently. Older exports without
+a signature retain restoration behavior but cannot detect those edits. This is what
 makes another converter's output usable: everything the Databricks converter emits is
 `DATABRICKS` with no ANSI alternative, and requiring ANSI dropped every field and metric
 — producing an *empty* Cube model, which Cube compiles, so nothing downstream noticed.
@@ -579,6 +585,7 @@ detail string.
 | `TEMPLATED_FILE_SKIPPED` | Jinja templating anywhere in a file, or a `.js`/`.ts` model file. Detected per file, as Cube's own tooling does, so the file is preserved whole rather than half-converted |
 | `NO_USABLE_DIALECT` | Export: no `ANSI_SQL` or preferred-dialect expression |
 | `SOURCE_NOT_FULLY_QUALIFIED` | A `sql_table` shorter than `catalog.schema.table`. Valid Cube and nothing is lost, but the Databricks, Snowflake and NVIDIA Auto Ontology converters reject such a source, so the model cannot convert onward — see [Onward conversion](#onward-conversion) |
+| `STALE_PARKED_EXPRESSION` | A native Cube expression changed; import restored the saved Ossie expression and reported that the edit is not reflected |
 | `PARKED_IN_META` | Preserved in the stash or under `meta.ossie` — invisible to Cube, but intact through a round trip |
 | `DROPPED_NO_CUBE_EQUIVALENT` | **Gone from the output.** Cube has nowhere to hold it and it cannot be parked: relationship `ai_context` (a Cube join entry has no `meta`) and a `dimension.is_time` role or opt-out that Cube expresses only through `type` |
 | `DROPPED_FROM_PROJECTION` | View projection only. **Gone from the output**: a Cube-only property of the view, a projected cube or a published member -- an access policy, pre-aggregations, drill members, extra `meta` -- that the round-trip import would preserve, but a projection of the public surface does not carry |

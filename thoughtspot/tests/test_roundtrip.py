@@ -509,7 +509,7 @@ def test_tpcds_physical_fields_translate_to_their_warehouse_column_even_when_the
     assert _dialects(return_amt)[PORTABLE_DIALECT] == "RETURN_AMT"
 
 
-def test_tpcds_known_unportable_metrics_have_no_portable_sibling_and_an_issue():
+def test_tpcds_metrics_are_portable_exactly_when_their_shape_allows():
     _, ossie_result, _ = _tml_roundtrip("tpcds")
     model = ossie_result.model
 
@@ -519,11 +519,16 @@ def test_tpcds_known_unportable_metrics_have_no_portable_sibling_and_an_issue():
     assert PORTABLE_DIALECT not in _dialects(profit_margin)
     assert "metric:profit_margin" in _issue_refs(ossie_result.issues, "TS-EXPR-FORMULA-REFERENCE")
 
-    # A bare aggregate call over a physical column: still a function call,
-    # not a bare column reference, so it is THOUGHTSPOT-only too.
+    # NOT here any more: a bare aggregate over a column the model surfaces.
+    # `total_sales` is `sum ( [store_sales::ss_ext_sales_price] )` over a
+    # declared field, and it now composes a portable sibling
+    # (apache/ossie-converters#30). Asserted positively so this test cannot
+    # pass by the metric quietly disappearing.
     total_sales = _metric(model, "total_sales")
-    assert PORTABLE_DIALECT not in _dialects(total_sales)
-    assert "metric:total_sales" in _issue_refs(ossie_result.issues, "TS-EXPR-THOUGHTSPOT-ONLY")
+    assert PORTABLE_DIALECT in _dialects(total_sales)
+    assert "metric:total_sales" not in _issue_refs(
+        ossie_result.issues, "TS-EXPR-THOUGHTSPOT-ONLY"
+    )
 
     # A physical column reference the model never surfaces as a field
     # resolves to nothing at all, which is a different unportable reason

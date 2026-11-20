@@ -26,8 +26,10 @@ on:
       - 'ossie'
       - '.gitmodules'
       - '.github/workflows/interop-ci.yml'
+      - 'ataccama/**'
       - 'bigquery/**'
       - 'cube/**'
+      - 'databricks/**'
       - 'dbt/**'
       - 'gooddata/**'
       - 'hex/**'
@@ -44,7 +46,6 @@ on:
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
-      - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'sap-csn-ontology/**'
@@ -58,8 +59,10 @@ on:
       - 'ossie'
       - '.gitmodules'
       - '.github/workflows/interop-ci.yml'
+      - 'ataccama/**'
       - 'bigquery/**'
       - 'cube/**'
+      - 'databricks/**'
       - 'dbt/**'
       - 'gooddata/**'
       - 'hex/**'
@@ -76,7 +79,6 @@ on:
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
-      - 'databricks/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'sap-csn-ontology/**'
@@ -111,13 +113,12 @@ jobs:
           python-version: '3.12'
 
       - name: Set up JDK 21
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: '21'
           distribution: temurin
           cache: maven
           cache-dependency-path: |
-            databricks/java/pom.xml
             salesforce/pom.xml
 
       - name: Install uv
@@ -128,16 +129,16 @@ jobs:
           cache-dependency-glob: '**/uv.lock'
 
       - name: Install harness dependencies
-        run: uv sync --project interop --locked
+        run: uv sync --project interop --locked --group execution
 
       - name: Test the harness
-        run: uv run --project interop --locked pytest interop/tests -q
+        run: uv run --project interop --locked --group execution pytest interop/tests -q
 
       - name: Run report-only matrix
         id: matrix
         # Default mode preserves converter FAIL/EMPTY/SKIP as findings. Harness
         # errors still fail this step; do not add --strict or continue-on-error.
-        run: uv run --project interop --locked python -m interop --native --output interop/.runs/ci
+        run: uv run --project interop --locked --group execution python -m interop --native --output interop/.runs/ci
 
       - name: Upload report and conversion evidence
         id: evidence

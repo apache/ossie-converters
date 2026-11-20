@@ -62,6 +62,7 @@ from ._common import (
     sanitize_name,
     uncollided_view_name,
     normalize_identifier,
+    native_expression_signature,
     resolve_identifier,
     referenced_datasets,
     join_source,
@@ -236,6 +237,13 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
             ds["metrics"] = dataset_metrics[ds["name"]]
     if metrics:
         model["metrics"] = metrics
+    _declare_key_fields(
+        cubes, {ds["name"]: ds.setdefault("fields", []) for ds in model["datasets"]},
+        {ds["name"]: ds.get("primary_key") for ds in model["datasets"]},
+        relationships, source_dialect)
+    for ds in model["datasets"]:
+        if not ds["fields"]:
+            del ds["fields"]
 
     # Model-level stash: the views verbatim (minus natively mapped properties),
     # the mapped view's identity, non-canonical file paths, and any file with no
@@ -710,6 +718,46 @@ def _yields_a_same_named_field(dim):
                 or dim.get("sub_query"))
 
 
+def _declare_key_fields(cubes, fields_by_ds, keys_by_ds, relationships, source_dialect):
+    """Declare a field for every key and join column no field of that name covers.
+
+    Ossie's `primary_key` and relationship columns name dataset *fields*, but a Cube
+    join can read a raw column no dimension exposes. Each such column becomes a bare
+    key-only field named after the column, typed like the dimension that reads it and
+    marked in the stash so export does not turn it into a dimension. A field already
+    carrying the column's name, such as a computed key dimension, stands for it as is.
+
+    `fields_by_ds` maps each dataset name to its field list, which is extended in place.
+    """
+    needed = {name: list(columns or ()) for name, columns in keys_by_ds.items()}
+    for rel in relationships or ():
+        needed.setdefault(rel["from"], []).extend(rel["from_columns"])
+        needed.setdefault(rel["to"], []).extend(rel["to_columns"])
+    for name, columns in needed.items():
+        fields = fields_by_ds[name]
+        have = {f["name"] for f in fields}
+        for column in dict.fromkeys(columns):
+            if column in have:
+                continue
+            field = {"name": column, "expression": {"dialects": [{
+                "dialect": source_dialect or DIALECT_ANSI, "expression": column}]}}
+            datatype = _column_datatype(cubes, name, column)
+            if datatype:
+                field["datatype"] = datatype
+            write_stash(field, {"key_only": True})
+            fields.append(field)
+            have.add(column)
+
+
+def _column_datatype(cubes, cname, column):
+    """The Ossie datatype of the dimension reading `column`, or None when none does."""
+    for dim in _as_named_list(cubes[cname].get("dimensions"),
+                              f"cube '{cname}' dimensions"):
+        if _column_of(cubes, cname, dim["name"]) == column:
+            return DIM_TYPE_TO_DATATYPE.get(snake(dim.get("type") or "string"))
+    return None
+
+
 def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
                   source_dialect=None, *, default_catalog=None, default_schema=None):
     """Build one Ossie dataset from a Cube cube."""
@@ -902,7 +950,7 @@ def _finish_dimension_field(cname, dname, dim, field, stash, issues):
         # A dimension export added only to carry Cube's primary key; the Ossie model had
         # no field for that column, so it gets none back.
         return None
-    _restore_expression(field, parked)
+    _restore_expression(field, parked, dim, issues, f"{cname}.{dname}")
     # A field that carried no datatype keeps carrying none: Ossie says not to infer a
     # scalar type from `is_time` alone, so emitting DateTime for a `type: time`
     # dimension would assert something the model never said.
@@ -1014,7 +1062,7 @@ def _case_label(cname, dname, holder, translate, literal):
     return "'" + text.replace("'", "''") + "'"
 
 
-def _restore_expression(target, parked):
+def _restore_expression(target, parked, member, issues, scope):
     """Put back the dialect, or the whole expression, that export had to set aside.
 
     Cube holds one `sql` per member, so an Ossie expression carrying several dialects
@@ -1022,6 +1070,14 @@ def _restore_expression(target, parked):
     A single non-ANSI dialect needs only its label restored.
     """
     if parked.get("expression"):
+        saved = parked.get("expression_signature")
+        if saved is not None and saved != native_expression_signature(member):
+            issues.add(
+                IssueType.STALE_PARKED_EXPRESSION, scope,
+                "the native Cube SQL, type, filters or evaluation settings changed; "
+                "restored the saved Ossie expression from meta.ossie.expression, "
+                "verify that it includes the intended edit, or remove "
+                "meta.ossie.expression to import the current Cube definition")
         target["expression"] = parked["expression"]
     elif parked.get("dialect"):
         target["expression"]["dialects"][0]["dialect"] = parked["dialect"]
@@ -1943,12 +1999,16 @@ def _valid_dataset_metric_expression(expression):
     Non-SQL alternatives remain opaque, but every alternative must have the
     Ossie expression shape before it can replace the native definition.
     """
-    if not isinstance(expression, dict) or set(expression) != {"dialects"}:
+    if not isinstance(expression, dict) or not expression or expression.keys() - {"sql", "dialects"}:
         return False
+    if "sql" in expression and (not isinstance(expression["sql"], str) or not expression["sql"].strip()):
+        return False
+    if "dialects" not in expression:
+        return True
     entries = expression["dialects"]
     dialects = {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL, "MDX", "TABLEAU", "MAQL",
                 "SIGMA", "THOUGHTSPOT", "DAX", "HOLISTICS_AQL"}
-    return isinstance(entries, list) and bool(entries) and all(
+    return isinstance(entries, list) and (bool(entries) or "sql" in expression) and all(
         isinstance(entry, dict) and set(entry) == {"dialect", "expression"}
         and isinstance(entry["dialect"], str) and entry["dialect"] in dialects
         and isinstance(entry["expression"], str) and bool(entry["expression"].strip())
@@ -2206,7 +2266,7 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         # A rejected local origin must not restore another stale expression
         # from the same measure's parking metadata.
         parked = {k: v for k, v in parked.items() if k != "expression"}
-    _restore_expression(metric, parked)
+    _restore_expression(metric, parked, measure, issues, scope)
     # A datatype parked by a previous export wins: Cube has no field for a measure's
     # result type, and only the count family can be inferred from the aggregate.
     parked_dt = parked_of(measure.get("meta")).get("datatype")

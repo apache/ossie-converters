@@ -56,20 +56,20 @@ from ossie_ontology.spec import Expression as SpecExpression
 
 def test_parse_returns_model_with_metadata(flights_model):
     assert flights_model.name == "Flights"
-    assert flights_model.version == "0.2.0.dev0"
+    assert flights_model.version == "0.3.0.dev0"
     assert flights_model.description == "Ontology of flights into and out of airports."
 
 
 def test_embedded_core_document_version_survives_roundtrip(flights_model, tmp_path):
     assert all(
-        mapping.semantic_model.version == "0.2.0.dev0"
+        mapping.semantic_model.version == "0.3.0.dev0"
         for mapping in flights_model.ontology_mappings
     )
 
     exported = OssieToSpecConverter.convert(flights_model).dump_yaml()
     document = yaml.safe_load(exported)
     assert all(
-        mapping["semantic_model"]["version"] == "0.2.0.dev0"
+        mapping["semantic_model"]["version"] == "0.3.0.dev0"
         for mapping in document["ontology_mappings"]
     )
 
@@ -77,7 +77,7 @@ def test_embedded_core_document_version_survives_roundtrip(flights_model, tmp_pa
     path.write_text(exported)
     reparsed = OssieParser().parse(path)
     assert all(
-        mapping.semantic_model.version == "0.2.0.dev0"
+        mapping.semantic_model.version == "0.3.0.dev0"
         for mapping in reparsed.ontology_mappings
     )
 
@@ -410,7 +410,7 @@ def _write_mapped_spec(
             field["datatype"] = field_datatype
         fields.append(field)
     semantic_model: dict = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sm",
         "datasets": [{"name": "T", "source": "DB.S.T", "fields": fields}],
     }
@@ -418,7 +418,7 @@ def _write_mapped_spec(
         semantic_model["metrics"] = metrics
     path = tmp_path / "spec.yaml"
     path.write_text(yaml.safe_dump({
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "Demo",
         "ontology": concepts,
         "ontology_mappings": [{"name": "m", "semantic_model": semantic_model, "concept_mappings": concept_mappings}],
@@ -759,7 +759,7 @@ def test_is_primitive_still_follows_a_chain_to_its_builtin_root():
 # ----- Global identifiers -----------------------------------------------
 
 _IRI_SPEC = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "Demo",
     "prefixes": {"foaf": "http://xmlns.com/foaf/0.1/"},
     "ontology": [

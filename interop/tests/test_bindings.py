@@ -20,7 +20,6 @@
 from copy import deepcopy
 from dataclasses import replace
 import json
-import os
 from pathlib import Path
 import sys
 
@@ -29,7 +28,7 @@ import yaml
 
 from interop.bindings import check_bindings
 from interop.checks import native_content
-from interop.manifest import Manifest, ManifestError, load_manifest
+from interop.manifest import BindingRegression, Manifest, ManifestError, load_manifest
 from interop.report import write_report
 from interop.runner import Runner, exit_code
 
@@ -53,13 +52,19 @@ def write_model(path, data):
 
 
 def test_original_fixtures_satisfy_independently_authored_oracles():
-    manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    assert len(manifest.regressions) == 2
-    for regression in manifest.regressions.values():
-        result = check_bindings(
-            manifest.converters[regression.source].fixtures[regression.fixture],
-            regression.metrics,
-        )
+    # The shipped binding regressions routed through the retired Databricks metric-view
+    # exporter; the cube source fixtures and their oracles remain, so the binding
+    # inspector is still validated directly against them.
+    pairs = [
+        (FIXTURE, ORACLE),
+        (
+            ROOT / "cube/tests/fixtures/tpcds_cube",
+            ROOT / "interop/fixtures/bindings/tpcds.yaml",
+        ),
+    ]
+    for fixture, oracle in pairs:
+        metrics = yaml.safe_load(oracle.read_text())["metrics"]
+        result = check_bindings(fixture, metrics)
         assert result["grade"] == "OK", result
 
 
@@ -242,19 +247,25 @@ def test_duplicate_native_cubes_and_yaml_keys_are_failures(tmp_path):
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(
-            fixture="missing"
-        ),
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(via="cube"),
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(
-            source="databricks"
-        ),
-        lambda data: data["regressions"]["cube-databricks-tpcds"].update(typo=True),
+        lambda reg: reg.update(fixture="missing"),
+        lambda reg: reg.update(via="cube"),
+        lambda reg: reg.update(source="dbt"),
+        lambda reg: reg.update(typo=True),
     ],
 )
 def test_bad_regression_configuration_fails_before_execution(tmp_path, mutation):
+    # A valid synthetic binding regression (cube source, distinct via) that each mutation
+    # turns into a configuration error: an unknown fixture, source == via, a non-Cube
+    # source, and an unknown field.
     data = yaml.safe_load((ROOT / "interop/manifest.yaml").read_text())
-    mutation(data)
+    regression = {
+        "source": "cube",
+        "via": "snowflake",
+        "fixture": "tpcds",
+        "expectations": "interop/fixtures/bindings/tpcds.yaml",
+    }
+    mutation(regression)
+    data["regressions"] = {"synthetic": regression}
     path = write_model(tmp_path / "manifest.yaml", data)
     with pytest.raises(ManifestError):
         load_manifest(path, ROOT)
@@ -352,8 +363,18 @@ def test_runner_persists_binding_failures_and_respects_dependency_results(
     tmp_path, mode, grade
 ):
     manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    name = "cube-databricks-metric-bindings"
-    regression = manifest.regressions[name]
+    # The binding regression that routed through the retired Databricks metric-view
+    # exporter is gone; build it directly over the cube source fixture, returning
+    # through a neutral `via`.
+    name = "cube-metric-bindings"
+    oracle = ROOT / "interop/fixtures/bindings/sales.yaml"
+    regression = BindingRegression(
+        source="cube",
+        fixture="metric-bindings",
+        via="snowflake",
+        expectations=oracle,
+        metrics=yaml.safe_load(oracle.read_text())["metrics"],
+    )
     data = model()
     if mode == "wrong-cube":
         sales, customer = data["cubes"]
@@ -379,7 +400,7 @@ def test_runner_persists_binding_failures_and_respects_dependency_results(
             "id": "pair",
             "tier": "B",
             "source": "cube--metric-bindings",
-            "target": "databricks",
+            "target": "snowflake",
             "grade": "SKIP" if mode == "blocked" else "LOSSY",
             "reason": "upstream failed",
             "output": str(tmp_path / "returned.yaml"),
@@ -404,151 +425,3 @@ def test_runner_persists_binding_failures_and_respects_dependency_results(
     assert "Native metric-binding regressions" in (tmp_path / "report.md").read_text()
     assert exit_code(runner.report) == 0
     assert exit_code(runner.report, strict=True) == (0 if grade == "OK" else 1)
-
-
-@pytest.mark.integration
-@pytest.mark.skipif(
-    os.environ.get("OSSIE_INTEROP_INTEGRATION") != "1",
-    reason="set OSSIE_INTEROP_INTEGRATION=1 with prepared Cube/Databricks and Java 21+",
-)
-def test_cube_tpcds_computed_dimension_keeps_its_databricks_join_binding(tmp_path):
-    manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    cube = manifest.converters["cube"]
-    databricks = manifest.converters["databricks"]
-    runner = Runner(
-        ROOT,
-        Manifest({"cube": cube, "databricks": databricks}, {}),
-        tmp_path,
-        prepare=False,
-    )
-    for converter in (cube, databricks):
-        preparation = runner.prepare(converter)
-        assert preparation["grade"] == "OK", preparation
-        runner.report["preparations"][converter.name] = preparation
-
-    source, model = runner.source("cube", "tpcds", cube.fixtures["tpcds"])
-    assert model is not None, source
-    result = runner.acceptance(source, model, databricks)
-    assert result["grade"] in ("OK", "LOSSY"), result
-    view = yaml.safe_load(Path(result["output"]).read_text())
-    assert view["source"] == "tpcds.public.store_sales"
-    joins = {join["name"]: join for join in view["joins"]}
-    assert set(joins) == {"customer", "date_dim", "item", "store"}
-    assert joins["customer"]["source"] == "tpcds.public.customer"
-    assert joins["customer"]["on"] == "source.ss_customer_sk = customer.c_customer_sk"
-    assert {measure["name"] for measure in view["measures"]} == {
-        metric["name"] for metric in model["metrics"]
-    }
-    full_name = next(
-        dim for dim in view["dimensions"] if dim["name"] == "customer_full_name"
-    )
-    assert full_name["expr"] == "customer.c_first_name || ' ' || customer.c_last_name"
-
-
-@pytest.mark.integration
-@pytest.mark.skipif(
-    os.environ.get("OSSIE_INTEROP_INTEGRATION") != "1",
-    reason="set OSSIE_INTEROP_INTEGRATION=1 with prepared Cube/Databricks and Java 21+",
-)
-@pytest.mark.parametrize(
-    "name", ["cube-databricks-tpcds", "cube-databricks-metric-bindings"]
-)
-def test_real_cube_databricks_cube_preserves_native_aggregate_bindings(tmp_path, name):
-    manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    regression = manifest.regressions[name]
-    cube = manifest.converters["cube"]
-    selected = Manifest(
-        {
-            "cube": replace(
-                cube, fixtures={regression.fixture: cube.fixtures[regression.fixture]}
-            ),
-            "databricks": replace(manifest.converters["databricks"], fixtures={}),
-        },
-        {},
-        {name: regression},
-    )
-    runner = Runner(ROOT, selected, tmp_path, prepare=False)
-    report = runner.run()
-    write_report(report, tmp_path)
-    if name == "cube-databricks-tpcds":
-        acceptance = next(
-            case
-            for case in report["cases"]
-            if case["tier"] == "A" and case["target"] == "databricks"
-        )
-        assert acceptance["grade"] in ("OK", "LOSSY"), acceptance
-        view = yaml.safe_load(Path(acceptance["output"]).read_text())
-        productivity = next(
-            measure["expr"]
-            for measure in view["measures"]
-            if measure["name"] == "store_productivity"
-        )
-        assert (
-            "COLLECT_SET(STRUCT(store.s_store_sk AS ossie_key, "
-            "store.s_number_employees AS ossie_value))" in productivity
-        )
-    result = report["regressions"][0]
-    assert result["grade"] == "OK", json.dumps(result, indent=2)
-    assert result["source_bindings"]["grade"] == "OK"
-    assert result["returned_bindings"]["grade"] == "OK"
-    assert len(result["returned_bindings"]["metrics"]) == len(regression.metrics)
-    assert result["commands"]  # includes the final source-native export
-
-
-@pytest.mark.integration
-@pytest.mark.skipif(
-    os.environ.get("OSSIE_INTEROP_INTEGRATION") != "1"
-    or not os.environ.get("OSSIE_CUBE_REPO"),
-    reason="requires prepared Cube and Databricks converters and OSSIE_CUBE_REPO",
-)
-def test_declared_databricks_fact_key_compiles_joined_tpcds_cube(tmp_path):
-    from sqlglot import exp, parse_one
-
-    manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
-    databricks = manifest.converters["databricks"]
-    cube = manifest.converters["cube"]
-    columns = ["ss_item_sk", "ss_ticket_number"]
-    databricks = replace(
-        databricks,
-        import_command=[
-            *databricks.import_command,
-            "--primary-key",
-            columns[0],
-            "--primary-key",
-            columns[1],
-        ],
-    )
-    runner = Runner(
-        ROOT,
-        Manifest({"databricks": databricks, "cube": cube}, {}),
-        tmp_path,
-        prepare=False,
-        native=True,
-    )
-    for converter in (databricks, cube):
-        preparation = runner.prepare(converter)
-        assert preparation["grade"] == "OK", preparation
-        runner.report["preparations"][converter.name] = preparation
-
-    source, data = runner.source("databricks", "tpcds", databricks.fixtures["tpcds"])
-    assert data is not None, source
-    fact = next(
-        dataset for dataset in data["datasets"] if dataset["name"] == "store_sales"
-    )
-    assert fact["primary_key"] == columns
-
-    exported = runner.acceptance(source, data, cube)
-    assert exported["grade"] in ("OK", "LOSSY"), exported
-    model_path = Path(exported["output"]) / "model/cubes/store_sales.yml"
-    native = yaml.safe_load(model_path.read_text())["cubes"][0]
-    assert native["joins"]
-    assert (native.get("sql") or native.get("sql_table")) == fact["source"]
-    source_sql = native.get("sql") or f"SELECT * FROM {native['sql_table']}"
-    tables = parse_one(source_sql, read="databricks").find_all(exp.Table)
-    assert [table.sql(dialect="databricks") for table in tables] == [
-        "tpcds.public.store_sales"
-    ]
-    assert {
-        dim["sql"] for dim in native["dimensions"] if dim.get("primary_key")
-    } == set(columns)
-    assert exported["native_gate"]["grade"] == "OK", exported["native_gate"]
