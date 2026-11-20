@@ -21,9 +21,10 @@ The stash lives in the *Ossie* document, so it is written on the way in and read
 on the way out. It follows that the stash can only carry what TML contains.
 
 The field holding those entries goes by two names: `custom_extensions`, which is
-what the spec says today, and `nonportable_extensions`, which apache/ossie#522
-renames it to without accepting the old one. `_extensions_field` is the single
-place that decides which name a given document is on.
+what the `ossie` schema this repository pins still says, and
+`nonportable_extensions`, which apache/ossie#522 (merged 2026-11-11) renames it
+to without accepting the old one. `_extensions_field` is the single place that
+decides which name a given document is on.
 """
 import json
 from typing import Any
@@ -55,7 +56,8 @@ def _extensions_field(obj: dict) -> str:
     """The name this object spells the vendor-extensions field with.
 
     Both names are read, which is what lets a document written under
-    apache/ossie#522 be understood here before that change lands -- the same
+    apache/ossie#522 be understood here before this repository moves to the
+    schema that carries it -- the same
     readers-first order this module already applies to the object form of
     `data`, and for the same reason: the rename does not accept the old name,
     so there is no version of the spec under which a reader may wait.
@@ -68,8 +70,8 @@ def _extensions_field(obj: dict) -> str:
     does not accept the old name even carrying nothing.
 
     Neither name present is the ordinary case -- an object with no extensions
-    at all -- and answers with today's name, so `write_stash` writes what the
-    spec says.
+    at all -- and answers with the old name, so `write_stash` writes what the
+    pinned schema says.
     """
     present = [name for name in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED) if name in obj]
     if len(present) > 1:
@@ -124,7 +126,7 @@ def read_stash(obj: dict) -> dict[str, Any]:
     """Return this object's parsed THOUGHTSPOT payload, or {} if it has none.
 
     Both the field name and the shape of `data` are accepted in two forms: the
-    `custom_extensions` field and JSON-string `data` the spec defines today, and
+    `custom_extensions` field and JSON-string `data` the pinned schema defines, and
     the `nonportable_extensions` field and object `data` apache/ossie#522
     renames and reshapes them to. The two axes are independent -- a document may
     use either name with either shape -- so they are read independently.
@@ -170,13 +172,13 @@ def read_stash(obj: dict) -> dict[str, Any]:
                     f"{_object_label(obj)!r}: {exc}"
                 ) from exc
         elif isinstance(raw, dict):
-            # The object form apache/ossie#522 proposes. The reader accepts it
-            # before any writer emits it: a document written under the new shape
-            # is then readable here whenever that lands, and whichever way the
-            # vote goes, where the reverse order would leave every such document
-            # unreadable until we shipped a release of our own. `write_stash`
-            # deliberately still emits the string form, which is what the spec
-            # says today -- a test pins that, and it is not an oversight.
+            # The object form apache/ossie#522 introduced. The reader accepts it
+            # before our writer emits it: a document written under the new
+            # shape is readable here now, where the reverse order would leave
+            # every such document unreadable until we shipped a release of our
+            # own. `write_stash` deliberately still emits the string form,
+            # which is what the pinned schema says -- a test pins that, and it
+            # is not an oversight.
             #
             # Round-tripped through JSON rather than taken as-is, for two
             # reasons that are easy to miss:
@@ -254,12 +256,13 @@ def write_stash(obj: dict, payload: dict[str, Any]) -> dict:
         return dict(obj)
 
     merged["_v"] = STASH_VERSION  # stamp the shape version so a future reader can recognise it
-    # Whichever name this document already uses, NOT whichever the spec will
-    # settle on. Emitting EXTENSIONS_FIELD unconditionally would hand a
+    # Whichever name this document already uses, NOT whichever the spec
+    # settled on. Emitting EXTENSIONS_FIELD unconditionally would hand a
     # #522-shaped document back under both names; emitting
     # EXTENSIONS_FIELD_RENAMED unconditionally would make every document we
-    # write unreadable to the spec as it stands. Neither present answers with
-    # today's name, so the writer has not moved -- a test pins that.
+    # write invalid against the schema this repository pins. Neither present
+    # answers with the old name, so the writer has not moved -- a test pins
+    # that.
     field = _extensions_field(obj)
     others = [e for e in obj.get(field) or [] if e.get("vendor_name") != VENDOR_KEY]
     out = dict(obj)
