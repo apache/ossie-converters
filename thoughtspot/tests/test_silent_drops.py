@@ -46,6 +46,8 @@ or Snowflake document had no way to learn the information was gone.
 """
 import json
 
+import pytest
+
 from ossie_thoughtspot.issues import IssueLog, Severity
 from ossie_thoughtspot.ossie_to_thoughtspot import build_model, convert
 from ossie_thoughtspot.tml import TmlDocument
@@ -217,7 +219,7 @@ class TestARelationshipsAiContextIsReported:
 class TestAnotherVendorsExtensionsAreReported:
     """The forward leg preserves them; the return leg has nowhere to put them."""
 
-    def _convert(self, *extension_owners, on_field=False):
+    def _convert(self, *extension_owners, on_field=False, field="custom_extensions"):
         # Our own entry has to be a well-formed payload: `stash.read_stash`
         # rejects an unrecognised shape version outright, which is a
         # different fact from the one under test here.
@@ -228,9 +230,9 @@ class TestAnotherVendorsExtensionsAreReported:
         ]
         dataset = _dataset("ORDERS", ["AMOUNT"])
         if on_field:
-            dataset["fields"][0]["custom_extensions"] = extensions
+            dataset["fields"][0][field] = extensions
         else:
-            dataset["custom_extensions"] = extensions
+            dataset[field] = extensions
         return convert(_model([dataset])).issues
 
     def test_the_drop_is_reported_once_naming_the_vendor(self):
@@ -248,6 +250,28 @@ class TestAnotherVendorsExtensionsAreReported:
     def test_a_field_scoped_extension_is_found_too(self):
         assert len(_issues(self._convert("DBT", on_field=True),
                            "TS-VENDOR-EXTENSIONS-DROPPED")) == 1
+
+    @pytest.mark.parametrize("on_field", [False, True])
+    def test_a_vendor_under_the_renamed_field_is_reported_too(self, on_field):
+        # apache/ossie#522's name for the field. `stash.read_stash` reads
+        # it, so a document written under it reaches this boundary too.
+        [issue] = _issues(
+            self._convert("DATABRICKS", on_field=on_field, field="nonportable_extensions"),
+            "TS-VENDOR-EXTENSIONS-DROPPED",
+        )
+        assert "DATABRICKS" in issue["message"]
+
+    def test_a_key_inside_another_vendors_payload_is_not_a_vendor(self):
+        # With `data` an object, a foreign payload can hold a key spelled like
+        # the field. What is under it is that vendor's own content.
+        dataset = _dataset("ORDERS", ["AMOUNT"])
+        dataset["nonportable_extensions"] = [{
+            "vendor_name": "DATABRICKS",
+            "data": {"custom_extensions": [{"vendor_name": "SNOWFLAKE", "data": "{}"}]},
+        }]
+        [issue] = _issues(convert(_model([dataset])).issues, "TS-VENDOR-EXTENSIONS-DROPPED")
+        assert "DATABRICKS" in issue["message"]
+        assert "SNOWFLAKE" not in issue["message"]
 
     def test_our_own_entry_is_not_reported_as_a_loss(self):
         assert _issues(self._convert("THOUGHTSPOT"), "TS-VENDOR-EXTENSIONS-DROPPED") == []
