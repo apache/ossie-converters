@@ -55,22 +55,7 @@ def _databricks_only(model):
     return model
 
 
-# The M6 rung (DATEDIFF, DATE_TRUNC) shows two converter gaps: the round trip
-# upper-cases the DATE_TRUNC unit, which the grader scores as REWRITTEN, and
-# `translate` has no verified DATABRICKS form for DATEDIFF.
-_DATE_SCALARS = "m6_date_scalars.ossie.yaml"
-
-
-def _ladder(reason):
-    return [
-        pytest.param(path, id=path.name, marks=pytest.mark.xfail(strict=True, reason=reason))
-        if path.name == _DATE_SCALARS
-        else pytest.param(path, id=path.name)
-        for path in LADDER
-    ]
-
-
-@pytest.mark.parametrize("path", _ladder("the round trip upper-cases the DATE_TRUNC unit"))
+@pytest.mark.parametrize("path", LADDER, ids=lambda path: path.name)
 def test_round_trip_is_portable(path):
     model = yaml.safe_load(path.read_text())
     native = convert_ossie_model_to_databricks(model)
@@ -81,7 +66,7 @@ def test_round_trip_is_portable(path):
     assert {finding.outcome for finding in report.findings} == {"PORTABLE"}
 
 
-@pytest.mark.parametrize("path", _ladder("no verified DATABRICKS translation for DATEDIFF"))
+@pytest.mark.parametrize("path", LADDER, ids=lambda path: path.name)
 def test_databricks_only_model_becomes_portable(path):
     model = yaml.safe_load(path.read_text())
     back = convert_ossie_model_from_databricks(_databricks_only(model))
