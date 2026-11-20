@@ -1636,7 +1636,8 @@ class TestOssieToMSIRoundTrip:
             backward = MSIToOssieConverter().convert(forward.output)
             assert backward.issues == []
             assert [m.name for m in backward.output.metrics or []] == ["avg_order_value"]
-            expression = backward.output.metrics[0].expression.dialects[0].expression
+            output_expression = backward.output.metrics[0].expression
+            expression = output_expression.sql or output_expression.dialects[0].expression
             if canonical_expression is not None:
                 assert expression == canonical_expression
             canonical_expression = expression
