@@ -89,6 +89,16 @@ references, so use a separate DAX parser when that guarantee is required.
 
 ### Optional live engine validation
 
+`ossie_microsoft.engine` is a vendor-specific validation helper for exported Power BI
+`model.bim` files. It calls Microsoft Fabric and Power BI APIs so that Microsoft's
+Analysis Services engine compiles and evaluates the exported DAX. It does not implement
+Ossie's Layer 2/3 query semantics, accept portable Ossie queries, or act as a
+vendor-neutral query engine.
+
+The check uses generated sample data. A successful result confirms that Microsoft can
+refresh and evaluate the exported model against those samples; it does not establish
+query-result equivalence between Ossie and Power BI, or between different vendors.
+
 The gap above is only fully closed by the engine itself: nothing offline compiles DAX the
 way Analysis Services does. `validate_with_engine` deploys a model to a Fabric workspace,
 refreshes it -- which is what actually compiles the DAX -- evaluates every table and

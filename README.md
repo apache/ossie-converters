@@ -41,6 +41,13 @@ Repository-level cross-converter acceptance and pairwise checks live in
 [`interop/`](interop/README.md). The matrix registers all 24 converter projects,
 with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
 
+The Microsoft converter also has an optional
+[vendor-specific live validation helper](microsoft/README.md#optional-live-engine-validation).
+`ossie_microsoft.engine` deploys exported Power BI models to Microsoft Fabric and asks
+Microsoft's engine to compile and evaluate their DAX against generated sample data.
+It does not implement Ossie's Layer 2/3 query semantics or establish cross-vendor
+query-result equivalence.
+
 Contributions follow the Apache Ossie
 [contribution guide](https://github.com/apache/ossie/blob/main/CONTRIBUTING.md).
 
