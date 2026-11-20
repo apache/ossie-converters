@@ -1064,6 +1064,18 @@ class TestSourceDialects:
                 "DATEDIFF(year, start_date, end_date)",
                 "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, YEAR)",
             ),
+            (
+                "DATEADD(day, DATEDIFF(day, start_date, end_date), start_date)",
+                "DATE_ADD(${TABLE}.start_date, INTERVAL (DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY)) DAY)",
+            ),
+            (
+                "DATEADD(day, -1, DATEADD(month, 1, order_date))",
+                "DATE_ADD(DATE_ADD(${TABLE}.order_date, INTERVAL 1 MONTH), INTERVAL -1 DAY)",
+            ),
+            (
+                "DATEDIFF(day, start_date, '2024-12-31')",
+                "DATE_DIFF('2024-12-31', ${TABLE}.start_date, DAY)",
+            ),
         ],
     )
     def test_ossie_date_arithmetic_is_transpiled(self, dialect, expr, sql):
@@ -1101,9 +1113,26 @@ class TestSourceDialects:
 
     def test_unknown_function_warns_and_is_emitted(self):
         model = _model([_dataset("t", [_field("x", expr="FOO(order_date)")])])
-        with pytest.warns(UserWarning, match="Field 't.x'.*FOO is not a BigQuery function"):
+        with pytest.warns(UserWarning, match="Field 't.x'.*FOO was not translated to BigQuery"):
             out = convert_ossie_to_lookml(model)
         assert "sql: FOO(${TABLE}.order_date) ;;" in _block(out, "view: t")
+
+    @pytest.mark.parametrize("expr", ["DATEADD(hour, 1, created_at)", "DATEDIFF(hour, start_at, end_at)"])
+    def test_time_unit_dateadd_datediff_warn_and_are_not_date_add(self, expr):
+        model = _model([_dataset("t", [_field("d", expr=expr)])])
+        with pytest.warns(UserWarning, match="HOUR has no BigQuery DATE_ADD/DATE_DIFF spelling"):
+            out = convert_ossie_to_lookml(model)
+        sql = _block(out, "dimension: d")
+        assert "INTERVAL 1 HOUR" not in sql
+        assert "DATE_DIFF(" not in sql or "HOUR" not in sql
+
+    def test_bigquery_date_diff_with_date_part_column_is_not_repaired(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(
+                _field("d", expr="DATE_DIFF(day, first_day, ISOWEEK)", dialect="BIGQUERY")
+            )
+        assert "sql: DATE_DIFF(${TABLE}.day, ${TABLE}.first_day, ISOWEEK) ;;" in view
 
     def test_ansi_count_distinct_of_quoted_identifier(self):
         ds = _dataset("t", [_field("id"), _field("cid", expr='"customer id"')], primary_key=["id"])

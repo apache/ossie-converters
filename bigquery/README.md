@@ -116,7 +116,9 @@ For example, `"Customer ID"` is an identifier in ANSI and a string literal in
 BigQuery, `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`,
 `DATEADD(day, 7, d)` becomes `DATE_ADD(d, INTERVAL 7 DAY)`, and
 `DATEDIFF(day, start, end)` becomes `DATE_DIFF(end, start, DAY)`.
-A portable function with no BigQuery spelling is emitted as-is with a warning.
+`HOUR` / `MINUTE` / `SECOND` are left as-is with a warning until
+`TIMESTAMP_ADD` / `TIMESTAMP_DIFF` is mapped. A portable function with no
+BigQuery spelling is emitted as-is with a warning.
 Blank expressions are ignored, so a blank tagged entry falls back to the next
 supported expression. If only unsupported or blank dialect entries remain, the
 field/metric is skipped with a warning. An expression with no `dialects` and
