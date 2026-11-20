@@ -32,6 +32,24 @@ A metric whose expression names two datasets therefore has to be AQL, in either 
 `SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT customer.c_customer_sk)` and becomes
 `sum(store_sales.ss_ext_sales_price) / count_distinct(customer.c_customer_sk)`.
 
+## Which body is translated
+
+A metric offering only `ANSI_SQL` or `OSSIE_SQL_2026` is first rendered into `--sql-dialect`, as a `@sql` body
+would be, and the rendering is translated. The [passthrough](#the-passthrough) hands a call to the warehouse,
+so the call has to be spelled the way that warehouse spells it.
+
+A rendering can also add a construct AQL has no name for. Postgres and Redshift divide two integers as
+integers, so sqlglot casts the numerator:
+
+```
+ANSI_SQL:  SUM(items.quantity) / COUNT(users.id)
+POSTGRES:  CAST(SUM(items.quantity) AS DOUBLE PRECISION) / COUNT(users.id)
+```
+
+`CAST` is outside the function table. When the rendering has no AQL form and the portable body has one, the
+converter translates the portable body, so both targets write `sum(items.quantity) / count(users.id)` like
+every other. The WARNING names the dialect the AQL was written from.
+
 ## What translation changes in the models
 
 AQL resolves a reference differently from Ossie SQL, so rendering a metric can need two changes to the models it
