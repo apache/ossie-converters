@@ -16,13 +16,13 @@
 # under the License.
 
 # SAP Business Partner slice — expected ontology for sap-bp-slice.csn.json.
-# Validates against ontology/ontology.json (v0.2.0.dev0) from the pinned ossie submodule.
+# Validates against ontology/ontology.json (v0.3.0.dev0) from the pinned ossie submodule.
 # Scope: one Business-Partner-class entity family, compound identity, associations,
 #        DDIC domain machinery, and one mapping to a data-product-shaped dataset.
 # Deliberately out of scope (v1): actions/events (behavior-layer proposal is the join point),
 #        hierarchies, time-dependence, authorization semantics.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 name: sap_business_partner
 description: >
   An ontology-layer model of the SAP Business Partner domain, covering business
@@ -231,7 +231,7 @@ ontology_mappings:
       real work: a sales-area row references its customer, which is itself
       referenced by business partner number.
     semantic_model:
-      version: "0.2.0.dev0"
+      version: "0.3.0.dev0"
       name: sap_customer_sales
       description: "Customer sales master data, projected from CDS views in the source system."
       datasets:

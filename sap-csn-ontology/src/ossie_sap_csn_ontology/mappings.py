@@ -37,7 +37,7 @@ from .csn_to_ossie import ConceptPlan, Conversion, ConversionError, Relationship
 DEFAULT_DIALECT = "ANSI_SQL"
 
 #: Core-spec version stamped on the semantic model embedded in each ontology map.
-CORE_SPEC_VERSION = "0.2.0.dev0"
+CORE_SPEC_VERSION = "0.3.0.dev0"
 
 
 def _identity_chain(conversion: Conversion, concept: ConceptPlan) -> list[tuple[str, RelationshipPlan]]:

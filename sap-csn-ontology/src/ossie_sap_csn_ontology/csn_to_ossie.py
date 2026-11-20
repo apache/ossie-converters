@@ -49,7 +49,7 @@ from .curation import Curation
 from .naming import relationship_name, value_type_name
 
 #: The ontology specification version this emitter targets.
-ONTOLOGY_VERSION = "0.2.0.dev0"
+ONTOLOGY_VERSION = "0.3.0.dev0"
 
 #: Emission role of a CSN element, decided by :func:`_plan_entity`.
 IDENTITY_SCALAR = "identity_scalar"

@@ -27,7 +27,7 @@ pair is the executable form of everything stated here.
 **Source format.** CAP-style CSN (Core Schema Notation) — the JSON
 representation behind CDS views, CAP applications, and data-product metadata.
 **Target format.** The ontology layer of the Apache Ossie specification
-(`ontology/ontology.json`, v0.2.0.dev0, as pinned by the `ossie` submodule of this repository).
+(`ontology/ontology.json`, v0.3.0.dev0, as pinned by the `ossie` submodule of this repository).
 
 ## 0 · Two inputs, one output
 
