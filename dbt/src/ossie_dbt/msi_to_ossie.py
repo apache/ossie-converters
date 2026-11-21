@@ -37,7 +37,7 @@ from ossie import (
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_dbt.ratio_helpers import unchanged_ratio_helpers
+from ossie_dbt.ratio_helpers import unchanged_ratio_helpers, without_ratio_helper_provenance
 from ossie_dbt.expression_utils import _is_constant_expr
 from ossie_dbt.filter_utils import _collect_filter_sql, _merge_filter_sqls
 
@@ -336,15 +336,18 @@ class MSIToOssieConverter:
         `config.meta` is otherwise silently dropped at this boundary (#42). It goes under a
         `meta` key, mirroring dbt's own `config`, so Ossie -> dbt can tell it apart from
         `DBT` entries that hold other dbt config, such as `materialized` or `tags`.
+        Generated ratio helper provenance is left out: it describes the manifest, not the
+        element, so a ratio without user metadata gets no entry.
         """
-        if config is None or not config.meta:
+        meta = without_ratio_helper_provenance(config.meta) if config is not None else {}
+        if not meta:
             return None
         # YAML-parsed meta can hold datetime.date. default=str keeps those
         # values instead of aborting the conversion.
         return [
             OssieCustomExtension(
                 vendor_name=OssieVendor.DBT.value,
-                data=json.dumps({"meta": config.meta}, default=str),
+                data=json.dumps({"meta": meta}, default=str),
             )
         ]
 
