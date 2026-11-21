@@ -341,3 +341,41 @@ def test_agent_context_time_field_must_name_a_declared_field():
     ext["data"] = json.dumps(data)
     _, issues = convert_ossie_to_records(doc)
     assert ["not a dataset.field reference" in i.detail for i in issues] == [True]
+
+
+def test_dataset_scoped_metric_count_star_source_column_and_dialect():
+    """Dataset-scoped metrics support COUNT(*), source.<column> (apache/ossie#633), and vendor
+    dialect quoting (e.g. BigQuery backticks), while refusing shadowed source qualifiers or
+    foreign dataset qualifiers."""
+    # COUNT(*) on a dataset-scoped metric resolves to its owning dataset
+    doc = _with_dataset_metric("COUNT(*)", name="row_count")
+    assert convert_ossie_to_registry(doc, "row_count")["definition"]["formula"] == "COUNT(m.*)"
+
+    # source.<column> reads the physical column directly, even if a field of that name is calculated
+    # or another dataset is named "source"
+    doc = _with_dataset_metric("SUM(source.SS_QUANTITY)")
+    doc["datasets"][0]["fields"][0]["expression"] = {"sql": "SS_QUANTITY * 2"}
+    doc["datasets"].append({"name": "source", "source": "TPCDS.PUBLIC.OTHER", "fields": [
+        {"name": "SS_QUANTITY", "expression": {"sql": "OTHER_QTY"}}]})
+    defn = convert_ossie_to_registry(doc, "total_quantity")["definition"]
+    assert defn["formula"] == "SUM(m.SS_QUANTITY)" and defn["source"]["table"] == "TPCDS.PUBLIC.STORE_SALES"
+
+    # A field named "source" on the dataset shadows the source qualifier
+    shadowed = _with_dataset_metric("SUM(source.SS_QUANTITY)")
+    shadowed["datasets"][0]["fields"].append({"name": "source", "expression": {"sql": "SRC"}})
+    _, issues = convert_ossie_to_records(shadowed)
+    assert len(issues) == 1 and "declares a field named 'source'" in issues.issues[0].detail
+
+    # A non-source qualifier on a dataset-scoped metric is refused
+    _, issues = convert_ossie_to_records(_with_dataset_metric("SUM(other.ss_quantity)"))
+    assert len(issues) == 1 and "uses qualified reference" in issues.issues[0].detail
+
+    # A dataset-scoped metric written in BIGQUERY with backtick-quoted identifiers parses in that dialect
+    bq = _with_dataset_metric("SUM(`ss quantity`)")
+    bq["datasets"][0]["source"] = "`tpcds`.`public`.`store_sales`"
+    bq["datasets"][0]["fields"] = [{"name": "ss quantity", "expression": {
+        "dialects": [{"dialect": "BIGQUERY", "expression": "`ss quantity`"}]}}]
+    bq["datasets"][0]["metrics"][0]["expression"] = {
+        "dialects": [{"dialect": "BIGQUERY", "expression": "SUM(`ss quantity`)"}]}
+    bq_defn = convert_ossie_to_registry(bq, "total_quantity")["definition"]
+    assert bq_defn["dialect"] == "bigquery" and bq_defn["formula"] == "SUM(m.`ss quantity`)"

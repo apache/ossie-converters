@@ -638,3 +638,29 @@ def test_quoting_the_dialect_does_not_use_is_refused(dialect, table):
     rec["metadata"]["definition"]["source"].update({"table": table, "entity": table})
     with pytest.raises(A.NotConvertible):
         A.convert(rec)
+
+
+def test_unique_keys_are_compared_as_column_sets_and_deduplicated():
+    """A composite key in another column order restates primary_key (cf. #168), and repeated
+    secondary keys are deduplicated in both to_ossie() and merge()."""
+    rec1 = _rec("COUNT(*)", joins=[
+        {"name": "c", "to": "TPCDS.PUBLIC.STORE", "cardinality": "many_to_one",
+         "sql": "m.C_A = c.S_A AND m.C_B = c.S_B"}])
+    rec2 = _rec("SUM(m.C_BALANCE)", joins=[
+        {"name": "c", "to": "TPCDS.PUBLIC.STORE", "cardinality": "many_to_one",
+         "sql": "m.C_B = c.S_B AND m.C_A = c.S_A"}])
+    rec2["name"] = "balance_total"
+    p1 = A.convert(rec1)[0]
+    p2 = A.convert(rec2)[0]
+    # Simulate secondary keys on the shared target dataset: reversed primary_key columns + duplicate secondary key
+    store1 = next(d for d in p1[1] if d["name"] == "store")
+    store2 = next(d for d in p2[1] if d["name"] == "store")
+    store1["unique_keys"] = [["s_b", "s_a"], ["s_code"]]
+    store2["unique_keys"] = [["s_b", "s_a"], ["s_code"], ["s_alt_id", "s_region"], ["s_region", "s_alt_id"]]
+    # Direct to_ossie dataset emission also deduplicates aliases added from a full JOIN clause
+    (_, decl_ds, _), = A.convert(json.loads((golden.FIXTURES / "declared_join_clause" / "input.registry.json").read_text()))
+    assert [d["name"] for d in decl_ds] == ["store_sales", "customer"]
+    merged = A.merge([p1, p2])
+    merged_store = next(d for d in merged["datasets"] if d["name"] == "store")
+    assert merged_store["primary_key"] == ["s_a", "s_b"]
+    assert merged_store["unique_keys"] == [["s_code"], ["s_alt_id", "s_region"]]
