@@ -84,9 +84,10 @@ custom_extensions:
 `_v` is the payload's format version. An entry with a version this converter does not
 understand is treated as malformed (see below).
 
-The `ONE_TO_ONE` and `MANY_TO_MANY` notes in `ai_context` are for readers only; the
-export does not depend on them. `ONE_TO_MANY` gets no note: once flipped, the relationship
-is many-to-one as Ossie reads it, and a one-to-many note would contradict that.
+The `ONE_TO_ONE` and `MANY_TO_MANY` notes in `ai_context` are a fallback: the export
+reads them only when the `WISDOM` entry can't be used (see below), so editing or removing
+a note matters once the entry is stale. `ONE_TO_MANY` gets no note: once flipped, the
+relationship is many-to-one as Ossie reads it, and a one-to-many note would contradict that.
 
 Compatibility: a converter from before the `WISDOM` extension reads only the notes, so it
 exports a `ONE_TO_MANY` relationship from a newer document as `MANY_TO_ONE` from its many
@@ -120,11 +121,12 @@ are stable:
   documents written before the extension, entries that are malformed, and entries that no
   longer match `from`/`to` (for example after a dataset was renamed). A note restores the
   type when it is exactly one of the notes (ignoring leading and trailing whitespace),
-  including the older `one-to-many relationship`. If neither the entry nor the note gives
-  a type, the edge is exported as `MANY_TO_ONE`, with a `RELATIONSHIP_TYPE_UNRESOLVED`
-  warning when there was an entry it could not use. A note matching the exported type
-  is carried by it; any other `ai_context` on a relationship, including a hand-edited
-  note, is dropped with an `AI_CONTEXT_DROPPED` warning.
+  including the older `one-to-many relationship`. An entry the note replaces is reported
+  as `CUSTOM_EXTENSION_DROPPED`. If neither the entry nor the note gives a type, the edge
+  is exported as `MANY_TO_ONE`, with a `RELATIONSHIP_TYPE_UNRESOLVED` warning (and no
+  `CUSTOM_EXTENSION_DROPPED`) when there was an entry it could not use. A note matching
+  the exported type is carried by it; any other `ai_context` on a relationship, including
+  a hand-edited note, is dropped with an `AI_CONTEXT_DROPPED` warning.
 - Metrics attach to the first dataset their expression references (a
   `METRIC_TABLE_UNRESOLVED` warning falls back to the first dataset).
 - Connections are per-dialect placeholders (`et-connection-snowflake`, ...) expected to be

@@ -56,10 +56,10 @@ _TIME_DATA_TYPES = {"DATE", "DATETIME", "TIMESTAMP"}
 _SIMPLE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Relationship `ai_context` notes for the Wisdom types Ossie direction can't express.
-# The type itself is kept in a WISDOM custom extension; the notes are for readers.
-# ONE_TO_MANY's note is no longer written (the edge is flipped, so it would contradict
-# the direction), but ossie_to_wisdom still reads all three, matched exactly, from
-# documents that carry no WISDOM extension.
+# The type itself is kept in a WISDOM custom extension. ONE_TO_MANY's note is no longer
+# written (the edge is flipped, so it would contradict the direction), but ossie_to_wisdom
+# still reads all three, matched exactly, when a relationship has no usable WISDOM
+# extension: documents written before it, and entries that are malformed or stale.
 RELATIONSHIP_TYPE_NOTES = {
     "ONE_TO_MANY": "one-to-many relationship",
     "ONE_TO_ONE": "one-to-one relationship",
