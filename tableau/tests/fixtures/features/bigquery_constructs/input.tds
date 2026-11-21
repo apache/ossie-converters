@@ -1,0 +1,9 @@
+<datasource name="bq" version="18.1"><connection class="bigquery" CATALOG="proj" EXECCATALOG="proj" project="proj">
+<relation name="events_*" table="[ds].[events_*]" type="table"/>
+<relation name="q" type="text">SELECT a FROM `proj.ds.t` WHERE d &gt; @start_date</relation>
+<cols><map key="[a]" value="[events_*].[a]"/><map key="[b]" value="[events_*].[b]"/></cols></connection>
+<column name="[a]" datatype="integer" role="dimension" type="ordinal"/>
+<column name="[b]" datatype="string" role="dimension" type="nominal"/>
+<column name="[Calculation_1]" caption="n" datatype="integer" role="measure"><calculation class="tableau" formula="COUNTD([a])"/></column>
+<column name="[Calculation_2]" caption="x" datatype="real" role="measure"><calculation class="tableau" formula="SUM([a])/ZN(SUM([a]))"/></column>
+</datasource>

@@ -1,0 +1,31 @@
+{
+  "fail": null,
+  "outputs": 1,
+  "loss_kinds": [
+    "no_column_metadata",
+    "query_parameter",
+    "source_qualified",
+    "wildcard_table"
+  ],
+  "datasources": {
+    "bq": {
+      "datasets": 2,
+      "fields": 2,
+      "relationships": 0,
+      "metrics": 2,
+      "converted": true,
+      "losses": [
+        "no_column_metadata",
+        "query_parameter",
+        "source_qualified",
+        "wildcard_table"
+      ]
+    }
+  },
+  "loss_counts": {
+    "no_column_metadata": 1,
+    "query_parameter": 1,
+    "source_qualified": 1,
+    "wildcard_table": 1
+  }
+}
