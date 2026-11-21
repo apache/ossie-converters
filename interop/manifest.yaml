@@ -183,6 +183,16 @@ converters:
     output: file
     fixtures:
       orders: salesforce/src/test/resources/examples/salesforceToOssie.json
+  sap-csn:
+    cwd: sap-csn
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-sap-csn, csn-to-ossie, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-sap-csn, ossie-to-csn, -i, '{input}', -o, '{output}']
+    native_format: csn
+    output: file
+    fixtures:
+      bookshop: sap-csn/tests/fixtures/bookshop.csn.json
   sigma:
     cwd: sigma
     toolchain: uv

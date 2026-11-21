@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 24 converter projects**, with explicit capability skips.
+The registry includes **all 25 converter projects**, with explicit capability skips.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -75,7 +75,7 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 | Cube, dbt | Existing CLI runners; focused semantic regressions retained |
 | Databricks | Ossie-native: `from-databricks` / `to-databricks` read and write an Ossie model (`native_format: ossie`); `to-databricks` is a pass-through |
 | GoodData | API adapter for declarative LDM JSON, using the converter's serialization helpers |
-| Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
+| Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, SAP CSN, Sigma, Wisdom | File/directory CLI import and export |
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |
@@ -91,6 +91,7 @@ Its selected import/export dialect is BIGQUERY and exports use the placeholder
 connection `interop_warehouse`; no live connection is created.
 BigQuery (LookML export only) checks `dimension`, `dimension_group` and `measure`
 declarations in the single exported file; LookML validation needs a Looker instance.
+SAP CSN counts the elements of `entity` definitions; it does not run the CDS compiler.
 Source fixtures include a small Honeydew workspace and an orders dataset
 compiled with Holistics CLI 2.3.32. The Holistics converter suite checks the
 ecommerce fixture's unresolved query template separately. OrionBelt installs

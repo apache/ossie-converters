@@ -143,7 +143,7 @@ def native_content(path, native_format, output_shape):
             data = (
                 json.loads(item.read_text(encoding="utf-8"))
                 if native_format
-                in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+                in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce", "csn")
                 else yaml.safe_load(item.read_text(encoding="utf-8"))
             )
             if not isinstance(data, dict):
@@ -247,6 +247,13 @@ def _additional_members(data, native_format):
         return sum(
             len(model.get("columns") or {})
             for model in (data.get("dataObjects") or {}).values()
+        )
+    if native_format == "csn":
+        # Elements of entities; types, services and actions are not model members.
+        return sum(
+            len(definition.get("elements") or {})
+            for definition in (data.get("definitions") or {}).values()
+            if definition.get("kind") == "entity"
         )
     if native_format == "sigma":
         return sum(

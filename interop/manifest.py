@@ -129,6 +129,7 @@ NATIVE_SHAPES = {
             "microsoft",
             "nvidia",
             "orionbelt",
+            "csn",
             "sigma",
             "snowflake",
             "wisdom",

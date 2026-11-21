@@ -50,6 +50,7 @@ on:
       - 'relationalai/**'
       - 'polaris/**'
       - 'salesforce/**'
+      - 'sap-csn/**'
   pull_request:
     branches: [main]
     paths:
@@ -82,6 +83,7 @@ on:
       - 'relationalai/**'
       - 'polaris/**'
       - 'salesforce/**'
+      - 'sap-csn/**'
   workflow_dispatch:
 
 permissions:

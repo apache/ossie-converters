@@ -45,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[2]
         "omni",
         "orionbelt",
         "salesforce",
+        "sap-csn",
         "sigma",
         "thoughtspot",
         "wisdom",
@@ -63,6 +64,7 @@ def test_registered_native_sources_have_real_members(name):
 @pytest.mark.parametrize(
     "fmt",
     [
+        "csn",
         "gooddata",
         "hex",
         "honeydew",
@@ -287,6 +289,25 @@ def test_sigma_counts_metrics_without_physical_columns(tmp_path):
         json.dumps({"pages": [{"elements": [{"metrics": [{"name": "revenue"}]}]}]})
     )
     assert native_content(output, "sigma", "file")["members"] == 1
+
+
+def test_csn_counts_entity_elements_not_other_definitions(tmp_path):
+    output = tmp_path / "native.csn.json"
+    output.write_text(
+        json.dumps(
+            {
+                "definitions": {
+                    "shop.Orders": {
+                        "kind": "entity",
+                        "elements": {"ID": {"type": "cds.UUID"}, "amount": {"type": "cds.Decimal"}},
+                    },
+                    "shop.Amount": {"kind": "type", "elements": {"value": {"type": "cds.Decimal"}}},
+                    "shop.submit": {"kind": "action", "params": {"ID": {"type": "cds.UUID"}}},
+                }
+            }
+        )
+    )
+    assert native_content(output, "csn", "file")["members"] == 2
 
 
 def test_orionbelt_registration_enables_native_semantic_validation():

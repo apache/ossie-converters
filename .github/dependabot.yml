@@ -54,6 +54,7 @@ updates:
       - "/orionbelt"
       - "/relationalai"
       - "/palantir"
+      - "/sap-csn"
       - "/sigma"
       - "/snowflake"
       - "/thoughtspot"
