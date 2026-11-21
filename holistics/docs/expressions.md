@@ -108,7 +108,8 @@ is the closest thing to it, and it is an instance-local connection name chosen b
 connection.
 
 `to-ossie` therefore requires `--sql-dialect`. Its value is one of `ANSI_SQL`, `OSSIE_SQL_2026`, `BIGQUERY`,
-`DATABRICKS` or `SNOWFLAKE`, the Ossie dialects sqlglot can parse. The reverse path parses the expression to
-restore its field references, so a dialect outside that set would convert in one direction only.
+`CLICKHOUSE`, `DATABRICKS`, `POSTGRES`, `REDSHIFT` or `SNOWFLAKE`, the Ossie dialects sqlglot can parse. The
+reverse path parses the expression to restore its field references, so a dialect outside that set would convert
+in one direction only.
 
 Part of the [Apache Ossie Holistics converter](../README.md). See also [the fixture](fixture.md), [the mapping](mapping.md), [measures](measures.md), [the HOLISTICS payload](vendor-payload.md), [Ossie to AML](reverse.md), [Ossie SQL to AQL](aql.md) and [limitations](limitations.md).

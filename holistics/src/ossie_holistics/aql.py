@@ -205,6 +205,19 @@ def translate(expression: str, dialect: str, reference) -> tuple[str, set[tuple[
     return _render(tree, context), numeric
 
 
+def translates(expression: str, dialect: str) -> bool:
+    """Whether `translate` has an AQL form for `expression`, references aside.
+
+    Every column is taken as resolvable, so this answers for the constructs
+    alone and touches nothing the caller owns.
+    """
+    try:
+        translate(expression, dialect, lambda table, column: column)
+    except Untranslatable:
+        return False
+    return True
+
+
 def _render(node, ctx) -> str:
     if isinstance(node, exp.Window):
         raise Untranslatable(
