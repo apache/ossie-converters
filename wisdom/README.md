@@ -53,7 +53,7 @@ python ../ossie/validation/validate.py semantic_model.yaml --schema ../ossie/cor
 | `fields[].label` | column/formula `properties.displayName` |
 | `fields[].dimension.is_time` | set when `properties.dataType` is `DATE`, `DATETIME`, or `TIMESTAMP` |
 | `relationships[]` | domain `relationshipGraph.relationships[]` (see cardinality below) |
-| `metrics[]` | every table's `measures[]`, hoisted to the model level |
+| `metrics[]` | every table's `measures[]`, hoisted to the model level. Dataset-scoped metrics (`datasets[].metrics`) are not supported yet: export ignores them |
 
 Expressions are emitted verbatim under the Ossie dialect mapped from the table's connection
 (`snowflake → SNOWFLAKE`, `databricks → DATABRICKS`, `bigquery → BIGQUERY`). Connections with
