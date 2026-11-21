@@ -117,13 +117,28 @@ metrics:
   ai_context:
     instructions: 'Grain: store. Counts: Stores with a monthly snapshot. Unit: percent. Re-aggregation:
       none. Nulls: ignore.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_active_shoppers_change_vs_60-90_days_ago", "definition_version":
-      1}, "agent_context": {"grain": "store", "population": "Stores with a monthly snapshot", "unit":
-      "percent", "reaggregation": "none", "null_handling": "ignore", "sql_dialect": "snowflake", "dimensions":
-      ["store_monthly_snapshot.store_name", "store_monthly_snapshot.division", "store_monthly_snapshot.state",
-      "store_monthly_snapshot.segment", "store_monthly_snapshot.lifecycle_stage", "store_monthly_snapshot.milestone"]}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_active_shoppers_change_vs_60-90_days_ago
+        definition_version: 1
+      agent_context:
+        grain: store
+        population: Stores with a monthly snapshot
+        unit: percent
+        reaggregation: none
+        null_handling: ignore
+        sql_dialect: snowflake
+        dimensions:
+        - store_monthly_snapshot.store_name
+        - store_monthly_snapshot.division
+        - store_monthly_snapshot.state
+        - store_monthly_snapshot.segment
+        - store_monthly_snapshot.lifecycle_stage
+        - store_monthly_snapshot.milestone
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

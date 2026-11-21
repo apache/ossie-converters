@@ -72,13 +72,16 @@ Ossie encodes cardinality by direction (`from` = many side, `to` = one side), so
 | `MANY_TO_MANY` | `from` = left, plus the note `many-to-many relationship; cardinality is not representable in Ossie` and a `CARDINALITY_LOSS` warning |
 
 Every relationship that is not `MANY_TO_ONE` also gets a `WISDOM` entry in its
-`custom_extensions` recording the original type and the `from`/`to` datasets it was
+`nonportable_extensions` recording the original type and the `from`/`to` datasets it was
 written with, so the export direction can restore the type:
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
   - vendor_name: WISDOM
-    data: '{"_v": 1, "normalizedEndpoints": ["orders", "customers"], "relationshipType": "ONE_TO_MANY"}'
+    data:
+      _v: 1
+      relationshipType: ONE_TO_MANY
+      normalizedEndpoints: [orders, customers]
 ```
 
 `_v` is the payload's format version. An entry with a version this converter does not
