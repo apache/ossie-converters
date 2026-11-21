@@ -179,25 +179,24 @@ Fields represent row-level attributes. They can be simple column references or c
 | Ossie Field | Description | Converter Consideration |
 |-----------|-------------|------------------------|
 | `name` | Field identifier | Map to column/attribute name |
-| `expression.dialects` | Multi-dialect SQL expressions | Select the dialect matching the target vendor; fall back to `ANSI_SQL` |
+| `expression` | Portable `sql` expression plus optional vendor `dialects` | Use the target vendor's entry in `dialects` when present, otherwise `sql` (see below) |
 | `datatype` | Logical data type of the field (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` for the field's logical data type. `Decimal` is exact base-10 with unspecified precision and scale; `Float` is approximate. Prefer the temporal members (`Date`, `Time`, `DateTime`, `DateTimeTz`) to classify time dimensions. Omit `datatype` when unknown; use `Opaque` + `custom_extensions` for a known type outside the portable vocabulary. |
 | `dimension.is_time` | Temporal-role marker. When `true`, the field should be treated as a time dimension regardless of its `datatype` (e.g. an `Integer` year grain, a `String` month name, or a `Date` column). When unset, defaults to `true` for temporal `datatype`s (`Date`, `Time`, `DateTime`, `DateTimeTz`) and `false` otherwise. | Map to vendor-specific time dimension markers. Converters SHOULD classify as a time dimension when `is_time` resolves to `true` (either explicit or defaulted from a temporal `datatype`). An explicit `is_time: false` suppresses the time-dimension classification even on temporal-typed columns. |
 | `label` | Categorization label | Map if vendor supports field labels/tags |
 | `description` | Human-readable description | Most vendors support field descriptions |
 | `ai_context` | Synonyms and business context | Map if vendor supports semantic annotations |
 
-**Expression dialect selection**: A field may provide expressions in multiple dialects. For example:
+**Expression dialect selection**: An expression has a portable top-level `sql` (written in `OSSIE_SQL_2026`) and may add vendor-specific variants in `dialects`. For example:
 
 ```yaml
 expression:
+  sql: LOWER(email)
   dialects:
-    - dialect: ANSI_SQL
-      expression: LOWER(email)
     - dialect: SNOWFLAKE
       expression: LOWER(email)::VARCHAR
 ```
 
-A Snowflake converter should pick the `SNOWFLAKE` dialect when available, and fall back to `ANSI_SQL` otherwise.
+A Snowflake converter should pick the `SNOWFLAKE` entry when available, and use `sql` otherwise. Either part may stand alone. When both `sql` and an `OSSIE_SQL_2026` entry in `dialects` are present, `sql` is authoritative. Documents written for `0.1.1` may carry only an `ANSI_SQL` entry; accept it as a last fallback. Metrics use the same selection.
 
 ### Relationships
 
@@ -222,19 +221,33 @@ means `from.product_id = to.id AND from.variant_id = to.variant_id`. The convert
 
 ### Metrics
 
-Metrics are aggregate measures. There are two flavors:
+Metrics are aggregate measures. They are declared in one of two places:
 
-- **Dataset-scoped** (`datasets[].metrics`): aggregations that belong to a single dataset. The expression references that dataset's declared fields by single-part (unqualified) name (e.g. `SUM(amount)`) and resolves entirely within it, at the dataset's row level. The dataset then carries its own metrics and stays queryable on its own. A source column that is not a declared field is written `source.column` (e.g. `SUM(source.quantity)`).
-- **Model-scoped** (`metrics` at the model root): aggregations that span datasets across the model. The expression references fields by multi-part name (`dataset.field`) and may combine fields from more than one dataset.
+- **Dataset-scoped** (`datasets[].metrics`): aggregations over a single dataset, which then carries its own metrics and stays queryable on its own. Metric names are unique within the dataset, and consumers reference the metric as `dataset.metric`.
+- **Model-scoped** (`metrics` at the model root): aggregations that may combine fields from several datasets via relationships. Consumers reference the metric as `metric`. A model-scoped metric over a single dataset is also valid, like `total_sales` in the TPC-DS example.
 
-When producing Ossie, generally bias toward declaring a metric that is scoped to a single dataset as a dataset-scoped metric rather than at the model root; reserve the model root for aggregations that genuinely span datasets.
+A name in a metric expression resolves according to the metric's scope:
 
-See [Metric Scoping](https://github.com/apache/ossie/blob/main/core-spec/spec.md#metric-scoping) for the full rules.
+| Name in the expression | In a dataset-scoped metric | In a model-scoped metric |
+|------------------------|----------------------------|--------------------------|
+| `amount` (unqualified) | The dataset's declared field `amount` | Invalid: qualify it as `dataset.field` |
+| `source.amount` | The column `amount` of the dataset's `source`, even when the dataset also declares a field named `amount` | The field `amount` of a dataset named `source`; model-scoped metrics cannot reference source columns |
+| `orders.amount` | Invalid: a metric that needs another dataset's field is model-scoped | The field `amount` of the dataset `orders` |
+
+So in a dataset-scoped metric, a converter must never read `source.amount` as a reference to a dataset named `source`. If a field `amount` is defined as `amount * fx_rate`, `SUM(amount)` sums the converted field and `SUM(source.amount)` sums the raw column. A converter also has to handle these rules:
+
+- **A field named `source`.** `source` is not reserved. If a dataset declares a field named `source`, the name refers to that field, and the dataset's metrics cannot reference source columns. On import, declare a field for the column and reference that instead.
+- **One namespace per dataset.** A dataset's field names and dataset-scoped metric names must be unique across the two. On import, keep a vendor measure model-scoped when its name matches a field of the dataset.
+- **Names unique per dataset only.** `orders.count` and `customers.count` can coexist. An exporter that places metrics in one vendor namespace must detect such collisions and report them, rather than emit duplicate names or let one metric replace another.
+
+When producing Ossie, prefer declaring a metric that aggregates a single dataset under that dataset. When consuming Ossie, accept single-dataset metrics at the model root; don't reject or move them.
+
+These rules follow the spec pinned by the `ossie` submodule: see [Metric Scoping](https://github.com/apache/ossie/blob/ee89dbdc2844d8b7d293ed42c8613928bb99505f/core-spec/spec.md#metric-scoping) and [Name Resolution](https://github.com/apache/ossie/blob/ee89dbdc2844d8b7d293ed42c8613928bb99505f/core-spec/spec.md#name-resolution) at that commit, or `ossie/core-spec/spec.md` in your clone. The spec's `main` branch may already have rules the converters don't implement yet.
 
 | Ossie Field | Description | Converter Consideration |
 |-----------|-------------|------------------------|
 | `name` | Metric identifier | Map to vendor's measure/KPI name |
-| `expression.dialects` | Multi-dialect aggregate expressions | Select the appropriate dialect; fall back to `ANSI_SQL` |
+| `expression` | Portable `sql` aggregate expression plus optional vendor `dialects` | Select the expression as for fields, then resolve its names by the metric's scope (see above) |
 | `datatype` | Logical data type of the metric result (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` to declare the result type of the aggregation. Numeric measures should distinguish exact `Decimal` or `Integer` results from approximate `Float` results. Omit `datatype` when unknown; use `Opaque` + `custom_extensions` for a known type outside the portable vocabulary. |
 | `description` | What the metric measures | Most vendors support descriptions |
 | `ai_context` | Synonyms and business context | Map if vendor supports semantic annotations |
@@ -244,12 +257,26 @@ See [Metric Scoping](https://github.com/apache/ossie/blob/main/core-spec/spec.md
 ```yaml
 - name: customer_lifetime_value
   expression:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT customer.c_customer_sk)
+    sql: SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT customer.c_customer_sk)
 ```
 
 The converter must ensure that the dataset references (`store_sales`, `customer`) are resolved correctly in the target vendor's format and that any required joins are established.
+
+**Dataset-scoped metric example**, from the `store_sales` dataset of the TPC-DS example:
+
+```yaml
+datasets:
+  - name: store_sales
+    # ...
+    metrics:
+      - name: total_quantity
+        expression:
+          sql: SUM(ss_quantity)
+```
+
+`ss_quantity` is a field of `store_sales`, and consumers reference the metric as `store_sales.total_quantity`.
+
+**Exporting dataset-scoped metrics**: If the target vendor attaches measures to tables, map each dataset's metrics there. If it only has model-level measures, rewrite each expression for model scope: qualify every field reference with the dataset name (`ss_quantity` becomes `store_sales.ss_quantity`), and translate each `source.column` into the vendor's own reference to that column of the dataset's table. Do both before any model-scope name resolution runs: there, `source.column` would mean a field of a dataset named `source`. Check the result for name collisions with other metrics, and report any metric the vendor cannot express instead of dropping it.
 
 ### Custom Extensions
 
@@ -296,16 +323,17 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 
 2. **Parse the Ossie model**: Load the JSON or YAML document as one model.
 
-3. **Map datasets**: For each dataset, translate the `name`, `source`, `primary_key`, `unique_keys`, and `fields` to the vendor's format. Parse the `source` string (typically `database.schema.table`) into the vendor's catalog structure.
+3. **Map datasets**: For each dataset, translate the `name`, `source`, `primary_key`, `unique_keys`, `fields`, and dataset-scoped `metrics` (see step 6) to the vendor's format. Parse the `source` string (typically `database.schema.table`) into the vendor's catalog structure.
 
-4. **Map fields with dialect selection**: For each field, select the expression dialect that matches the target vendor. Implement a fallback chain:
-   - Prefer the vendor-specific dialect (e.g., `SNOWFLAKE` for a Snowflake converter)
-   - Fall back to `ANSI_SQL` if the vendor dialect is not available
-   - Raise a warning or error if neither is available
+4. **Map fields with dialect selection**: For each field, select the expression that matches the target vendor. Implement a fallback chain:
+   - Prefer the vendor-specific entry in `dialects` (e.g., `SNOWFLAKE` for a Snowflake converter)
+   - Otherwise use the top-level `sql`, or an `OSSIE_SQL_2026` entry in `dialects` when there is no `sql`
+   - Accept a legacy `ANSI_SQL` entry if none of these is available
+   - Raise a warning or error if no expression is usable
 
 5. **Map relationships**: Translate relationship definitions into the vendor's join syntax. Ensure composite key column ordering is preserved.
 
-6. **Map metrics**: Translate metric expressions using the same dialect selection logic as fields. Resolve dataset references (e.g., `store_sales.ss_ext_sales_price`) into the vendor's qualified column format.
+6. **Map metrics**: Map the model-root `metrics` and each dataset's `metrics`, selecting expressions as for fields. In a model-scoped metric, resolve `dataset.field` references (e.g., `store_sales.ss_ext_sales_price`) into the vendor's qualified column format. In a dataset-scoped metric, resolve unqualified names as fields of that dataset and `source.column` as a column of its `source`, not as a dataset named `source`. If the vendor has no per-table measures, see [Exporting dataset-scoped metrics](#metrics). Report any metric that cannot be mapped instead of dropping it.
 
 7. **Apply custom extensions**: Extract `custom_extensions` entries matching the target `vendor_name` and apply vendor-specific settings to the output.
 
@@ -317,10 +345,13 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 
 | Scenario | Recommended Approach |
 |----------|---------------------|
-| Missing vendor-specific dialect for a field/metric | Fall back to `ANSI_SQL`; log a warning |
-| Computed fields with vendor-specific SQL syntax | Require the vendor dialect in the source Ossie model; error if neither vendor nor ANSI dialect is available |
+| Missing vendor-specific dialect for a field/metric | Use the top-level `sql`; if only a legacy `ANSI_SQL` entry exists, use it and log a warning |
+| Computed fields with vendor-specific SQL syntax | Require the vendor dialect in the source Ossie model; error if neither the vendor dialect nor `sql` is available |
 | Composite primary keys | Ensure the vendor format supports composite keys; if not, flatten or document the limitation |
 | Cross-dataset metrics referencing multiple tables | Ensure all referenced datasets exist and relationships are defined; resolve qualified column names |
+| Dataset-scoped metrics on a vendor with only model-level measures | Rewrite them for model scope (see [Exporting dataset-scoped metrics](#metrics)); report any that cannot be rewritten |
+| Dataset-scoped metrics with the same name in different datasets | Valid in Ossie; if the vendor has one metric namespace, report the collision instead of emitting duplicates |
+| Imported vendor measure named like a field of its table | Keep it model-scoped, since a dataset's fields and metrics share one namespace |
 | Custom extensions with unknown vendor | Ignore (do not discard) — preserve for round-tripping |
 | `ai_context` on a vendor that doesn't support it | Store in a `custom_extension` under the converter's own vendor name (see [`extensions/vendors.md`](https://github.com/apache/ossie/blob/main/extensions/vendors.md)) to preserve for round-tripping; there is no shared cross-vendor token |
 
@@ -345,9 +376,9 @@ Given the [TPC-DS example](https://github.com/apache/ossie/blob/main/examples/tp
 1. Read the `tpcds_retail_model` semantic model.
 2. Create a Snowflake semantic model with name `tpcds_retail_model`.
 3. Map each dataset (`store_sales`, `date_dim`, `customer`, `item`, `store`) to Snowflake table references, parsing `source` values like `tpcds.public.store_sales` into Snowflake's `database.schema.table` format.
-4. For each field, select the `ANSI_SQL` dialect expression (since no `SNOWFLAKE` dialect is provided in this example).
+4. For each field, use the top-level `sql` expression (since no `SNOWFLAKE` dialect is provided in this example).
 5. Translate relationships into Snowflake join definitions, mapping `from_columns` and `to_columns` pairs.
-6. Translate metrics like `total_sales` (`SUM(store_sales.ss_ext_sales_price)`) into Snowflake metric definitions.
+6. Translate model-scoped metrics like `total_sales` (`SUM(store_sales.ss_ext_sales_price)`) and dataset-scoped metrics like `store_sales.total_quantity` (`SUM(ss_quantity)`) into Snowflake metric definitions.
 7. Extract the `SALESFORCE` and `DBT` custom extensions — these would not be applied to the Snowflake output but should be preserved if the model is later imported back to Ossie.
 
 ## Contributing a New Converter

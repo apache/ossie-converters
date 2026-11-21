@@ -107,7 +107,7 @@ Path("data_model.json").write_text(json.dumps(result.output, indent=2))
 | Element (any other `kind`) | *not modeled* | Preserved verbatim in a model-level `custom_extensions` entry so `ossie-to-sigma` restores it unchanged |
 | Column (`formula`) | `OssieField.expression` | See [Expression translation](#expression-translation) |
 | Element `uniqueKeys` | `OssieDataset.primary_key` | Column ids resolved to field names; the raw `uniqueKeys` list (including any entry that failed to resolve) is also preserved in `custom_extensions` for exact round-trip reconstruction |
-| Element `metrics[]` | `OssieMetric` | Promoted to model level (Ossie metrics are not dataset-scoped); the formula is re-qualified with the owning dataset name |
+| Element `metrics[]` | `OssieMetric` | Promoted to model level; the formula is re-qualified with the owning dataset name. Dataset-scoped Ossie metrics (`datasets[].metrics`) are not supported yet: import does not produce them and export ignores them |
 | `relationships[]` (join keys) | `OssieRelationship` | See [Relationship resolution](#relationship-resolution) |
 | Column/element/relationship native `id` | *(preserved, not surfaced)* | Stashed in `custom_extensions` (`vendor_name: SIGMA`) so re-export can reuse Sigma's own stable ids rather than minting new ones — see [Stable ids](#stable-ids) |
 | Column `format` | `datatype` (coarse) + `custom_extensions` | Sigma has no column datatype, only a display format with two kinds (`number`, `datetime`); anything else becomes `Opaque`. Ossie → Sigma writes a `number` kind for numeric columns only; date columns get no `format`, so Sigma uses its own default. The native format object is always preserved |
