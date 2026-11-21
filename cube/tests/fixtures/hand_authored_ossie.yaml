@@ -38,6 +38,12 @@ datasets:
   unique_keys:
   - - order_number
   fields:
+  - name: order_number
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: order_number
+    datatype: String
   - name: id
     expression:
       dialects:

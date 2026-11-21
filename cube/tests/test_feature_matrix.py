@@ -150,7 +150,8 @@ def test_a_computed_primary_key_returns_to_its_own_dimension():
     assert dataset["primary_key"] == ["line_key"]
     # Recorded, because the Ossie document alone cannot tell a dimension name from a
     # column name afterwards.
-    assert stash_of(dataset)["computed_primary_key"] == ["line_key"]
+    assert dataset["primary_key"] == ["line_key"]
+    assert "computed_primary_key" not in stash_of(dataset)
     cube = parse_files(back)["model/cubes/computed_primary_key.yml"]["cubes"][0]
     keys = [d for d in cube["dimensions"] if d.get("primary_key")]
     assert [d["name"] for d in keys] == ["line_key"]

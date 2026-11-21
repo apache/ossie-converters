@@ -447,9 +447,10 @@ def test_composite_count_uses_a_warehouse_string_type(project, dialect, cast_typ
     out = _import({"m.yml": dump_yaml(model)}, project, source_dialect=dialect)
     assert_ossie_is_valid(out)
     sql = parse(out)["metrics"][0]["expression"]["dialects"][0]["expression"]
+    tenant = "__orders_tenant" if project else "tenant"
     assert sql == (
         f"COUNT(DISTINCT CONCAT(CAST(orders.id AS {cast_type}), "
-        f"CAST(orders.tenant AS {cast_type})))"
+        f"CAST(orders.{tenant} AS {cast_type})))"
     )
     files, _ = convert_ossie_to_cube(out)
     restored = _import(files, False, source_dialect=dialect)
@@ -568,10 +569,16 @@ def test_reprojected_count_uses_its_parked_dialect(project, dialect):
     files, _ = convert_ossie_to_cube(original)
     restored, _, _ = convert_cube_view_to_ossie(files, "sales")
     assert_ossie_is_valid(restored)
+    tenant = "__orders_tenant"
     assert (
         parse(restored)["metrics"][0]["expression"]
-        == parse(original)["metrics"][0]["expression"]
+        == {"dialects": [{"dialect": dialect, "expression":
+            "COUNT(DISTINCT CONCAT(CAST(orders.id AS STRING), "
+            f"CAST(orders.{tenant} AS STRING)))"}]}
     )
+    next_files, _ = convert_ossie_to_cube(restored)
+    again, _, _ = convert_cube_view_to_ossie(next_files, "sales")
+    assert parse(again)["metrics"][0]["expression"] == parse(restored)["metrics"][0]["expression"]
 
 
 @pytest.mark.parametrize("project", [False, True])
@@ -825,17 +832,22 @@ def test_native_unsplittable_foreign_aggregate_is_reported(dialect):
 
 
 @pytest.mark.parametrize("dialect", ["BIGQUERY", "DATABRICKS"])
-def test_native_quoted_reference_to_a_dropped_field_drops_the_metric(dialect):
+@pytest.mark.parametrize("dependency", ["id", "legacy"])
+def test_native_quoted_reference_to_a_dropped_field_drops_the_metric(dialect, dependency):
     model = _cross_dataset_composite_count(dialect)
-    model["datasets"][1]["fields"][0]["expression"]["dialects"] = [
-        {"dialect": "DAX", "expression": "[id]"}
-    ]
+    if dependency == "legacy":
+        model["datasets"][1]["fields"].append({"name": "legacy", "expression": {
+            "dialects": [{"dialect": "DAX", "expression": "[legacy]"}]}})
+    else:
+        model["datasets"][1]["fields"][0]["expression"]["dialects"] = [
+            {"dialect": "DAX", "expression": "[id]"}]
     model["metrics"][0]["expression"]["dialects"][0]["expression"] = (
-        "SUM(orders.`amount`) + SUM(users.`id`)"
+        f"SUM(orders.`amount`) + SUM(users.`{dependency}`)"
     )
     files, issues = convert_ossie_to_cube(dump_yaml(model))
     assert all(not parse(y)["cubes"][0].get("measures") for p, y in files.items() if "/cubes/" in p)
-    assert any("users.id" in issue.detail and "dropped" in issue.detail for issue in issues)
+    assert any(f"users.{dependency}" in issue.detail and "dropped" in issue.detail
+               for issue in issues)
 
 
 @cube_gate
