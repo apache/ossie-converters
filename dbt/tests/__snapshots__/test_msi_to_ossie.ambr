@@ -166,23 +166,23 @@
     from: users_a
     to: users_b
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   - name: orders__users_a__user
     from: orders
     to: users_a
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   - name: orders__users_b__user
     from: orders
     to: users_b
     from_columns:
-    - user_id
+    - user
     to_columns:
-    - user_id
+    - user
   
   '''
 # ---
