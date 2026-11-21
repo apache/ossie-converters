@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Checks that every converter has a CI workflow, a converter/* label in
+# .github/labeler.yml, and an option in the issue forms' Converter dropdown, so
+# auto-label-issues.yml can label issues for it.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+GITHUB_DIR="$REPO_DIR/.github"
+FORMS="bug_report.yml feature_request.yml"
+# The dropdown option for issues that aren't about a converter.
+NOT_APPLICABLE_OPTION="N/A"
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+for workflow in "$GITHUB_DIR"/workflows/converter-*-ci.yml; do
+  name="$(basename "$workflow")"
+  name="${name#converter-}"
+  echo "${name%-ci.yml}"
+done | sort > "$TMP_DIR/workflows"
+
+sed -n 's|^converter/\([^:]*\):.*|\1|p' "$GITHUB_DIR/labeler.yml" | sort > "$TMP_DIR/labels"
+
+status=0
+compare() {
+  local expected="$1" actual="$2" description="$3"
+  if ! diff -u "$expected" "$actual" > "$TMP_DIR/diff"; then
+    echo "ERROR: $description"
+    sed -n '3,$p' "$TMP_DIR/diff"
+    echo
+    status=1
+  fi
+}
+
+compare "$TMP_DIR/workflows" "$TMP_DIR/labels" \
+  "converter-<name>-ci.yml workflows (-) and converter/* labels in .github/labeler.yml (+) differ:"
+
+for form in $FORMS; do
+  # Options of the dropdown with "id: converter", up to the next form field.
+  awk -v skip="$NOT_APPLICABLE_OPTION" '
+    /^[[:space:]]*id:[[:space:]]*converter[[:space:]]*$/ { in_field = 1; next }
+    in_field && /^[[:space:]]*-[[:space:]]+type:/ { exit }
+    in_field && /^[[:space:]]*-[[:space:]]+/ {
+      option = $0
+      sub(/^[[:space:]]*-[[:space:]]+/, "", option)
+      sub(/[[:space:]]+$/, "", option)
+      if (option != skip) print option
+    }
+  ' "$GITHUB_DIR/ISSUE_TEMPLATE/$form" | sort > "$TMP_DIR/$form"
+
+  compare "$TMP_DIR/labels" "$TMP_DIR/$form" \
+    "converter/* labels in .github/labeler.yml (-) and the Converter dropdown in .github/ISSUE_TEMPLATE/$form (+) differ:"
+done
+
+if [ "$status" -ne 0 ]; then
+  echo "Update .github/labeler.yml and the Converter dropdown in each issue form together."
+  exit "$status"
+fi
+
+echo "Issue template check passed."

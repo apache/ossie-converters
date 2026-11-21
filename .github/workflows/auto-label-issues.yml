@@ -22,6 +22,7 @@ on:
     types: [opened]
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
@@ -58,3 +59,67 @@ jobs:
               issue_number: context.issue.number,
               labels: [label]
             });
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/labeler.yml
+            .github/scripts/issue-labels.js
+          sparse-checkout-cone-mode: false
+      # Converter labels run as a separate step so a failure here cannot keep
+      # needs-triage off the issue.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const { converterNames, labelsForIssue } = require(
+              `${process.env.GITHUB_WORKSPACE}/.github/scripts/issue-labels.js`
+            );
+
+            const ensureLabel = async (name, color, description) => {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name
+                });
+              } catch (e) {
+                if (e.status === 404) {
+                  try {
+                    await github.rest.issues.createLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      name,
+                      color,
+                      description
+                    });
+                  } catch (createError) {
+                    // 422: another run created the label first.
+                    if (createError.status !== 422) {
+                      throw createError;
+                    }
+                  }
+                } else {
+                  throw e;
+                }
+              }
+            };
+
+            const names = converterNames(fs.readFileSync('.github/labeler.yml', 'utf8'));
+            const found = labelsForIssue(context.payload.issue, names);
+
+            // The New converter form applies this label itself, but GitHub drops form
+            // labels that don't exist yet, so make sure it exists.
+            await ensureLabel('new-converter', '5319e7', 'Request or proposal for a new converter');
+            for (const label of found) {
+              await ensureLabel(label, '0e8a16', '');
+            }
+
+            if (found.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: found
+              });
+            }
