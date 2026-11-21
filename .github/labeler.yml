@@ -20,6 +20,10 @@ converter/ataccama:
   - changed-files:
       - any-glob-to-any-file: 'ataccama/**'
 
+converter/celonis:
+  - changed-files:
+      - any-glob-to-any-file: 'celonis/**'
+
 converter/bigquery:
   - changed-files:
       - any-glob-to-any-file: 'bigquery/**'
