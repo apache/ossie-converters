@@ -31,8 +31,6 @@ from sqlglot import expressions as exp
 
 from ossie_orionbelt._common import (
     _COLUMN_REF_RE,
-    _INTERNAL_VENDORS,
-    _OBML_VENDOR_READ,
     _OSSIE_DIALECT_TO_SQLGLOT,
     _OSSIE_VERSION,
     _SQL_PARSEABLE_DIALECTS,
@@ -41,6 +39,8 @@ from ossie_orionbelt._common import (
     OBML_DECIMAL_DEFAULT,
     OSSIE_DATATYPE_TO_OBML_ABSTRACT,
     OSSIE_TO_OBML_TYPE,
+    _is_internal_vendor,
+    _is_obml_extension,
     obml_datatype_to_ossie,
     obml_decimal_default,
     ossie_metric_datatype_to_obml,
@@ -229,7 +229,7 @@ class OssietoOBML:
 
         # ── Restore model-level properties from custom_extensions ────
         for ext in model.get("custom_extensions", []):
-            if ext.get("vendor_name") in _OBML_VENDOR_READ:
+            if _is_obml_extension(ext):
                 try:
                     ext_data = json.loads(ext.get("data", "{}"))
                     if ext_data.get("obml_filters"):
@@ -352,7 +352,7 @@ class OssietoOBML:
         properties themselves are restored after them, as before.
         """
         for ext in model.get("custom_extensions", []):
-            if ext.get("vendor_name") in _OBML_VENDOR_READ:
+            if _is_obml_extension(ext):
                 try:
                     data = json.loads(ext.get("data", "{}"))
                 except (json.JSONDecodeError, TypeError):
@@ -370,7 +370,7 @@ class OssietoOBML:
         """
         for ext in ossie_exts or []:
             vendor = ext.get("vendor_name")
-            if vendor and vendor not in _INTERNAL_VENDORS:
+            if vendor and not _is_internal_vendor(vendor, ext.get("data")):
                 obml_target.setdefault("customExtensions", []).append(
                     {"vendor": vendor, "data": ext.get("data", "")}
                 )
@@ -468,7 +468,7 @@ class OssietoOBML:
 
         # Restore DataObject owner / comment / refresh from custom_extensions
         for ext in ds.get("custom_extensions", []):
-            if ext.get("vendor_name") in _OBML_VENDOR_READ:
+            if _is_obml_extension(ext):
                 try:
                     ext_data = json.loads(ext.get("data", "{}"))
                     if ext_data.get("obml_owner"):
@@ -563,7 +563,7 @@ class OssietoOBML:
 
         # Restore OBML-only column properties from custom_extensions
         for ext in field.get("custom_extensions", []):
-            if ext.get("vendor_name") in _OBML_VENDOR_READ:
+            if _is_obml_extension(ext):
                 try:
                     ext_data = json.loads(ext.get("data", "{}"))
                     # Restore the exact OBML abstractType stashed on export, so a
@@ -777,7 +777,7 @@ class OssietoOBML:
                     dim_def["synonyms"] = list(ai_ctx["synonyms"])
                 # Restore OBML-only dimension properties from custom_extensions
                 for ext in field.get("custom_extensions", []):
-                    if ext.get("vendor_name") in _OBML_VENDOR_READ:
+                    if _is_obml_extension(ext):
                         try:
                             ext_data = json.loads(ext.get("data", "{}"))
                             if ext_data.get("obml_time_grain"):
@@ -1057,7 +1057,7 @@ class OssietoOBML:
     def _extract_obml_extras(ossie_metric: dict) -> dict:
         """Extract OBML-only properties from Ossie metric custom_extensions."""
         for ext in ossie_metric.get("custom_extensions", []):
-            if ext.get("vendor_name") in _OBML_VENDOR_READ:
+            if _is_obml_extension(ext):
                 try:
                     data = json.loads(ext.get("data", "{}"))
                     # Check for any obml_ prefixed keys

@@ -285,11 +285,13 @@ class OssieToLightdashConverter:
     ) -> str:
         by_dialect = {
             dialect_expression.dialect: dialect_expression.expression
-            for dialect_expression in expression.dialects
+            for dialect_expression in expression.dialects or []
         }
         for dialect in (self._dialect, OssieDialect.OSSIE_SQL_2026, OssieDialect.ANSI_SQL):
             if dialect in by_dialect:
                 return by_dialect[dialect]
+        if expression.sql is not None:
+            return expression.sql
         if not expression.dialects:
             return ""
         issues.append(
@@ -440,10 +442,11 @@ class OssieToLightdashConverter:
             # Lightdash rejects a second join to the same table without an
             # alias. An alias from the extension is restored. Otherwise the
             # relationship name is the alias for every repeat of a dataset
-            # pair.
+            # pair, and for a self-join, whose two sides would otherwise
+            # share one reference.
             pair = (relationship.from_dataset, relationship.to)
             alias = extension_data.get("alias")
-            if alias is None and pair in joined_pairs:
+            if alias is None and (pair in joined_pairs or relationship.from_dataset == relationship.to):
                 alias = relationship.name
             joined_pairs.add(pair)
             join_reference = alias or to_model_name

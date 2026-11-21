@@ -26,7 +26,6 @@ ExportProblemCode = Literal[
     "identifier-allocation-failed",
     "identifier-collision",
     "is-time",
-    "missing-dialect",
     "missing-datatype",
     "project-description",
 ]
@@ -51,7 +50,6 @@ EXPORT_PROBLEM_SUMMARIES: dict[ExportProblemCode, str] = {
     ),
     "duplicate-name": ("Duplicate Ossie names are ambiguous; conversion continued."),
     "is-time": "Temporal role markers are not supported in Hex and were dropped.",
-    "missing-dialect": "No dialect was specified; ANSI SQL was used.",
     "missing-datatype": "A datatype is required in Hex; a default was used.",
     "project-description": (
         "Project descriptions are not supported in Hex and were dropped."

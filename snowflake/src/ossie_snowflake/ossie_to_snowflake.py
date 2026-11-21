@@ -33,7 +33,7 @@ from sqlglot.errors import TokenError
 from sqlglot.tokens import TokenType
 
 
-SUPPORTED_VERSION = "0.2.0.dev0"
+SUPPORTED_VERSION = "0.3.0.dev0"
 
 _TIME_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
 
@@ -85,7 +85,7 @@ def convert_ossie_to_snowflake(ossie_yaml_str):
 
     Expects the standard Ossie document format::
 
-        version: "0.2.0.dev0"
+        version: "0.3.0.dev0"
         name: ...
         datasets: [...]
 
@@ -201,10 +201,11 @@ def _convert_dataset(dataset):
 
     # unique_keys: [[...], ...] -> unique_keys: [{columns: [...]}, ...]
     # Snowflake semantic views do not take UNIQUE on the primary key columns,
-    # so a unique key that restates the primary key is not emitted.
+    # so a unique key that restates the primary key is not emitted. Keys are
+    # column sets: a unique key over the same columns in another order restates it too.
     uks = dataset.get("unique_keys")
     if uks and pk:
-        uks = [uk for uk in uks if list(uk) != list(pk)]
+        uks = [uk for uk in uks if set(uk) != set(pk)]
     if uks:
         result["unique_keys"] = [{"columns": uk} for uk in uks]
 
@@ -390,6 +391,12 @@ def _extract_expression(expression, field_name):
 
     dialects = expression.get("dialects")
     if not dialects:
+        if expression.get("sql") is not None:
+            warnings.warn(
+                f"Skipping field/metric '{field_name}': it has only a portable sql "
+                f"expression and no dialect entries"
+            )
+            return None
         raise OssieConversionError(
             f"Missing expression for field/metric '{field_name}'"
         )

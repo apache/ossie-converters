@@ -1,0 +1,81 @@
+{
+ "id": "metric_synth_sales_to_active_customers",
+ "kind": "metric",
+ "app": "metric",
+ "name": "Sales to active customers",
+ "display_name": "Sales To Active Customers",
+ "description": "Store sales that can be attributed to a known customer",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "warehouse-tables/sales_to_active_customers",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "count",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "sales_to_active_customers",
+    "datatype": "integer",
+    "unit": "sales"
+   },
+   "joins": [
+    {
+     "name": "active_customer",
+     "to": "TPCDS.PUBLIC.CUSTOMER",
+     "cardinality": "many_to_one",
+     "origin": "declared",
+     "sql": "JOIN TPCDS.PUBLIC.CUSTOMER c ON c.c_customer_sk = store_sales.ss_customer_sk"
+    }
+   ],
+   "dimensions": [
+    {
+     "name": "ss_sold_date",
+     "kind": "time",
+     "sql": "ss_sold_date",
+     "datatype": "date",
+     "description": "Sale date."
+    },
+    {
+     "name": "preferred",
+     "kind": "categorical",
+     "sql": "c.c_preferred_cust_flag",
+     "datatype": "string",
+     "description": "Preferred customer flag."
+    },
+    {
+     "name": "birth_country",
+     "kind": "categorical",
+     "sql": "c.c_birth_country",
+     "datatype": "string",
+     "description": "Customer birth country."
+    }
+   ],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "sale",
+   "population": "Store sales joined to their customer",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "COUNT(*)",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "store_sales",
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "parameters": [],
+    "timeframe_column": "ss_sold_date"
+   }
+  },
+  "validation_warnings": []
+ }
+}

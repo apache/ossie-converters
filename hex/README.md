@@ -58,15 +58,16 @@ Options:
 - `-i, --input <file>` — Required. Ossie YAML file to export.
 - `-o, --output <directory>` — Optional. Directory where Hex YAML files are
   written. If omitted, the current working directory is used.
-- `-d, --dialect <dialect>` — Optional. Ossie dialect to pick from Ossie
-  expressions. If omitted, `ANSI_SQL` is used.
+- `-d, --dialect <dialect>` — Optional. Prefer this dialect of Ossie
+  expressions. Accepts a freeform, case-insensitive name. If omitted, a portable
+  dialect or first variant is chosen.
 - `-v, --verbose` — Optional. Show a grouped problem summary. Repeat the flag
   (`-vv`) to show every occurrence with its conversion phase and cause path.
 
 Example:
 
 ```bash
-ossie-hex export -i ossie.yaml -o hex/ --dialect snowflake
+ossie-hex export -i ossie.yaml -o hex/
 ```
 
 ### Python API
@@ -81,7 +82,6 @@ from ossie_hex import convert_ossie_to_hex
 hex_project, problems = convert_ossie_to_hex(
     input="ossie.yaml",
     output="hex/",
-    dialect="snowflake",
 )
 ```
 
@@ -90,14 +90,32 @@ Options:
 - `input` — Required. Ossie YAML file to export.
 - `output` — Optional. Directory where Hex YAML files are written. If omitted,
   no files are written.
-- `dialect` — Optional. Ossie dialect to pick from Ossie expressions. If
-  omitted, `ANSI_SQL` is preferred, falling back to the first available variant.
+- `dialect` — Optional. Prefer this dialect of Ossie expressions. Accepts a
+  freeform value. If omitted, a portable dialect or first variant is chosen.
 
 Returns: a tuple of
 
 - `hex_project`: A Hex semantic project, or `None` if conversion could not
   produce a project.
 - `problems`: A list of problems encountered.
+
+Details:
+
+Providing a dialect that is not a SQL dialect will result in a warning. A Hex
+semantic project must specify a single SQL dialect that all its SQL expressions
+are written in.
+
+Providing a dialect that is not found in every list of dialect expressions will
+result in warnings. In the case it is not found, a best attempt will be made to
+maintain the member. The preference order is (1) a portable dialect
+(`OSSIE_SQL_2026` or `ANSI_SQL`), (2) the first dialect in the list.
+
+An expression that has only the portable `sql` and no dialect expressions is
+not supported yet. The field or metric is omitted with an error.
+
+Providing a dialect that can be normalized (by uppercasing) to a well-known
+value results in no problems. Otherwise, the dialect is considered unknown and
+results in a warning.
 
 ## Conversion
 

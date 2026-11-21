@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import copy
 import json
 from pathlib import Path
 
@@ -216,7 +217,7 @@ def test_import_powerbi_project_hands_documents_to_tom_then_ossie(tmp_path, monk
     def fake_convert(semantic_model, *, translate_dax=False):
         seen["model_name"] = semantic_model["name"]
         assert translate_dax is False
-        return "version: 0.2.0.dev0\nname: mini\n"
+        return "version: 0.3.0.dev0\nname: mini\n"
 
     monkeypatch.setattr(
         "ossie_microsoft.pbip.deserialize_tmdl_documents", fake_deserialize
@@ -225,7 +226,7 @@ def test_import_powerbi_project_hands_documents_to_tom_then_ossie(tmp_path, monk
         "ossie_microsoft.pbip.convert_semantic_model_to_ossie", fake_convert
     )
 
-    assert import_powerbi_project(root / "mini.pbip") == "version: 0.2.0.dev0\nname: mini\n"
+    assert import_powerbi_project(root / "mini.pbip") == "version: 0.3.0.dev0\nname: mini\n"
     assert seen["paths"][0:2] == ["database.tmdl", "model.tmdl"]
     assert seen["model_name"] == "mini"
 
@@ -341,3 +342,192 @@ def test_project_api_translates_measures_with_the_existing_converter(tmp_path, m
         {"dialect": "OSSIE_SQL_2026", "expression": "SUM(Sales.Amount)"},
         {"dialect": "DAX", "expression": "SUM ( Sales[Amount] )"},
     ]
+
+
+# --- follow-ups from the #26 review ------------------------------------------
+
+
+def test_partial_declarations_of_one_table_are_all_passed_to_tom(tmp_path):
+    # TMDL lets one object be declared across files; TOM merges them.
+    root = _project(tmp_path)
+    definition = root / "mini.SemanticModel" / "definition"
+    _write(definition / "tables" / "Orders.measures.tmdl", "table Orders\n\tmeasure M = 1\n")
+
+    paths = [path for path, _ in tmdl_documents(definition)]
+    assert "tables/Orders.tmdl" in paths
+    assert "tables/Orders.measures.tmdl" in paths
+
+
+def test_documents_in_other_and_nested_folders_are_passed_to_tom(tmp_path):
+    root = _project(tmp_path)
+    definition = root / "mini.SemanticModel" / "definition"
+    _write(definition / "measures" / "Sales.tmdl", "table Orders\n\tmeasure S = 1\n")
+    _write(definition / "tables" / "Finance" / "Ledger.tmdl", "table Ledger\n")
+
+    paths = [path for path, _ in tmdl_documents(definition)]
+    assert "measures/Sales.tmdl" in paths
+    assert "tables/Finance/Ledger.tmdl" in paths
+
+
+def test_every_loaded_document_is_logged(tmp_path, caplog):
+    root = _project(tmp_path)
+    definition = root / "mini.SemanticModel" / "definition"
+    with caplog.at_level("DEBUG", logger="ossie_microsoft"):
+        documents = tmdl_documents(definition)
+    logged = [r.getMessage() for r in caplog.records]
+    for path, _ in documents:
+        assert f"loading TMDL document {path}" in logged
+
+
+@pytest.mark.parametrize("field", ["byPath", "report"])
+def test_a_reference_outside_the_project_folder_is_rejected(tmp_path, field):
+    root = _project(tmp_path / "project")
+    outside = _project(tmp_path / "elsewhere")
+    if field == "byPath":
+        _write(root / "mini.Report" / "definition.pbir", json.dumps(
+            {"datasetReference": {"byPath": {"path": str(outside / "mini.SemanticModel")}}}))
+    else:
+        _write(root / "mini.pbip", json.dumps(
+            {"artifacts": [{"report": {"path": str(outside / "mini.Report")}}]}))
+
+    with pytest.raises(ConversionError, match="points outside the project folder"):
+        resolve_definition_dir(root / "mini.pbip")
+
+
+def test_a_missing_input_says_it_does_not_exist(tmp_path, capsys):
+    assert main(["import", "-i", str(tmp_path / "missing.pbip")]) == 1
+    err = capsys.readouterr().err
+    assert "does not exist" in err
+    assert "Traceback" not in err
+
+
+def _tmsl_project(root: Path, bim) -> Path:
+    model = root / "mini.SemanticModel"
+    _write(model / "model.bim", json.dumps(bim))
+    _write(root / "mini.Report" / "definition.pbir", json.dumps(
+        {"datasetReference": {"byPath": {"path": "../mini.SemanticModel"}}}))
+    _write(root / "mini.pbip", json.dumps({"artifacts": [{"report": {"path": "mini.Report"}}]}))
+    return root
+
+
+@pytest.mark.parametrize("entry", ["mini.SemanticModel", "mini.pbip"])
+@pytest.mark.parametrize("definition_file", [False, True])
+def test_a_tmsl_project_is_imported_from_its_model_bim(
+    tmp_path, bim, entry, definition_file, monkeypatch
+):
+    root = _tmsl_project(tmp_path, bim)
+    if definition_file:
+        _write(root / "mini.SemanticModel" / "definition", "not a TMDL directory\n")
+
+    def no_tom(documents):
+        raise AssertionError("a TMSL project does not need TOM")
+
+    monkeypatch.setattr("ossie_microsoft.pbip.deserialize_tmdl_documents", no_tom)
+    document = yaml.safe_load(import_powerbi_project(root / entry))
+    assert any(item["name"] == "Total Sales" for item in document["metrics"])
+
+
+def _mixed_storage_project(root: Path, bim, definition_state: str) -> Path:
+    root = _tmsl_project(root, bim)
+    definition = root / "mini.SemanticModel" / "definition"
+    definition.mkdir()
+    if definition_state != "empty":
+        _write(definition / "model.tmdl", "model Model\n")
+    if definition_state == "complete":
+        _write(definition / "database.tmdl", "database mini\n")
+    return root
+
+
+@pytest.mark.parametrize("entry", ["mini.SemanticModel", "mini.pbip"])
+@pytest.mark.parametrize("definition_state", ["empty", "incomplete", "complete"])
+def test_a_folder_with_both_storage_formats_is_refused(
+    tmp_path, bim, entry, definition_state
+):
+    root = _mixed_storage_project(tmp_path, bim, definition_state)
+
+    with pytest.raises(ConversionError, match="both model.bim and definition/"):
+        import_powerbi_project(root / entry)
+
+
+@pytest.mark.parametrize("entry", ["mini.SemanticModel", "mini.pbip"])
+@pytest.mark.parametrize("definition_state", ["empty", "incomplete"])
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_cli_rejects_mixed_storage_without_writing_output(
+    tmp_path, bim, capsys, entry, definition_state, existing_output
+):
+    root = _mixed_storage_project(tmp_path, bim, definition_state)
+    output = tmp_path / "output.yaml"
+    if existing_output:
+        output.write_text("keep this output\n", encoding="utf-8")
+
+    assert main(["import", "-q", "-i", str(root / entry), "-o", str(output)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("Error:")
+    assert "both model.bim and definition/" in captured.err
+    assert "Traceback" not in captured.err
+    if existing_output:
+        assert output.read_text(encoding="utf-8") == "keep this output\n"
+    else:
+        assert not output.exists()
+
+
+@pytest.mark.parametrize("entry", ["model.bim", "definition"])
+def test_cli_can_import_an_explicit_model_from_a_mixed_storage_folder(
+    tmp_path, bim, capsys, monkeypatch, entry
+):
+    root = _mixed_storage_project(tmp_path, bim, "complete")
+    monkeypatch.setattr(
+        "ossie_microsoft.pbip.deserialize_tmdl_documents", lambda documents: bim
+    )
+
+    assert main(["import", "-i", str(root / "mini.SemanticModel" / entry)]) == 0
+    document = yaml.safe_load(capsys.readouterr().out)
+    assert any(item["name"] == "Total Sales" for item in document["metrics"])
+
+
+def test_cli_imports_a_tmsl_semantic_model_folder(tmp_path, bim, capsys):
+    root = _tmsl_project(tmp_path, bim)
+
+    assert main(["import", "-i", str(root / "mini.SemanticModel")]) == 0
+    assert "Total Sales" in capsys.readouterr().out
+
+
+def test_resolving_a_missing_path_says_it_does_not_exist(tmp_path):
+    with pytest.raises(ConversionError, match="does not exist"):
+        resolve_definition_dir(tmp_path / "missing.SemanticModel")
+
+
+def test_a_plain_file_is_not_a_tmsl_project(tmp_path):
+    from ossie_microsoft.pbip import tmsl_model
+
+    _write(tmp_path / "model.bim", "{}")
+    assert tmsl_model(tmp_path / "model.bim") is None
+
+
+def test_debug_records_do_not_count_as_conversion_issues(
+    tmp_path, monkeypatch, capsys, caplog, bim
+):
+    # With the package logger at DEBUG (as under `pytest --log-level=DEBUG`), the
+    # "loading TMDL document" lines reach the CLI's handler. Only WARNING and above are
+    # constructs that could not be converted, so a clean project passes --strict.
+    root = _project(tmp_path)
+    # The sales model, trimmed to what converts without a single warning.
+    clean = copy.deepcopy(bim)
+    for key in ("cultures", "expressions", "perspectives", "queryGroups", "relationships", "roles"):
+        clean["model"].pop(key, None)
+    clean["model"]["tables"] = clean["model"]["tables"][:1]
+    for measure in clean["model"]["tables"][0]["measures"]:
+        measure.pop("kpi", None)
+    monkeypatch.setattr(
+        "ossie_microsoft.pbip.deserialize_tmdl_documents", lambda documents: clean
+    )
+    # The same project converts cleanly under --strict at the default level.
+    assert main(["import", "--strict", "-i", str(root / "mini.pbip")]) == 0
+    capsys.readouterr()
+    with caplog.at_level("DEBUG", logger="ossie_microsoft"):
+        assert main(["import", "--strict", "-i", str(root / "mini.pbip")]) == 0
+    err = capsys.readouterr().err
+    assert "could not be converted" not in err
+    assert "loading TMDL document" not in err
+    assert any("loading TMDL document" in r.getMessage() for r in caplog.records)

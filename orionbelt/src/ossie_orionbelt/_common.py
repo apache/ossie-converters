@@ -25,13 +25,14 @@ the per-direction class modules can import them without forming an import cycle.
 
 from __future__ import annotations
 
+import json
 import re
 
 # ─── Spec version pin ───────────────────────────────────────────────────────
 # Single source of truth for the Ossie spec we emit. Bump when upstream cuts
 # a stable v0.2.0 (drop the ``.dev0`` suffix). All read paths accept both
 # 0.1.x (via the legacy shim) and 0.2.x.
-_OSSIE_VERSION = "0.2.0.dev0"
+_OSSIE_VERSION = "0.3.0.dev0"
 
 # SQL dialects (of the Ossie enum) whose aggregation expressions our regex-based
 # metric parser can read, in preference order. ANSI_SQL first, then
@@ -40,7 +41,7 @@ _OSSIE_VERSION = "0.2.0.dev0"
 # simple/expression aggregations (``SUM(t.c)``, ``SUM(t.a * t.b)``) are
 # syntactically identical to ANSI. Non-SQL languages (MDX, TABLEAU, MAQL, SIGMA,
 # THOUGHTSPOT, DAX) are never parsed as SQL.
-_SQL_PARSEABLE_DIALECTS = ("ANSI_SQL", "OSSIE_SQL_2026", "SNOWFLAKE", "DATABRICKS")
+_SQL_PARSEABLE_DIALECTS = ("ANSI_SQL", "OSSIE_SQL_2026", "SNOWFLAKE", "DATABRICKS", "CLICKHOUSE")
 
 # Ossie SQL-dialect tag -> sqlglot ``read`` dialect. ANSI and the portable
 # OSSIE_SQL_2026 map to sqlglot's default (None).
@@ -49,6 +50,7 @@ _OSSIE_DIALECT_TO_SQLGLOT: dict[str, str | None] = {
     "OSSIE_SQL_2026": None,
     "SNOWFLAKE": "snowflake",
     "DATABRICKS": "databricks",
+    "CLICKHOUSE": "clickhouse",
 }
 
 # Matches a ``dataset.column`` reference inside a SQL expression, where each
@@ -76,7 +78,42 @@ _OSSIE_VENDOR_READ = ("Ossie", "OBSL")
 # Vendors the converter handles internally (its own payloads + native-field
 # stashes). Any custom_extension from a vendor outside this set is third-party
 # and is carried through verbatim in both directions, never relabelled.
-_INTERNAL_VENDORS = frozenset({"ORIONBELT", "COMMON", "Ossie", "OBSL"})
+_INTERNAL_VENDORS = frozenset({"ORIONBELT", "Ossie", "OBSL"})
+# The legacy tag we emitted before ORIONBELT. COMMON is no longer a registered
+# vendor name and other converters have written their own state under it, so a
+# COMMON extension is ours only when its payload is one we wrote: it carries
+# our ``obml_`` keys or our provenance stamp (the model-level payload of a plain
+# model has only ``source_format``, ``source_version`` and ``converter``); any
+# other COMMON extension is third-party and carried through verbatim.
+_VENDOR_LEGACY_OBML = "COMMON"
+_CONVERTER_STAMP = "ossie-orionbelt"
+
+
+def _is_our_payload(data: object) -> bool:
+    try:
+        payload = json.loads(data) if isinstance(data, str) else data
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("converter") == _CONVERTER_STAMP:
+        return True
+    return any(isinstance(key, str) and key.startswith("obml_") for key in payload)
+
+
+def _is_obml_extension(ext: dict) -> bool:
+    """An Ossie custom_extension that carries an OrionBelt payload."""
+    vendor = ext.get("vendor_name")
+    if vendor == _VENDOR_OBML:
+        return True
+    return vendor == _VENDOR_LEGACY_OBML and _is_our_payload(ext.get("data"))
+
+
+def _is_internal_vendor(vendor: object, data: object) -> bool:
+    """True when an extension is handled by the converter, not carried through."""
+    if vendor in _INTERNAL_VENDORS:
+        return True
+    return vendor == _VENDOR_LEGACY_OBML and _is_our_payload(data)
 
 # ─── Type mapping ───────────────────────────────────────────────────────────
 

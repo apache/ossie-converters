@@ -1,0 +1,64 @@
+{
+ "sales_to_active_customers": {
+  "name": "sales_to_active_customers",
+  "description": "Store sales that can be attributed to a known customer",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT(m.*)",
+   "aggregation": {
+    "type": "custom",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "sales_to_active_customers",
+    "datatype": "integer",
+    "unit": "sales"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "sql": null,
+    "parameters": [],
+    "timeframe_column": "m.SS_SOLD_DATE"
+   },
+   "joins": [
+    {
+     "name": "t1",
+     "to": "TPCDS.PUBLIC.CUSTOMER",
+     "sql": "m.SS_CUSTOMER_SK = t1.C_CUSTOMER_SK",
+     "cardinality": "many_to_one",
+     "origin": "ossie relationship"
+    }
+   ],
+   "dimensions": [
+    {
+     "name": "ss_sold_date",
+     "sql": "m.SS_SOLD_DATE",
+     "kind": "time",
+     "datatype": "date",
+     "description": "Sale date."
+    },
+    {
+     "name": "preferred",
+     "sql": "t1.C_PREFERRED_CUST_FLAG",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Preferred customer flag."
+    },
+    {
+     "name": "birth_country",
+     "sql": "t1.C_BIRTH_COUNTRY",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Customer birth country."
+    }
+   ],
+   "examples": [],
+   "grain": "sale",
+   "population": "Store sales joined to their customer"
+  }
+ }
+}

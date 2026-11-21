@@ -92,6 +92,15 @@ def main(argv=None):
                     for name, regression in manifest.document_regressions.items()
                     if set(regression.targets) & set(names)
                 },
+                manifest.portability
+                and replace(
+                    manifest.portability,
+                    modes={
+                        name: mode
+                        for name, mode in manifest.portability.modes.items()
+                        if mode.converter in names
+                    },
+                ),
             )
     except ManifestError as error:
         print(f"Manifest error: {error}", file=sys.stderr)
@@ -136,6 +145,7 @@ def main(argv=None):
                 "cases": [],
                 "regressions": [],
                 "document_regressions": [],
+                "portability": [],
                 "harness_errors": [],
             }
         )

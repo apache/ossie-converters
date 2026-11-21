@@ -38,7 +38,7 @@ from typing import Any
 
 import yaml
 
-SUPPORTED_OSSIE_VERSION = "0.2.0.dev0"
+SUPPORTED_OSSIE_VERSION = "0.3.0.dev0"
 HONEYDEW_VENDOR = "HONEYDEW"
 _OSSIE_METADATA_SECTION = "ossie"
 # Workspaces written before the Ossie rebrand named the section "osi". Still
@@ -195,7 +195,7 @@ def _fields_to_honeydew(
         if not field_name:
             raise HoneydewConversionError(f"Field missing 'name' in dataset '{entity_name}'")
 
-        expr = _pick_ansi_expression(field.get("expression"), field_name)
+        expr = _pick_expression(field.get("expression"), field_name)
         if not expr or not expr.strip():
             continue
 
@@ -268,7 +268,7 @@ def _fields_to_honeydew(
 def _dataset_to_files(
     ds: dict[str, Any],
     relations: list[dict[str, Any]],
-    metrics: list[dict[str, Any]],
+    metrics: list[tuple[dict[str, Any], str]],
 ) -> dict[str, str]:
     entity_name = ds["name"]
     base = f"schema/{entity_name}"
@@ -276,12 +276,12 @@ def _dataset_to_files(
 
     primary_key = ds.get("primary_key") or []
     unique_keys = ds.get("unique_keys")
-    # A unique key identical to the primary key is re-derived from the entity's
-    # keys on the Honeydew → Ossie path, so don't persist it as metadata — that
+    # A unique key over the primary key's columns (in any order) is re-derived from
+    # the entity's keys on the Honeydew → Ossie path, so don't persist it as metadata — that
     # would inject a redundant metadata block on a Honeydew → Ossie → Honeydew round-trip.
     if unique_keys:
-        pk_tuple = tuple(primary_key)
-        unique_keys = [uk for uk in unique_keys if tuple(uk) != pk_tuple] or None
+        pk_cols = set(primary_key)
+        unique_keys = [uk for uk in unique_keys if set(uk) != pk_cols] or None
     description = ds.get("description")
     ai_context = ds.get("ai_context")
     fields = ds.get("fields") or []
@@ -344,20 +344,14 @@ def _dataset_to_files(
         files[f"{base}/attributes/{calc['name']}.yml"] = _dump(calc)
 
     # ── metric YAMLs ────────────────────────────────────────────────────────────
-    for metric in metrics:
-        mname = metric.get("name")
-        if not mname:
-            continue
-        mexpr = _pick_ansi_expression(metric.get("expression"), mname)
-        if not mexpr or not mexpr.strip():
-            continue
-
+    for metric, sql in metrics:
+        mname = metric["name"]
         metric_dict: dict[str, Any] = {
             "type": "metric",
             "entity": entity_name,
             "name": mname,
             "datatype": "number",
-            "sql": mexpr,
+            "sql": sql,
         }
         if metric.get("description"):
             metric_dict["description"] = metric["description"]
@@ -424,36 +418,47 @@ def _ossie_relation_to_honeydew(rel: dict[str, Any]) -> dict[str, Any] | None:
     return honeydew_rel
 
 
-def _pick_ansi_expression(expression: Any, field_name: str) -> str | None:
-    """Select the ANSI_SQL expression; fall back to first available dialect."""
+def _pick_expression(expression: Any, element_name: str) -> str | None:
+    """Pick primary SQL, ANSI_SQL, or tagged portable SQL, in that order.
+
+    Warn when falling back to the first usable expression from another dialect.
+    """
     if expression is None:
         return None
     if not isinstance(expression, dict):
-        warnings.warn(f"'{field_name}': 'expression' must be a mapping; field will be skipped")
-        return None
-    dialects = expression.get("dialects") or []
-    if not dialects:
+        warnings.warn(f"'{element_name}': 'expression' must be a mapping; skipping")
         return None
 
-    ansi_expr = None
+    sql = expression.get("sql")
+    if isinstance(sql, str) and sql.strip():
+        return sql
+
+    portable_expr = None
     first_expr = None
-
-    for d in dialects:
-        dialect = (d.get("dialect") or "").upper()
-        expr = d.get("expression")
+    for entry in expression.get("dialects") or []:
+        if not isinstance(entry, dict):
+            continue
+        expr = entry.get("expression")
+        if not isinstance(expr, str) or not expr.strip():
+            continue
+        dialect = entry.get("dialect")
+        dialect = dialect.upper() if isinstance(dialect, str) else ""
+        if dialect == "ANSI_SQL":
+            return expr
+        if dialect == "OSSIE_SQL_2026" and portable_expr is None:
+            portable_expr = expr
         if first_expr is None:
             first_expr = expr
-        if dialect == "ANSI_SQL" and ansi_expr is None:
-            ansi_expr = expr
 
-    if ansi_expr is not None:
-        return ansi_expr
+    if portable_expr is not None:
+        return portable_expr
 
     if first_expr is not None:
-        warnings.warn(f"'{field_name}': no ANSI_SQL dialect found; using first available")
-        return first_expr
-
-    return None
+        warnings.warn(
+            f"'{element_name}': no usable ANSI_SQL or OSSIE_SQL_2026 expression; "
+            "using first available"
+        )
+    return first_expr
 
 
 def _ossie_field_to_honeydew_datatype(field: dict[str, Any]) -> str:
@@ -495,38 +500,29 @@ def _parse_ossie_source(source: str) -> tuple[str, str]:
 def _assign_metrics_to_entities(
     metrics: list[dict[str, Any]],
     entity_names: list[str],
-) -> dict[str, list[dict[str, Any]]]:
-    """Assign each Ossie metric to the most appropriate Honeydew entity.
+) -> dict[str, list[tuple[dict[str, Any], str]]]:
+    """Group exportable metrics with the SQL used to assign and write them.
 
     Priority:
     1. HONEYDEW ``custom_extension`` entity hint (preserves round-trip placement)
-    2. First ``entity.column`` pattern in the ANSI_SQL expression
+    2. First ``entity.column`` pattern in the selected SQL expression
     3. First entity in the model (with a warning)
     """
     entity_set = set(entity_names)
-    result: dict[str, list[dict[str, Any]]] = {}
+    result: dict[str, list[tuple[dict[str, Any], str]]] = {}
 
     for metric in metrics:
-        mname = metric.get("name", "")
-
-        # Priority 1: HONEYDEW entity hint (set during Honeydew → Ossie)
-        hinted = _get_honeydew_extension(metric).get("entity")
-        if hinted and hinted in entity_set:
-            result.setdefault(hinted, []).append(metric)
+        mname = metric.get("name")
+        if not mname:
+            continue
+        sql = _pick_expression(metric.get("expression"), mname)
+        if not sql or not sql.strip():
             continue
 
-        # Priority 2: expression scan
-        expr_dict = metric.get("expression") or {}
-        dialects = expr_dict.get("dialects") or [] if isinstance(expr_dict, dict) else []
-        expr_str = ""
-        for d in dialects:
-            if (d.get("dialect") or "").upper() == "ANSI_SQL":
-                expr_str = d.get("expression") or ""
-                break
-        if not expr_str and dialects:
-            expr_str = dialects[0].get("expression") or ""
-
-        assigned = _find_entity_in_expression(expr_str, entity_set)
+        hinted = _get_honeydew_extension(metric).get("entity")
+        assigned = (
+            hinted if hinted and hinted in entity_set else _find_entity_in_expression(sql, entity_set)
+        )
 
         # Priority 3: fallback
         if assigned is None:
@@ -540,7 +536,7 @@ def _assign_metrics_to_entities(
                 warnings.warn(f"Metric '{mname}': no entities to assign to, skipping")
                 continue
 
-        result.setdefault(assigned, []).append(metric)
+        result.setdefault(assigned, []).append((metric, sql))
 
     return result
 
@@ -724,9 +720,9 @@ def _entity_to_ossie_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
     # A Honeydew entity's keys uniquely identify its rows — Honeydew enforces this
     # and validates that relationships join to those keys — so surface them as a
     # unique key as well as the primary key. Union with any unique keys preserved
-    # from an Ossie source, de-duplicated.
+    # from an Ossie source, de-duplicated as column sets.
     unique_keys = [list(uk) for uk in (ossie_meta.get("unique_keys") or [])]
-    if keys and tuple(keys) not in {tuple(uk) for uk in unique_keys}:
+    if keys and frozenset(keys) not in {frozenset(uk) for uk in unique_keys}:
         unique_keys.append(list(keys))
     if unique_keys:
         ds["unique_keys"] = unique_keys

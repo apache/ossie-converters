@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_preferred_customer_count",
+ "kind": "metric",
+ "app": "metric",
+ "name": "preferred_customer_count",
+ "display_name": "Preferred Customer Count",
+ "description": "Count of customers whose preferred flag is set",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:preferred_customer_count",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "count"
+   },
+   "output": {
+    "alias": "preferred_customer_count",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "customer",
+   "population": "Customers flagged as preferred",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "COUNT(*)",
+   "source": {
+    "sql": "SELECT * FROM TPCDS.PUBLIC.CUSTOMER WHERE C_PREFERRED_CUST_FLAG = 'Y'",
+    "table": null,
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.CUSTOMER",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

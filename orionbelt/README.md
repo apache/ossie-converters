@@ -159,8 +159,10 @@ Ossie `custom_extensions` carry vendor-tagged payloads. This converter:
   original vendor and data. Ossie has no separate dimension entity, so an OBML
   dimension's foreign extensions surface on its Ossie field.
 
-Legacy `COMMON` / `OBSL` tags from earlier converter versions are still accepted
-on read.
+Legacy tags from earlier converter versions are still accepted on read: `OBSL`,
+and `COMMON` when the payload is ours (`obml_` keys or the `ossie-orionbelt`
+provenance stamp). Any other `COMMON` extension is carried through verbatim, like
+a third-party vendor.
 
 ## Limitations / unsupported constructs
 
@@ -181,7 +183,7 @@ OBML, but are not interpreted by other Ossie consumers:
   (`obml_unconverted_metrics`) and re-emitted on OBML to Ossie, so the Ossie to OBML
   to Ossie roundtrip stays lossless. A `LOSSY:` warning is raised for each such
   metric because it is **not queryable through OBML**. SQL expressions in the
-  `ANSI_SQL`, `OSSIE_SQL_2026`, `SNOWFLAKE`, and `DATABRICKS` dialects are all read on import.
+  `ANSI_SQL`, `OSSIE_SQL_2026`, `SNOWFLAKE`, `DATABRICKS`, and `CLICKHOUSE` dialects are all read on import.
 
 Ossie v0.1.x inputs are accepted on read via a legacy normalization shim; output
 targets Ossie **v0.2.0.dev0**.

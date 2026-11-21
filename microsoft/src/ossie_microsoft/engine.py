@@ -138,7 +138,11 @@ def _request(method, url, token, payload=None):
     try:
         with urllib.request.urlopen(request) as response:  # noqa: S310
             body = response.read().decode("utf-8")
-            return response.status, (json.loads(body) if body else None), dict(response.headers)
+            try:
+                parsed = json.loads(body) if body else None
+            except json.JSONDecodeError:
+                parsed = {"error": {"message": "invalid JSON response from Power BI"}}
+            return response.status, parsed, dict(response.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8")[:2000], dict(exc.headers)
     except (urllib.error.URLError, ConnectionError, TimeoutError, socket.gaierror) as exc:
@@ -305,6 +309,8 @@ def _wait_for_operation(url, token, tries=40, delay=3):
         received_response = True
         if status != 200:
             return {"status": "Failed", "error": _request_failure(status, body)}
+        if isinstance(body, dict) and "error" in body:
+            return {"status": "Failed", "error": _engine_message(body)}
         if isinstance(body, dict) and body.get("status") in ("Succeeded", "Failed"):
             return body
     if last_transport_error and not received_response:
@@ -346,6 +352,8 @@ def deploy(document, workspace, name, token):
     status, body, headers = _request(
         "POST", f"{FABRIC_API}/workspaces/{workspace}/items", token, payload
     )
+    if status in (200, 201, 202) and isinstance(body, dict) and "error" in body:
+        return None, _engine_message(body)
     if status in (200, 201):
         dataset = body.get("id") if isinstance(body, dict) else None
         if dataset:
@@ -364,6 +372,8 @@ def deploy(document, workspace, name, token):
             )
             dataset = created.get("id") if isinstance(created, dict) else None
             if result_status == 200:
+                if isinstance(created, dict) and "error" in created:
+                    return None, _engine_message(created)
                 if (
                     isinstance(dataset, str)
                     and dataset
@@ -401,6 +411,8 @@ def refresh(workspace, dataset, token, tries=60, delay=5):
     )
     if status not in (200, 202):
         return _request_failure(status, body)
+    if isinstance(body, dict) and "error" in body:
+        return _engine_message(body)
     last_transport_error = None
     received_response = False
     for _ in range(tries):
@@ -414,6 +426,8 @@ def refresh(workspace, dataset, token, tries=60, delay=5):
             last_transport_error = _engine_message(body)
             continue
         received_response = True
+        if status == 200 and isinstance(body, dict) and "error" in body:
+            return _engine_message(body)
         if status == 200 and body.get("value"):
             state = body["value"][0]
             if state.get("status") == "Completed":
@@ -438,9 +452,24 @@ def evaluate(workspace, dataset, token, query):
         token,
         {"queries": [{"query": query}], "serializerSettings": {"includeNulls": True}},
     )
-    if status == 200:
-        return body["results"][0]["tables"][0].get("rows", []), None
-    return None, _engine_message(body)
+    if status != 200:
+        return None, _request_failure(status, body)
+    try:
+        if body.get("error"):
+            return None, _engine_message(body)
+        # This request contains one query, so exactly one result table is expected.
+        result, = body["results"]
+        if result.get("error"):
+            return None, _engine_message(result)
+        table, = result["tables"]
+        if table.get("error"):
+            return None, _engine_message(table)
+        rows = table.get("rows", [])
+        if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+            return rows, None
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
+    return None, "unexpected executeQueries response; expected one result table"
 
 
 def _expression_text(expression):
@@ -464,15 +493,13 @@ def check_model(document, workspace, dataset, token):
                 workspace, dataset, token, f'EVALUATE ROW("v", [{measure["name"]}])'
             )
             expression = _expression_text(measure.get("expression"))
-            # A measure whose DAX failed to compile is dropped from the model, so
-            # referencing it by name returns no rows rather than an error. That is
-            # precisely the silent failure this validator exists to catch, so the
-            # expression is re-evaluated inline to recover the real diagnostic.
-            if error is None and not rows and expression:
+            # Missing measures can return empty rows or an embedded query error.
+            # Evaluate the expression inline to obtain the engine's DAX diagnostic.
+            if not rows and expression:
                 _retry_rows, retry_error = evaluate(
                     workspace, dataset, token, f'EVALUATE ROW("v", {expression})'
                 )
-                error = retry_error or (
+                error = retry_error or error or (
                     f"measure '{measure['name']}' is not present in the deployed model; "
                     "the engine rejected it"
                 )

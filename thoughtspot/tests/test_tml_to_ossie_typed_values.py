@@ -172,6 +172,9 @@ def _run_join(on_expression):
     log = IssueLog()
     result = _relationship_from_join(
         name="orders_to_customers", from_prefix="ORDERS", to_prefix="CUSTOMERS",
+        # Nothing is aliased here, so the model and physical namespaces
+        # coincide -- the shape every one of these type cases is about.
+        from_physical="ORDERS", to_physical="CUSTOMERS",
         on_expression=on_expression, join_type=None, cardinality=None,
         join_shape="inline", referencing_join=None,
         table_lookup=lambda name: None, log=log,

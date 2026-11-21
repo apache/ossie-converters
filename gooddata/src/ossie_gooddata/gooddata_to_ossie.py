@@ -33,7 +33,7 @@ from ossie_gooddata.models import (
     GdReference,
 )
 
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
 
 def gooddata_to_ossie(

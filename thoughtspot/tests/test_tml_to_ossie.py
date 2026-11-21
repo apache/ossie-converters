@@ -157,7 +157,7 @@ class TestMinimalConversion:
 
         assert isinstance(result, OssieConversion)
         document = result.model
-        assert document["version"] == "0.2.0.dev0"
+        assert document["version"] == "0.3.0.dev0"
         semantic_model = document
         assert semantic_model["name"] == "sales_analytics"
 
@@ -1268,7 +1268,39 @@ class TestKeyDerivationEdgeCasesCommitted:
         assert any(i["code"] == "TS-JOIN-RESIDUAL-PREDICATES" for i in result.issues.as_dicts())
         assert any(i["code"] == "TS_KEY_COVERAGE" for i in result.issues.as_dicts())
 
-    def test_a_self_join_gives_each_alias_its_own_dataset_and_key(self):
+    def test_a_self_join_gives_each_alias_its_own_dataset_but_no_relationship(self):
+        """ThoughtSpot has no self-join, and this document is doubly invalid.
+
+        This test asserted the opposite until 2026-11-16: that the document
+        below converts cleanly into one relationship, with no issue raised.
+        It was written on an assumption about `on` that a cluster refuses on
+        both counts (`--policy VALIDATE_ONLY`, 2026-11-16):
+
+        * **the alias names.** `[Emp::Manager Id] = [Mgr::Id]` ->
+          `Invalid srcTable or destTable in join expression`.
+
+          Read this narrowly. The document is invalid on the second count as
+          well, so the refusal cannot be attributed to the alias names ALONE,
+          and no probe has been run on an alias-spelled condition between two
+          DIFFERENT tables. What is structural rather than empirical is the
+          Table leg: a `joins_with[]` entry lives on the table, which has no
+          knowledge of the aliases a model gives it, so its `destination` and
+          its `on` prefixes can only be physical. That is why the writer
+          emits physical names. The reader accepts either spelling, because
+          being strict about an unproven rule would drop joins that convert
+          perfectly well -- see `test_alias_joins.py`.
+        * **the self-join.** Written in physical names instead, the same
+          model gives `Schema validation failed`. A hierarchy needs one alias
+          per level, each joined to a distinct table.
+
+        So no such document can arrive from ThoughtSpot. What can arrive is
+        hand-written TML, and there the condition says `EMPLOYEES` on both
+        sides and cannot say which end each column belongs to. Guessing would
+        silently reverse a join, so the relationship is declined and said so.
+
+        Everything the old test got right is still asserted: each alias is
+        its own dataset, and the two share one `source`.
+        """
         employees = _table("EMPLOYEES", columns=[
             _column("Id", "ID", "INT64"), _column("Manager Id", "MANAGER_ID", "INT64"),
             _column("Name", "NAME", "VARCHAR"),
@@ -1277,7 +1309,8 @@ class TestKeyDerivationEdgeCasesCommitted:
             name="OrgChart",
             model_tables=[
                 {"name": "EMPLOYEES", "alias": "Emp", "joins": [{
-                    "with": "Mgr", "on": "[Emp::Manager Id] = [Mgr::Id]",
+                    "with": "Mgr",
+                    "on": "[EMPLOYEES::Manager Id] = [EMPLOYEES::Id]",
                     "type": "INNER", "cardinality": "MANY_TO_ONE",
                 }]},
                 {"name": "EMPLOYEES", "alias": "Mgr"},
@@ -1293,11 +1326,9 @@ class TestKeyDerivationEdgeCasesCommitted:
 
         assert set(datasets) == {"Emp", "Mgr"}
         assert datasets["Emp"]["source"] == datasets["Mgr"]["source"] == "SALES.PUBLIC.EMPLOYEES"
-        assert datasets["Mgr"]["primary_key"] == ["ID"]
-        rel = semantic_model["relationships"][0]
-        assert rel["from"] == "Emp"
-        assert rel["to"] == "Mgr"
-        assert result.issues.as_dicts() == []
+        assert semantic_model.get("relationships", []) == []
+        codes = [i["code"] for i in result.issues.as_dicts()]
+        assert "TS-JOIN-AMBIGUOUS-PREFIX" in codes
 
     def test_a_top_level_or_in_a_join_condition_is_not_fabricated_into_an_equality_pair(self):
         customers = _table("CUSTOMERS", columns=[_column("Id", "ID", "INT64"), _column("Legacy Id", "LEGACY_ID", "INT64")])

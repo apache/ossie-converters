@@ -70,7 +70,7 @@ def test_columns_become_fields(model):
     orders = next(dataset for dataset in model.datasets if dataset.name == "orders")
     fields = {field.name: field for field in orders.fields}
     assert fields["order_id"].expression.dialects[0].expression == "order_id"
-    assert fields["order_id"].expression.dialects[0].dialect is OssieDialect.SNOWFLAKE
+    assert fields["order_id"].expression.dialects[0].dialect == OssieDialect.SNOWFLAKE
     assert fields["order_date"].dimension.is_time is True
     assert fields["order_id"].dimension is None
     assert fields["status"].label == "Order Status"
@@ -86,7 +86,7 @@ def test_formulas_become_fields(model):
     fields = {field.name: field for field in orders.fields}
     is_large = fields["is_large"]
     assert is_large.expression.dialects[0].expression == 'CASE WHEN "orders"."amount" > 100 THEN TRUE ELSE FALSE END'
-    assert is_large.expression.dialects[0].dialect is OssieDialect.SNOWFLAKE
+    assert is_large.expression.dialects[0].dialect == OssieDialect.SNOWFLAKE
     assert is_large.label == "Is Large"
     assert is_large.description == "true when the order amount exceeds 100"
 
@@ -100,7 +100,7 @@ def test_formula_colliding_with_column_is_dropped(result, model):
 
 def test_unsupported_dialect_falls_back_to_ansi(result, model):
     tags = next(dataset for dataset in model.datasets if dataset.name == "tags")
-    assert all(field.expression.dialects[0].dialect is OssieDialect.ANSI_SQL for field in tags.fields)
+    assert all(field.expression.dialects[0].dialect == OssieDialect.ANSI_SQL for field in tags.fields)
     unsupported = _issues_of(result, ConverterIssueType.UNSUPPORTED_DIALECT)
     assert len(unsupported) == 1
     assert "postgres" in unsupported[0].element_name
@@ -126,6 +126,49 @@ def test_non_string_relationship_type_is_kept_as_many_to_one():
     relationship = model.relationships[0]
     assert (relationship.from_dataset, relationship.to) == ("orders", "customers")
     assert relationship.ai_context is None
+    assert relationship.custom_extensions is None
+
+
+def _wisdom_extension_data(relationship):
+    extensions = [ext for ext in relationship.custom_extensions or [] if ext.vendor_name == "WISDOM"]
+    assert len(extensions) == 1
+    return json.loads(extensions[0].data)
+
+
+def test_relationship_types_are_stored_in_a_wisdom_extension(model):
+    relationships = {relationship.name: relationship for relationship in model.relationships}
+    assert _wisdom_extension_data(relationships["orders_to_customers_2"]) == {
+        "_v": 1,
+        "relationshipType": "ONE_TO_MANY",
+        "normalizedEndpoints": ["orders", "customers"],
+    }
+    assert _wisdom_extension_data(relationships["orders_to_tags"]) == {
+        "_v": 1,
+        "relationshipType": "MANY_TO_MANY",
+        "normalizedEndpoints": ["orders", "tags"],
+    }
+    # MANY_TO_ONE is what Ossie direction already says, so nothing is stored.
+    assert relationships["orders_to_customers"].custom_extensions is None
+    assert relationships["orders_to_tags_2"].custom_extensions is None
+
+
+def test_one_to_many_gets_no_ai_context_note(model):
+    # The note would contradict the flipped direction; the type lives in the WISDOM extension.
+    relationships = {relationship.name: relationship for relationship in model.relationships}
+    assert relationships["orders_to_customers_2"].ai_context is None
+
+
+def test_one_to_one_keeps_its_note_and_stores_its_type():
+    export = json.loads(FIXTURE.read_text())
+    edge = export["domain"]["zsheet_json"]["relationshipGraph"]["relationships"][0]
+    edge["properties"]["relationshipType"] = "ONE_TO_ONE"
+    relationship = WisdomToOssieConverter().convert(export).output.relationships[0]
+    assert relationship.ai_context == "one-to-one relationship"
+    assert _wisdom_extension_data(relationship) == {
+        "_v": 1,
+        "relationshipType": "ONE_TO_ONE",
+        "normalizedEndpoints": ["orders", "customers"],
+    }
 
 
 def test_many_to_many_is_kept_with_cardinality_loss(result, model):
@@ -154,7 +197,7 @@ def test_measures_become_metrics(result, model):
     assert set(metrics) == {"total_amount", "customers_total_amount"}
     total = metrics["total_amount"]
     assert total.expression.dialects[0].expression == 'SUM("orders"."amount")'
-    assert total.expression.dialects[0].dialect is OssieDialect.SNOWFLAKE
+    assert total.expression.dialects[0].dialect == OssieDialect.SNOWFLAKE
     assert total.description == "Total order amount"
     collisions = _issues_of(result, ConverterIssueType.METRIC_NAME_COLLISION)
     assert [issue.element_name for issue in collisions] == ["customers.total_amount"]

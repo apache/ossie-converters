@@ -127,10 +127,23 @@ def native_content(path, native_format, output_shape):
                     model_files.append(str(item))
                     members += count
                 continue
+            if native_format == "lookml":
+                # Source-content check only; LookML validation needs Looker.
+                text = item.read_text(encoding="utf-8")
+                count = len(
+                    re.findall(
+                        r"(?m)^\s*(?:dimension|dimension_group|measure):\s*\w+\s*\{",
+                        text,
+                    )
+                )
+                if count:
+                    model_files.append(str(item))
+                    members += count
+                continue
             data = (
                 json.loads(item.read_text(encoding="utf-8"))
                 if native_format
-                in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+                in ("atlan", "dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
                 else yaml.safe_load(item.read_text(encoding="utf-8"))
             )
             if not isinstance(data, dict):
@@ -157,6 +170,11 @@ def native_content(path, native_format, output_shape):
                     for model in models
                 )
                 is_model = bool(models)
+            elif native_format == "ossie":
+                # The native artifact is an Ossie model; count its fields and metrics.
+                counts = inventory(data)
+                count = counts["fields"] + counts["metrics"]
+                is_model = counts["datasets"] > 0
             elif native_format != "databricks":
                 count = _additional_members(data, native_format)
                 is_model = count > 0
@@ -187,6 +205,13 @@ def _additional_members(data, native_format):
     """
     if native_format == "omni":
         return len(data.get("dimensions") or {}) + len(data.get("measures") or {})
+    if native_format == "atlan":
+        # A registry export lists metric records; each carries its definition's formula.
+        return sum(
+            1
+            for record in data.get("artifacts") or []
+            if (record.get("metadata") or {}).get("definition", {}).get("formula")
+        )
     if native_format == "hex":
         # Hex resource files wrap a model, dimension, measure or relation.
         return sum(len(data.get(key) or []) for key in ("dimensions", "measures"))

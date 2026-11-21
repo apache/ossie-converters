@@ -1,0 +1,49 @@
+{
+ "paid_by_birth_country": {
+  "name": "paid_by_birth_country",
+  "description": "Net paid on store sales, by customer birth country",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "bigquery",
+   "formula": "SUM(CASE WHEN (m.ss_quantity > 0) THEN m.ss_net_paid END)",
+   "aggregation": {
+    "type": "custom",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "paid_by_birth_country",
+    "datatype": "decimal",
+    "unit": "currency"
+   },
+   "source": {
+    "entity": "`tpcds`.`public`.`store_sales`",
+    "alias": "m",
+    "table": "`tpcds`.`public`.`store_sales`",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [
+    {
+     "name": "t1",
+     "to": "`tpcds`.`public`.`customer`",
+     "sql": "m.ss_customer_sk = t1.c_customer_sk",
+     "cardinality": "many_to_one",
+     "origin": "ossie relationship"
+    }
+   ],
+   "dimensions": [
+    {
+     "name": "birth_country",
+     "sql": "t1.c_birth_country",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Customer birth country."
+    }
+   ],
+   "examples": [],
+   "grain": "sale",
+   "population": "Store sales with a positive quantity"
+  }
+ }
+}

@@ -129,7 +129,8 @@ def parse_aggregation(expression: str) -> Optional[ParsedAggregation]:
     # the other aggregations use rejects that operand.
     percentile_match = _PERCENTILE_RE.match(expression)
     if percentile_match and _is_single_call_body(percentile_match.group("inner")):
-        percentile = float(percentile_match.group("fraction")) * 100
+        # Rounding absorbs float noise, as in 0.07 * 100 == 7.000000000000001.
+        percentile = round(float(percentile_match.group("fraction")) * 100, 6)
         if percentile.is_integer():
             percentile = int(percentile)
         return ParsedAggregation(

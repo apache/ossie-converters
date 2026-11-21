@@ -35,7 +35,7 @@ import yaml
 from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError, TokenError
 
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 # Any release in this major.minor series is accepted on input. The spec is
 # still on a .dev line, so pinning the exact string would reject every real
 # model as soon as the patch or dev suffix moves.
@@ -2015,8 +2015,9 @@ def _relationship_as_columns(
 def _normalize_expressions(value: Any, name: str) -> list[dict[str, str]]:
     if not isinstance(value, dict):
         raise AutoOntologyConversionError(f"{name!r} has no valid expression")
-    dialects = value.get("dialects")
-    if not isinstance(dialects, list) or not dialects:
+    sql = value.get("sql")
+    dialects = value.get("dialects") or []
+    if not isinstance(dialects, list) or (not dialects and sql is None):
         raise AutoOntologyConversionError(
             f"{name!r} requires at least one expression dialect"
         )
@@ -2030,6 +2031,13 @@ def _normalize_expressions(value: Any, name: str) -> list[dict[str, str]]:
         and item.get("dialect")
         and item.get("expression") is not None
     ]
+    if sql is not None:
+        # The top-level `sql` is written in OSSIE_SQL_2026 and wins over an
+        # OSSIE_SQL_2026 entry. It goes first, so it is read when there is no
+        # ANSI_SQL entry.
+        result = [{"dialect": "OSSIE_SQL_2026", "expression": str(sql)}] + [
+            item for item in result if item["dialect"].upper() != "OSSIE_SQL_2026"
+        ]
     if not result:
         raise AutoOntologyConversionError(f"{name!r} has no usable expression dialect")
     return result

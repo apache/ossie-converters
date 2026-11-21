@@ -18,7 +18,7 @@
 """Shared helpers for the Apache Ossie <-> Microsoft Power BI converters.
 
 Cross-cutting concerns live here: version constants, the data type mapping in both
-directions, the `custom_extensions` stash protocol, and the warning helper used to
+directions, the `nonportable_extensions` stash protocol, and the warning helper used to
 report every lossy step.
 
 Design rule for this converter pair: **never emit a plausible-looking expression that
@@ -30,10 +30,10 @@ an explicit placeholder rather than guessing, preserving the source expression a
 metadata when the target format supports it.
 """
 
-import json
 import logging
 import re
 import warnings
+from copy import deepcopy
 
 # Every lossy step is reported twice, on purpose, because the two channels answer
 # different questions. A `UserWarning` is the programmatic contract: a caller can raise
@@ -46,12 +46,12 @@ _WARNING_REGISTRY = {}
 
 # Apache Ossie semantic model spec version this converter targets (see core-spec).
 #
-# NOTE: this is an exact-match check on import/export. This spoke intentionally has no
+# NOTE: export warns when the input version differs. This spoke intentionally has no
 # `apache-ossie` package dependency, so nothing updates this automatically -- it MUST be
 # bumped in lockstep with the `version` in `core-spec/` whenever the spec version moves.
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
-# Vendor id used for the `custom_extensions` stash.
+# Vendor id used for the `nonportable_extensions` stash.
 VENDOR = "POWER_BI"
 
 # Expression dialects this converter understands.
@@ -75,7 +75,7 @@ RELATIONSHIP_ENDPOINT_METADATA = RELATIONSHIP_CARDINALITY_METADATA | frozenset(
     {"crossFilteringBehavior", "isActive", "relyOnReferentialIntegrity"}
 )
 
-# Bump when the shape of a stashed `data` blob changes.
+# Bump when the vendor-defined structure inside stashed `data` changes.
 STASH_VERSION = 2
 
 # Default TMSL compatibility level. 1550 is the baseline that supports calculation
@@ -288,28 +288,30 @@ def is_date_only_format(format_string):
 
 
 def read_stash(obj):
-    """Return the POWER_BI `custom_extensions` payload attached to `obj`, or {}."""
-    for ext in (obj or {}).get("custom_extensions") or []:
+    """Return a detached POWER_BI `nonportable_extensions` payload, or {}."""
+    if "custom_extensions" in (obj or {}):
+        raise ConversionError(
+            "Legacy 'custom_extensions' are not supported; "
+            "use 'nonportable_extensions' with object-valued data"
+        )
+    for ext in (obj or {}).get("nonportable_extensions") or []:
         if not isinstance(ext, dict) or ext.get("vendor_name") != VENDOR:
             continue
-        try:
-            data = json.loads(ext.get("data") or "{}")
-        except json.JSONDecodeError as e:
-            raise ConversionError(
-                f"{VENDOR} custom_extensions data is not valid JSON: {e}") from e
+        data = ext.get("data")
         if not isinstance(data, dict):
             raise ConversionError(
-                f"{VENDOR} custom_extensions data must be a JSON object")
+                f"{VENDOR} nonportable_extensions data must be an object")
+        data = deepcopy(data)
         version = data.pop("_v", STASH_VERSION)
         if not isinstance(version, int) or isinstance(version, bool):
             raise ConversionError(
-                f"{VENDOR} custom_extensions data has a non-integer version "
+                f"{VENDOR} nonportable_extensions data has a non-integer version "
                 f"'_v': {version!r}")
         if version > STASH_VERSION:
             # Replaying a payload written by a newer converter could silently
             # mean something different, so refuse rather than guess.
             raise ConversionError(
-                f"{VENDOR} custom_extensions data was written by a newer "
+                f"{VENDOR} nonportable_extensions data was written by a newer "
                 f"converter (format version {version}, this converter "
                 f"understands {STASH_VERSION}); upgrade ossie-microsoft")
         return data
@@ -317,7 +319,7 @@ def read_stash(obj):
 
 
 def write_stash(obj, data):
-    """Attach a POWER_BI `custom_extensions` entry holding `data` (a dict).
+    """Attach a POWER_BI `nonportable_extensions` entry holding `data` (a dict).
 
     No-op when `data` is empty, so a model that uses no Power BI-specific features
     converts to clean, vendor-neutral Apache Ossie. Merges into an existing POWER_BI
@@ -326,21 +328,20 @@ def write_stash(obj, data):
     if not data:
         return
     payload = {"_v": STASH_VERSION}
-    payload.update(data)
-    blob = json.dumps(payload, sort_keys=True)
-    exts = obj.setdefault("custom_extensions", [])
+    payload.update(deepcopy(data))
+    exts = obj.setdefault("nonportable_extensions", [])
     for ext in exts:
         if ext.get("vendor_name") == VENDOR:
-            ext["data"] = blob
+            ext["data"] = payload
             return
-    exts.append({"vendor_name": VENDOR, "data": blob})
+    exts.append({"vendor_name": VENDOR, "data": payload})
 
 
 def foreign_vendor_extensions(obj):
-    """Return non-POWER_BI custom_extensions (dropped on export, with a warning)."""
+    """Return non-POWER_BI nonportable_extensions (dropped on export, with a warning)."""
     return [
         ext
-        for ext in (obj or {}).get("custom_extensions") or []
+        for ext in (obj or {}).get("nonportable_extensions") or []
         if isinstance(ext, dict) and ext.get("vendor_name") != VENDOR
     ]
 
