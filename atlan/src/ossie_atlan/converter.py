@@ -916,8 +916,11 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         "registry": {**({"id": art["id"]} if art.get("id") else {}), "definition_version": d.get("version"),
                      **({"output_column": art["output_column"]} if art.get("output_column") else {})},
         "agent_context": ctx}}]
-    datasets = []
+    datasets, seen_ds = [], set()
     for alias, ds in m.alias_ds.items():
+        if ds in seen_ds:
+            continue
+        seen_ds.add(ds)
         entry = {"name": ds, "source": m.alias_table[alias]}
         keys = [r["to_columns"] for r in rels if r["to"] == ds]
         # A declared many_to_one join says its target columns identify one row. Most exporters
@@ -925,9 +928,14 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         # read unique_keys. A second, different key on the same dataset stays a unique key.
         if keys:
             entry["primary_key"] = copy.deepcopy(keys[0])
-            rest = [k for k in keys[1:] if k != keys[0]]
+            seen_keys = {frozenset(keys[0])}
+            rest = []
+            for k in keys[1:]:
+                if frozenset(k) not in seen_keys:
+                    seen_keys.add(frozenset(k))
+                    rest.append(copy.deepcopy(k))
             if rest:
-                entry["unique_keys"] = copy.deepcopy(rest)
+                entry["unique_keys"] = rest
         if m.fields[ds]:
             entry["fields"] = m.fields[ds]
         datasets.append(entry)
@@ -958,10 +966,20 @@ def _conflict(ds: dict, rels: dict, owner: dict, m: dict, dsl: list[dict], rl: l
                 gx = next((y for y in g.get("custom_extensions") or [] if y["vendor_name"] == x["vendor_name"]), None)
                 if gx and any(k in gx["data"] and gx["data"][k] != v for k, v in x["data"].items()):
                     return f"field {d['name']}.{f['name']}: metrics disagree on its values or filter form"
-        if d.get("primary_key") and have.get("primary_key") not in (None, d["primary_key"]):
+        if (
+            d.get("primary_key")
+            and have.get("primary_key") is not None
+            and frozenset(have["primary_key"]) != frozenset(d["primary_key"])
+        ):
             return f"dataset {d['name']}: metrics disagree on primary_key"
     for r in rl:
-        if r["name"] in rels and rels[r["name"]] != r:
+        hr = rels.get(r["name"])
+        if hr and (
+            hr["from"] != r["from"]
+            or hr["to"] != r["to"]
+            or frozenset(zip(hr["from_columns"], hr["to_columns"]))
+            != frozenset(zip(r["from_columns"], r["to_columns"]))
+        ):
             return f"relationship {r['name']}: metrics disagree on its keys"
     return None
 
@@ -992,37 +1010,45 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
         owner.setdefault("_metrics", set()).add(m["name"])
         for d in dsl:
             if d["name"] not in ds:
-                ds[d["name"]] = copy.deepcopy(d)
+                have = copy.deepcopy(d)
+                have.pop("unique_keys", None)
+                ds[d["name"]] = have
                 for f in d.get("fields", []):
                     owner[(d["name"], f["name"])] = m["name"]
-                continue
-            have = ds[d["name"]]
-            for f in d.get("fields", []):
-                g = next((x for x in have.setdefault("fields", []) if x["name"] == f["name"]), None)
-                if g is None:
-                    have["fields"].append(copy.deepcopy(f))
-                    owner[(d["name"], f["name"])] = m["name"]
-                    continue
-                for k, v in f.items():
-                    if k == "custom_extensions":
+            else:
+                have = ds[d["name"]]
+                for f in d.get("fields", []):
+                    g = next((x for x in have.setdefault("fields", []) if x["name"] == f["name"]), None)
+                    if g is None:
+                        have["fields"].append(copy.deepcopy(f))
+                        owner[(d["name"], f["name"])] = m["name"]
                         continue
-                    if k in g and g[k] != v:               # prose only (checked above): first wording wins
-                        notes.append(("prose", m["name"], f"{d['name']}.{f['name']}: {k} differs from "
-                                      f"{owner[(d['name'], f['name'])]}; kept the first"))
-                        continue
-                    g.setdefault(k, v)
-                for x in f.get("custom_extensions") or []:
-                    gx = next((y for y in g.setdefault("custom_extensions", []) if y["vendor_name"] == x["vendor_name"]), None)
-                    if gx is None:
-                        g["custom_extensions"].append(copy.deepcopy(x))
-                    else:
-                        for k, v in x["data"].items():
-                            gx["data"].setdefault(k, v)
-            if d.get("primary_key"):
-                have["primary_key"] = d["primary_key"]
-            for key in d.get("unique_keys", []):
-                if key not in have.setdefault("unique_keys", []):
-                    have["unique_keys"].append(key)
+                    for k, v in f.items():
+                        if k == "custom_extensions":
+                            continue
+                        if k in g and g[k] != v:               # prose only (checked above): first wording wins
+                            notes.append(("prose", m["name"], f"{d['name']}.{f['name']}: {k} differs from "
+                                          f"{owner[(d['name'], f['name'])]}; kept the first"))
+                            continue
+                        g.setdefault(k, v)
+                    for x in f.get("custom_extensions") or []:
+                        gx = next((y for y in g.setdefault("custom_extensions", []) if y["vendor_name"] == x["vendor_name"]), None)
+                        if gx is None:
+                            g["custom_extensions"].append(copy.deepcopy(x))
+                        else:
+                            for k, v in x["data"].items():
+                                gx["data"].setdefault(k, v)
+                if d.get("primary_key") and not have.get("primary_key"):
+                    have["primary_key"] = d["primary_key"]
+            raw_uk = list(have.pop("unique_keys", [])) + list(d.get("unique_keys", []))
+            seen_keys = {frozenset(have["primary_key"])} if have.get("primary_key") else set()
+            uk = []
+            for key in raw_uk:
+                if frozenset(key) not in seen_keys:
+                    seen_keys.add(frozenset(key))
+                    uk.append(key)
+            if uk:
+                have["unique_keys"] = uk
         for r in rl:
             rels.setdefault(r["name"], copy.deepcopy(r))
     doc = {"version": "0.3.0.dev0", "name": name}
@@ -1094,19 +1120,36 @@ def _metric(doc: dict, name: str) -> dict:
     if ds is None:
         return m
     text = expression_text(m)
+    dialect = next((x["dialect"] for x in m["expression"].get("dialects") or []
+                    if m["expression"].get("sql") is None and x["expression"] == text),
+                   OSSIE_DIALECT)
+    read_dialect = PARSE_DIALECT.get(
+        (agent_context(m).get("sql_dialect") or dialect).lower(), DIALECT
+    )
     try:
-        tree = sqlglot.parse_one(text)
+        tree = sqlglot.parse_one(text, read=read_dialect)
     except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
         raise NotConvertible(f"an expression in the Ossie file does not parse: {str(e).splitlines()[0][:80]}") from None
     own = {f["name"] for f in ds.get("fields") or []}
+    own_folded = {f.casefold() for f in own}
     others = set(metric_names(doc))
     for c in tree.find_all(exp.Column):
+        if c.table:
+            if not c.args.get("db") and c.table.casefold() == "source":
+                if "source" in own_folded:
+                    raise NotConvertible(f"dataset {ds['name']!r} declares a field named 'source', "
+                                         f"which shadows source.{c.name}")
+                c.set("db", exp.to_identifier(ds["name"]))
+                continue
+            raise NotConvertible(f"dataset-scoped metric {name!r} uses qualified reference "
+                                 f"{c.sql(dialect=read_dialect)}; use an unqualified field name or source.<column>")
         # the dataset's own field wins; another bare metric name stays bare and is refused later
-        if not c.table and (c.name in own or c.name not in others):
+        if c.name in own or c.name not in others:
             c.set("table", exp.to_identifier(ds["name"]))
-    dialect = next((x["dialect"] for x in m["expression"].get("dialects") or [] if x["expression"] == text),
-                   OSSIE_DIALECT)
-    return {**m, "expression": {"dialects": [{"dialect": dialect, "expression": tree.sql()}]}}
+    for cnt in tree.find_all(exp.Count):
+        if isinstance(cnt.this, exp.Star):
+            cnt.set("this", exp.Column(this=exp.Star(), table=exp.to_identifier(ds["name"])))
+    return {**m, "expression": {"dialects": [{"dialect": dialect, "expression": tree.sql(dialect=read_dialect)}]}}
 
 
 def metric_names(doc: dict) -> list[str]:
@@ -1164,7 +1207,13 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None,
                                  f"{'no dataset' if not homes else 'several datasets'} define it")
         c.set("table", exp.to_identifier(homes[0]))
     expr_text = tree0.sql(dialect=DIALECT)
-    used = {c.table for c in tree0.find_all(exp.Column) if c.table in ds}
+
+    def _col_ds(c: exp.Column) -> str | None:
+        if c.args.get("db") and c.db in ds and c.table.casefold() == "source":
+            return c.db
+        return c.table if not c.args.get("db") and c.table in ds else None
+
+    used = {dname for c in tree0.find_all(exp.Column) if (dname := _col_ds(c))}
     targets = {r["to"] for r in rels}
     base = next((n for n in ds if n in used and n not in targets), None)
     if base is None and names is not None:            # this metric's own joins lead to what it reads: start at their root
@@ -1215,7 +1264,9 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None,
     if zero:
         tree = tree.this
     for c in list(tree.find_all(exp.Column)):
-        if c.table in ds:
+        if c.args.get("db") and c.db in ds and c.table.casefold() == "source":
+            c.replace(exp.Column(this=c.this.copy(), table=exp.to_identifier(alias[c.db])))
+        elif not c.args.get("db") and c.table in ds:
             c.replace(field_sql(c.table, c.name))
     joins = [{"name": alias[r["to"]], "to": ds[r["to"]]["source"],
               "sql": " AND ".join(f"{field_sql(r['from'], a).sql(dialect=DIALECT)} = "
@@ -1369,7 +1420,10 @@ def to_registry(doc: dict, metric_name: str) -> dict:
     Filters stay inside the formula (Ossie cannot say which CASE WHEN was a filter)."""
     m = _metric(doc, metric_name)
     ctx0 = agent_context(m)
-    dialect = ctx0.get("sql_dialect", "snowflake")
+    text = expression_text(m)
+    chosen = next((x.get("dialect") or "" for x in m["expression"].get("dialects") or []
+                   if m["expression"].get("sql") is None and x.get("expression") == text), "")
+    dialect = ctx0.get("sql_dialect") or PARSE_DIALECT.get(chosen.lower(), "snowflake")
     with _parsing(dialect):
         try:
             parts = _reverse_parts(doc, m)
