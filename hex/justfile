@@ -127,4 +127,4 @@ test-python-matrix *args:
 snapshot-review *args: (test-python "--inline-snapshot=review" args)
 
 # non-interactively regenerate snapshots for inline-snapshot and syrupy
-snapshot-fix *args: (test-python "--inline-snapshot=fix --snapshot-update" args)
+snapshot-fix *args: (test-python "--inline-snapshot=create,fix --snapshot-update" args)

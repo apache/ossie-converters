@@ -292,9 +292,9 @@ class TestMeasureAggregationRoundtrip:
         assert exts, "expected custom_extensions to carry the obml_aggregation marker"
         import json as _json
 
-        common = [_json.loads(e["data"]) for e in exts if e.get("vendor_name") == "ORIONBELT"]
-        assert any(e.get("obml_aggregation") == "measure" for e in common), (
-            "obml_aggregation marker missing from COMMON extras"
+        orionbelt = [_json.loads(e["data"]) for e in exts if e.get("vendor_name") == "ORIONBELT"]
+        assert any(e.get("obml_aggregation") == "measure" for e in orionbelt), (
+            "obml_aggregation marker missing from ORIONBELT extras"
         )
 
     def test_roundtrip_preserves_measure_aggregation(self):

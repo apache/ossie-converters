@@ -24,12 +24,31 @@ semantic model. Power BI output is available as either a TMSL `model.bim` mappin
 TMDL document. The conversion is offline and requires no Power BI or Fabric
 connection.
 
-Each Ossie JSON/YAML document contains one model, with `name`, `datasets`,
-`relationships`, and `metrics` at the root alongside `version`. Legacy
-`semantic_model` wrappers must be unwrapped before conversion; split documents
-containing multiple models into separate files. Because the Ossie schema requires at
-least one dataset, importing a Power BI model fails explicitly when every table is
-malformed or excluded from the vendor-neutral model.
+The converter targets Ossie `0.3.0.dev0`. Vendor-specific state is stored in
+`nonportable_extensions` entries whose `data` values are structured objects, not
+JSON-encoded strings. To migrate an older document, update `version`, rename
+`custom_extensions` to `nonportable_extensions` at every level, and parse each
+JSON-encoded `data` value into an object. Flat inputs with legacy
+`custom_extensions` or string-valued Power BI extension data are rejected on export.
+
+Microsoft tests use a [snapshot of the 0.3 schema](tests/fixtures/ossie-schema-0.3.0.dev0.json)
+from [apache/ossie at `aa500d3`](https://github.com/apache/ossie/blob/aa500d37894c3d62c96cdce4192cbecea4d7f06a/core-spec/ossie-schema.json).
+Microsoft CI checks the snapshot and validates output with that revision's validator.
+The shared Ossie submodule remains on 0.2 for converters that have not migrated;
+cross-converter interoperability with those converters requires a spec migration.
+
+Power BI imports write one flat Ossie model with `name`, `datasets`, `relationships`,
+and `metrics` at the root alongside `version`. Power BI exports also accept an Ossie
+`0.1.1` document with one model in a `semantic_model` array, as returned by
+[Snowflake Semantic Views](https://docs.snowflake.com/en/sql-reference/functions/system_read_ossie_yaml_from_semantic_view).
+This version-specific compatibility path normalizes legacy extensions before
+export. It accepts the 0.1.1 schema's `vendor_name`/`data` properties and
+`vendor`/`content` aliases retained for older caller inputs. The test fixture is
+synthetic and uses the schema's names. Root `dialects` and `vendors` declarations
+are discarded with warnings, and malformed extension entries raise a conversion error.
+Split documents containing multiple models into separate files. Because the Ossie
+schema requires at least one dataset, importing a Power BI model fails explicitly
+when every table is malformed or excluded from the vendor-neutral model.
 
 ## Installation
 
@@ -69,6 +88,16 @@ TOM does not parse or validate DAX**, including syntax, function names, arity, o
 references, so use a separate DAX parser when that guarantee is required.
 
 ### Optional live engine validation
+
+`ossie_microsoft.engine` is a vendor-specific validation helper for exported Power BI
+`model.bim` files. It calls Microsoft Fabric and Power BI APIs so that Microsoft's
+Analysis Services engine compiles and evaluates the exported DAX. It does not implement
+Ossie's Layer 2/3 query semantics, accept portable Ossie queries, or act as a
+vendor-neutral query engine.
+
+The check uses generated sample data. A successful result confirms that Microsoft can
+refresh and evaluate the exported model against those samples; it does not establish
+query-result equivalence between Ossie and Power BI, or between different vendors.
 
 The gap above is only fully closed by the engine itself: nothing offline compiles DAX the
 way Analysis Services does. `validate_with_engine` deploys a model to a Fabric workspace,
@@ -113,9 +142,18 @@ ossie-microsoft export -i model.yaml -o model.bim    # Apache Ossie -> Power BI
 Power BI projects saved as split TMDL can be imported too. Pass a `.pbip` file, a
 semantic model folder that contains `definition/`, or that `definition` folder. The
 project root is not an input. A `.pbip` is followed through `datasetReference.byPath`.
-`byConnection` and a project stored as TMSL are outside this path. It needs the
+`byConnection` is not supported. It needs the
 [optional TOM setup](#optional-tom-validation-and-tmdl-serialization). Importing
-`model.bim` does not.
+`model.bim` does not, and a project stored as TMSL (a semantic model folder with
+`model.bim` instead of `definition/`, or a `.pbip` that points at one) is read through
+that `model.bim`. A folder with both is refused as ambiguous, even if `definition/`
+is empty or missing `database.tmdl`. Passing `model.bim` or a valid `definition/`
+folder directly selects that format without checking for the other in its parent.
+
+Every `.tmdl` file under `definition/` (outside hidden folders such as `.pbi/`) is passed
+to TOM, which merges partial declarations of one object across files and reports real
+conflicts; the loaded files are logged at debug level on the `ossie_microsoft` logger.
+The report path in the `.pbip` and its `byPath` must stay inside the project folder.
 
 ```bash
 ossie-microsoft import -i "Report.pbip" -o model.yaml
@@ -218,7 +256,7 @@ logging.getLogger("ossie_microsoft").addHandler(logging.StreamHandler())
 | temporal `dataType` or `dataCategory: Time` | `field.dimension.is_time` |
 | `table.measures[]` | `metrics[]` (`DAX` dialect) |
 | `model.relationships[]` | `relationships[]` |
-| everything else | `custom_extensions` (vendor `POWER_BI`) |
+| everything else | `nonportable_extensions` (vendor `POWER_BI`, object-valued `data`) |
 
 ## Design rule: expressions are never rewritten
 
@@ -256,8 +294,8 @@ Nothing is discarded silently. The converter follows the two rules in
 1. **Preserve.** Every TMSL property the Apache Ossie mapping does not consume —
    annotations, partitions, hierarchies, roles, perspectives, cultures, query groups,
    format strings, display folders, KPIs, cross-filter behaviour, relationship
-   cardinalities, `rowNumber` columns — is stored in a versioned JSON blob in a
-   `POWER_BI` `custom_extensions` entry, alongside excluded tables, measures without
+   cardinalities, `rowNumber` columns — is stored in a versioned object in a
+   `POWER_BI` `nonportable_extensions` entry, alongside excluded tables, measures without
    expressions, and skipped relationships. This is a deny-list, not an allow-list: a
    TMSL property this converter has never heard of is preserved too, rather than
    silently dropped. The export direction replays it all, so a `model.bim` converted to
@@ -278,7 +316,7 @@ Nothing is discarded silently. The converter follows the two rules in
    ```
 
 A model that uses no Power BI-specific features converts to clean, vendor-neutral Apache
-Ossie with no `custom_extensions` at all.
+Ossie with no `nonportable_extensions` at all.
 
 ## Data type notes
 
@@ -323,7 +361,7 @@ These are reported rather than approximated, in either direction:
 | Composite relationships | A TMSL relationship joins exactly one column pair |
 | Composite primary/unique keys | TMSL marks a single key column per table |
 | `Opaque` fields | Power BI has no untyped data type |
-| Other vendors' `custom_extensions` | not interpretable by Power BI |
+| Other vendors' `nonportable_extensions` | not interpretable by Power BI |
 
 On import, private tables, calculation groups, auto-generated date tables
 (`LocalDateTable_*`, `DateTableTemplate_*`) and `rowNumber` columns are left out of the
@@ -357,7 +395,10 @@ preserved just as faithfully but are not reported: a warning on every cosmetic p
 would bury the ones that matter.
 
 In the other direction, Apache Ossie's `ai_context` is stored in an `OssieAIContext`
-annotation. A `label` has no TMSL equivalent and is reported as dropped.
+annotation. On import, a JSON object in this annotation becomes structured `ai_context`
+only when its known properties have the types required by the Ossie schema; other text,
+including JSON arrays, remains a string. A `label` has no TMSL equivalent and is reported
+as dropped.
 
 ### SQL metric expressions
 
@@ -430,8 +471,17 @@ names the reason.
 Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
 `Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
 `BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
-other measures; and `VAR` / `RETURN`. Every other DAX function is refused with a reason
-from a per-function registry, for example:
+other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
+`BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
+compares a BLANK number as 0, so `BLANK = 0` is TRUE; strict `==` does not); and math
+functions (`ABS`, `SQRT`, `POWER`, `LOG`, `INT`, `TRUNC`, `MOD`, `QUOTIENT`, trigonometry,
+...) when their argument can never be BLANK, for example `ABS(COALESCE([Sales], 0))`,
+since what they return for BLANK is not documented. Arithmetic, comparisons and conditions
+take only numbers: `SUM`, `AVERAGE`, `MIN` and `MAX` count as numbers when their column's
+`datatype` is numeric, so `MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate])` (dates) or a
+column without a datatype stays DAX. `ROUND` is not translated: DAX
+rounds ties half away from zero, which the spec's `ROUND` does not guarantee. Every other
+DAX function is refused with a reason from a per-function registry, for example:
 
 ```
 [table 'Sales' measure 'YTD'] DAX measure kept as-is; not translated to OSSIE_SQL_2026

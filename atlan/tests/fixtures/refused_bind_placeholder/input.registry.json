@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_weekly_avg_basket_for_store",
+ "kind": "metric",
+ "app": "metric",
+ "name": "weekly_avg_basket_for_store",
+ "display_name": "Weekly Avg Basket For Store",
+ "description": "Weekly average basket value for one store",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:weekly_avg_basket_for_store",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "weekly_avg_basket_for_store",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "week",
+   "population": "Store sales of one store, last 12 months",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "SELECT DATE_TRUNC('week', SS_SOLD_DATE) AS WEEK, ROUND(AVG(SS_NET_PAID), 2) AS VALUE FROM TPCDS.PUBLIC.STORE_SALES WHERE SS_STORE_SK = ? AND SS_NET_PAID IS NOT NULL AND SS_SOLD_DATE >= DATEADD(month, -12, CURRENT_TIMESTAMP()) GROUP BY 1 ORDER BY 1",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

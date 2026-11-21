@@ -243,6 +243,7 @@ def test_text_round_trips():
 
 def test_reverse_translation_gives_up_on_non_text_casts():
     # Date and boolean casts are not mapped.
+    assert sql_to_sigma_formula('TRY_CAST("A" AS DOUBLE)', dialect="snowflake") is None
     assert sql_to_sigma_formula('CAST("A" AS DATE)') is None
     assert sql_to_sigma_formula('CAST("A" AS BOOLEAN)') is None
     # Integer and DECIMAL/NUMBER casts round to a scale, which Number() does not.
@@ -253,6 +254,44 @@ def test_reverse_translation_gives_up_on_non_text_casts():
     # A sized text type truncates, which Text() does not.
     assert sql_to_sigma_formula('CAST("A" AS CHAR(1))') is None
     assert sql_to_sigma_formula('CAST("A" AS VARCHAR(10))') is None
+
+
+@pytest.mark.parametrize(
+    ("formula", "sql"),
+    [
+        ('In([A], "a", "b")', "\"A\" IN ('a', 'b')"),
+        ("In([A], 1, 2, 3)", '"A" IN (1, 2, 3)'),
+        ('In([A], "a")', "\"A\" IN ('a')"),
+        ("Not In([A], 1, 2)", 'NOT "A" IN (1, 2)'),
+        ("In([A], -1, 0)", '"A" IN (-1, 0)'),
+        ("In([A], True, False)", '"A" IN (TRUE, FALSE)'),
+        ("In([A] Or [B], False)", '("A" OR "B") IN (FALSE)'),
+        ("In([A] = [B], True)", '("A" = "B") IN (TRUE)'),
+        ("In([A] + 1, 2)", '"A" + 1 IN (2)'),
+    ],
+)
+def test_in_translates_both_ways(formula, sql):
+    assert to_ansi_sql(parse_formula(formula), dataset_alias="T") == sql
+    back = sql_to_sigma_formula(sql, dataset_alias="T")
+    assert back is not None
+    assert to_ansi_sql(parse_formula(back), dataset_alias="T") == sql
+
+
+def test_reverse_translation_of_not_in():
+    assert sql_to_sigma_formula('"A" NOT IN (1, 2)', dataset_alias="T") == "NOT (In([A], 1, 2))"
+
+
+def test_in_gives_up_outside_a_literal_list():
+    # A NULL candidate makes SQL IN return NULL instead of FALSE on a miss, and a
+    # column candidate can be NULL at run time; Sigma's In() is documented as
+    # returning True or False, so only non-null literal lists are mapped.
+    assert to_ansi_sql(parse_formula("In([A], [B])")) is None
+    assert to_ansi_sql(parse_formula("In([A], 1, Null())")) is None
+    assert to_ansi_sql(parse_formula("In([A])")) is None
+    assert to_ansi_sql(parse_formula('In([A], -"x")')) is None
+    assert sql_to_sigma_formula('"A" IN ("B", "C")') is None
+    assert sql_to_sigma_formula('"A" IN (1, NULL)') is None
+    assert sql_to_sigma_formula('"A" IN (SELECT 1)') is None
 
 
 def test_number_round_trips():

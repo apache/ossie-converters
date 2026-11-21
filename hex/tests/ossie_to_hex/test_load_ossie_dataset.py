@@ -16,7 +16,7 @@
 # under the License.
 
 import pytest
-from ossie import OssieDataset, OssieDialect
+from ossie import OssieDataset
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.load_ossie_dataset import load_ossie_dataset
@@ -26,7 +26,7 @@ from tests.ossie_to_hex.utils import Quick
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx.set_ossie_dialect(OssieDialect.ANSI_SQL)
+    ctx.set_ossie_dialect(None)
     return ctx
 
 
@@ -35,7 +35,7 @@ def foo() -> OssieDataset:
     return Quick.dataset(
         name="foo",
         source="public.foo",
-        fields=[("id", "String", [("ANSI_SQL", "id")])],
+        fields=[("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
 
 
@@ -43,7 +43,7 @@ def test_keeps_valid_fields(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         name="foo",
         source="public.foo",
-        fields=[("id", "String", [("ANSI_SQL", "id")])],
+        fields=[("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = load_ossie_dataset(foo, ctx=ctx)
     assert result.name == foo.name
@@ -59,8 +59,8 @@ def test_preserves_fields_with_invalid_expressions(ctx: ExportContext) -> None:
         name="foo",
         source="public.foo",
         fields=[
-            ("good", "String", [("ANSI_SQL", "id")]),
-            ("bad", "String", [("ANSI_SQL", "SELECT FROM")]),
+            ("good", "String", [("OSSIE_SQL_2026", "id")]),
+            ("bad", "String", [("OSSIE_SQL_2026", "SELECT FROM")]),
         ],
     )
     result = load_ossie_dataset(foo, ctx=ctx)

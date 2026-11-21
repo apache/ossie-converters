@@ -35,7 +35,7 @@ def minimal_ossie_input(tmp_path: Path) -> Path:
                 datatype: Integer
                 expression:
                   dialects:
-                    - dialect: ANSI_SQL
+                    - dialect: OSSIE_SQL_2026
                       expression: id
         """
     )

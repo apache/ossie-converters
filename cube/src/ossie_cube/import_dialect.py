@@ -63,6 +63,10 @@ def validate_imported_expressions(model):
     items.extend(
         (f"metric '{metric['name']}'", metric) for metric in model.get("metrics", [])
     )
+    items.extend(
+        (f"metric '{ds['name']}.{metric['name']}'", metric)
+        for ds in model.get("datasets", []) for metric in ds.get("metrics", [])
+    )
     for scope, item in items:
         for entry in item.get("expression", {}).get("dialects", []):
             dialect = entry.get("dialect")

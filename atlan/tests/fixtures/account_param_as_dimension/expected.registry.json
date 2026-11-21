@@ -1,0 +1,60 @@
+{
+ "resolved_returns": {
+  "name": "resolved_returns",
+  "description": "Returns resolved for one store in a window",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT_IF(CASE WHEN ((NOT m.SR_RESOLVED_AT IS NULL OR LOWER(m.SR_RETURN_STATUS) IN ('resolved', 'closed'))) AND (COALESCE(m.SR_RESOLVED_AT, m.SR_RETURNED_DATE) >= DATEADD(DAY, -30, CURRENT_TIMESTAMP())) THEN (NOT m.SR_RESOLVED_AT IS NULL OR LOWER(m.SR_RETURN_STATUS) IN ('resolved', 'closed')) END)",
+   "aggregation": {
+    "type": "custom",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "resolved_returns",
+    "datatype": "integer",
+    "unit": "returns"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_RETURNS",
+    "sql": null,
+    "parameters": [
+     {
+      "name": "window_days",
+      "datatype": "integer",
+      "default": 30
+     }
+    ]
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "store",
+     "sql": "m.SR_STORE_SK",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "The store the return is attributed to."
+    },
+    {
+     "name": "return_date",
+     "sql": "m.SR_RETURNED_DATE",
+     "kind": "time",
+     "datatype": "date",
+     "description": "When the return was filed."
+    }
+   ],
+   "examples": [
+    {
+     "question": "How many returns did store 42 resolve in the last 30 days?",
+     "sql": "SELECT COUNT(*) FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_STORE_SK = 42 AND SR_RESOLVED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)",
+     "source": "ossie"
+    }
+   ],
+   "grain": "TPCDS.PUBLIC.STORE_RETURNS.SR_TICKET_NUMBER",
+   "population": "Returns that reached a resolved or closed state"
+  }
+ }
+}

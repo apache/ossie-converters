@@ -1,0 +1,112 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+model:
+  version: 0.3.0.dev0
+  name: databricks_first
+  datasets:
+  - name: orders
+    source: main.raw.orders
+    fields:
+    - name: order_id
+      expression:
+        sql: o_orderkey
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_orderkey
+    - name: customer_id
+      expression:
+        sql: o_custkey
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_custkey
+    - name: Order Date
+      expression:
+        sql: TO_DATE(o_orderdate)
+        dialects:
+        - dialect: DATABRICKS
+          expression: to_date(o_orderdate)
+    - name: order_week
+      expression:
+        sql: DATE_TRUNC('WEEK', o_orderdate)
+        dialects:
+        - dialect: DATABRICKS
+          expression: date_trunc('week', `o_orderdate`)
+    - name: amount
+      expression:
+        sql: o_totalprice
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_totalprice
+    - name: status
+      expression:
+        sql: o_orderstatus
+        dialects:
+        - dialect: ANSI_SQL
+          expression: o_orderstatus
+    metrics:
+    - name: revenue
+      expression:
+        sql: SUM(amount) FILTER(WHERE status <> 'X')
+        dialects:
+        - dialect: DATABRICKS
+          expression: SUM(amount) FILTER (WHERE status <> 'X')
+    - name: big_orders
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: count_if(amount > 100)
+    - name: deployed_revenue
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: MEASURE(source.revenue)
+  - name: customers
+    source: main.raw.customers
+    fields:
+    - name: customer_id
+      expression:
+        sql: c_custkey
+        dialects:
+        - dialect: DATABRICKS
+          expression: c_custkey
+    - name: segment
+      expression:
+        sql: UPPER(c_mktsegment)
+        dialects:
+        - dialect: DATABRICKS
+          expression: upper(c_mktsegment)
+  relationships:
+  - name: orders_to_customers
+    from: orders
+    to: customers
+    from_columns:
+    - customer_id
+    to_columns:
+    - customer_id
+  metrics:
+  - name: revenue_per_customer
+    expression:
+      sql: AGG(orders.revenue) / COUNT(DISTINCT customers.customer_id)
+      dialects:
+      - dialect: DATABRICKS
+        expression: MEASURE(orders.revenue) / COUNT(DISTINCT customers.customer_id)
+warnings:
+- '[PORTABLE_EXPRESSION_MISSING] at datasets[orders].metrics[big_orders]: DATABRICKS: no verified translation
+  for COUNT_IF'
+- '[PORTABLE_EXPRESSION_MISSING] at datasets[orders].metrics[deployed_revenue]: DATABRICKS: an Ossie dataset
+  metric cannot evaluate a measure'

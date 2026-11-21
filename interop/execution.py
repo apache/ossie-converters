@@ -49,6 +49,9 @@ def run_command(argv: list[str], cwd: Path, evidence: Path, timeout: float) -> d
             # UV_PROJECT_ENVIRONMENT can even select the wrong dependency set.
             for name in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"):
                 environment.pop(name, None)
+            # Adapters run as scripts under interop/, whose module names (checks,
+            # report, manifest, ...) must not shadow a converter's dependencies.
+            environment["PYTHONSAFEPATH"] = "1"
             process = subprocess.Popen(
                 argv,
                 cwd=cwd,
@@ -187,6 +190,11 @@ def diagnostics(result, converter):
             notices = True
             continue
         if re.match(r"\s*warnings\.warn\b", line):
+            continue
+        # Summaries and tool chatter are not conversion diagnostics.
+        if re.search(r"\b(?:0|no) warnings?\b", line, re.I) or re.match(
+            r"\s*warning: Failed to hardlink", line
+        ):
             continue
         code = re.match(r"\s*\[([A-Z_]+)\]\s*(.*)", line)
         warning = re.search(r"\bwarn(?:ing)?s?\b|\b\w+Warning:", line, re.I)

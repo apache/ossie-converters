@@ -36,13 +36,17 @@ dependency of the dbt and NVIDIA Auto Ontology converters for the same purpose.
 """
 
 import re
+from typing import ClassVar
 
 import sqlglot
 import sqlglot.expressions as exp
 from sqlglot.tokens import TokenType
 
-from ._common import (DIALECT_ANSI, SQL_DIALECT_READERS, quoted_char_mask,
-                      sub_outside_quotes)
+from ._common import (
+    DIALECT_ANSI,
+    SQL_DIALECT_READERS,
+    quoted_char_mask,
+)
 
 # sqlglot node types for the aggregates this converter maps to a Cube measure type.
 # `Count` covers COUNT / COUNT(DISTINCT x); ApproxDistinct covers
@@ -52,6 +56,30 @@ _AGGREGATE_NODES = (
 )
 
 
+def _unit_first_date_function(name, kind, args):
+    """Read Ossie's three-argument date calls without losing operand positions.
+
+    The default reader takes DATEDIFF's last operand for a unit and discards its
+    identifier position (or its literal type). Build the tree from the original
+    arguments instead. Other arities retain the default reader's behaviour.
+    """
+    if len(args) == 3:
+        return kind(this=args[2], expression=args[1], unit=args[0])
+    builder = sqlglot.Parser.FUNCTIONS.get(name)
+    return builder(args) if builder else exp.Anonymous(this=name, expressions=args)
+
+
+class _OssieSQL(sqlglot.Dialect):
+    """The default grammar with Ossie's documented unit-first date functions."""
+
+    class Parser(sqlglot.Parser):
+        FUNCTIONS: ClassVar[dict] = {
+            **sqlglot.Parser.FUNCTIONS,
+            "DATEDIFF": lambda args: _unit_first_date_function("DATEDIFF", exp.DateDiff, args),
+            "DATEADD": lambda args: _unit_first_date_function("DATEADD", exp.DateAdd, args),
+        }
+
+
 def parse(expr, source_dialect=None):
     """Parse an Ossie expression, or None when sqlglot cannot.
 
@@ -59,8 +87,8 @@ def parse(expr, source_dialect=None):
     it as one opaque calculated measure, which is what it did for everything before.
     """
     try:
-        return sqlglot.parse_one(str(expr).strip(),
-                                 read=SQL_DIALECT_READERS.get(source_dialect))
+        reader = SQL_DIALECT_READERS.get(source_dialect) or _OssieSQL
+        return sqlglot.parse_one(str(expr).strip(), read=reader)
     except Exception:
         return None
 
@@ -411,7 +439,7 @@ _REF_SENTINEL = "__ossie_ref_{}__"
 _SENTINEL_RE = re.compile(r"^__ossie_\w+__$")
 
 
-def _mask_references(text):
+def _mask_references(text, sentinel=_REF_SENTINEL):
     """Replace `{...}` references with sentinel identifiers sqlglot can parse.
 
     Returns (masked text, [original references]). `\\{`/`\\}` (Cube's escape for a
@@ -422,7 +450,7 @@ def _mask_references(text):
 
     def keep(m):
         saved.append(m.group(0))
-        return _REF_SENTINEL.format(len(saved) - 1)
+        return sentinel.format(len(saved) - 1)
 
     masked = _REF_RE.sub(keep, text.replace("\\{", "\x00lb\x00")
                          .replace("\\}", "\x00rb\x00"))
@@ -441,7 +469,11 @@ def unqualified_column_names(sql_text, source_dialect=None):
     tree = parse(masked, source_dialect)
     if tree is None:
         return None
-    names = set()
+    return {ident.name for ident in _bare_columns(tree)}
+
+
+def _bare_columns(tree):
+    """Unquoted bare identifiers that the reader classified as columns."""
     for column in tree.find_all(exp.Column):
         if column.table:
             continue
@@ -451,29 +483,79 @@ def unqualified_column_names(sql_text, source_dialect=None):
         name = ident.name
         if _SENTINEL_RE.match(name) or not re.fullmatch(r"[A-Za-z_]\w*", name):
             continue
-        names.add(name)
-    return names
+        yield ident
 
 
-def replace_bare_identifiers(text, mapping):
+def replace_bare_identifiers(text, mapping, source_dialect=None):
     """Replace whole-word occurrences of `mapping`'s keys outside string literals.
 
-    A match must stand alone: not part of a dotted reference (either side), not a
-    function call, not adjacent to a quote or brace. The keys come from
-    `unqualified_column_names`, so they are known to be column tokens -- the guards
-    only keep a same-named token in another role (a table head, a call) untouched.
+    Parsed column spans distinguish a column from a same-named unit. Incomplete
+    fragments use names collected from their whole expression, with lexical guards
+    for dotted references, function calls and quotes.
     """
     if not mapping:
         return text
+    marker = _REF_SENTINEL
+    while marker.split("{}")[0] in text:
+        marker = marker.replace("{}", "alt_{}")
+    masked, saved = _mask_references(text, marker)
+    tree = parse(masked, source_dialect)
+    if tree is not None and not isinstance(tree, (exp.Alias, exp.Aliases)):
+        # A unit and a column may have the same spelling: DATEDIFF(day, a, day).
+        # Replace column spans only, keeping the unit (and literals/comments) intact.
+        leading = len(masked) - len(masked.lstrip())
+        edits = {}
+        for ident in _bare_columns(tree):
+            start, end = ident.meta.get("start"), ident.meta.get("end")
+            if ident.name in mapping and isinstance(start, int) and isinstance(end, int):
+                edits[start + leading, end + leading + 1] = mapping[ident.name]
+        for (start, end), replacement in sorted(edits.items(), reverse=True):
+            masked = masked[:start] + replacement + masked[end:]
+        return re.sub(marker.format(r"(\d+)"),
+                      lambda m: saved[int(m.group(1))], masked)
+    # Decomposed metrics also pass incomplete glue fragments, whose column names
+    # were collected from the whole expression. Some even parse as aliases:
+    # `* revenue` has no Column node. Retain the lexical fallback there.
     alternation = "|".join(re.escape(name) for name in sorted(mapping, key=len,
                                                               reverse=True))
     pattern = re.compile(
         rf'(?<![\w.$"{{])({alternation})(?!\s*[.(])(?![\w"}}])')
-    return sub_outside_quotes(
-        text, lambda run: pattern.sub(lambda m: mapping[m.group(1)], run))
+    starts = {token.start for token in native_tokens(text, source_dialect)}
+    quoted = _expression_quote_mask(text, source_dialect)
+    edits = [(m.start(), m.end(), mapping[m.group(1)]) for m in pattern.finditer(text)
+             if m.start() in starts and not quoted[m.start()]]
+    for start, end, replacement in reversed(edits):
+        text = text[:start] + replacement + text[end:]
+    return text
 
 
-def qualify_bare_columns(cube_sql):
+def date_unit_spans(text, source_dialect=None):
+    """Unit tokens in a whole expression, distinguished from same-named operands.
+
+    Decomposition can leave an incomplete `DATEADD(day, ` fragment. Only the
+    whole tree tells whether that `day` is a unit or Databricks' two-argument
+    DATEADD's date operand. Preserve that role before splitting/rewriting text.
+    """
+    tree = parse(text, source_dialect)
+    if tree is None:
+        return []
+    parts = _UNIT_WORDS | {var.name.upper() for var in tree.find_all(exp.Var)}
+    parts |= set(sqlglot.Dialect.DATE_PART_MAPPING) | set(sqlglot.Dialect.DATE_PART_MAPPING.values())
+    leading = len(text) - len(text.lstrip())
+    columns = {part.meta["start"] + leading for column in tree.find_all(exp.Column)
+               for part in column.parts if isinstance(part.meta.get("start"), int)}
+    tokens = native_tokens(text, source_dialect)
+    return [(token.start, token.end + 1) for i, token in enumerate(tokens)
+            if token.start not in columns and token.text.upper() in parts
+            and not text[token.start:token.end + 1].startswith(("'", '"', "`"))
+            # BigQuery can synthesize path identifiers with no positions. A dotted
+            # path part is still a column, never a unit, even without that metadata.
+            and (i == 0 or tokens[i - 1].token_type is not TokenType.DOT)
+            and (i + 1 == len(tokens)
+                 or tokens[i + 1].token_type not in (TokenType.DOT, TokenType.L_PAREN))]
+
+
+def qualify_bare_columns(cube_sql, source_dialect=None):
     """Qualify bare column references in Cube SQL as `{CUBE}.column`.
 
     Cube compiles a member's `sql` as raw SQL of the data source, so a bare
@@ -488,11 +570,11 @@ def qualify_bare_columns(cube_sql):
     expression.
     """
     text = str(cube_sql)
-    names = unqualified_column_names(text)
+    names = unqualified_column_names(text, source_dialect)
     if not names:
         return text
     return replace_bare_identifiers(
-        text, {name: "{CUBE}." + name for name in names})
+        text, {name: "{CUBE}." + name for name in names}, source_dialect)
 
 
 # The portable reading first, then grammars that quote identifiers with backticks

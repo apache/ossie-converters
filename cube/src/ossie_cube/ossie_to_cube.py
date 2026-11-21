@@ -47,6 +47,7 @@ from ._common import (
     DIALECT_ANSI,
     DIALECT_OSSIE_SQL,
     OSSIE_VERSION,
+    SQL_DIALECT_READERS,
     ConversionError,
     classify_metric_expression,
     cube_file,
@@ -56,6 +57,7 @@ from ._common import (
     foreign_vendor_extensions,
     generated_view_cubes,
     instructions_of,
+    is_referenceable_name,
     is_simple_identifier,
     load_yaml,
     ReferenceTables,
@@ -69,6 +71,7 @@ from ._common import (
     lookup_map,
     match_keys,
     normalize_identifier,
+    native_expression_signature,
     resolve_identifier,
     quoted_runs,
     split_dotted_ref,
@@ -77,10 +80,13 @@ from ._common import (
     sanitize_name,
     synonyms_of,
     uncollided_view_name,
+    unescape_braces_from_cube,
     view_file,
 )
+from ._dataset_metric import (count_key_signature, expression_fields, field_signatures,
+                              local_columns, origin_signature)
 from .converter_issues import IssueLog, IssueType
-from .expressions import (UnattributableSQL, aggregate_spans, native_tokens,
+from .expressions import (UnattributableSQL, aggregate_spans, date_unit_spans, native_tokens,
                           parse as parse_expression, qualify_bare_columns,
                           replace_bare_identifiers, unqualified_column_names,
                           unsplittable_aggregate_datasets)
@@ -133,6 +139,12 @@ def _convert_model(model, dialect, base_cube, issues):
         cube_names[ds_name] = sanitize_name(
             ds_name, f"Model '{name}': dataset", taken)
         taken.add(cube_names[ds_name].lower())
+    # A key-only field stands in for a key or join column no dimension exposes. The
+    # keys and joins still name that column, so it comes back as raw SQL, not a dimension.
+    for ds in dataset_list:
+        if ds.get("fields"):
+            ds["fields"] = [f for f in ds["fields"]
+                            if not read_stash(f).get("key_only")]
     datasets = {ds["name"]: ds for ds in dataset_list}
 
     relationships = model.get("relationships") or []
@@ -191,6 +203,16 @@ def _convert_model(model, dialect, base_cube, issues):
 
     if not _a_view_carries_the_model(model_stash):
         _carry_model_on_a_cube(model, cubes_by_name, issues)
+
+    # Snapshot the final native definition, after key flags and stash overrides.
+    # Import can then report a Cube edit before restoring an authoritative saved
+    # expression. Presentation-only edits do not invalidate this record.
+    for cube in cubes_by_name.values():
+        for key in ("dimensions", "measures"):
+            for member in _member_entries(cube.get(key)):
+                parked = (member.get("meta") or {}).get("ossie") or {}
+                if parked.get("expression"):
+                    parked["expression_signature"] = native_expression_signature(member)
 
     files = {path: dump_yaml(content) for path, content in files_content.items()}
 
@@ -346,6 +368,10 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     pk_names = []
     computed_keys = set(stash.get("computed_primary_key") or [])
     taken = {d["name"].lower() for d in dimensions}
+    # Measures have already been allocated. A private key dimension can choose a
+    # new name, whereas renaming those measures here would break view references.
+    taken.update(m["name"].lower() for m in (measures or []))
+    taken.update(n.lower() for n in plan.members)
     # `plan.primary_key`, not the dataset's own field: the plan is where the fallback to
     # `unique_keys` is resolved, and every stage has to agree on the answer.
     for entry in plan.primary_key:
@@ -426,6 +452,20 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     if output_joins:
         cube["joins"] = output_joins
     measures = [_ordered(m, _MEASURE_KEY_ORDER) for m in (measures or [])]
+    bindings = None
+    for measure in measures:
+        parked = (measure.get("meta") or {}).get("ossie") or {}
+        origin = parked.get("dataset_metric")
+        if isinstance(origin, dict) and "signature" not in origin:
+            if bindings is None:
+                bindings = field_signatures(dimensions, cname)
+            origin = unescape_braces_from_cube(origin)
+            used_fields = expression_fields(origin["expression"], bindings, f"{cname}.{measure['name']}")
+            origin["bindings"] = {f: bindings[f] for f in sorted(used_fields)}
+            if key_signature := count_key_signature(measure, cube, dimensions):
+                origin["key_signature"] = key_signature
+            origin["signature"] = origin_signature(measure, origin)
+            parked["dataset_metric"] = escape_braces_for_cube(origin)
     # Measures a prior import could not express in Ossie (multi-stage ones) go back
     # at their original indices, interleaved with the ones rebuilt from metrics.
     for item in sorted(stash.get("extra_measures") or [],
@@ -588,7 +628,7 @@ def _park_expression(parked, expression, used):
       back, so a multi-dialect expression is parked entire.
     """
     dialects = (expression or {}).get("dialects") or []
-    if len(dialects) > 1:
+    if (expression or {}).get("sql") is not None or len(dialects) > 1:
         parked["expression"] = expression
         return
     if used is None and len(dialects) == 1:
@@ -636,7 +676,7 @@ def _geo_half_sql(field, geo, dialect, scope):
     the alias as it crosses)."""
     if geo.get("sql") is not None:
         return geo["sql"]
-    expr, _ = pick_expression(field.get("expression"), dialect)
+    expr, used = pick_expression(field.get("expression"), dialect)
     if expr is None:
         raise ConversionError(
             f"{scope}: geo half '{field.get('name')}' has no stashed sql and no "
@@ -644,7 +684,7 @@ def _geo_half_sql(field, geo, dialect, scope):
     expr = expr.strip()
     if is_simple_identifier(expr):
         return "{CUBE}." + expr
-    return qualify_bare_columns(expr)
+    return qualify_bare_columns(expr, used)
 
 
 def _resolve_dimension_names(ds, dialect, scope):
@@ -779,7 +819,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
             # recommends -- and, unlike a `{member}` reference, it means the same
             # thing whether or not a field shadows the column's name.
             dim["sql"] = qualify_bare_columns(
-                ossie_expr_to_cube_sql(expr, cname, tables))
+                ossie_expr_to_cube_sql(expr, cname, tables), used)
         if stash.get("case") is not None:
             # A `case` dimension carries its conditions instead of `sql`, and Cube
             # rejects a dimension declaring both ("dimensions.size does not match any
@@ -1062,6 +1102,8 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             stashed_name = mstash["measure"].get("name")
             if stashed_name:
                 reserved.add(str(stashed_name).lower())
+    for _, metric, scope in _dataset_metrics(datasets):
+        reserved.add(sanitize_name(metric["name"], scope, set()).lower())
 
     # Which datasets declare each field name, for attributing an unqualified
     # column in a metric expression. Both spellings count -- the Ossie field name
@@ -1075,7 +1117,11 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
     refs = _MetricReferences(model, dialect, tables, resolve_base, name,
                              field_owners, set(cube_names.values()), issues)
 
+    restored_fields = _restored_field_names(datasets, cube_names, plan)
     measures_by_cube = {}
+    _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
+                            dialect, issues, name, refs)
+    refs.reserve_dataset_members(measures_by_cube, plan, reserved)
     for metric in (model.get("metrics") or []):
         mname_raw = require_str(metric, "name", "metric")
         scope = f"metric '{mname_raw}'"
@@ -1090,9 +1136,11 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             # only the spellings regeneration would not reproduce); restore it
             # verbatim and re-inject the natively mapped metadata.
             measure = dict(stash["measure"])
-            measure["name"] = mname
-            _apply_measure_metadata(metric, measure, stash)
             target = refs.cube_of_metric(mname_raw)
+            measure["name"] = refs.native_name(mname_raw)
+            _apply_measure_metadata(
+                _restored_model_metric(metric, restored_fields, tables, cube_names), measure, stash)
+            _record_model_metric_name(measure, mname_raw, mname, stash, issues, target)
             _place(measures_by_cube, target, measure, name)
             continue
 
@@ -1126,6 +1174,7 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             continue
         referenced = refs.datasets_pointed_at(expr, expression_dialect)
         target = refs.cube_of_metric(mname_raw)
+        original_name, mname = mname, refs.native_name(mname_raw)
 
         if len(referenced) > 1:
             # Cube resolves a cross-cube member reference by adding an implicit join,
@@ -1167,16 +1216,303 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             measure = _measure_from_expression(
                 expr, target, mname, stash, plan, refs,
                 expression_dialect=expression_dialect)
-        _apply_measure_metadata(metric, measure, stash, expression_dialect,
-                                decomposed=decomposed)
+        _apply_measure_metadata(_restored_model_metric(metric, restored_fields, tables, cube_names),
+                                measure, stash, expression_dialect, decomposed=decomposed)
         # Cube-only keys import found on the measure (`format`, `drill_members`,
         # `public`, ...) ride flat in the stash -- the same protocol dimensions
         # use -- and go back onto the rebuilt measure as written.
         for key, value in stash.items():
             if key not in _METRIC_STASH_CONSUMED:
                 measure[key] = value
+        _record_model_metric_name(measure, mname_raw, original_name, stash, issues, target)
         _place(measures_by_cube, target, measure, name)
     return measures_by_cube
+
+
+def _record_model_metric_name(measure, raw_name, requested_name, stash, issues, target):
+    """Keep the Ossie name when its native slot belongs to a dataset metric."""
+    native_name = measure["name"]
+    if native_name != requested_name or stash.get("model_metric_name"):
+        measure.setdefault("meta", {}).setdefault("ossie", {})["model_metric_name"] = (
+            escape_braces_for_cube(raw_name))
+    if native_name != requested_name:
+        issues.add(IssueType.APPROXIMATED, f"metric '{raw_name}'",
+                   f"dataset metric keeps its Cube member name; model metric exported as "
+                   f"'{target}.{native_name}'")
+
+
+def _dataset_metrics(datasets):
+    """Dataset metrics have a local namespace shared with the dataset's fields."""
+    for ds_name, ds in datasets.items():
+        metrics = ds.get("metrics", [])
+        if metrics is None:
+            metrics = []
+        if not isinstance(metrics, list):
+            raise ConversionError(f"Dataset '{ds_name}': 'metrics' must be a list")
+        taken = {normalize_identifier(f["name"]) for f in ds.get("fields") or []}
+        for metric in metrics:
+            scope = f"dataset '{ds_name}' metric"
+            if not isinstance(metric, dict):
+                raise ConversionError(f"{scope} must be a mapping")
+            raw = require_str(metric, "name", scope)
+            scope += f" '{raw}'"
+            key = normalize_identifier(raw)
+            if key in taken:
+                raise ConversionError(
+                    f"{scope}: fields and metrics share one dataset namespace; "
+                    f"name '{raw}' is declared more than once")
+            taken.add(key)
+            yield ds_name, metric, scope
+
+
+def _qualify_dataset_metric(expr, dialect, dataset, fields, scope, renamed_fields=None,
+                            raw_columns=None):
+    """Rewrite only parsed column spans, preserving literals and SQL spelling."""
+    expr = expr.strip()
+    quote = "`" if dialect in BACKTICK_DIALECTS else '"'
+
+    def reference(name, quoted=False):
+        return (name if not quoted and is_referenceable_name(name)
+                else quote + name.replace(quote, quote * 2) + quote)
+
+    replacements = {}
+    for column, field in local_columns(expr, dialect, fields, scope):
+        ident = column.this
+        start, end = ident.meta.get("start"), ident.meta.get("end")
+        if field is None:
+            if raw_columns is None:
+                continue  # Preserve source.column in the restored Ossie expression.
+            first = column.parts[0].meta.get("start")
+            if not all(isinstance(i, int) for i in (first, start, end)):
+                raise ConversionError(f"{scope}: cannot resolve '{column.sql()}' in SQL")
+            sentinel = f"__ossie_source_{len(raw_columns)}__"
+            while sentinel.casefold() in expr.casefold():
+                sentinel += "_"
+            raw_columns[sentinel] = "{CUBE}." + escape_braces_for_cube(expr[start:end + 1])
+            replacements[first, end + 1] = sentinel
+            continue
+        if not isinstance(start, int) or not isinstance(end, int):
+            raise ConversionError(f"{scope}: cannot resolve field '{ident.name}' in SQL")
+        field = (renamed_fields or {}).get(field, field)
+        replacements[start, end + 1] = (
+            reference(dataset) + "." + reference(field) if dataset is not None
+            else reference(field, quoted=bool(ident.args.get("quoted"))))
+    for (start, end), replacement in sorted(replacements.items(), reverse=True):
+        expr = expr[:start] + replacement + expr[end:]
+    return expr
+
+
+def _restored_field_names(datasets, cube_names, plan):
+    restored_fields = {}
+    for ds_name, ds in datasets.items():
+        target = cube_names[ds_name]
+        restored_fields[target] = {}
+        for field in ds.get("fields") or []:
+            fname = field["name"]
+            if fname in plan[target].dropped:
+                continue
+            member = plan[target].names[fname]
+            geo = read_stash(field).get("geo")
+            restored_fields[target][fname] = f"{member}_{geo['part']}" if geo else member
+    return restored_fields
+
+
+def _restored_model_metric(metric, restored_fields, tables, cube_names):
+    """Rebind saved SQL to the field and dataset names emitted on re-import."""
+    renamed_datasets = lookup_map({name: cube for name, cube in cube_names.items() if name != cube})
+
+    def rewrite(sql, dialect):
+        tree = parse_expression(sql, dialect)
+        if tree is None:
+            return sql
+        replacements = {}
+        leading = len(sql) - len(sql.lstrip())
+        for column in tree.find_all(sqlglot.exp.Column):
+            if len(column.parts) != 2:
+                continue
+            owner, field = column.parts
+            def written(identifier):
+                return ('"' + identifier.name.replace('"', '""') + '"'
+                        if identifier.args.get("quoted") else identifier.name)
+            cube = resolve_identifier(tables.datasets, written(owner))
+            names = restored_fields.get(cube)
+            if names is None:
+                continue
+            original = resolve_identifier(lookup_map(names.keys()), written(field))
+            if original is None:
+                continue
+            replacements_to_make = []
+            if names[original] != original:
+                replacements_to_make.append((field, names[original]))
+            renamed_owner = resolve_identifier(renamed_datasets, written(owner))
+            if renamed_owner is not None:
+                replacements_to_make.append((owner, renamed_owner))
+            for identifier, replacement in replacements_to_make:
+                start, end = identifier.meta.get("start"), identifier.meta.get("end")
+                if not isinstance(start, int) or not isinstance(end, int):
+                    continue
+                quote = "`" if dialect in BACKTICK_DIALECTS else '"'
+                if identifier.args.get("quoted") or not is_referenceable_name(replacement):
+                    replacement = quote + replacement.replace(quote, quote * 2) + quote
+                replacements[start + leading, end + leading + 1] = replacement
+        for (start, end), replacement in sorted(replacements.items(), reverse=True):
+            sql = sql[:start] + replacement + sql[end:]
+        return sql
+
+    expression = metric.get("expression") or {}
+    restored = dict(expression)
+    if expression.get("sql") is not None:
+        restored["sql"] = rewrite(expression["sql"], DIALECT_OSSIE_SQL)
+    if expression.get("dialects") is not None:
+        restored["dialects"] = [
+            {**entry, "expression": rewrite(entry["expression"], entry["dialect"])}
+            if entry["dialect"] in {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL} else dict(entry)
+            for entry in expression["dialects"]
+        ]
+    return {**metric, "expression": restored}
+
+
+def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
+                            dialect, issues, model_name, model_refs):
+    # Local expressions contain no metric references, so model-level metric names
+    # must never shadow their fields. Ownership comes from the declaring dataset,
+    # including COUNT(*) and other expressions with no field reference.
+    # Import splits merged geo dimensions back into coordinate fields. Those
+    # names, rather than the merged member name, define the restored namespace.
+    restored_fields = _restored_field_names(datasets, cube_names, plan)
+    restored_names = {c: {normalize_identifier(n) for n in fields.values()}
+                      for c, fields in restored_fields.items()}
+    pinned_members = {}
+    for ds_name, metric, _ in _dataset_metrics(datasets):
+        stash = read_stash(metric)
+        if pinned := stash.get("name") or stash.get("dataset_metric_member"):
+            pinned_members.setdefault(ds_name, set()).add(pinned.lower())
+    for ds_name, metric, scope in _dataset_metrics(datasets):
+        target = cube_names[ds_name]
+        fields = [f["name"] for f in datasets[ds_name].get("fields") or []]
+        aliases = {field: member for field, member in restored_fields[target].items()
+                   if field != member}
+        expression = metric["expression"]
+        restored_expression = expression
+        if expression.get("sql") is not None:
+            try:
+                sql = _qualify_dataset_metric(expression["sql"], DIALECT_OSSIE_SQL,
+                                              None, fields, scope, aliases)
+            except ConversionError as exc:
+                expression = {key: value for key, value in expression.items() if key != "sql"}
+                restored_expression = expression
+                issues.add(IssueType.APPROXIMATED, scope,
+                           f"{exc}; ignored the primary SQL expression")
+            else:
+                if aliases:
+                    restored_expression = {**expression, "sql": sql}
+        expr, used = pick_expression(expression, dialect)
+        if expr is None:
+            issues.add(IssueType.NO_USABLE_DIALECT, scope,
+                       "no ANSI_SQL expression and no warehouse dialect Cube could "
+                       "pass through; metric dropped")
+            continue
+        _report_dialect_fallback(issues, scope, used, dialect)
+        raw_columns = {}
+        try:
+            qualified = _qualify_dataset_metric(expr, used, ds_name, fields, scope,
+                                                raw_columns=raw_columns)
+        except ConversionError as exc:
+            issues.add(IssueType.DROPPED_NO_CUBE_EQUIVALENT, scope, f"{exc}; metric dropped")
+            continue
+        refs = _MetricReferences({}, dialect, tables, lambda: None, model_name,
+                                 {}, set(cube_names.values()), issues, raw_columns=raw_columns)
+        missing = _references_a_dropped_field(qualified, tables, cube_names, plan, used)
+        if missing:
+            issues.add(IssueType.NO_USABLE_DIALECT, scope,
+                       f"references {', '.join(sorted(missing))}, which has no "
+                       "expression in a usable dialect; metric dropped")
+            continue
+        stash = read_stash(metric)
+        pinned = stash.get("name") or stash.get("dataset_metric_member")
+        mname = pinned or sanitize_name(metric["name"], scope, set())
+        taken = {m["name"].lower() for m in measures_by_cube.get(target, [])}
+        taken.update(n.lower() for n in plan[target].members)
+        if not pinned:
+            taken.update(pinned_members.get(ds_name, ()))
+
+        def occupied(candidate):
+            return (candidate.lower() in taken or
+                    (not pinned and model_refs.requests_member(target, candidate)))
+
+        # A restored local identity has priority. For newly authored names keep
+        # the original rule: a model-level measure gets its requested slot.
+        if occupied(mname):
+            base = f"{target}__{mname}"
+            mname, suffix = base, 2
+            while occupied(mname):
+                mname, suffix = f"{base}_{suffix}", suffix + 1
+        if "measure" in stash:
+            measure = {**stash["measure"], "name": mname}
+        else:
+            measure = _measure_from_expression(
+                qualified, target, mname, stash, plan, refs, expression_dialect=used)
+        # Store the local expression with its scope, rather than handing the
+        # model-level importer an unqualified expression in the wrong namespace.
+        translated = {**metric, "expression": {"dialects": [
+            {"dialect": used, "expression": qualified}]}}
+        _apply_measure_metadata(translated, measure, stash, used)
+        if aliases and restored_expression.get("dialects"):
+            # Fields re-import under their sanitized Cube identifiers. A local
+            # expression must name those fields too, rather than restore dangling
+            # references such as "Net Amount" when its field is now net_amount.
+            entries = []
+            for entry in restored_expression.get("dialects") or []:
+                if entry["dialect"] not in {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL}:
+                    issues.add(
+                        IssueType.APPROXIMATED, scope,
+                        f"field names were sanitized, but the opaque "
+                        f"{entry['dialect']} alternative cannot be rewritten; "
+                        "preserved unchanged for review")
+                    entries.append(entry)
+                    continue
+                try:
+                    rewritten = _qualify_dataset_metric(entry["expression"], entry["dialect"],
+                                                        None, fields, scope, aliases)
+                except ConversionError as exc:
+                    issues.add(IssueType.DROPPED_NO_CUBE_EQUIVALENT, scope, f"{exc}; metric dropped")
+                    break
+                entries.append({**entry, "expression": rewritten})
+            else:
+                restored_expression = {**restored_expression, "dialects": entries}
+            if len(entries) != len(restored_expression["dialects"]):
+                continue
+        try:
+            expression_fields(restored_expression, restored_fields[target].values(), scope)
+        except ConversionError as exc:
+            issues.add(IssueType.DROPPED_NO_CUBE_EQUIVALENT, scope, f"{exc}; metric dropped")
+            continue
+        for key, value in stash.items():
+            if key not in _METRIC_STASH_CONSUMED:
+                measure[key] = value
+        local_name = metric["name"]
+        if normalize_identifier(local_name) in restored_names[target]:
+            local_name, suffix = mname, 2
+            while normalize_identifier(local_name) in restored_names[target]:
+                local_name, suffix = f"{mname}_{suffix}", suffix + 1
+            issues.add(
+                IssueType.APPROXIMATED, scope,
+                f"restored field names would collide with this metric's name; "
+                f"the restored dataset metric is named '{local_name}'")
+        restored_names[target].add(normalize_identifier(local_name))
+        origin = {"name": local_name, "expression": restored_expression}
+        overrides = {k: stash[k] for k in ("name", "sql", "type", "filters", "measure")
+                     if k in stash}
+        if local_name != metric["name"] and local_name != mname:
+            # A restored field (for example a geo half) can occupy the original
+            # local metric name without occupying its Cube measure name. Keep
+            # that native identity when the Ossie-only name must change.
+            overrides.setdefault("name", mname)
+        if overrides:
+            origin["overrides"] = overrides
+        measure.setdefault("meta", {}).setdefault("ossie", {})["dataset_metric"] = (
+            escape_braces_for_cube(origin))
+        _place(measures_by_cube, target, measure, model_name)
 
 
 # Metric stash keys the exporter consumes itself rather than writing onto the
@@ -1184,7 +1520,8 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
 # (`sql`, `filters`, `type`), natively mapped metadata (`title`, `meta`), and the
 # legacy whole-measure record (`measure`).
 _METRIC_STASH_CONSUMED = frozenset(
-    {"cube", "measure", "sql", "filters", "type", "name", "title", "meta"})
+    {"cube", "measure", "sql", "filters", "type", "name", "title", "meta",
+     "model_metric_name", "dataset_metric_member", "integer_sum_grain", "integer_sum_keys"})
 
 
 def _pinned_cube(stash, metric_name, known_cubes, issues):
@@ -1267,14 +1604,18 @@ class _MetricReferences:
     """
 
     def __init__(self, model, dialect, tables, resolve_base, model_name,
-                 field_owners, known_cubes, issues):
+                 field_owners, known_cubes, issues, *, raw_columns=None):
         self._tables = tables
+        self._raw_columns = raw_columns or {}
         self._resolve_base = resolve_base
         self._model_name = model_name
         self._field_owners = field_owners  # match key -> {cubes declaring the field}
         self._index = {}     # match key -> canonical key
         self._native_masks = {}  # (text, target, dialect) -> native reference masks
         self._details = {}   # canonical key -> {measure, stash_cube, expr, cube}
+        self._local_members = {}
+        self._reserved_names = set()
+        self._allocated_names = {}
         for metric in (model.get("metrics") or []):
             raw = metric.get("name")
             if not isinstance(raw, str):
@@ -1298,6 +1639,41 @@ class _MetricReferences:
                 "verbatim": "measure" in stash,
                 "cube": None,
             }
+
+    def requests_member(self, target, name):
+        """Whether an unallocated model metric wants this native slot."""
+        return any(detail["measure"].lower() == name.lower()
+                   and (detail["expr"] is not None or detail["verbatim"])
+                   and self._cube_of(key, ()) == target
+                   for key, detail in self._details.items())
+
+    def reserve_dataset_members(self, measures_by_cube, plan, reserved):
+        self._local_members = {c: {m["name"].lower() for m in measures}
+                               for c, measures in measures_by_cube.items()}
+        self._reserved_names = reserved
+        reserved.update(n for members in self._local_members.values() for n in members)
+        self._occupied_members = {c: {n.lower() for n in p.members} for c, p in plan.items()}
+
+    def native_name(self, written_name):
+        return self._native_name(resolve_identifier(self._index, written_name))
+
+    def _native_name(self, key):
+        name = self._details[key]["measure"]
+        if not self._local_members:
+            return name
+        target = self._cube_of(key, ())
+        if name.lower() not in self._local_members.get(target, ()):
+            return name
+        slot = (target, name.lower())
+        if slot not in self._allocated_names:
+            base = f"{target}__{name}"
+            alias, suffix = base, 2
+            while (alias.lower() in self._reserved_names
+                   or alias.lower() in self._occupied_members[target]):
+                alias, suffix = f"{base}_{suffix}", suffix + 1
+            self._allocated_names[slot] = alias
+            self._reserved_names.add(alias.lower())
+        return self._allocated_names[slot]
 
     def _referenced_in(self, text, source_dialect=None):
         """{bare identifier -> canonical metric key} for `text`'s metric references.
@@ -1473,7 +1849,7 @@ class _MetricReferences:
             f"Model '{self._model_name}': metric reference cycle: {named}. Cube "
             f"refuses cyclic member references; break the cycle in the Ossie model.")
 
-    def to_cube_sql(self, text, target, context=None, source_dialect=None):
+    def to_cube_sql(self, text, target, context=None, source_dialect=None, context_offset=None):
         """`ossie_expr_to_cube_sql`, with metric references rendered as measures.
 
         Each referenced name is masked with a sentinel identifier first, so the
@@ -1499,6 +1875,10 @@ class _MetricReferences:
         is, while a genuine bare column in glue text still qualifies.
         """
         whole = context if context is not None else text
+        units = date_unit_spans(whole, source_dialect) if context_offset is not None else []
+        unit_marker = "__ossie_unit_"
+        while unit_marker in whole:
+            unit_marker += "alt_"
         attributed = {name: f"{cube}.{name}"
                       for name, cube in self._fields_in(whole, source_dialect).items()}
         masks, substitutions = {}, {}
@@ -1506,18 +1886,23 @@ class _MetricReferences:
                 sorted(self._referenced_in(whole, source_dialect).items())):
             sentinel = f"__ossie_mref_{i}__"
             masks[written] = sentinel
-            detail = self._details[key]
             cube = self._cube_of(key, ())
+            member = self._native_name(key)
             substitutions[sentinel] = (
-                "{" + detail["measure"] + "}" if cube == target
-                else "{" + cube + "." + detail["measure"] + "}")
+                "{" + member + "}" if cube == target else "{" + cube + "." + member + "}")
 
         native = self._native_reference_masks(whole, target, source_dialect)
         native_pattern = (re.compile("|".join(map(re.escape, sorted(native, key=len,
                                                                   reverse=True))))
                           if native else None)
 
-        def convert(fragment):
+        def convert(fragment, offset=None):
+            if offset is not None:
+                for start, end in reversed(units):
+                    if offset <= start and end <= offset + len(fragment):
+                        sentinel = f"{unit_marker}{start}__"
+                        substitutions[sentinel] = whole[start:end]
+                        fragment = fragment[:start - offset] + sentinel + fragment[end - offset:]
             if native_pattern:
                 # Token starts exclude text inside native (including raw/triple)
                 # literals, even if it contains an otherwise identical reference.
@@ -1530,20 +1915,23 @@ class _MetricReferences:
                     return sentinel
                 fragment = native_pattern.sub(replace, fragment)
             fragment = _mask_native_literals(fragment, source_dialect, substitutions)
-            fragment = replace_bare_identifiers(fragment, attributed)
-            fragment = replace_bare_identifiers(fragment, masks)
+            fragment = replace_bare_identifiers(fragment, attributed, source_dialect)
+            fragment = replace_bare_identifiers(fragment, masks, source_dialect)
             return ossie_expr_to_cube_sql(fragment, target, self._tables)
 
-        out = convert(text)
+        out = convert(text, context_offset)
         # Whatever bare identifiers remain are raw columns (the metric references
         # are sentinels at this point), so they get the same `{CUBE}.column`
         # qualification every other generated member SQL does. The names are taken
         # from the converted whole and only *applied* to the fragment, which is the
         # part `qualify_bare_columns` cannot do for itself.
         names = unqualified_column_names(
-            out if context is None else convert(whole), source_dialect)
+            out if context is None else convert(whole, 0), source_dialect)
         out = replace_bare_identifiers(
-            out, {name: "{CUBE}." + name for name in names or ()})
+            out, {name: "{CUBE}." + name for name in names or ()}, source_dialect)
+        for sentinel, raw in self._raw_columns.items():
+            substitutions[f"{{CUBE}}.{sentinel}"] = raw
+            substitutions[sentinel] = raw
         if substitutions:
             # One pass keeps restored literal data from being rewritten again.
             pattern = "|".join(map(re.escape, sorted(substitutions, key=len, reverse=True)))
@@ -1668,14 +2056,14 @@ def _decompose_measure(expr, spans, mname, fallback, measures_by_cube, plan,
         _place(measures_by_cube, part_target, part, model_name)
 
         out.append(refs.to_cube_sql(expr[cursor:start], fallback, context=expr,
-                                    source_dialect=expression_dialect))
+                                    source_dialect=expression_dialect, context_offset=cursor))
         # `{CUBE.x}` for a part on the same cube as the public measure: an explicit
         # name pins the reference to this cube and breaks if it is extended.
         qualifier = "CUBE" if part_target == fallback else part_target
         out.append("{" + f"{qualifier}.{part_name}" + "}")
         cursor = end
     out.append(refs.to_cube_sql(expr[cursor:], fallback, context=expr,
-                                source_dialect=expression_dialect))
+                                source_dialect=expression_dialect, context_offset=cursor))
     return "".join(out)
 
 
