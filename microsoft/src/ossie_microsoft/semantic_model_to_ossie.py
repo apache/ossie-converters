@@ -85,6 +85,7 @@ _M_SF_STEP_RE = re.compile(r"\{\[([^\]]*)\]\}")
 _M_SF_NAME_RE = re.compile(r'Name\s*=\s*"([^"]+)"')
 _M_SF_KIND_RE = re.compile(r'Kind\s*=\s*"([^"]+)"')
 _SF_TABLE_KINDS = frozenset({"View", "Table"})
+_SF_UNQUOTED_IDENTIFIER_RE = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
 
 # TMSL properties consumed by the Apache Ossie mapping at each level. Everything else is
 # preserved verbatim in the stash. This is deliberately a deny-list rather than an
@@ -431,7 +432,16 @@ def _qualified_name_from_snowflake_m(expression):
         parts.insert(0, schema)
         if database:
             parts.insert(0, database)
-    return ".".join(parts)
+    return ".".join(_quote_snowflake_identifier(part) for part in parts)
+
+
+# Snowflake folds unquoted identifiers to uppercase, so any part that is not
+# already a plain uppercase identifier must be quoted to keep its case.
+
+def _quote_snowflake_identifier(name):
+    if _SF_UNQUOTED_IDENTIFIER_RE.fullmatch(name):
+        return name
+    return '"' + name.replace('"', '""') + '"'
 
 
 # Each parser returns a qualified name, or None when the M expression is not
