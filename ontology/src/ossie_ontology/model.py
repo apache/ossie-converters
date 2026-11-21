@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, get_args
 
-from ossie_ontology.spec import CoreVersion
+from ossie_ontology.spec import Annotations, CoreVersion
 
 # ---------------------------------------------------------------------------
 # Builtin concept names.
@@ -132,6 +132,7 @@ class Concept:
     _requires: list[Formula]
     _is_component: bool
     _iri: str | None
+    _annotations: Annotations
 
     def __init__(
         self,
@@ -145,6 +146,7 @@ class Concept:
         requires: list[Formula] | None = None,
         is_component: bool = True,
         iri: str | None = None,
+        annotations: Annotations | None = None,
     ):
         self._name = name
         self._type = type
@@ -156,6 +158,7 @@ class Concept:
         self._requires = requires if requires else []
         self._is_component = is_component
         self._iri = iri
+        self._annotations = dict(annotations) if annotations else {}
 
     def add_require(self, require: Formula) -> None:
         self._requires.append(require)
@@ -184,6 +187,10 @@ class Concept:
     @property
     def iri(self) -> str | None:
         return self._iri
+
+    @property
+    def annotations(self) -> Annotations:
+        return dict(self._annotations)
 
     @property
     def is_builtin(self) -> bool:
@@ -259,6 +266,7 @@ class Relationship:
     _derived_by: list[Formula]
     _requires: list[Formula]
     _iri: str | None
+    _annotations: Annotations
 
     def __init__(
         self,
@@ -269,11 +277,18 @@ class Relationship:
         verbalizes: list[str] | None = None,
         multiplicity: RelationshipMultiplicity | None = None,
         iri: str | None = None,
+        annotations: Annotations | None = None,
+        role_annotations: list[Annotations] | None = None,
     ):
+        """`role_annotations`, when given, lines up with `relates`: one entry per
+        additional role, since the implicit container role cannot carry any."""
         self._name = name
         self._container = container
         container_role = Role(self, container, 0, None)
-        additional = [Role(self, concept, idx + 1, role_name) for idx, (concept, role_name) in enumerate(relates)]
+        additional = [
+            Role(self, concept, idx + 1, role_name, role_annotations[idx] if role_annotations else None)
+            for idx, (concept, role_name) in enumerate(relates)
+        ]
         self._roles = tuple([container_role] + additional)
         self._description = description
         self._multiplicity = multiplicity
@@ -282,6 +297,7 @@ class Relationship:
         self._derived_by = []
         self._requires = []
         self._iri = iri
+        self._annotations = dict(annotations) if annotations else {}
 
     @property
     def name(self) -> str:
@@ -302,6 +318,10 @@ class Relationship:
     @property
     def iri(self) -> str | None:
         return self._iri
+
+    @property
+    def annotations(self) -> Annotations:
+        return dict(self._annotations)
 
     @property
     def signature(self) -> list[Concept]:
@@ -388,13 +408,22 @@ class Role:
     _name: str | None
     _sibling: Role | None
     _idx: int
+    _annotations: Annotations
 
-    def __init__(self, part_of: Relationship, player: Concept, idx: int, name: str | None = None):
+    def __init__(
+        self,
+        part_of: Relationship,
+        player: Concept,
+        idx: int,
+        name: str | None = None,
+        annotations: Annotations | None = None,
+    ):
         self._part_of = part_of
         self._player = player
         self._idx = idx
         self._name = name
         self._sibling = None
+        self._annotations = dict(annotations) if annotations else {}
 
     @property
     def player(self) -> Concept:
@@ -411,6 +440,10 @@ class Role:
     @property
     def explicit_name(self) -> str | None:
         return self._name
+
+    @property
+    def annotations(self) -> Annotations:
+        return dict(self._annotations)
 
     @property
     def part_of(self) -> Relationship:
@@ -1084,6 +1117,7 @@ class OssieOntology:
     _ontology_mappings: list[OntologyMapping]
     _ontology_mapping_index: dict[str, OntologyMapping]
     _prefixes: dict[str, str]
+    _annotations: Annotations
 
     def __init__(
         self,
@@ -1093,6 +1127,7 @@ class OssieOntology:
         ai_context: AiContext | None = None,
         version: str | None = None,
         prefixes: dict[str, str] | None = None,
+        annotations: Annotations | None = None,
     ):
         self._name = name
         self._description = description
@@ -1102,6 +1137,7 @@ class OssieOntology:
         self._ontology_mappings = []
         self._ontology_mapping_index = {}
         self._prefixes = dict(prefixes) if prefixes else {}
+        self._annotations = dict(annotations) if annotations else {}
 
     @property
     def name(self) -> str:
@@ -1137,6 +1173,10 @@ class OssieOntology:
     def prefixes(self) -> dict[str, str]:
         """Namespace prefixes the document's QName `iri` values resolve against."""
         return dict(self._prefixes)
+
+    @property
+    def annotations(self) -> Annotations:
+        return dict(self._annotations)
 
 
 # ---------------------------------------------------------------------------
