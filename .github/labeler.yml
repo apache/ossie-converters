@@ -96,6 +96,10 @@ converter/salesforce:
   - changed-files:
       - any-glob-to-any-file: 'salesforce/**'
 
+converter/shacl:
+  - changed-files:
+      - any-glob-to-any-file: 'shacl/**'
+
 converter/sigma:
   - changed-files:
       - any-glob-to-any-file: 'sigma/**'

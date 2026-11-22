@@ -21,9 +21,10 @@
 
 Converters between Ossie and Spec ontology formats.
 
-The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)) and the
+The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)), the
 Ossie → RelationalAI converter ([`relationalai/`](../relationalai/README.md))
-are built on this package but live in their own directories.
+and the Ossie → SHACL converter ([`shacl/`](../shacl/README.md)) are built on
+this package but live in their own directories.
 
 | Converter               | Direction |
 |-------------------------|-----------|

@@ -49,6 +49,7 @@ on:
       - 'wisdom-semantic-view/**'
       - 'palantir/**'
       - 'relationalai/**'
+      - 'shacl/**'
       - 'polaris/**'
       - 'salesforce/**'
   pull_request:
@@ -82,6 +83,7 @@ on:
       - 'wisdom-semantic-view/**'
       - 'palantir/**'
       - 'relationalai/**'
+      - 'shacl/**'
       - 'polaris/**'
       - 'salesforce/**'
   workflow_dispatch:
