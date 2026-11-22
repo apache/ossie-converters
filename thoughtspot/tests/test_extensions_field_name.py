@@ -17,12 +17,12 @@
 
 """The two names the vendor-extensions field goes by.
 
-`custom_extensions` is what the spec says today. apache/ossie#522 renames it to
-`nonportable_extensions` and does NOT accept the old name, so unlike the object
-form of `data` -- where a reader could in principle wait, because the string
-form stays valid -- there is no version of that change under which waiting
-costs nothing. The reader takes both names from now; the writer keeps each
-document on the name it already carries.
+`custom_extensions` is what the `ossie` schema this repository pins says.
+apache/ossie#522 (merged 2026-11-11) renames it to `nonportable_extensions` and
+does NOT accept the old name, so a reader that waited for the submodule to move
+could not read any document written under the new spec until then. The reader
+takes both names from now; the writer keeps each document on the name it
+already carries.
 
 The name and the shape of `data` are independent axes. `test_object_form_types`
 owns the shape axis; this file owns the name axis and crosses the two once.
@@ -167,7 +167,7 @@ class TestBothNamesAtOnceIsRefused:
 
 
 class TestTheWriterHasNotMoved:
-    """Readers first. The writer emits today's name, and keeps a document that
+    """Readers first. The writer emits the old name, and keeps a document that
     already uses the new one on the new one -- it never introduces it."""
 
     def test_an_object_with_no_extensions_gets_todays_name(self):
