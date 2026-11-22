@@ -22,10 +22,13 @@
 #   stdout as Turtle or N-Triples. The input is a single Ossie document, as
 #   YAML or JSON.
 #
-#   The conversion goes through LinkML. RDFS has no counts and no value types,
-#   so multiplicities, `requires` and value types are lost, and so are
-#   'ontology_mappings' (datasets, join paths, metrics) and 'derived_by' rules.
-#   The full mapping and all limitations are documented at
+#   The conversion goes through LinkML. RDFS has no counts and no value types
+#   of its own: multiplicities are lost, a value type that lists its allowed
+#   values becomes a class with the values as its instances, and any other
+#   value type is replaced by the XSD datatype it is built on, losing its
+#   'requires'. 'ontology_mappings' (datasets, join paths, metrics) and
+#   'derived_by' rules are lost too. The full mapping and all limitations are
+#   documented at
 #   https://linkml.ohi.dev/docs/importers/ossie/ and
 #   https://linkml.ohi.dev/docs/generators/rdfs/
 #
@@ -39,8 +42,9 @@
 # Outputs:
 #
 #   - stdout: The RDFS vocabulary, as Turtle (default) or N-Triples
-#   - stderr: One warning per kind of thing that was dropped, such as
-#     `derived_by` rules or ontology mappings
+#   - stderr: One warning per kind of thing that was dropped on the way to
+#     LinkML, such as `derived_by` rules or ontology mappings. What is dropped
+#     on the way from LinkML to RDFS, such as multiplicities, is not reported.
 #
 import argparse
 from pathlib import Path

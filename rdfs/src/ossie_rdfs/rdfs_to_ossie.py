@@ -48,10 +48,11 @@ class RdfsToOssieConverter:
     say that a property has one value, so relationships get no multiplicity.
     `rdfs:label` and `rdfs:comment` fill the verbalization and description.
 
-    A property with no `rdfs:domain` is dropped, since an Ossie relationship
-    belongs to a concept. Things the import does not read, such as
-    individuals, are reported with `warnings.warn` (one `UserWarning` per
-    kind). The mapping is documented at
+    The conversion has two steps, and only losses in the first are reported.
+    RDFS -> LinkML reports what it does not read, such as individuals, with
+    `warnings.warn` (one `UserWarning` per kind). LinkML -> Ossie then drops,
+    without any warning, every property with no `rdfs:domain`, since an Ossie
+    relationship belongs to a concept. The mapping is documented at
     https://linkml.ohi.dev/docs/importers/owl/ and
     https://linkml.ohi.dev/docs/generators/ossie/
 

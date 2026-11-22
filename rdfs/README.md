@@ -111,7 +111,7 @@ uv run python scripts/ossie_to_rdfs.py --format nt path/to/ossie.yaml
 
 ### `scripts/rdfs_to_ossie.py`
 
-Converts an RDFS vocabulary (Turtle or N-Triples) into an Ossie-compliant YAML representation of the ontology it describes, printed to stdout. Warnings about what was not imported are written to stderr.
+Converts an RDFS vocabulary (Turtle or N-Triples) into an Ossie-compliant YAML representation of the ontology it describes, printed to stdout. Before printing, it builds the Ossie runtime model from the document, so output that is not valid Ossie stops the run with an error. Warnings about what was not imported are written to stderr.
 
 **Usage:**
 
@@ -119,6 +119,8 @@ Converts an RDFS vocabulary (Turtle or N-Triples) into an Ossie-compliant YAML r
 uv run python scripts/rdfs_to_ossie.py path/to/vocabulary.ttl
 # With a name for the ontology:
 uv run python scripts/rdfs_to_ossie.py --name MyOntology path/to/vocabulary.ttl
+# Labels and comments in German, for vocabularies that carry translations:
+uv run python scripts/rdfs_to_ossie.py --metadata-language de path/to/vocabulary.ttl
 ```
 
 ## Running the tests

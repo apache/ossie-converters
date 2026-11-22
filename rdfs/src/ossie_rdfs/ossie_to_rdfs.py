@@ -42,14 +42,18 @@ class OssieToRdfsConverter:
 
     Every entity type becomes an `rdfs:Class`, with `rdfs:subClassOf` for the
     concepts it extends, and each of its relationships an `rdf:Property` with
-    `rdfs:domain` and `rdfs:range`. RDFS has no value types of its own, so a
-    relationship to a value type gets the XSD datatype it is built on.
+    `rdfs:domain` and `rdfs:range`. A value type that lists its allowed values
+    becomes a class too, with the values as its instances. Any other value
+    type is not in the output: a relationship to it gets the XSD datatype it
+    is built on as its range.
 
-    RDFS says nothing about how many values a property has or which values
-    are allowed, so multiplicities and `requires` are lost on the way. So are
-    datasets, join paths and metrics (`ontology_mappings`) and `derived_by`
-    rules. What LinkML has no place for is reported with `warnings.warn` (one
-    `UserWarning` per kind). The mapping is documented at
+    The conversion has two steps, and only losses in the first are reported.
+    Ossie -> LinkML drops datasets, join paths and metrics
+    (`ontology_mappings`), `derived_by` rules and expressions LinkML cannot
+    express, and reports each kind with `warnings.warn` (one `UserWarning`).
+    LinkML -> RDFS then drops, without any warning, everything RDFS cannot
+    say: multiplicities, the names of value types other than enumerations,
+    and their `requires`, such as value ranges. The mapping is documented at
     https://linkml.ohi.dev/docs/importers/ossie/ and
     https://linkml.ohi.dev/docs/generators/rdfs/
 

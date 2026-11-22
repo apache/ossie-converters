@@ -30,19 +30,27 @@
 #
 # Usage:
 #
-#   $ python rdfs_to_ossie.py [--name NAME] <path_to_vocabulary>
+#   $ python rdfs_to_ossie.py [--name NAME] [--metadata-language LANG] <path_to_vocabulary>
 #
 #   Without --name, the ontology is named after the vocabulary's rdfs:label if
 #   that is a usable name, else the prefix of most of its terms.
+#   --metadata-language picks the language of labels and comments in
+#   vocabularies that carry translations (default: en).
+#
+#   The document is built into the Ossie runtime model before it is printed,
+#   so output that is not valid Ossie stops the run with an error.
 #
 # Outputs:
 #
 #   - stdout: The Ossie document, as YAML
-#   - stderr: One warning per kind of thing that was not imported, such as
-#     individuals
+#   - stderr: One warning per kind of thing the RDFS -> LinkML step did not
+#     read, such as individuals. Properties with no rdfs:domain are dropped on
+#     the way from LinkML to Ossie without a warning.
 #
 import argparse
 from pathlib import Path
+
+from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 
 from ossie_rdfs import RdfsToOssieConverter
 
@@ -50,8 +58,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert an RDFS vocabulary into an Ossie ontology.")
     parser.add_argument("path", type=Path, help="RDFS vocabulary (Turtle or N-Triples)")
     parser.add_argument("--name", help="name of the ontology")
+    parser.add_argument("--metadata-language", default="en", help="language of labels and comments (default: en)")
     args = parser.parse_args()
 
     document = args.path.read_text(encoding="utf-8")
+    spec = RdfsToOssieConverter().convert_to_spec(
+        document, name=args.name, metadata_language=args.metadata_language
+    )
+    # Build the runtime model only as a check: it raises if the document is
+    # not valid Ossie. The document printed is the one ohi wrote.
+    SpecToOssieConverter().convert(spec)
 
-    print(RdfsToOssieConverter().convert_to_spec(document, name=args.name).dump_yaml())
+    print(spec.dump_yaml())
