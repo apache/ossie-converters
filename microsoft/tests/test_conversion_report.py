@@ -93,6 +93,8 @@ def test_export_reports_native_objects_placeholders_and_losses(tmp_path, capsys)
         entry["source_path"]: entry for entry in report["entries"] if "payload_path" not in entry
     }
     assert {path: entry["status"] for path, entry in entries.items()} == {
+        "": "placeholder",
+        "/datasets/0": "translated",
         "/datasets/0/nonportable_extensions/1": "dropped",
         "/datasets/0/nonportable_extensions/2": "dropped",
         "/datasets/0/metrics/0": "dropped",
@@ -206,18 +208,25 @@ def test_import_reports_vendor_metadata_and_original_source_paths(tmp_path, proj
     assert report["completed"] is True
     entries = {entry["source_path"]: entry for entry in report["entries"]}
     assert {path: entry["status"] for path, entry in entries.items()} == {
+        "/model": "translated",
+        "/model/tables/0": "vendor_metadata",
+        "/model/tables/1": "translated",
         "/model/tables/0/columns/0": "vendor_metadata",
         "/model/tables/0/measures/0": "vendor_metadata",
         "/model/tables/1/columns/0": "translated",
         "/model/tables/1/columns/1": "vendor_metadata",
         "/model/tables/1/columns/2": "dropped",
-        "/model/tables/1/measures/0": "translated",
+        "/model/tables/1/measures/0": "source_dialect",
         "/model/tables/1/measures/1": "vendor_metadata",
         "/model/tables/1/measures/2": "dropped",
         "/model/relationships/0": "translated",
         "/model/relationships/1": "vendor_metadata",
         "/model/relationships/2": "dropped",
     }
+    assert entries["/model/tables/0"]["table"] == "Private"
+    assert entries["/model/tables/0"]["detail"]
+    assert entries["/model/tables/0/columns/0"]["table"] == "Private"
+    assert entries["/model/tables/0/measures/0"]["table"] == "Private"
     assert entries["/model/tables/1/columns/0"]["metadata_properties"] == ["isHidden"]
     assert entries["/model/tables/1/measures/1"]["reason"] == "missing_expression"
     assert entries["/model/relationships/1"]["vendor"] == "POWER_BI"
@@ -317,3 +326,136 @@ def test_output_write_failure_is_a_controlled_error_in_the_report(tmp_path, caps
     stderr = capsys.readouterr().err
     assert "Error:" in stderr
     assert "Traceback" not in stderr
+
+
+@pytest.mark.parametrize("direction", ["import", "export"])
+@pytest.mark.parametrize("failure", [AttributeError("unexpected failure"), KeyboardInterrupt()])
+def test_aborted_run_replaces_an_existing_success_report(tmp_path, monkeypatch, direction, failure):
+    from ossie_microsoft import cli
+    from ossie_microsoft._report import record
+
+    source = Path(__file__).parent / "fixtures" / "sales_model.bim"
+    report = tmp_path / "report.json"
+    assert main(["import", "-i", str(source), "--report", str(report), "--quiet"]) == 0
+    assert json.loads(report.read_text())["completed"] is True
+
+    def abort(args):
+        record("field", "/partial", {"name": "partial"}, "translated")
+        raise failure
+
+    monkeypatch.setattr(cli, "_run_" + direction, abort)
+    args = [direction, "-i", str(source), "--report", str(report), "--quiet"]
+    if isinstance(failure, KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt):
+            main(args)
+    else:
+        assert main(args) == 1
+    recorded = json.loads(report.read_text())
+    assert recorded["completed"] is False
+    assert recorded["error"] == (str(failure) or type(failure).__name__)
+    assert [e["name"] for e in recorded["entries"]] == ["partial"]
+    monkeypatch.undo()
+    assert main(["import", "-i", str(source), "--report", str(report), "--quiet"]) == 0
+    recovered = json.loads(report.read_text())
+    assert recovered["completed"] is True
+    assert "error" not in recovered
+    assert not any(e.get("name") == "partial" for e in recovered["entries"])
+
+
+def test_invalid_expression_does_not_leave_a_stale_success_report(tmp_path):
+    source = tmp_path / "source.yaml"
+    report = tmp_path / "report.json"
+    model = {"name": "shop", "datasets": [{"name": "Sales", "fields": [{"name": "id"}]}]}
+    source.write_text(yaml.safe_dump(model))
+    args = ["export", "-i", str(source), "--report", str(report), "--quiet"]
+    assert main(args) == 0
+    model["datasets"][0]["fields"][0]["expression"] = 42
+    source.write_text(yaml.safe_dump(model))
+    assert main(args) == 1
+    recorded = json.loads(report.read_text())
+    assert recorded["completed"] is False
+    assert "error" in recorded
+
+
+@pytest.mark.parametrize(
+    ("translate", "expression", "status", "reason"),
+    [
+        (False, "SUM(Orders[Amount])", "source_dialect", "dax_translation_disabled"),
+        (True, "SUM(Orders[Amount])", "translated", None),
+        (True, "UNSUPPORTED(Orders[Amount])", "source_dialect", "dax_translation_refused"),
+    ],
+)
+def test_import_report_distinguishes_dax_outcomes(tmp_path, translate, expression, status, reason):
+    source, report, output = (tmp_path / name for name in ("source.bim", "report.json", "out.yaml"))
+    source.write_text(json.dumps({"name": "shop", "model": {"tables": [{
+        "name": "Orders", "columns": [{"name": "Amount", "dataType": "decimal"}],
+        "measures": [{"name": "Revenue", "expression": expression}],
+    }]}}))
+    args = ["import", "-i", str(source), "-o", str(output), "--report", str(report)]
+    if translate:
+        args.append("--translate-dax")
+    assert main(args) == 0
+    recorded = json.loads(report.read_text())
+    entry = next(e for e in recorded["entries"] if e["kind"] == "metric")
+    assert entry["status"] == status
+    assert entry.get("reason") == reason
+    assert entry["table"] == "Orders"
+    dialects = yaml.safe_load(output.read_text())["metrics"][0]["expression"]["dialects"]
+    assert {e["dialect"] for e in dialects} == (
+        {"DAX", "OSSIE_SQL_2026"} if status == "translated" else {"DAX"}
+    )
+    if reason == "dax_translation_refused":
+        assert entry["detail"]
+        assert any(entry["detail"] in warning for warning in recorded["warnings"])
+    else:
+        assert "detail" not in entry
+
+
+def test_export_report_places_model_dataset_key_and_source_losses(tmp_path):
+    source, report, output = (tmp_path / name for name in ("source.yaml", "report.json", "out.bim"))
+    source.write_text(yaml.safe_dump({
+        "name": "shop", "label": "Shop", "datasets": [{
+            "name": "Orders", "label": "Orders label", "source": "Orders",
+            "primary_key": ["id", "region"], "unique_keys": [["id", "region"]],
+            "fields": [{"name": "id"}, {"name": "region"}],
+        }],
+    }))
+    assert main(["export", "-i", str(source), "-o", str(output), "--report", str(report)]) == 0
+    entries = json.loads(report.read_text())["entries"]
+    by_kind = {e["kind"]: e for e in entries}
+    assert by_kind["model"]["dropped_properties"] == ["label"]
+    assert by_kind["dataset"]["dropped_properties"] == ["label"]
+    keys = [e for e in entries if e["kind"] == "key"]
+    assert {e["source_path"] for e in keys} == {
+        "/datasets/0/primary_key", "/datasets/0/unique_keys/0",
+    }
+    assert all(e["status"] == "dropped" and e["columns"] == ["id", "region"] for e in keys)
+    assert by_kind["source"]["reason"] == "missing_source_ids"
+    assert by_kind["source"]["missing_ids"] == ["workspaceId", "itemId"]
+    assert by_kind["source"]["source_path"] == ""
+    table = json.loads(output.read_text())["model"]["tables"][0]
+    assert not any(c.get("isKey") or c.get("isUnique") for c in table["columns"])
+
+
+def test_import_report_records_preserved_model_and_dataset_properties(tmp_path):
+    source, report = (tmp_path / name for name in ("source.bim", "report.json"))
+    source.write_text(json.dumps({"name": "shop", "model": {
+        "roles": [], "tables": [{"name": "Orders", "hierarchies": [],
+                                  "columns": [{"name": "id"}]}],
+    }}))
+    assert main(["import", "-i", str(source), "--report", str(report), "--quiet"]) == 0
+    entries = {e["kind"]: e for e in json.loads(report.read_text())["entries"]}
+    assert entries["model"]["metadata_properties"] == ["roles"]
+    assert entries["dataset"]["metadata_properties"] == ["hierarchies"]
+
+
+def test_success_report_does_not_capture_an_outer_exception(tmp_path):
+    source = Path(__file__).parent / "fixtures" / "sales_model.bim"
+    report = tmp_path / "report.json"
+    try:
+        raise RuntimeError("unrelated caller failure")
+    except RuntimeError:
+        assert main(["import", "-i", str(source), "--report", str(report), "--quiet"]) == 0
+    recorded = json.loads(report.read_text())
+    assert recorded["completed"] is True
+    assert "error" not in recorded

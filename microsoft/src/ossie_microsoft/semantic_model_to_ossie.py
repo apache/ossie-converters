@@ -175,21 +175,30 @@ def build_ossie_document(bim_file, translate_dax=False):
     for index, table in all_tables:
         if not _is_exported_table(table):
             excluded_tables.append(table)
+            record(
+                "dataset", f"/model/tables/{index}", table, "vendor_metadata",
+                vendor="POWER_BI", reason="excluded_table", detail=_exclusion_reason(table),
+                table=table["name"],
+            )
             record_items(
                 "field", f"/model/tables/{index}/columns", table.get("columns"),
-                "vendor_metadata", vendor="POWER_BI", reason="excluded_table",
+                "vendor_metadata", vendor="POWER_BI", reason="excluded_table", table=table["name"],
             )
         if _is_measure_table(table):
             metric_tables.append((index, table))
         else:
             record_items(
                 "metric", f"/model/tables/{index}/measures", table.get("measures"),
-                "vendor_metadata", vendor="POWER_BI", reason="excluded_table",
+                "vendor_metadata", vendor="POWER_BI", reason="excluded_table", table=table["name"],
             )
     exported_names = {table["name"] for _, table in tables}
 
     semantic_model = {"name": bim_file.get("name") or "semantic_model"}
-    warn_unsupported("model", model, TMSL_UNSUPPORTED_MODEL, "Apache Ossie", _PRESERVED)
+    metadata_properties = warn_unsupported(
+        "model", model, TMSL_UNSUPPORTED_MODEL, "Apache Ossie", _PRESERVED
+    )
+    record("model", "/model", bim_file, "translated", vendor="POWER_BI",
+           metadata_properties=metadata_properties or None)
     description = model.get("description") or bim_file.get("description")
     if description:
         semantic_model["description"] = text(description)
@@ -298,7 +307,12 @@ def _convert_table(table, source_path):
     dataset = {"name": table["name"], "source": _table_source(table)}
     scope = f"table '{table['name']}'"
 
-    warn_unsupported(scope, table, TMSL_UNSUPPORTED_TABLE, "Apache Ossie", _PRESERVED)
+    metadata_properties = warn_unsupported(
+        scope, table, TMSL_UNSUPPORTED_TABLE, "Apache Ossie", _PRESERVED
+    )
+    record("dataset", source_path, table, "translated", table=table["name"],
+           target_name=dataset["name"], vendor="POWER_BI",
+           metadata_properties=metadata_properties or None)
     primary_key = []
     unique_keys = []
     fields = []
@@ -307,7 +321,8 @@ def _convert_table(table, source_path):
     for index, column in enumerate(table.get("columns") or []):
         column_path = f"{source_path}/columns/{index}"
         if not isinstance(column, dict) or not column.get("name"):
-            record("field", column_path, column, "dropped", reason="invalid_column")
+            record("field", column_path, column, "dropped", reason="invalid_column",
+                   table=table["name"])
             continue
         # A rowNumber column is a storage-engine artifact with no user-visible data. It
         # is kept in the stash so an export can put it back.
@@ -315,13 +330,13 @@ def _convert_table(table, source_path):
             excluded_columns.append(column)
             record(
                 "field", column_path, column, "vendor_metadata",
-                vendor="POWER_BI", reason="row_number_column",
+                vendor="POWER_BI", reason="row_number_column", table=table["name"],
             )
             continue
         field, column_stash = _convert_column(column, scope)
         record(
             "field", column_path, column, "translated",
-            target_name=field["name"], target_dataset=dataset["name"],
+            target_name=field["name"], target_dataset=dataset["name"], table=table["name"],
             vendor="POWER_BI" if column_stash else None,
             metadata_properties=sorted(column_stash) or None,
         )
@@ -572,22 +587,26 @@ def _measure_expression(dax_expression, scope, translate_dax, resolve_field, mea
     carries ``OSSIE_SQL_2026`` as the primary dialect with the original DAX kept as a
     fallback, so no information is lost and a reader that trusts only DAX still has it.
     ``measures`` maps the model's measure names to their DAX, so a reference to another
-    measure can be expanded.
+    measure can be expanded. Return the expression plus a retained-DAX reason code
+    and refusal detail for the CLI report.
     """
-    if not translate_dax or resolve_field is None:
-        return make_expression(dax_expression, DIALECT_DAX)
+    if not translate_dax:
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_disabled", None
+    if resolve_field is None:
+        return (make_expression(dax_expression, DIALECT_DAX),
+                "dax_translation_refused", "no field resolver")
 
     sql, reason = translate_measure(dax_expression, resolve_field, measures)
     if sql is None:
         warn(scope, f"DAX measure kept as-is; not translated to OSSIE_SQL_2026 ({reason})")
-        return make_expression(dax_expression, DIALECT_DAX)
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_refused", reason
 
     return {
         "dialects": [
             {"dialect": DIALECT_OSSIE_SQL, "expression": sql},
             {"dialect": DIALECT_DAX, "expression": dax_expression},
         ]
-    }
+    }, None, None
 
 
 def _measure_bodies(tables):
@@ -610,7 +629,8 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
         for index, measure in enumerate(table.get("measures") or []):
             source_path = f"/model/tables/{table_index}/measures/{index}"
             if not isinstance(measure, dict) or not measure.get("name"):
-                record("metric", source_path, measure, "dropped", reason="invalid_measure")
+                record("metric", source_path, measure, "dropped", reason="invalid_measure",
+                       table=table["name"])
                 continue
             scope = f"table '{table['name']}' measure '{measure.get('name')}'"
             warn_unsupported(scope, measure, TMSL_UNSUPPORTED_MEASURE, "Apache Ossie", _PRESERVED)
@@ -631,7 +651,7 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 )
                 record(
                     "metric", source_path, measure, "vendor_metadata",
-                    vendor="POWER_BI", reason="missing_expression",
+                    vendor="POWER_BI", reason="missing_expression", table=table["name"],
                 )
                 continue
 
@@ -643,12 +663,10 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 warn(scope, f"duplicate measure name; renamed to '{name}'")
             seen.add(name)
 
-            metric = {
-                "name": name,
-                "expression": _measure_expression(
-                    expression, scope, translate_dax, resolve_field, measures
-                ),
-            }
+            converted_expression, reason, detail = _measure_expression(
+                expression, scope, translate_dax, resolve_field, measures
+            )
+            metric = {"name": name, "expression": converted_expression}
             if measure.get("description"):
                 metric["description"] = text(measure["description"])
             # A measure's result type is inferred from its DAX, so it is reported for
@@ -671,7 +689,10 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
             write_stash(metric, stash)
             metrics.append(metric)
             record(
-                "metric", source_path, measure, "translated", target_name=name,
+                "metric", source_path, measure, "source_dialect" if reason else "translated",
+                target_name=name, table=table["name"], source_dialect=DIALECT_DAX,
+                target_dialect=DIALECT_DAX if reason else DIALECT_OSSIE_SQL,
+                reason=reason, detail=detail,
                 vendor="POWER_BI", metadata_properties=sorted(stash),
             )
     return metrics, excluded

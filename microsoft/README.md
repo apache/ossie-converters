@@ -231,18 +231,24 @@ ossie-microsoft export -i model.yaml -o model.bim --report report.json
 ossie-microsoft import -i model.bim -o model.yaml --report report.json
 ```
 
-The report has a schema `version` of `1`, a `direction` of `import` or `export`,
+Reports are collected only by the CLI with `--report`; ordinary library calls do
+not collect entries. The report has a schema `version` of `1`, a `direction` of
+`import` or `export`,
 an `entries` array, and the text of conversion `warnings`. Each entry names the
 source object when available and includes its `kind`, `source_path`, and `status`.
+The `kind` values are `model`, `dataset`, `field`, `metric`, `relationship`, `key`,
+`source`, and `extension`. Import field and metric entries also identify their
+source `table`, including objects kept only in excluded-table metadata.
 The path is a JSON Pointer into the Ossie model on export or the parsed TMSL
 document on import. For TMDL and PBIP input, the pointers refer to the TMSL
 representation used by the converter.
 
 | Status | Meaning |
 | --- | --- |
-| `translated` | The converter emitted a field, metric, or relationship in the target model. |
+| `translated` | The converter emitted the object in the target model; imported measures have a translated SQL alternative. |
+| `source_dialect` | An imported measure retains DAX only, either because translation was disabled or because it was refused. |
 | `vendor_metadata` | The complete source object is only available in the Power BI extension. |
-| `placeholder` | The converter emitted a calculated column or measure with `BLANK()` and annotated it with the source expression. |
+| `placeholder` | The converter emitted an annotated `BLANK()` expression, or a generated Direct Lake source uses placeholder ids. |
 | `dropped` | The converter omitted the source object or vendor extension. |
 
 Entries may also contain target names, a reason code, metadata property names, or
@@ -250,7 +256,36 @@ dropped property names. For a metric inside a Snowflake extension, `source_path`
 points to the extension and `payload_path` points into its decoded JSON payload.
 A completed conversion sets `completed: true`. The report is written in quiet mode and when strict mode returns nonzero. If
 conversion aborts, it includes `completed: false`, the `error`, and any entries
-recorded before the error.
+recorded before the error. This also replaces a report from an earlier successful
+run when an unexpected conversion error or an interrupt aborts the current run
+(provided the report path remains writable). The empty JSON Pointer `""` identifies
+the root model, including its shared generated Direct Lake source. Keys have
+pointers to `primary_key` or the relevant `unique_keys` entry and include `columns`.
+
+| Reason code | Meaning |
+| --- | --- |
+| `invalid_column`, `invalid_field`, `invalid_measure`, `invalid_metric`, `invalid_relationship` | The source object is malformed or missing its name. |
+| `missing_expression` | A metric has no expression. |
+| `unsupported_expression` | The expression could not be represented; an annotated placeholder was emitted. |
+| `dax_translation_disabled` | DAX translation was not requested. |
+| `dax_translation_refused` | Translation was requested but was unsafe; `detail` contains the translator's refusal reason. |
+| `excluded_table` | The source table is excluded from portable datasets. |
+| `row_number_column` | The storage-engine column is retained only as vendor metadata. |
+| `inactive_relationship`, `duplicate_relationship`, `unsupported_cardinality` | The relationship remains vendor metadata on import. |
+| `missing_endpoint`, `unsupported_column_pairs` | Relationship endpoints are missing or unsupported. |
+| `unsupported_dataset_metric` | Dataset-scoped metrics are omitted on export. |
+| `unsupported_vendor` | A foreign vendor extension is omitted. |
+| `unsupported_composite_key` | Power BI cannot mark the composite key on the table. |
+| `missing_source_ids` | A shared generated Direct Lake source uses placeholder ids; `missing_ids` identifies them. |
+
+DAX metric entries include `source_dialect` and `target_dialect`. Unsupported model
+and dataset properties appear on their entries as `metadata_properties` on import
+or `dropped_properties` on export.
+
+Two error-reporting changes apply even without `--report`: conversion failures,
+including failed output writes, produce an `Error: ...` diagnostic and exit 1,
+and omitted dataset-scoped metrics
+warn individually, so `--strict` returns 1 for those omissions.
 
 ## Mapping
 

@@ -36,9 +36,7 @@ import sys
 import warnings
 from pathlib import Path
 
-import yaml
-
-from ._common import LOGGER, ConversionError
+from ._common import LOGGER
 from ._report import collect_entries
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
 from .pbip import import_powerbi_project, reraise_tom_load_failure
@@ -186,6 +184,8 @@ def main(argv=None):
     counter = _CountingHandler(args.quiet, report)
     LOGGER.addHandler(counter)
     error = None
+    completed = False
+    report_written = True
     entries = report["entries"] if report is not None else None
     try:
         with collect_entries(entries), warnings.catch_warnings():
@@ -196,23 +196,25 @@ def main(argv=None):
                 fh.write(out)
         else:
             sys.stdout.write(out)
-    except (ConversionError, TypeError, ValueError, OSError, yaml.YAMLError) as e:
-        error = str(e)
+        completed = True
+    except Exception as e:
+        error = str(e) or type(e).__name__
     finally:
         LOGGER.removeHandler(counter)
+        if report is not None:
+            report["completed"] = completed
+            interrupted = sys.exc_info()[1] if not completed else None
+            if error is not None or interrupted is not None:
+                report["error"] = error or str(interrupted) or type(interrupted).__name__
+            try:
+                args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            except OSError as e:
+                print(f"Error writing conversion report: {e}", file=sys.stderr)
+                report_written = False
 
     if error is not None:
         print(f"Error: {error}", file=sys.stderr)
-    if report is not None:
-        report["completed"] = error is None
-        if error is not None:
-            report["error"] = error
-        try:
-            args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        except OSError as e:
-            print(f"Error writing conversion report: {e}", file=sys.stderr)
-            return 1
-    if error is not None:
+    if error is not None or not report_written:
         return 1
 
     if counter.count and not args.quiet:

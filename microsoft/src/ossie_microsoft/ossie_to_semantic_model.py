@@ -188,7 +188,10 @@ def convert_ossie_to_semantic_model(
 
     stash = read_stash(semantic_model)
     _warn_foreign_extensions("model", semantic_model)
-    warn_unsupported("model", semantic_model, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    dropped_properties = warn_unsupported(
+        "model", semantic_model, OSSIE_UNSUPPORTED, "Power BI", _DROPPED
+    )
+    record("model", "", semantic_model, "translated", dropped_properties=dropped_properties or None)
 
     tables, table_columns, generated_partitions = _convert_datasets(datasets)
     # Restore excluded hosts before placing model-level metrics so a metric whose
@@ -276,7 +279,9 @@ def _convert_dataset(dataset, source_path):
     scope = f"dataset '{name}'"
     stash = read_stash(dataset)
     _warn_foreign_extensions(scope, dataset, source_path)
-    warn_unsupported(scope, dataset, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    dropped_properties = warn_unsupported(scope, dataset, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    record("dataset", source_path, dataset, "translated", target_name=name,
+           dropped_properties=dropped_properties or None)
     record_items(
         "metric", f"{source_path}/metrics", dataset.get("metrics"), "dropped",
         reason="unsupported_dataset_metric",
@@ -285,8 +290,8 @@ def _convert_dataset(dataset, source_path):
         metric_name = metric.get("name", "<unnamed>") if isinstance(metric, dict) else "<unnamed>"
         warn(scope, f"dataset-scoped metric '{metric_name}' is not supported; skipped")
 
-    key_columns = _key_columns(dataset, scope)
-    unique_columns = _unique_columns(dataset, scope)
+    key_columns = _key_columns(dataset, scope, source_path)
+    unique_columns = _unique_columns(dataset, scope, source_path)
     column_index = _dataset_column_index(dataset)
 
     columns = []
@@ -357,6 +362,9 @@ def _direct_lake_expression(source):
     workspace_id = source.get("workspaceId") or PLACEHOLDER_WORKSPACE_ID
     item_id = source.get("itemId") or PLACEHOLDER_ITEM_ID
     if not source.get("workspaceId") or not source.get("itemId"):
+        record("source", "", {"name": DIRECT_LAKE_EXPRESSION}, "placeholder",
+               reason="missing_source_ids",
+               missing_ids=[key for key in ("workspaceId", "itemId") if not source.get(key)])
         warn(
             DIRECT_LAKE_EXPRESSION,
             "no workspaceId/itemId given; the Direct Lake source uses placeholder ids",
@@ -518,7 +526,7 @@ def _m_string(value):
     return '"' + value.replace('"', '""') + '"'
 
 
-def _key_columns(dataset, scope):
+def _key_columns(dataset, scope, source_path):
     primary_key = dataset.get("primary_key") or []
     if len(primary_key) > 1:
         # TMSL marks a single column per table with `isKey`; there is no composite form.
@@ -527,13 +535,15 @@ def _key_columns(dataset, scope):
             f"Power BI has no composite key; primary key ({', '.join(primary_key)}) "
             "is not marked on the table",
         )
+        record("key", f"{source_path}/primary_key", dataset, "dropped",
+               columns=primary_key, reason="unsupported_composite_key")
         return set()
     return set(primary_key)
 
 
-def _unique_columns(dataset, scope):
+def _unique_columns(dataset, scope, source_path):
     columns = set()
-    for unique_key in dataset.get("unique_keys") or []:
+    for index, unique_key in enumerate(dataset.get("unique_keys") or []):
         if not isinstance(unique_key, list):
             continue
         if len(unique_key) > 1:
@@ -542,6 +552,8 @@ def _unique_columns(dataset, scope):
                 f"Power BI has no composite unique constraint; unique key "
                 f"({', '.join(unique_key)}) is not marked on the table",
             )
+            record("key", f"{source_path}/unique_keys/{index}", dataset, "dropped",
+                   columns=unique_key, reason="unsupported_composite_key")
             continue
         columns.update(unique_key)
     return columns
