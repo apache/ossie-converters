@@ -22,7 +22,7 @@ import hashlib
 import json
 import re
 from collections import Counter
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Sequence
 
 from metricflow_semantic_interfaces.errors import ModelTransformError
 from metricflow_semantic_interfaces.implementations.element_config import PydanticSemanticLayerElementConfig
@@ -35,6 +35,21 @@ from metricflow_semantic_interfaces.transformations.convert_count import Convert
 from metricflow_semantic_interfaces.transformations.convert_median import ConvertMedianMetricToPercentile
 
 _KEY = "generated_ratio_helpers"
+
+
+def without_ratio_helper_provenance(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """Return `meta` without helper provenance, dropping an `ossie` namespace left empty.
+
+    Provenance only belongs in a generated manifest: Ossie -> MSI writes it afresh for
+    each ratio and MSI -> Ossie reads it, so it is never carried in an Ossie document.
+    Key order is kept, and metadata without provenance is returned as is, so the user's
+    metadata round-trips unchanged.
+    """
+    ossie = meta.get("ossie")
+    if not isinstance(ossie, dict) or _KEY not in ossie:
+        return meta
+    rest = {key: value for key, value in ossie.items() if key != _KEY}
+    return {key: rest if key == "ossie" else value for key, value in meta.items() if key != "ossie" or rest}
 
 
 def _definition(metric: PydanticMetric) -> dict:

@@ -96,7 +96,7 @@ def test_metadata_and_ratio_remain_stable_across_three_serialized_round_trips(ex
         metric = reverse.output.metrics[0]
         extensions = [e for e in metric.custom_extensions if e.vendor_name == OssieVendor.DBT.value]
         assert len(extensions) == 1
-        assert _user_metadata(json.loads(extensions[0].data)["meta"]) == USER_META
+        assert json.loads(extensions[0].data)["meta"] == USER_META
         current_sql = metric.expression.dialects[0].expression
         assert _evaluate(current_sql) == pytest.approx(expected_value)
         current_expression = _canonical_sql(current_sql)
@@ -125,7 +125,7 @@ def test_saved_query_reference_keeps_helpers_with_restored_user_metadata():
     reverse = MSIToOssieConverter().convert(manifest)
     assert {m.name for m in reverse.output.metrics} == {"avg", "avg_numerator", "avg_denominator"}
     owner = next(m for m in reverse.output.metrics if m.name == "avg")
-    assert _user_metadata(json.loads(owner.custom_extensions[0].data)["meta"]) == USER_META
+    assert json.loads(owner.custom_extensions[0].data)["meta"] == USER_META
 
 @pytest.mark.parametrize("namespace", ["custom", ["custom"], None])
 def test_non_object_user_namespace_is_preserved_without_guessing_helper_ownership(namespace):
@@ -172,7 +172,7 @@ def test_non_meta_entries_do_not_shadow_ratio_user_metadata(prefix):
     reverse = MSIToOssieConverter().convert(forward.output)
     assert reverse.issues == []
     assert [m.name for m in reverse.output.metrics] == ["avg"]
-    assert _user_metadata(json.loads(reverse.output.metrics[0].custom_extensions[0].data)["meta"]) == USER_META
+    assert json.loads(reverse.output.metrics[0].custom_extensions[0].data)["meta"] == USER_META
 
 
 @pytest.mark.parametrize("invalid_meta", [None, [], "invalid", 17])
@@ -210,5 +210,52 @@ def test_restored_datatype_is_applied_before_signing_ratio_family(datatype):
         assert reverse.issues == []
         assert [m.name for m in reverse.output.metrics] == ["avg"]
         assert reverse.output.metrics[0].datatype == datatype
-        assert _user_metadata(json.loads(reverse.output.metrics[0].custom_extensions[0].data)["meta"]) == expected
+        assert json.loads(reverse.output.metrics[0].custom_extensions[0].data)["meta"] == expected
         doc = OssieDocument.model_validate_json(reverse.output.model_dump_json())
+
+
+def test_ratio_without_user_metadata_round_trips_without_an_extension():
+    doc = _ossie_doc(
+        datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("order_id")])],
+        metrics=[_ossie_metric("avg", "SUM(orders.amount) / COUNT(orders.order_id)")],
+    )
+    forward = OssieToMSIConverter().convert(doc)
+    owner = next(m for m in forward.output.metrics if m.name == "avg")
+    assert set(owner.config.meta["ossie"]) == {KEY}
+    reverse = MSIToOssieConverter().convert(forward.output)
+    assert reverse.issues == []
+    assert [(m.name, m.custom_extensions) for m in reverse.output.metrics] == [("avg", None)]
+
+
+RATIO = "SUM(orders.amount) / COUNT(orders.order_id)"
+
+@pytest.mark.parametrize("meta, expression", [
+    (USER_META, RATIO),
+    ({"ossie": {"owner": "accounting"}, "team": "finance"}, RATIO),
+    ({"team": "finance"}, RATIO),
+    # Only provenance is removed: a namespace that never held it is left alone.
+    ({"team": "finance", "ossie": {}}, "SUM(orders.amount)"),
+])
+def test_user_metadata_extension_round_trips_unchanged(meta, expression):
+    doc = _document(meta=meta, expression=expression)
+    reverse = MSIToOssieConverter().convert(OssieToMSIConverter().convert(doc).output)
+    assert [m.name for m in reverse.output.metrics] == ["avg"]
+    assert reverse.output.metrics[0].custom_extensions == doc.metrics[0].custom_extensions
+
+
+STALE_MARKER = {"version": 2, "names": ["avg_numerator", "avg_denominator"], "signature": "stale"}
+
+@pytest.mark.parametrize("meta, expected", [
+    ({"team": "finance", "ossie": {KEY: STALE_MARKER}}, {"team": "finance"}),
+    ({"ossie": {"owner": "accounting", KEY: STALE_MARKER}}, {"ossie": {"owner": "accounting"}}),
+    ({"ossie": {KEY: STALE_MARKER}}, None),
+    ({"team": "finance", "ossie": {}}, {"team": "finance", "ossie": {}}),
+])
+def test_provenance_carried_in_a_document_is_not_restored(meta, expected):
+    # A document written before provenance was left out of the extension, whose
+    # ratio has since become a SIMPLE metric.
+    forward = OssieToMSIConverter().convert(_document(meta=meta, expression="SUM(orders.amount)"))
+    assert forward.issues == []
+    assert [m.name for m in forward.output.metrics] == ["avg"]
+    config = forward.output.metrics[0].config
+    assert (config.meta if config is not None else None) == expected

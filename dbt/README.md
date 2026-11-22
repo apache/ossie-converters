@@ -187,6 +187,11 @@ semantic fields and external-consumer checks remain part of the conservative
 retention contract. Version 1 markers are accepted only when their exact original
 definitions still match; otherwise helpers are retained rather than guessed.
 
+Provenance stays in the manifest. dbt → Ossie leaves `generated_ratio_helpers`
+out of the metric's `DBT` custom extension, so a ratio without user metadata gets
+no entry, and Ossie → dbt drops a copy found in one, since each ratio is signed
+afresh.
+
 ## Development
 
 ```bash
