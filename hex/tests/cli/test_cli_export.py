@@ -141,7 +141,7 @@ Warnings (52)
    2× `Field.datatype` — A datatype is required in Hex; a default was used.
    1× `Dataset.primary_key` — Composite primary keys are not supported in Hex and were dropped.
    1× `Dataset.unique_keys` — Composite unique keys are not supported in Hex and were dropped.
-   1× `description` — Project descriptions are not supported in Hex and were dropped.
+   1× `description` — Project description is not supported in Hex and was dropped. Other descriptions (dataset, field, metric, ...) are preserved.
    1× `custom_extensions` — Custom extensions are not preserved in Hex and were dropped.
 """)
 
