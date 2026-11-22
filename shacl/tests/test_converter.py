@@ -126,7 +126,7 @@ def test_every_entity_type_gets_a_node_shape(flights_model: OssieOntology, fligh
 
 
 def test_relationship_becomes_a_property_shape(flights_shapes: Graph):
-    # `rcrosses overequires: [Airport.latitude, ...]` makes it mandatory, ManyToOne caps it
+    # `requires: [Airport.latitude, ...]` makes it mandatory, ManyToOne caps it
     # at one, and DegreesLatitude's `requires` bounds become the value range.
     latitude = _property_shape(flights_shapes, FLIGHTS.Airport, FLIGHTS["Airport.latitude"])
     assert flights_shapes.value(latitude, SH.minCount) == Literal(1)
@@ -200,7 +200,14 @@ def test_open_shapes_accept_extra_properties(people_spec: OssieSpec):
     extra = 'p:ann <https://example.org/other/nickname> "Annie" .'
     assert validate(_data(), shacl_graph=shapes)[0]
     assert validate(_data(extra), shacl_graph=shapes)[0]
-    assert not validate(_data(extra), shacl_graph=_convert(people_spec, closed=True))[0]
+
+
+def test_closed_shapes_reject_only_extra_properties(people_spec: OssieSpec):
+    shapes = _convert(people_spec, closed=True)
+    extra = 'p:ann <https://example.org/other/nickname> "Annie" .'
+    # Valid data still passes: rdf:type is not counted as an extra property.
+    assert validate(_data(), shacl_graph=shapes)[0]
+    assert not validate(_data(extra), shacl_graph=shapes)[0]
 
 
 def test_missing_mandatory_property_is_rejected(people_spec: OssieSpec):

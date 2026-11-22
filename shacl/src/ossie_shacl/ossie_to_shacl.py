@@ -21,9 +21,7 @@
 There is no SHACL code here. The ontology goes through LinkML, with both steps
 done by `ohi_linkml` – the `neverblink-linkml` distribution, a natively
 compiled LinkML implementation: Ossie -> LinkML (`from_ossie`), then
-LinkML -> SHACL (`Schema.shacl`). The LinkML package of this repository does
-the first step too, but it is short enough to repeat here rather than depend
-on that package."""
+LinkML -> SHACL (`Schema.shacl`)."""
 
 from __future__ import annotations
 
