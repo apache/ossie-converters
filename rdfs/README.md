@@ -89,9 +89,11 @@ print(OssieToSpecConverter.convert(ontology).dump_yaml())
 print(OssieToRdfsConverter.convert(ontology, schema_id="https://example.org/my-ontology"))
 ```
 
-`OssieToRdfsConverter`: `schema_id` is the base IRI of the classes and properties. An Ossie ontology has no IRI of its own, so without it a placeholder built from the ontology's name is used. `output_format` is `ttl` (the default) or `nt`. `convert_spec` does the same from an `OssieSpec`, without building the runtime model.
+`OssieToRdfsConverter` converts a runtime model (`convert`), an `OssieSpec` (`convert_spec`) or an Ossie document on disk (`convert_file`). `schema_id` is the base IRI of the classes and properties. An Ossie ontology has no IRI of its own, so without it a placeholder built from the ontology's name is used. `output_format` is `ttl` (the default) or `nt`.
 
-`RdfsToOssieConverter` reads Turtle or N-Triples. `name` names the ontology; by default it is the vocabulary's `rdfs:label` if that is a usable name, else the prefix of most of its terms. `metadata_language` picks the language of labels and comments in vocabularies that contain multilingual strings. `convert_to_spec` stops at the Ossie document, without building the runtime model.
+`RdfsToOssieConverter` reads Turtle or N-Triples, from a string (`convert`) or a file (`convert_file`). `name` names the ontology; by default it is the vocabulary's `rdfs:label` if that is a usable name, else the prefix of most of its terms. `metadata_language` picks the language of labels and comments in vocabularies that contain multilingual strings; where there is no text in that language, text in another language or without a language tag is used instead. `convert_to_spec` stops at the Ossie document, and `to_model` builds the runtime model from it later.
+
+A round trip, Ossie → RDFS → Ossie, does not give back the same document. Relationship names are rebuilt from the property IRIs, so `name` on `Person` comes back as `person_name`. Value types come back as the built-in they are built on, and multiplicities, `requires` and `identify_by` are gone.
 
 ## Scripts
 

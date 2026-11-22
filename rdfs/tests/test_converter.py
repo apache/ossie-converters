@@ -196,6 +196,17 @@ def test_n_triples():
     assert Graph().parse(data=text, format="nt").isomorphic(_people_rdfs())
 
 
+def test_convert_file(flights_path: Path, flights_model: OssieOntology):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        from_file = OssieToRdfsConverter.convert_file(
+            flights_path, schema_id="https://example.org/flights"
+        )
+    assert Graph().parse(data=from_file, format="turtle").isomorphic(
+        Graph().parse(data=_flights_rdfs(flights_model), format="turtle")
+    )
+
+
 def test_convert_and_convert_spec_agree(flights_model: OssieOntology):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -257,7 +268,7 @@ def test_property_without_a_domain_is_dropped(library_spec: OssieSpec):
 def test_what_ossie_cannot_hold_is_warned_about():
     document = LIBRARY_RDFS + "lib:mobyDick a lib:Book .\n"
     with pytest.warns(UserWarning) as record:
-        RdfsToOssieConverter().convert_text(document)
+        RdfsToOssieConverter().convert(document)
     assert any("individual" in str(w.message).lower() for w in record)
     assert all(w.filename == __file__ for w in record)
 
@@ -269,6 +280,31 @@ def test_runtime_model_is_built(tmp_path: Path):
     assert isinstance(model, OssieOntology)
     assert [c.name for c in model.ontology.lookup_concept("Person").extends] == ["Agent"]
     assert model.ontology.lookup_concept("Book").is_entity_type
+
+
+def test_spec_then_model(library_spec: OssieSpec):
+    # The same model as `convert`, built in two steps.
+    model = RdfsToOssieConverter().to_model(library_spec)
+    assert {c.name for c in model.ontology.concepts() if not c.is_builtin} == {
+        "Agent", "Person", "Book",
+    }
+
+
+def test_labels_in_another_language_are_kept():
+    # Only Italian text: asking for English still gets it, rather than nothing.
+    italian = '"Qualcuno che può scrivere un libro."@it'
+    english = '"Someone who can write a book."'
+    document = LIBRARY_RDFS.replace(english, italian)
+    spec = _no_warnings(RdfsToOssieConverter().convert_to_spec, document, metadata_language="en")
+    assert _concept(spec, "Agent").description == "Qualcuno che può scrivere un libro."
+    # With both, the language asked for wins.
+    both = LIBRARY_RDFS.replace(english, f"{italian} , {english}@en")
+    for language, text in [
+        ("it", "Qualcuno che può scrivere un libro."),
+        ("en", "Someone who can write a book."),
+    ]:
+        spec = _no_warnings(RdfsToOssieConverter().convert_to_spec, both, metadata_language=language)
+        assert _concept(spec, "Agent").description == text
 
 
 def test_n_triples_input(library_spec: OssieSpec):
@@ -303,3 +339,6 @@ def test_round_trip_keeps_classes_subtypes_and_properties():
         "person_name": ["String"],
         "person_knows": ["Person"],
     }
+    # RDFS has no counts or keys, so none come back.
+    assert all(rel.multiplicity is None for rel in person.values())
+    assert not _concept(back, "Person").identify_by

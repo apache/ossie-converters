@@ -50,8 +50,6 @@
 import argparse
 from pathlib import Path
 
-from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
-
 from ossie_rdfs import RdfsToOssieConverter
 
 if __name__ == "__main__":
@@ -62,11 +60,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     document = args.path.read_text(encoding="utf-8")
-    spec = RdfsToOssieConverter().convert_to_spec(
+    converter = RdfsToOssieConverter()
+    spec = converter.convert_to_spec(
         document, name=args.name, metadata_language=args.metadata_language
     )
     # Build the runtime model only as a check: it raises if the document is
     # not valid Ossie. The document printed is the one ohi wrote.
-    SpecToOssieConverter().convert(spec)
+    converter.to_model(spec)
 
     print(spec.dump_yaml())
