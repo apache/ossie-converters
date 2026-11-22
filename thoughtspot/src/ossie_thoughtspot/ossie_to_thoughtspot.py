@@ -87,6 +87,8 @@ from .constants import (
     DATASET_STASH_TML_OBJECT_WITNESS,
     DATASET_STASH_UNSURFACED_COLUMNS,
     DIALECT,
+    EXTENSIONS_FIELD,
+    EXTENSIONS_FIELD_RENAMED,
     FIELD_STASH_COLUMN_PROPERTIES,
     FIELD_STASH_DATA_TYPE,
     FIELD_STASH_DATA_TYPE_WITNESS,
@@ -2285,6 +2287,20 @@ def _join_entry_for_unrepresentable(entry: dict, log: IssueLog) -> tuple[str, di
     }
 
 
+def _is_stashed_formula(entry: object, *keys: str) -> bool:
+    """Whether a stashed formula entry is a mapping whose `keys` all hold text.
+
+    An absent or empty key counts as text: the loops in `build_model` fall back
+    to a default for it, and an explicit `name: null` is one the forward
+    direction can write (`tml_to_ossie` takes the display name from
+    `column.get("name", ...)`). Reading it as malformed dropped a formula that
+    was restored as `<unnamed>` before this check existed.
+    """
+    return isinstance(entry, dict) and all(
+        isinstance(entry.get(key) or "", str) for key in keys
+    )
+
+
 def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueLog) -> TmlDocument:
     """One Ossie semantic model -> one ThoughtSpot `model:` TML document.
 
@@ -2353,7 +2369,7 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
     } | {
         entry["id"]
         for entry in model_payload.get(MODEL_STASH_UNSURFACED_FORMULAS) or []
-        if isinstance(entry, dict) and entry.get("id")
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"]
     }
     model_tables_by_prefix: dict[str, dict] = {}
     table_doc_by_prefix: dict[str, TmlDocument | None] = {}
@@ -2497,6 +2513,21 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         columns.append(columns_entry)
 
     for entry in model_payload.get(MODEL_STASH_UNSURFACED_FORMULAS) or []:
+        if not _is_stashed_formula(entry, "id", "name", "expr"):
+            # The same check, for the same reason, as the unattributed loop
+            # below: `name` reaches `_formula_id_from` and `expr` reaches the
+            # formula rewriter, and both raise a bare TypeError on an int.
+            log.add(
+                code="TS-MODEL-UNSURFACED-FORMULA-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    "a stashed unsurfaced formula is not a mapping whose id, "
+                    "name and expression are all text, so it is skipped; the "
+                    "formula it described is not restored"
+                ),
+                object_ref=object_ref,
+            )
+            continue
         # Re-emitted with NO surfacing columns[] entry, because that is what
         # they were: internal helpers other formulas reference. Giving them one
         # -- as the unattributed-formula path deliberately does -- would make a
@@ -2514,12 +2545,7 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         formulas.append(unsurfaced_entry)
 
     for entry in model_payload.get(MODEL_STASH_UNATTRIBUTED_FORMULAS) or []:
-        if (
-            not isinstance(entry, dict)
-            or not isinstance(entry.get("name", ""), str)
-            or not isinstance(entry.get("expr") or "", str)
-            or not isinstance(entry.get(FIELD_STASH_FORMULA_NAME) or "", str)
-        ):
+        if not _is_stashed_formula(entry, "name", "expr", FIELD_STASH_FORMULA_NAME):
             # `_formula_id_from` normalises the display name and raises a bare
             # TypeError on anything that is not a string. A hand-written
             # object-form payload gets its scalars typed by the YAML loader,
@@ -3009,8 +3035,13 @@ def _report_foreign_extensions(ossie_document: dict, log: IssueLog) -> None:
             continue
         seen.add(id(node))
         if isinstance(node, dict):
-            extensions = node.get("custom_extensions")
-            if isinstance(extensions, list):
+            # Both names `stash.read_stash` accepts. Reading only the old one
+            # dropped every foreign entry of a document written under
+            # apache/ossie#522 without this report.
+            for field in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED):
+                extensions = node.get(field)
+                if not isinstance(extensions, list):
+                    continue
                 for entry in extensions:
                     if not isinstance(entry, dict):
                         continue
@@ -3018,11 +3049,15 @@ def _report_foreign_extensions(ossie_document: dict, log: IssueLog) -> None:
                     if isinstance(vendor, str) and vendor != VENDOR_KEY:
                         vendors[vendor] = None
             for key, value in node.items():
-                # Skipping the extensions list is an optimisation, not a
-                # rule: an entry is `{vendor_name, data}` with `data` a JSON
-                # *string*, so descending into it can never find a nested
-                # custom_extensions.
-                if key != "custom_extensions" and isinstance(value, (dict, list)):
+                # Skipping the extensions lists is a rule, not an
+                # optimisation: with `data` an object, another vendor's
+                # payload can hold a key spelled like either field, and
+                # descending into it would report that vendor's internals as
+                # a vendor of their own.
+                if (
+                    key not in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED)
+                    and isinstance(value, (dict, list))
+                ):
                     stack.append(value)
         elif isinstance(node, list):
             stack.extend(item for item in node if isinstance(item, (dict, list)))
@@ -3033,7 +3068,7 @@ def _report_foreign_extensions(ossie_document: dict, log: IssueLog) -> None:
         code="TS-VENDOR-EXTENSIONS-DROPPED",
         severity=Severity.INFO,
         message=(
-            f"the document carries custom_extensions owned by "
+            f"the document carries vendor extensions owned by "
             f"{', '.join(sorted(vendors))}; ThoughtSpot TML has no vendor "
             f"extension field, so those entries are not carried into the "
             f"model and will not survive a conversion back to Ossie"

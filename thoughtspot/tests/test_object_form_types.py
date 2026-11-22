@@ -18,7 +18,7 @@
 """YAML types arriving in an object-form `custom_extensions` payload.
 
 A JSON string is parsed by a JSON parser, so every scalar in it is typed by
-what was written. The object form apache/ossie#522 proposes has been through a
+what was written. The object form apache/ossie#522 introduced has been through a
 YAML loader instead, which types unquoted scalars by guessing. `Yaml12Loader`
 narrows the bool resolver and nothing else, so SafeLoader's YAML 1.1 rules
 still apply to the rest:
@@ -44,6 +44,7 @@ from ossie_thoughtspot.constants import (
     FIELD_STASH_DB_COLUMN_NAME_WITNESS,
     FIELD_STASH_FORMULA_NAME,
     MODEL_STASH_UNATTRIBUTED_FORMULAS,
+    MODEL_STASH_UNSURFACED_FORMULAS,
     VENDOR_KEY,
 )
 from ossie_thoughtspot.errors import ConversionError
@@ -74,6 +75,11 @@ def _bracket_field(display, table, *, field_stash=None):
 
 def _model_with_unattributed_formula(formula):
     """A model whose only stashed content is one unattributed formula."""
+    return _model_with_stashed_formulas(MODEL_STASH_UNATTRIBUTED_FORMULAS, [formula])
+
+
+def _model_with_stashed_formulas(key, formulas):
+    """A model whose only stashed content is `formulas`, under `key`."""
     return {
         "name": "sales",
         "datasets": [{
@@ -85,9 +91,13 @@ def _model_with_unattributed_formula(formula):
             "custom_extensions": _object_stash(**{
                 DATASET_STASH_CONNECTION_NAME: "My Snowflake"}),
         }],
-        "custom_extensions": _object_stash(**{
-            MODEL_STASH_UNATTRIBUTED_FORMULAS: [formula]}),
+        "custom_extensions": _object_stash(**{key: formulas}),
     }
+
+
+def _build_model_body(model, log):
+    tables = [build_table(model["datasets"][0], IssueLog())]
+    return build_model(model, tables, log).body
 
 
 class TestTheLoaderReallyDoesThis:
@@ -270,6 +280,52 @@ class TestARetypedStringIsReportedNotCrashedOn:
         tables = [build_table(model["datasets"][0], IssueLog())]
         build_model(model, tables, log)
         assert "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED" not in _codes(log)
+
+    def test_an_explicitly_null_name_is_restored_as_unnamed(self):
+        # In the string form, which is what `tml_to_ossie` writes: it takes the
+        # display name from `column.get("name", ...)`, so an explicit null can
+        # reach the stash. The guard read it as malformed and dropped a formula
+        # that was restored as `<unnamed>` before the guard existed.
+        model = _model_with_unattributed_formula({"name": None, "expr": "1 + 1"})
+        [entry] = model["custom_extensions"]
+        entry["data"] = json.dumps(entry["data"])
+        log = IssueLog()
+        body = _build_model_body(model, log)
+        assert "TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED" not in _codes(log)
+        assert [f["name"] for f in body["formulas"]] == ["<unnamed>"]
+
+    @pytest.mark.parametrize(
+        "formula",
+        [
+            # Measured before the check: the first two raised TypeError from
+            # normalize(), the third TypeError from the formula rewriter, the
+            # fourth TypeError hashing the id into the preserved set, the fifth
+            # reached the TML with an int id, and the last raised
+            # AttributeError.
+            {"name": 2024, "expr": "1"},
+            {"id": "formula_target", "name": 2024, "expr": "1"},
+            {"id": "formula_target", "name": "Target", "expr": 2024},
+            {"id": ["formula_target"], "name": "Target", "expr": "1"},
+            {"id": 2024, "name": "Target", "expr": "1"},
+            "not a mapping",
+        ],
+    )
+    def test_a_malformed_unsurfaced_formula_is_reported_and_skipped(self, formula):
+        model = _model_with_stashed_formulas(MODEL_STASH_UNSURFACED_FORMULAS, [formula])
+        log = IssueLog()
+        body = _build_model_body(model, log)
+        assert "TS-MODEL-UNSURFACED-FORMULA-MALFORMED" in _codes(log)
+        assert body.get("formulas", []) == []
+
+    def test_a_well_formed_unsurfaced_formula_beside_a_malformed_one_is_kept(self):
+        helper = {"id": "formula_helper", "name": "Helper", "expr": "1 + 1"}
+        model = _model_with_stashed_formulas(
+            MODEL_STASH_UNSURFACED_FORMULAS, [{"name": 2024, "expr": "1"}, helper]
+        )
+        log = IssueLog()
+        body = _build_model_body(model, log)
+        assert _codes(log).count("TS-MODEL-UNSURFACED-FORMULA-MALFORMED") == 1
+        assert body["formulas"] == [helper]
 
 
 def test_the_string_form_is_unaffected_by_any_of_this():
