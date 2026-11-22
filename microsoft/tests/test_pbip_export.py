@@ -257,6 +257,39 @@ def test_export_refuses_a_folder_that_already_holds_database_tmdl(osi, tmp_path,
     assert not written
 
 
+def test_export_refuses_a_renamed_definition_folder(osi, tmp_path, written):
+    # From the second #76 review: definition/ was written beside the old database.tmdl,
+    # with exit 0, and import then failed on the two clashing databases.
+    renamed = tmp_path / "Sales.SemanticModel"
+    renamed.mkdir()
+    (renamed / "database.tmdl").write_text("database x\n", encoding="utf-8")
+    with pytest.raises(ConversionError, match="is the definition folder"):
+        export_powerbi_project(osi, renamed, force=True)
+    assert not written
+    assert not (renamed / "definition").exists()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "CON.SemanticModel",
+        "nul.semanticmodel",
+        "COM1.SemanticModel",
+        "aux.sales.SemanticModel",
+        # Windows drops the trailing dot or space and would write into Sales.SemanticModel
+        # as a project folder, nesting a second model.
+        "Sales.SemanticModel.",
+        "Sales.SemanticModel ",
+    ],
+)
+def test_export_rejects_a_semantic_model_folder_name_windows_cannot_use(
+    osi, tmp_path, written, name
+):
+    with pytest.raises(ConversionError, match=r"folder name .* rename the folder"):
+        export_powerbi_project(osi, tmp_path / name)
+    assert not written
+
+
 def test_cli_writes_into_the_semantic_model_folder_it_is_given(osi, tmp_path, written, capsys):
     # The scenario from the #76 review: this used to nest a second model, with exit 0.
     source = _ossie_file(osi, tmp_path)

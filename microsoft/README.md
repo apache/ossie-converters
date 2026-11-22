@@ -220,11 +220,14 @@ ossie-microsoft export -i model.yaml --pbip "Sales.SemanticModel" --force
 ```
 
 A `.pbip` file or a `definition` folder is refused, because neither can hold the model.
+So is any folder with `database.tmdl` at its top level, such as a renamed `definition`
+folder, because import would read it as the definition itself.
 
 `<name>` is the Apache Ossie model name, and the written folder is reported on stderr
 (`Wrote out/<name>.SemanticModel`) unless `-q` is given. A name Windows cannot use for a
 folder, including a device name such as `CON` or `NUL`, is rejected so the project can
-be cloned anywhere. TOM writes `definition/`, so the documents are
+be cloned anywhere, both as the model name and as the name of a `.SemanticModel` folder
+given to `--pbip`. TOM writes `definition/`, so the documents are
 the ones Power BI itself produces, and `definition.pbism` is version `4.0`, the first
 that reads TMDL. It needs the
 [optional TOM setup](#optional-tom-validation-and-tmdl-serialization).

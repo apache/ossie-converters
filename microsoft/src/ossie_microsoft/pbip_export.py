@@ -68,18 +68,26 @@ def export_powerbi_project(
 
     Raises:
         ConversionError: if ``output_dir`` is a ``definition`` folder or a ``.pbip`` file,
-            the model name cannot name a folder, the folder already holds a model and
-            ``force`` is not set, or TOM rejects the model.
+            the model name, or the name of a given ``.SemanticModel`` folder, cannot name
+            a folder, the folder already holds a model and ``force`` is not set, or TOM
+            rejects the model.
         TomUnavailableError: if the optional TOM setup is missing.
     """
     semantic_model = convert_ossie_to_semantic_model(ossie_yaml_str, source=source)
     output = Path(output_dir)
-    if output.name.casefold().endswith(_SEMANTIC_MODEL_SUFFIX):
+    _check_not_a_definition_folder(output)
+    # Windows drops trailing dots and spaces, so `X.SemanticModel.` is X.SemanticModel.
+    if output.name.rstrip(". ").casefold().endswith(_SEMANTIC_MODEL_SUFFIX):
         # Nesting <name>.SemanticModel inside it would leave the report's byPath on the
         # outer folder, so the project would silently keep its old model.
+        if not _is_portable(output.name):
+            raise ConversionError(
+                f"folder name {output.name!r} cannot name a semantic model folder; "
+                "rename the folder"
+            )
         folder = output
     else:
-        _check_project_folder(output)
+        _check_not_a_pbip_file(output)
         folder = output / f"{_folder_name(semantic_model['name'])}.SemanticModel"
     _check_target(folder, force)
 
@@ -99,12 +107,7 @@ def export_powerbi_project(
 
 def _folder_name(name):
     name = str(name)
-    if (
-        not name.strip()
-        or _INVALID_NAME_RE.search(name)
-        or _RESERVED_NAME_RE.fullmatch(name.split(".")[0].rstrip())
-        or name.endswith((".", " "))
-    ):
+    if not _is_portable(name):
         raise ConversionError(
             f"model name {name!r} cannot name a semantic model folder; rename the "
             "Apache Ossie model"
@@ -112,16 +115,30 @@ def _folder_name(name):
     return name
 
 
-def _check_project_folder(output):
-    # Import also accepts these two, but neither can hold a <name>.SemanticModel folder.
-    if output.suffix.casefold() == ".pbip":
-        raise ConversionError(
-            f"{output} is a .pbip file; pass the project folder or its .SemanticModel folder"
-        )
+def _is_portable(name):
+    return not (
+        not name.strip()
+        or _INVALID_NAME_RE.search(name)
+        or _RESERVED_NAME_RE.fullmatch(name.split(".")[0].rstrip())
+        or name.endswith((".", " "))
+    )
+
+
+def _check_not_a_definition_folder(output):
+    # Import reads a folder with a top-level database.tmdl as the definition itself, so a
+    # definition/ written inside it would clash with the old files instead of replacing them.
     if output.name.casefold() == "definition" or (output / "database.tmdl").is_file():
         raise ConversionError(
             f"{output} is the definition folder of a semantic model; pass its "
             ".SemanticModel folder instead"
+        )
+
+
+def _check_not_a_pbip_file(output):
+    # Import also accepts a .pbip file, but it cannot hold a <name>.SemanticModel folder.
+    if output.suffix.casefold() == ".pbip":
+        raise ConversionError(
+            f"{output} is a .pbip file; pass the project folder or its .SemanticModel folder"
         )
 
 
