@@ -18,6 +18,7 @@
 """Export to a Power BI project semantic model folder, with TOM replaced by a fake."""
 
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -188,8 +189,8 @@ def test_cli_reports_a_missing_tom_setup_without_a_traceback(osi, tmp_path, monk
 
 @pytest.mark.parametrize(
     "extra",
-    [["--force"], ["-o", "model.bim", "--pbip", "out"]],
-    ids=["force-without-pbip", "output-and-pbip"],
+    [["--force"], ["-o", "model.bim", "--pbip", "out"], ["--pbip", ""], ["--pbip", "", "--force"]],
+    ids=["force-without-pbip", "output-and-pbip", "empty-pbip", "empty-pbip-with-force"],
 )
 def test_cli_rejects_conflicting_export_targets(osi, tmp_path, capsys, extra):
     source = _ossie_file(osi, tmp_path)
@@ -263,10 +264,43 @@ def test_export_refuses_a_renamed_definition_folder(osi, tmp_path, written):
     renamed = tmp_path / "Sales.SemanticModel"
     renamed.mkdir()
     (renamed / "database.tmdl").write_text("database x\n", encoding="utf-8")
-    with pytest.raises(ConversionError, match="is the definition folder"):
+    with pytest.raises(ConversionError, match="database.tmdl at its top level"):
         export_powerbi_project(osi, renamed, force=True)
     assert not written
     assert not (renamed / "definition").exists()
+
+
+def test_export_refuses_a_renamed_definition_folder_inside_the_project(osi, tmp_path, written):
+    # The same clash, reached through the project folder rather than the folder itself.
+    renamed = tmp_path / "sales_model.SemanticModel"
+    renamed.mkdir()
+    (renamed / "database.tmdl").write_text("database x\n", encoding="utf-8")
+    with pytest.raises(ConversionError, match="database.tmdl at its top level"):
+        export_powerbi_project(osi, tmp_path, force=True)
+    assert not written
+
+
+def test_export_writes_into_the_semantic_model_folder_it_is_run_in(
+    osi, tmp_path, written, monkeypatch
+):
+    target = tmp_path / "Sales.SemanticModel"
+    (target / "definition").mkdir(parents=True)
+    monkeypatch.chdir(target)
+    assert export_powerbi_project(osi, ".", force=True) == Path(".")
+    monkeypatch.chdir(target / "definition")
+    assert export_powerbi_project(osi, "..", force=True) == Path("..")
+
+    assert not list(target.glob("*.SemanticModel"))
+    assert (target / "definition.pbism").is_file()
+
+
+def test_export_refuses_the_definition_folder_it_is_run_in(osi, tmp_path, written, monkeypatch):
+    definition = tmp_path / "Sales.SemanticModel" / "definition"
+    definition.mkdir(parents=True)
+    monkeypatch.chdir(definition)
+    with pytest.raises(ConversionError, match="is the definition folder"):
+        export_powerbi_project(osi, ".")
+    assert not written
 
 
 @pytest.mark.parametrize(

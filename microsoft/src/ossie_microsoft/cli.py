@@ -185,6 +185,9 @@ def _run_export(args):
 def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.command == "export" and args.pbip == "":
+        # Path("") is the current directory, which is rarely what an empty value meant.
+        parser.error("--pbip requires a folder")
     if args.command == "export" and args.force and not args.pbip:
         parser.error("--force requires --pbip")
     handler = _run_import if args.command == "import" else _run_export

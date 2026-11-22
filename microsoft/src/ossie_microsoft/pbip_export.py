@@ -75,19 +75,20 @@ def export_powerbi_project(
     """
     semantic_model = convert_ossie_to_semantic_model(ossie_yaml_str, source=source)
     output = Path(output_dir)
-    _check_not_a_definition_folder(output)
+    # `.` and `..` stand for the folder they resolve to, such as the .SemanticModel
+    # folder the command is run in.
+    name = output.resolve().name if output.name in ("", "..") else output.name
     # Windows drops trailing dots and spaces, so `X.SemanticModel.` is X.SemanticModel.
-    if output.name.rstrip(". ").casefold().endswith(_SEMANTIC_MODEL_SUFFIX):
+    if name.rstrip(". ").casefold().endswith(_SEMANTIC_MODEL_SUFFIX):
         # Nesting <name>.SemanticModel inside it would leave the report's byPath on the
         # outer folder, so the project would silently keep its old model.
-        if not _is_portable(output.name):
+        if not _is_portable(name):
             raise ConversionError(
-                f"folder name {output.name!r} cannot name a semantic model folder; "
-                "rename the folder"
+                f"folder name {name!r} cannot name a semantic model folder; rename the folder"
             )
         folder = output
     else:
-        _check_not_a_pbip_file(output)
+        _check_project_folder(output, name)
         folder = output / f"{_folder_name(semantic_model['name'])}.SemanticModel"
     _check_target(folder, force)
 
@@ -124,21 +125,16 @@ def _is_portable(name):
     )
 
 
-def _check_not_a_definition_folder(output):
-    # Import reads a folder with a top-level database.tmdl as the definition itself, so a
-    # definition/ written inside it would clash with the old files instead of replacing them.
-    if output.name.casefold() == "definition" or (output / "database.tmdl").is_file():
-        raise ConversionError(
-            f"{output} is the definition folder of a semantic model; pass its "
-            ".SemanticModel folder instead"
-        )
-
-
-def _check_not_a_pbip_file(output):
-    # Import also accepts a .pbip file, but it cannot hold a <name>.SemanticModel folder.
+def _check_project_folder(output, name):
+    # Import also accepts these two, but neither can hold a <name>.SemanticModel folder.
     if output.suffix.casefold() == ".pbip":
         raise ConversionError(
             f"{output} is a .pbip file; pass the project folder or its .SemanticModel folder"
+        )
+    if name.casefold() == "definition" or (output / "database.tmdl").is_file():
+        raise ConversionError(
+            f"{output} is the definition folder of a semantic model; pass its "
+            ".SemanticModel folder instead"
         )
 
 
@@ -148,6 +144,13 @@ def _check_target(folder, force):
     if (folder / "model.bim").exists():
         raise ConversionError(
             f"{folder} stores its model as TMSL (model.bim); remove it to write TMDL"
+        )
+    # Import reads a folder with a top-level database.tmdl as the definition itself, so a
+    # definition/ written beside it would clash with the old files instead of replacing them.
+    if (folder / "database.tmdl").is_file():
+        raise ConversionError(
+            f"{folder} has database.tmdl at its top level, so import would read it as a "
+            "definition folder; remove its TMDL files or move them into definition/"
         )
     if not force and folder.is_dir() and any(folder.iterdir()):
         raise ConversionError(
