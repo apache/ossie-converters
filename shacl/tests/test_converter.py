@@ -75,7 +75,8 @@ ontology:
 
 
 def _convert(spec: OssieSpec, **options) -> Graph:
-    """Convert People, which drops nothing, so no warnings are expected."""
+    """Convert *spec* into a graph of shapes, failing on any warning: only use
+    it for ontologies that SHACL can hold in full, such as People."""
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         text = OssieToShaclConverter.convert_spec(
@@ -153,9 +154,10 @@ def test_string_enumeration_becomes_sh_in(flights_shapes: Graph):
 def test_what_shacl_cannot_hold_is_warned_about(flights_model: OssieOntology):
     with pytest.warns(UserWarning) as record:
         OssieToShaclConverter.convert(flights_model)
-    messages = [str(w.message) for w in record]
-    assert any("Ontology mapping, which is not read" in m for m in messages)
-    assert any("Derivation (`derived_by`)" in m for m in messages)
+    # Only keywords are matched, as ohi may reword its messages in any release.
+    messages = [str(w.message).lower() for w in record]
+    assert any("mapping" in m for m in messages)
+    assert any("derived_by" in m for m in messages)
     # The warnings point at the caller, not at this package.
     assert all(w.filename == __file__ for w in record)
 
@@ -234,7 +236,10 @@ def test_convert_and_convert_spec_agree(flights_model: OssieOntology):
             OssieToSpecConverter.convert(flights_model),
             schema_id="https://example.org/flights",
         )
-    assert from_spec == _flights(flights_model)
+    # Compared as graphs: the order of the triples in the text is not fixed.
+    assert Graph().parse(data=from_spec, format="turtle").isomorphic(
+        Graph().parse(data=_flights(flights_model), format="turtle")
+    )
 
 
 def test_schema_id_defaults_to_a_placeholder(people_spec: OssieSpec):

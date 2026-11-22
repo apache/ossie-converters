@@ -31,9 +31,6 @@ this package but live in their own directories.
 | `ossie_to_spec`         | Ossie model → Spec YAML |
 | `spec_to_ossie`         | Spec YAML → Ossie model |
 
-The Ossie → RelationalAI (PyRel) converter builds on this package and lives in
-its own directory, [`relationalai/`](../relationalai/README.md).
-
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) — Python package and dependency manager

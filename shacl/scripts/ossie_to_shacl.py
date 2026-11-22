@@ -15,12 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
-
-
 # Description:
 #
 #   This script converts an Ossie ontology into SHACL shapes, printed to stdout
-#   as Turtle. The input is a single Ossie document, as YAML or JSON.
+#   as Turtle or N-Triples. The input is a single Ossie document, as YAML or
+#   JSON.
 #
 #   The conversion goes through LinkML. Only the ontology is converted:
 #   'ontology_mappings' (datasets, join paths, metrics) and 'derived_by' rules
@@ -30,7 +29,7 @@
 #
 # Usage:
 #
-#   $ python ossie_to_shacl.py [--closed] <path_to_ossie_document> [base_iri]
+#   $ python ossie_to_shacl.py [--closed] [--format ttl|nt] <path_to_ossie_document> [base_iri]
 #
 #   Shapes are open (they allow properties beyond the ontology's) unless
 #   --closed is given. An Ossie ontology carries no IRI of its own, so the
@@ -39,7 +38,7 @@
 #
 # Outputs:
 #
-#   - stdout: The SHACL shapes, as Turtle
+#   - stdout: The SHACL shapes, as Turtle (default) or N-Triples
 #   - stderr: One warning per kind of thing that was dropped, such as
 #     `derived_by` rules or ontology mappings
 #
@@ -55,8 +54,11 @@ if __name__ == "__main__":
     parser.add_argument("path", type=Path, help="Ossie document (.yaml or .json)")
     parser.add_argument("base_iri", nargs="?", help="base IRI of the shapes, classes and properties")
     parser.add_argument("--closed", action="store_true", help="reject properties the ontology does not declare")
+    parser.add_argument("--format", choices=["ttl", "nt"], default="ttl", help="RDF serialization of the output (default: ttl)")
     args = parser.parse_args()
 
     model = OssieParser().parse(args.path)
 
-    print(OssieToShaclConverter.convert(model, schema_id=args.base_iri, closed=args.closed))
+    print(OssieToShaclConverter.convert(
+        model, schema_id=args.base_iri, output_format=args.format, closed=args.closed
+    ))

@@ -84,7 +84,7 @@ print(OssieToShaclConverter.convert(ontology, schema_id="https://example.org/my-
 
 ### `scripts/ossie_to_shacl.py`
 
-Converts an Ossie ontology (YAML or JSON) into SHACL shapes, printed to stdout as Turtle. Warnings about what was dropped are written to stderr.
+Converts an Ossie ontology (YAML or JSON) into SHACL shapes, printed to stdout as Turtle, or as N-Triples with `--format nt`. Warnings about what was dropped are written to stderr.
 
 **Usage:**
 
@@ -94,6 +94,8 @@ uv run python scripts/ossie_to_shacl.py path/to/ossie.yaml
 uv run python scripts/ossie_to_shacl.py path/to/ossie.yaml https://example.org/my-ontology
 # Closed shapes:
 uv run python scripts/ossie_to_shacl.py --closed path/to/ossie.yaml
+# N-Triples instead of Turtle:
+uv run python scripts/ossie_to_shacl.py --format nt path/to/ossie.yaml
 ```
 
 ## Running the tests
