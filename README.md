@@ -38,7 +38,7 @@ git submodule update --init
 ```
 
 Repository-level cross-converter acceptance and pairwise checks live in
-[`interop/`](interop/README.md). The matrix registers all 25 converter projects,
+[`interop/`](interop/README.md). The matrix registers all 26 converter projects,
 with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
 
 The Microsoft converter also has an optional

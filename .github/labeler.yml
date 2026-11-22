@@ -84,6 +84,10 @@ converter/palantir:
   - changed-files:
       - any-glob-to-any-file: 'palantir/**'
 
+converter/owl:
+  - changed-files:
+      - any-glob-to-any-file: 'owl/**'
+
 converter/polaris:
   - changed-files:
       - any-glob-to-any-file: 'polaris/**'
