@@ -266,6 +266,17 @@ def test_n_triples():
     assert Graph().parse(data=text, format="nt").isomorphic(_people_owl())
 
 
+def test_convert_file(flights_path: Path, flights_model: OssieOntology):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        from_file = OssieToOwlConverter.convert_file(
+            flights_path, schema_id="https://example.org/flights"
+        )
+    assert Graph().parse(data=from_file, format="turtle").isomorphic(
+        Graph().parse(data=_flights_owl(flights_model), format="turtle")
+    )
+
+
 def test_convert_and_convert_spec_agree(flights_model: OssieOntology):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -344,7 +355,7 @@ def test_property_without_a_domain_is_dropped(library_spec: OssieSpec):
 def test_what_ossie_cannot_hold_is_warned_about():
     document = LIBRARY_OWL + "lib:mobyDick a lib:Book .\n"
     with pytest.warns(UserWarning) as record:
-        OwlToOssieConverter().convert_text(document)
+        OwlToOssieConverter().convert(document)
     assert any("individual" in str(w.message).lower() for w in record)
     assert all(w.filename == __file__ for w in record)
 
@@ -358,6 +369,31 @@ def test_runtime_model_is_built(tmp_path: Path):
     assert model.ontology.lookup_concept("Format").is_value_type
 
 
+def test_spec_then_model(library_spec: OssieSpec):
+    # The same model as `convert`, built in two steps.
+    model = OwlToOssieConverter().to_model(library_spec)
+    assert {c.name for c in model.ontology.concepts() if not c.is_builtin} == {
+        "Agent", "Person", "Book", "Format",
+    }
+
+
+def test_labels_in_another_language_are_kept():
+    # Only Italian text: asking for English still gets it, rather than nothing.
+    italian = '"Qualcuno che può scrivere un libro."@it'
+    english = '"Someone who can write a book."'
+    document = LIBRARY_OWL.replace(english, italian)
+    spec = _no_warnings(OwlToOssieConverter().convert_to_spec, document, metadata_language="en")
+    assert _concept(spec, "Agent").description == "Qualcuno che può scrivere un libro."
+    # With both, the language asked for wins.
+    both = LIBRARY_OWL.replace(english, f"{italian} , {english}@en")
+    for language, text in [
+        ("it", "Qualcuno che può scrivere un libro."),
+        ("en", "Someone who can write a book."),
+    ]:
+        spec = _no_warnings(OwlToOssieConverter().convert_to_spec, both, metadata_language=language)
+        assert _concept(spec, "Agent").description == text
+
+
 def test_pattern_is_not_parsed_yet():
     # A pattern comes over as `REGEXP_LIKE(...)`, which the expression
     # language defines but the ontology package's parser does not read yet.
@@ -368,9 +404,9 @@ def test_pattern_is_not_parsed_yet():
     )["shelf_mark"]
     assert shelf_mark.requires == ["REGEXP_LIKE(String, '^[A-Z]+[0-9]+$')"]
     with pytest.raises(ValueError, match="REGEXP_LIKE"):
-        OwlToOssieConverter().convert_text(document)
+        OwlToOssieConverter().convert(document)
     # Keeping formulas as raw text gets past it.
-    _no_warnings(OwlToOssieConverter(formula_factory=FormulaFactory()).convert_text, document)
+    _no_warnings(OwlToOssieConverter(formula_factory=FormulaFactory()).convert, document)
 
 
 def test_n_triples_input(library_spec: OssieSpec):
@@ -403,5 +439,9 @@ def test_round_trip_keeps_classes_subtypes_and_counts():
         "person_name": ["String"],
         "person_knows": ["Person"],
     }
+    # `name` was OneToOne and the key; it comes back required, ManyToOne, and
+    # no longer a key.
     assert person["person_name"].multiplicity == "ManyToOne"
+    assert _concept(back, "Person").requires == ["Person.person_name"]
+    assert not _concept(back, "Person").identify_by
     assert person["person_knows"].multiplicity is None

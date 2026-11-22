@@ -50,8 +50,6 @@
 import argparse
 from pathlib import Path
 
-from ossie_ontology.parser import OssieParser
-
 from ossie_owl import OssieToOwlConverter
 
 if __name__ == "__main__":
@@ -61,6 +59,4 @@ if __name__ == "__main__":
     parser.add_argument("--format", choices=["ttl", "nt"], default="ttl", help="RDF serialization of the output (default: ttl)")
     args = parser.parse_args()
 
-    model = OssieParser().parse(args.path)
-
-    print(OssieToOwlConverter.convert(model, schema_id=args.ontology_iri, output_format=args.format))
+    print(OssieToOwlConverter.convert_file(args.path, schema_id=args.ontology_iri, output_format=args.format))

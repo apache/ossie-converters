@@ -28,12 +28,14 @@ Pairs with owl_to_ossie.OwlToOssieConverter for the other direction."""
 from __future__ import annotations
 
 import warnings
+from pathlib import Path
 from typing import Literal
 
 import ohi_linkml
 
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
 from ossie_ontology.model import OssieOntology
+from ossie_ontology.parser import OssieParser
 from ossie_ontology.spec import OssieSpec
 
 
@@ -63,6 +65,7 @@ class OssieToOwlConverter:
     https://linkml.ohi.dev/docs/generators/owl/
 
         ontology_ttl = OssieToOwlConverter.convert(model)
+        ontology_ttl = OssieToOwlConverter.convert_file("ontology.yaml")
     """
 
     @staticmethod
@@ -96,12 +99,25 @@ class OssieToOwlConverter:
         return OssieToOwlConverter._convert_spec(spec, schema_id, output_format)
 
     @staticmethod
+    def convert_file(
+        path: str | Path,
+        schema_id: str | None = None,
+        output_format: Literal["ttl", "nt"] = "ttl",
+    ) -> str:
+        """Read an Ossie document from disk, as YAML or JSON, and convert it.
+        The options are those of `convert`."""
+        model = OssieParser().parse(Path(path))
+        return OssieToOwlConverter._convert_spec(
+            OssieToSpecConverter.convert(model), schema_id, output_format
+        )
+
+    @staticmethod
     def _convert_spec(
         spec: OssieSpec,
         schema_id: str | None,
         output_format: Literal["ttl", "nt"],
     ) -> str:
-        # Called straight from both public methods, so stacklevel=3 always points
+        # Called straight from every public method, so stacklevel=3 always points
         # the warnings at the caller's code rather than at this module.
         result = ohi_linkml.from_ossie(spec.dump_yaml(), schema_id=schema_id)
         # One line per kind of thing LinkML has no place for, e.g. `derived_by`.

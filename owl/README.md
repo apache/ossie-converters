@@ -90,9 +90,11 @@ print(OssieToSpecConverter.convert(ontology).dump_yaml())
 print(OssieToOwlConverter.convert(ontology, schema_id="https://example.org/my-ontology"))
 ```
 
-`OssieToOwlConverter`: `schema_id` is the IRI of the ontology, and the base IRI of its classes and properties. An Ossie ontology has no IRI of its own, so without it a placeholder built from the ontology's name is used. `output_format` is `ttl` (the default) or `nt`. `convert_spec` does the same from an `OssieSpec`, without building the runtime model.
+`OssieToOwlConverter` converts a runtime model (`convert`), an `OssieSpec` (`convert_spec`) or an Ossie document on disk (`convert_file`). `schema_id` is the IRI of the ontology, and the base IRI of its classes and properties. An Ossie ontology has no IRI of its own, so without it a placeholder built from the ontology's name is used. `output_format` is `ttl` (the default) or `nt`.
 
-`OwlToOssieConverter` reads Turtle or N-Triples. `name` names the ontology; by default it is the ontology's `rdfs:label` if that is a usable name, else the prefix of most of its terms. `metadata_language` picks the language of labels and comments in ontologies that contain multilingual strings. `convert_to_spec` stops at the Ossie document, without building the runtime model.
+`OwlToOssieConverter` reads Turtle or N-Triples, from a string (`convert`) or a file (`convert_file`). `name` names the ontology; by default it is the ontology's `rdfs:label` if that is a usable name, else the prefix of most of its terms. `metadata_language` picks the language of labels and comments in ontologies that contain multilingual strings; where there is no text in that language, text in another language or without a language tag is used instead. `convert_to_spec` stops at the Ossie document, and `to_model` builds the runtime model from it later.
+
+A round trip, Ossie → OWL → Ossie, does not give back the same document. Relationship names are rebuilt from the property IRIs, so `name` on `Person` comes back as `person_name`. Value types come back as the built-in they are built on, and a single `OneToOne` relationship in `identify_by` comes back as a required `ManyToOne` one, no longer a key.
 
 ## Scripts
 

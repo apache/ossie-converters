@@ -66,6 +66,7 @@ class OwlToOssieConverter:
     unset, SpecToOssieConverter's defaults apply and every formula is parsed.
 
         model = OwlToOssieConverter().convert_file("ontology.ttl")
+        model = OwlToOssieConverter().convert(ontology_ttl)
     """
 
     def __init__(self, formula_factory: FormulaFactory | None = None,
@@ -75,7 +76,7 @@ class OwlToOssieConverter:
         self._formula_factory = formula_factory
         self._mapping_formula_factory = mapping_formula_factory
 
-    def convert_text(
+    def convert(
         self,
         document: str,
         name: str | None = None,
@@ -86,9 +87,11 @@ class OwlToOssieConverter:
         *name* names the ontology. By default it is the ontology's
         `rdfs:label` if that is a usable name, else the prefix of most of its
         terms. *metadata_language* picks the language of labels and comments in
-        ontologies that carry translations.
+        ontologies that carry translations. Where a label or comment has no
+        text in that language, text in another language or without a language
+        tag is used instead, so nothing is dropped for its language.
         """
-        return self._to_model(self._to_spec(document, name, metadata_language))
+        return self.to_model(self._to_spec(document, name, metadata_language))
 
     def convert_file(
         self,
@@ -97,9 +100,9 @@ class OwlToOssieConverter:
         metadata_language: str = "en",
     ) -> OssieOntology:
         """Read an ontology from disk, as Turtle or N-Triples, and convert it.
-        The options are those of `convert_text`."""
+        The options are those of `convert`."""
         document = Path(path).read_text(encoding="utf-8")
-        return self._to_model(self._to_spec(document, name, metadata_language))
+        return self.to_model(self._to_spec(document, name, metadata_language))
 
     def convert_to_spec(
         self,
@@ -110,11 +113,14 @@ class OwlToOssieConverter:
         """Convert an ontology, stopping at the spec DTO.
 
         The shorter path when the caller only wants to write the Ossie document
-        out rather than build the runtime model.
+        out rather than build the runtime model; `to_model` builds it later.
         """
         return self._to_spec(document, name, metadata_language)
 
-    def _to_model(self, spec: OssieSpec) -> OssieOntology:
+    def to_model(self, spec: OssieSpec) -> OssieOntology:
+        """Build the runtime model from a spec DTO, such as one from
+        `convert_to_spec`, with this converter's formula factories. Raises if
+        the document is not valid Ossie."""
         return SpecToOssieConverter(
             formula_factory=self._formula_factory,
             mapping_formula_factory=self._mapping_formula_factory,

@@ -55,7 +55,6 @@
 import argparse
 from pathlib import Path
 
-from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 from ossie_ontology.model import FormulaFactory
 
 from ossie_owl import OwlToOssieConverter
@@ -69,11 +68,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     document = args.path.read_text(encoding="utf-8")
-    spec = OwlToOssieConverter().convert_to_spec(
+    converter = OwlToOssieConverter(formula_factory=FormulaFactory() if args.raw_formulas else None)
+    spec = converter.convert_to_spec(
         document, name=args.name, metadata_language=args.metadata_language
     )
     # Build the runtime model only as a check: it raises if the document is
     # not valid Ossie. The document printed is the one ohi wrote.
-    SpecToOssieConverter(formula_factory=FormulaFactory() if args.raw_formulas else None).convert(spec)
+    converter.to_model(spec)
 
     print(spec.dump_yaml())
