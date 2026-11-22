@@ -176,6 +176,9 @@ converters:
   palantir:
     cwd: palantir
     skip: Converts Palantir ontology exports into Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
+  rdfs:
+    cwd: rdfs
+    skip: Converts between RDFS vocabularies and Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
   relationalai:
     cwd: relationalai
     skip: Converts Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.

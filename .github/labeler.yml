@@ -88,6 +88,10 @@ converter/polaris:
   - changed-files:
       - any-glob-to-any-file: 'polaris/**'
 
+converter/rdfs:
+  - changed-files:
+      - any-glob-to-any-file: 'rdfs/**'
+
 converter/relationalai:
   - changed-files:
       - any-glob-to-any-file: 'relationalai/**'

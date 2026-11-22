@@ -21,17 +21,15 @@
 
 Converters between Ossie and Spec ontology formats.
 
-The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)) and the
+The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)), the
 Ossie → RelationalAI converter ([`relationalai/`](../relationalai/README.md))
-are built on this package but live in their own directories.
+and the RDFS ↔ Ossie converters ([`rdfs/`](../rdfs/README.md)) are built on
+this package but live in their own directories.
 
 | Converter               | Direction |
 |-------------------------|-----------|
 | `ossie_to_spec`         | Ossie model → Spec YAML |
 | `spec_to_ossie`         | Spec YAML → Ossie model |
-
-The Ossie → RelationalAI (PyRel) converter builds on this package and lives in
-its own directory, [`relationalai/`](../relationalai/README.md).
 
 ## Prerequisites
 

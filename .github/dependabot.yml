@@ -53,6 +53,7 @@ updates:
       - "/omni"
       - "/ontology"
       - "/orionbelt"
+      - "/rdfs"
       - "/relationalai"
       - "/palantir"
       - "/sigma"
