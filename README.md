@@ -38,8 +38,15 @@ git submodule update --init
 ```
 
 Repository-level cross-converter acceptance and pairwise checks live in
-[`interop/`](interop/README.md). The matrix registers all 25 converter projects,
+[`interop/`](interop/README.md). The matrix registers all 26 converter projects,
 with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
+
+The Microsoft converter also has an optional
+[vendor-specific live validation helper](microsoft/README.md#optional-live-engine-validation).
+`ossie_microsoft.engine` deploys exported Power BI models to Microsoft Fabric and asks
+Microsoft's engine to compile and evaluate their DAX against generated sample data.
+It does not implement Ossie's Layer 2/3 query semantics or establish cross-vendor
+query-result equivalence.
 
 Contributions follow the Apache Ossie
 [contribution guide](https://github.com/apache/ossie/blob/main/CONTRIBUTING.md).
@@ -48,8 +55,10 @@ Contributions follow the Apache Ossie
 
 Converters use the [flat core format](https://github.com/apache/ossie/tree/main/core-spec): one model per JSON/YAML document,
 with `name`, `datasets`, `relationships`, and `metrics` at the root alongside
-`version`. Legacy `semantic_model` arrays or object wrappers must be migrated
-before conversion; see the [migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
+`version`. Migrate legacy `semantic_model` wrappers before conversion unless the
+target converter explicitly supports them. The [Microsoft converter](microsoft/README.md)
+accepts the single-model `0.1.1` array returned by Snowflake Semantic Views. See the
+[migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
 For catalog exports, write separate documents rather than wrapping multiple
 models in one file. Ontology documents retain their embedded `semantic_model`
 property as defined by the ontology schema.
@@ -92,7 +101,7 @@ Read an Ossie semantic model and produce the equivalent vendor-specific represen
 - Ossie → Snowflake semantic model definition
 - Ossie → dbt `semantic_models` YAML
 - Ossie → Tableau data source / Salesforce semantic layer
-- Ossie → Databricks semantic layer definition
+- Ossie → Databricks Unity Catalog metric views
 - Ossie → LookML (Looker / BigQuery)
 
 ### Import (Vendor → Apache Ossie)
@@ -118,6 +127,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `CUBE` | Cube data model |
 | `HEX` | Hex semantic project |
 | `HOLISTICS` | Holistics AML dataset |
+| `ATLAN` | Atlan metric registry records |
 | `LIGHTDASH` | Lightdash semantic layer (model files, or dbt `meta`) |
 | `ATACCAMA` | Ataccama ONE catalog metadata |
 
@@ -140,7 +150,7 @@ The top-level container. Maps to the root object in each vendor's format.
 | `ai_context` | Instructions, synonyms for AI tools | Map if vendor supports AI/LLM annotations |
 | `datasets` | Logical datasets (fact/dimension tables) | See dataset mapping below |
 | `relationships` | Foreign key connections | See relationship mapping below |
-| `metrics` | Aggregate measures | See metric mapping below |
+| `metrics` | Model-scoped aggregate measures | See metric mapping below |
 | `custom_extensions` | Vendor-specific metadata | Extract extensions matching the target vendor |
 
 ### Datasets
@@ -154,6 +164,7 @@ Datasets represent logical tables (fact or dimension tables). They contain field
 | `primary_key` | Single or composite primary key | Map to vendor's PK syntax; note composite keys use arrays like `[order_id, line_number]` |
 | `unique_keys` | Alternative unique identifiers | Map if vendor supports unique constraints |
 | `fields` | Row-level attributes (columns) | See field mapping below |
+| `metrics` | Dataset-scoped aggregate measures | See metric mapping below |
 | `ai_context` | Synonyms and context for AI | Map if vendor supports semantic annotations |
 | `custom_extensions` | Vendor-specific metadata | Extract extensions matching the target vendor |
 
@@ -212,7 +223,14 @@ means `from.product_id = to.id AND from.variant_id = to.variant_id`. The convert
 
 ### Metrics
 
-Metrics are aggregate measures defined at the semantic model level. They can span multiple datasets via relationships.
+Metrics are aggregate measures. There are two flavors:
+
+- **Dataset-scoped** (`datasets[].metrics`): aggregations that belong to a single dataset. The expression references that dataset's declared fields by single-part (unqualified) name (e.g. `SUM(amount)`) and resolves entirely within it, at the dataset's row level. The dataset then carries its own metrics and stays queryable on its own. A source column that is not a declared field is written `source.column` (e.g. `SUM(source.quantity)`).
+- **Model-scoped** (`metrics` at the model root): aggregations that span datasets across the model. The expression references fields by multi-part name (`dataset.field`) and may combine fields from more than one dataset.
+
+When producing Ossie, generally bias toward declaring a metric that is scoped to a single dataset as a dataset-scoped metric rather than at the model root; reserve the model root for aggregations that genuinely span datasets.
+
+See [Metric Scoping](https://github.com/apache/ossie/blob/main/core-spec/spec.md#metric-scoping) for the full rules.
 
 | Ossie Field | Description | Converter Consideration |
 |-----------|-------------|------------------------|

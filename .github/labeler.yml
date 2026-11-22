@@ -20,6 +20,10 @@ converter/ataccama:
   - changed-files:
       - any-glob-to-any-file: 'ataccama/**'
 
+converter/atlan:
+  - changed-files:
+      - any-glob-to-any-file: 'atlan/**'
+
 converter/celonis:
   - changed-files:
       - any-glob-to-any-file: 'celonis/**'

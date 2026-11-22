@@ -39,9 +39,11 @@ updates:
   - package-ecosystem: "uv"
     directories:
       - "/ataccama"
+      - "/atlan"
       - "/bigquery"
       - "/celonis"
       - "/cube"
+      - "/databricks"
       - "/dbt"
       - "/gooddata"
       - "/honeydew"
@@ -68,7 +70,6 @@ updates:
   # Maven / Java converters
   - package-ecosystem: "maven"
     directories:
-      - "/databricks/java"
       - "/polaris"
       - "/salesforce"
     schedule:
