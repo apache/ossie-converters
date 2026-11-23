@@ -33,7 +33,7 @@ from . import stash
 from .calc_catalog import CATALOG
 from .formula import masked, refs as formula_refs, sub_refs, tokenize
 from .losses import spec as loss_spec
-from .warehouse import DEFAULT, GENERIC, WAREHOUSES, Warehouse, by_tableau_class, needs_quote
+from .warehouse import DEFAULT, GENERIC, WAREHOUSES, Warehouse, by_tableau_class, needs_quote, pick_sql
 
 from ossie.models import (
     OssieAIContextObject,
@@ -793,7 +793,6 @@ def _make_sql_resolver(ds_fields: dict, wh: Warehouse = DEFAULT, addressing: dic
                        metric_names: set[str] | None = None):
     """Return `sql_dialect(tab, home, label, losses)` over an index of ds_fields that is built once and extended incrementally as fields are appended."""
     from .calc_parser import Untranslatable, translate
-    preference = wh.dialect_preference
     import sqlglot
     from sqlglot import exp
     sql_of: dict[tuple[str, str], tuple[str, str | None]] = {}
@@ -812,11 +811,9 @@ def _make_sql_resolver(ds_fields: dict, wh: Warehouse = DEFAULT, addressing: dic
                 key = (tn, f.name)
                 type_of[key] = _type(f)
                 by_name.setdefault(f.name, set()).add(key)
-                for pref in preference:
-                    d = next((x for x in f.expression.dialects if x.dialect.value == pref), None)
-                    if d:
-                        sql_of[key] = (d.expression, None if pref == "ANSI_SQL" else wh.sqlglot_dialect)
-                        break
+                sql, read, _ = pick_sql(f.expression, wh)
+                if sql is not None:
+                    sql_of[key] = (sql, read)
             seen[tn] = len(fs)
 
     def _home_name(home: str | None) -> str | None:
@@ -836,11 +833,17 @@ def _make_sql_resolver(ds_fields: dict, wh: Warehouse = DEFAULT, addressing: dic
                 while isinstance(node, exp.Paren):
                     node = node.this
             else:
-                node = exp.column(name, table=ds)
+                node = exp.Column(
+                    this=exp.to_identifier(name, quoted=needs_quote(name, wh)),
+                    table=exp.to_identifier(ds, quoted=needs_quote(ds, wh)),
+                )
             # home == "" means "no home table": the metric spans tables, so every column keeps its qualifier.
             home_eff = _home_name(home)
             if isinstance(node, exp.Column) and table and (home == "" or (home_eff and table.lower() != home_eff.lower())):
-                node = exp.column(node.name, table=table)
+                node = exp.Column(
+                    this=node.this.copy(),
+                    table=exp.to_identifier(table, quoted=needs_quote(table, wh)),
+                )
             return exp.Paren(this=node), typ
         key = (home or "", name)
         hit = sql_of.get(key)
@@ -1393,12 +1396,11 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
             elif (k := internal_of.get(ref)) in emitted:
                 et, ename, _dt = emitted[k]
                 ef = next((x for x in ds_fields[et.name] if x.name == ename), None)
-                d = next((x for pref in (target_dialect, OssieDialect.ANSI_SQL) for x in ef.expression.dialects if x.dialect == pref), None) if ef else None
-                if d is None:
+                sub, _read, matched = pick_sql(ef.expression, wh) if ef else (None, None, None)
+                if sub is None:
                     return False
                 tabs.add(et.name)
-                sub = d.expression
-                if d.dialect == OssieDialect.ANSI_SQL and wh.sqlglot_dialect:  # ANSI "x" is a string literal on BigQuery
+                if matched != wh.ossie_dialect and wh.sqlglot_dialect:  # ANSI/OSSIE_SQL_2026 "x" is a string literal on BigQuery
                     sub = sqlglot.parse_one(sub).sql(dialect=wh.sqlglot_dialect)
                 subs.append(f"({sub})")
             else:

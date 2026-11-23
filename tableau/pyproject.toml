@@ -29,7 +29,7 @@ dev = [
 
 [project]
 name = "apache-ossie-tableau"
-version = "0.2.0.dev0"
+version = "0.3.0.dev0"
 description = "Tableau classic (.tds/.twb/.twbx) <> Apache Ossie converter"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
 requires-python = ">=3.11"
@@ -43,7 +43,7 @@ keywords = [
     "TWB"
 ]
 dependencies = [
-    "apache-ossie>=0.2.0.dev0",
+    "apache-ossie>=0.3.0.dev0",
     "PyYAML>=6.0",
     "sqlglot>=30.12.0",
 ]

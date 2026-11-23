@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass, field
 
 ANSI_SQL = "ANSI_SQL"
+OSSIE_SQL_2026 = "OSSIE_SQL_2026"
 
 
 @dataclass(frozen=True)
@@ -118,3 +119,22 @@ def needs_quote(name: str, wh: Warehouse | None = None) -> bool:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) or name.lower() in RESERVED:
         return True
     return wh is not None and wh.fold == "upper" and name != name.upper()
+
+
+def dialect_value(expr, name: str) -> str | None:
+    """Expression text for `name` from an OssieExpression (`expr.sql` outranks `OSSIE_SQL_2026` in `dialects`)."""
+    if name == OSSIE_SQL_2026 and getattr(expr, "sql", None) is not None:
+        return expr.sql
+    for d in getattr(expr, "dialects", None) or ():
+        if d.dialect == name:
+            return d.expression
+    return None
+
+
+def pick_sql(expr, wh: Warehouse) -> tuple[str | None, str | None, str | None]:
+    """Return `(sql, sqlglot_read_dialect, matched_ossie_dialect)` for `expr` on `wh`."""
+    for name in (*wh.dialect_preference, OSSIE_SQL_2026):
+        sql = dialect_value(expr, name)
+        if sql is not None:
+            return sql, (wh.sqlglot_dialect if name == wh.ossie_dialect else None), name
+    return None, None, None

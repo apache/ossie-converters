@@ -1,4 +1,4 @@
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: federated_1b4cgxc0es9g0e1da4yec04i4bu9
 description: Converted from Tableau datasource federated.1b4cgxc0es9g0e1da4yec04i4bu9
 datasets:
@@ -520,7 +520,7 @@ metrics:
         / COUNTD([CUSTOMER].[C_CUSTKEY])
     - dialect: SNOWFLAKE
       expression: SUM((LINEITEM.L_EXTENDEDPRICE) * (1 - (LINEITEM.L_DISCOUNT))) /
-        COUNT(DISTINCT (C_CUSTKEY))
+        COUNT(DISTINCT (CUSTOMER.C_CUSTKEY))
   datatype: Float
   custom_extensions:
   - vendor_name: TABLEAU

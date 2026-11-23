@@ -929,7 +929,6 @@ def emit_tableau(tree: exp.Expression, ref: Callable[[exp.Column], str] | None =
             return out if n.parent is None or isinstance(n.parent, (exp.And, exp.Or, exp.Paren)) else f"({out})"
         if t is exp.Case:
             subj = n.args.get("this")
-            f"CASE {e(subj)}" if subj is not None else "IF"
             parts = []
             for i, w in enumerate(n.args["ifs"]):
                 kw = "WHEN" if subj is not None else ("IF" if i == 0 else "ELSEIF")

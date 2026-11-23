@@ -243,7 +243,7 @@ def _bin_ds(calc_xml: str, params: str = ""):
 
 def _expr(r, name, dialect="TABLEAU"):
     f = next(f for f in r.document.datasets[0].fields if f.name == name)
-    return next(d.expression for d in f.expression.dialects if d.dialect.value == dialect)
+    return next(d.expression for d in f.expression.dialects if d.dialect == dialect)
 
 
 def test_bin_with_literal_size_becomes_floor_field():
@@ -314,7 +314,7 @@ def test_record_count_emits_count_star_when_key_is_known():
     r = convert_datasource(_numrec_ds(unique=True))
     (m,) = r.document.metrics
     assert m.expression.dialects[0].expression == "COUNT(*)"
-    assert any(d.expression == "COUNT(*)" for d in m.expression.dialects if d.dialect.value != "TABLEAU")
+    assert any(d.expression == "COUNT(*)" for d in m.expression.dialects if d.dialect != "TABLEAU")
     (loss,) = [x for x in r.losses if x.kind == "record_count"]
     assert loss.severity == "info"
     assert not any(f.name.endswith("_ONE") for d in r.document.datasets for f in d.fields)
@@ -380,7 +380,7 @@ def test_metric_referencing_metric_keeps_a_bare_name():
     exprs = {m.name: m.expression.dialects[0].expression for m in r.document.metrics}
     assert exprs.get("Twice") == "SUM([orders].[amt]) / Base"
     assert not any(x.kind == "metric_inlined" for x in r.losses)
-    sqls = {m.name: next((d.expression for d in m.expression.dialects if d.dialect.value != "TABLEAU"), None)
+    sqls = {m.name: next((d.expression for d in m.expression.dialects if d.dialect != "TABLEAU"), None)
             for m in r.document.metrics}
     assert sqls.get("Twice") and "Base" in sqls["Twice"] and "SUM" in sqls["Twice"]
 
@@ -608,7 +608,7 @@ def test_cross_dataset_sum_ratio_has_warehouse_sql():
     (m,) = r.document.metrics
     tab = m.expression.dialects[0].expression
     assert tab == "SUM([a].[x]) / SUM([b].[y])"
-    sql = next(d.expression for d in m.expression.dialects if d.dialect.value != "TABLEAU")
+    sql = next(d.expression for d in m.expression.dialects if d.dialect != "TABLEAU")
     assert "SUM" in sql and "x" in sql and "y" in sql
     assert "sql_untranslated" not in {x.kind for x in r.losses}
 
@@ -617,7 +617,7 @@ def test_cross_dataset_untranslated_keeps_tableau_only():
     r = convert_datasource(_two_table_ds("SUM([a].[x]) / MYFUNC(SUM([b].[y]))"))
     (m,) = r.document.metrics
     assert m.expression.dialects[0].expression.startswith("SUM([a].[x])")
-    assert not any(d.dialect.value in ("SNOWFLAKE", "ANSI_SQL", "BIGQUERY") for d in m.expression.dialects)
+    assert not any(d.dialect in ("SNOWFLAKE", "ANSI_SQL", "BIGQUERY") for d in m.expression.dialects)
     assert "sql_untranslated" in {x.kind for x in r.losses}
 
 
@@ -627,7 +627,7 @@ def test_bare_aggregate_without_bigquery_form_records_sql_untranslated(formula):
                       + calc(formula) + "</datasource>")
     r = convert_datasource(x)
     m = next(m for m in r.document.metrics if m.name == "C")
-    assert [d.dialect.value for d in m.expression.dialects] == ["TABLEAU"]
+    assert [d.dialect for d in m.expression.dialects] == ["TABLEAU"]
     assert ("sql_untranslated", "C") in {(x.kind, x.name) for x in r.losses}
 
 

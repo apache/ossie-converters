@@ -86,8 +86,28 @@ def test_snowflake_mixed_case_columns_and_tables_are_quoted():
     (d,) = r.document.datasets
     assert d.source == 'DB.PUBLIC."OrderLines"'
     assert _field_sql(r) == {"OrderId": '"OrderId"', "AMOUNT": "AMOUNT", "region": '"region"'}
-    metric = next(x.expression for x in r.document.metrics[0].expression.dialects if x.dialect.value == "SNOWFLAKE")
+    metric = next(x.expression for x in r.document.metrics[0].expression.dialects if x.dialect == "SNOWFLAKE")
     assert '"OrderId"' in metric and '"AMOUNT"' not in metric
+
+
+def test_snowflake_multi_table_metric_preserves_quoting():
+    xml = ET.fromstring(
+        "<datasource name='d'><connection class='snowflake' dbname='DB' schema='PUBLIC'>"
+        "<relation connection='c' name='OrderLines' table='[PUBLIC].[OrderLines]' type='table'/>"
+        "<relation connection='c' name='Customers' table='[PUBLIC].[Customers]' type='table'/>"
+        + recs("OrderLines", [("OrderId", "integer"), ("start", "real")])
+        + recs("Customers", [("OrderId", "integer"), ("Score", "real")])
+        + "</connection><object-graph><objects>"
+        "<object id='O1' caption='OrderLines'><properties><relation connection='c' name='OrderLines' table='[PUBLIC].[OrderLines]' type='table'>"
+        "<columns><column name='OrderId' datatype='integer'/><column name='start' datatype='real'/></columns></relation></properties></object>"
+        "<object id='O2' caption='Customers'><properties><relation connection='c' name='Customers' table='[PUBLIC].[Customers]' type='table'>"
+        "<columns><column name='OrderId' datatype='integer'/><column name='Score' datatype='real'/></columns></relation></properties></object>"
+        "</objects><relationships><relationship><expression op='='><expression op='[OrderId]'/><expression op='[OrderId]'/></expression>"
+        "<first-end-point object-id='O1'/><second-end-point object-id='O2'/></relationship></relationships></object-graph>"
+        + calc("SUM([start]) + SUM([Score])") + "</datasource>")
+    r = convert_datasource(xml)
+    metric = next(x.expression for x in r.document.metrics[0].expression.dialects if x.dialect == "SNOWFLAKE")
+    assert '"OrderLines"."start"' in metric and '"Customers"."Score"' in metric
 
 
 def test_bigquery_mixed_case_columns_stay_bare():

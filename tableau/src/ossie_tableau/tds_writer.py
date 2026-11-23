@@ -37,7 +37,7 @@ from . import stash
 from .convert import Loss
 from .calc_parser import Untranslatable, from_sql as calc_from_sql
 from .formula import tokenize
-from .warehouse import BIGQUERY, SNOWFLAKE, Connection
+from .warehouse import BIGQUERY, SNOWFLAKE, Connection, dialect_value, needs_quote, pick_sql
 
 _REPLAYED_RAW = {
     "aliases", "semantic-values", "parameter", "filter", "drill-paths",
@@ -139,19 +139,16 @@ def _tableau_ext(obj) -> dict:
 
 def _dialect(expr, *names: str) -> str | None:
     for n in names:
-        for d in expr.dialects:
-            if d.dialect.value == n:
-                return d.expression
+        val = dialect_value(expr, n)
+        if val is not None:
+            return val
     return None
 
 
 def _pick(expr, wh) -> tuple[str | None, str | None]:
     """The preferred SQL text of `expr` and the sqlglot dialect to read it with (None = generic ANSI)."""
-    for n in wh.dialect_preference:
-        sql = _dialect(expr, n)
-        if sql is not None:
-            return sql, (wh.sqlglot_dialect if n == wh.ossie_dialect else None)
-    return None, None
+    sql, read, _ = pick_sql(expr, wh)
+    return sql, read
 
 
 def _bare_column(sql: str, dialect: str | None) -> str | None:
@@ -327,9 +324,10 @@ def write_tds(doc: OssieDocument, conn: Connection) -> TdsResult:
                     continue
                 peer = declared.get(other, {}).get(ocol.lower())
                 dt = peer.datatype if peer is not None and peer.datatype is not None else OssieDataType.STRING
+                col_sql = col if not needs_quote(col) else '"' + col.replace('"', '""') + '"'
                 nf = OssieField.model_validate({
                     "name": col, "datatype": dt.value, "dimension": {},
-                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": col}]},
+                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": col_sql}]},
                     "custom_extensions": [{"vendor_name": "TABLEAU", "data": json.dumps({"hidden": True})}]})
                 extra.setdefault(dsn, []).append(nf)
                 declared[dsn][col.lower()] = nf
@@ -621,7 +619,7 @@ def write_tds(doc: OssieDocument, conn: Connection) -> TdsResult:
         formula = rewrite_tableau(m.name, tab) if tab is not None else (from_sql(m.name, sql, None, read) if sql is not None else None)
         if formula is None:
             if tab is None and sql is None:
-                losses.append(Loss("untranslatable_expression", m.name, f"no TABLEAU/{wh.ossie_dialect}/ANSI_SQL expression"))
+                losses.append(Loss("untranslatable_expression", m.name, f"no TABLEAU/{wh.ossie_dialect}/ANSI_SQL/OSSIE_SQL_2026 expression"))
             continue
         dt = TDS_TYPE[m.datatype][0] if m.datatype else "real"
         kids = []

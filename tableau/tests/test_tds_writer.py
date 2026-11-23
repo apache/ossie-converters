@@ -311,3 +311,32 @@ def test_custom_sql_source_ending_in_paren_survives_write_and_reconvert(tmp_path
     assert r.document.datasets[0].source == sql
     p.write_text(write_tds(r.document, CONN).xml)
     assert next(e for e in ET.parse(p).getroot().iter("relation") if e.get("type") == "text").text == sql
+
+
+@pytest.mark.unit
+def test_portable_sql_only_expressions_write_to_tds(tmp_path):
+    doc = OssieDocument.model_validate({
+        "name": "portable",
+        "datasets": [{
+            "name": "ORDERS",
+            "source": "DB.SCH.ORDERS",
+            "fields": [
+                {"name": "AMT", "expression": {"sql": "AMT"}, "datatype": "Decimal"},
+                {"name": "UP", "expression": {"sql": "UPPER(NAME)"}, "dimension": {}, "datatype": "String"},
+                {"name": "NAME", "expression": {"sql": "NAME"}, "dimension": {}, "datatype": "String"},
+            ],
+        }],
+        "metrics": [{"name": "TOTAL_AMT", "expression": {"sql": "SUM(ORDERS.AMT)"}}],
+    })
+    res = write_tds(doc, CONN)
+    assert "untranslatable_expression" not in {l.kind for l in res.losses}
+    root = ET.fromstring(res.xml)
+    formulas = {c.get("caption"): c.find("calculation").get("formula")
+                for c in root.findall("column") if c.find("calculation") is not None}
+    assert formulas["UP"] == "UPPER([NAME])"
+    assert formulas["TOTAL_AMT"] == "SUM([AMT])"
+    p = tmp_path / "portable.tds"
+    p.write_text(res.xml)
+    back = convert_file(p)[0]
+    assert back.document is not None
+    assert {m.name for m in back.document.metrics or []} == {"TOTAL_AMT"}
