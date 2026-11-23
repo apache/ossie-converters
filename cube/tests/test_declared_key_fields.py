@@ -17,7 +17,6 @@
 
 """Keys and relationships reference fields, including aliases and computed fields."""
 
-import json
 
 import pytest
 import yaml
@@ -153,8 +152,8 @@ def test_undeclared_legacy_columns_are_accepted_and_reported(where):
     else:
         rel = model["relationships"][0]
         rel[where] = ["missing"]
-        rel["custom_extensions"] = [
-            {"vendor_name": "CUBE", "data": json.dumps({"_v": 1, "sql": "x = y"})}
+        rel["nonportable_extensions"] = [
+            {"vendor_name": "CUBE", "data": {"_v": 1, "sql": "x = y"}}
         ]
     files, issues = convert_ossie_to_cube(yaml.safe_dump(model))
     assert any("missing" in i.detail and "legacy source column" in i.detail for i in issues)
@@ -292,8 +291,8 @@ def test_key_only_fields_from_earlier_imports_keep_their_join_bindings():
     model = document()
     orders = model["datasets"][0]
     orders["fields"][1] = field("customer_id", "customer_id")
-    orders["fields"][1]["custom_extensions"] = [{
-        "vendor_name": "CUBE", "data": json.dumps({"_v": 1, "key_only": True}),
+    orders["fields"][1]["nonportable_extensions"] = [{
+        "vendor_name": "CUBE", "data": {"_v": 1, "key_only": True},
     }]
     model["relationships"][0]["from_columns"] = ["customer_id"]
     files = export(model)
@@ -315,10 +314,10 @@ def test_geo_coordinate_keys_keep_the_coordinate_field_and_native_key_dimension(
     ]:
         f = field(name, sql)
         f["datatype"] = "Float"
-        f["custom_extensions"] = [
+        f["nonportable_extensions"] = [
             {
                 "vendor_name": "CUBE",
-                "data": json.dumps({"_v": 1, "geo": {"of": "location", "part": part}}),
+                "data": {"_v": 1, "geo": {"of": "location", "part": part}},
             }
         ]
         ds["fields"].append(f)
@@ -619,10 +618,10 @@ def test_member_key_chains_preserve_escaped_literals(case):
 def test_column_only_field_cube_metadata_edits_materialize(metadata):
     model = document()
     raw = {"name": "raw", "expression": expression("raw_id")}
-    raw["custom_extensions"] = [
+    raw["nonportable_extensions"] = [
         {
             "vendor_name": "CUBE",
-            "data": json.dumps({"_v": 1, "raw_column": True, **metadata}),
+            "data": {"_v": 1, "raw_column": True, **metadata},
         }
     ]
     model["datasets"][0]["fields"].append(raw)
@@ -663,8 +662,8 @@ def test_secondary_unique_key_preserves_column_only_field_binding(raw_name):
     raw = {
         "name": raw_name,
         "expression": expression("id"),
-        "custom_extensions": [
-            {"vendor_name": "CUBE", "data": json.dumps({"_v": 1, "raw_column": True})}
+        "nonportable_extensions": [
+            {"vendor_name": "CUBE", "data": {"_v": 1, "raw_column": True}}
         ],
     }
     ds["fields"].append(raw)
@@ -737,12 +736,10 @@ def test_projection_resolves_recorded_geo_coordinate_keys(part):
     for name, coordinate in [("lat", "latitude"), ("lon", "longitude")]:
         f = field(name, coordinate)
         f["datatype"] = "Float"
-        f["custom_extensions"] = [
+        f["nonportable_extensions"] = [
             {
                 "vendor_name": "CUBE",
-                "data": json.dumps(
-                    {"_v": 1, "geo": {"of": "location", "part": coordinate}}
-                ),
+                "data": {"_v": 1, "geo": {"of": "location", "part": coordinate}},
             }
         ]
         ds["fields"].append(f)
@@ -767,10 +764,10 @@ def test_review_key_dependencies_compile_in_native_cube():
         {
             "name": "source__id",
             "expression": expression("id"),
-            "custom_extensions": [
+            "nonportable_extensions": [
                 {
                     "vendor_name": "CUBE",
-                    "data": json.dumps({"_v": 1, "raw_column": True}),
+                    "data": {"_v": 1, "raw_column": True},
                 }
             ],
         }
@@ -791,12 +788,10 @@ def test_review_key_dependencies_compile_in_native_cube():
                 "name": name,
                 "datatype": "Float",
                 "expression": expression(part),
-                "custom_extensions": [
+                "nonportable_extensions": [
                     {
                         "vendor_name": "CUBE",
-                        "data": json.dumps(
-                            {"_v": 1, "geo": {"of": "location", "part": part}}
-                        ),
+                        "data": {"_v": 1, "geo": {"of": "location", "part": part}},
                     }
                 ],
             }

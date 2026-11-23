@@ -246,7 +246,6 @@ def test_legacy_fallback_never_replaces_a_declared_but_unusable_field(constraint
 
 @pytest.mark.parametrize("side", ["from", "to"])
 def test_composite_join_is_not_weakened_when_one_endpoint_is_unusable(side):
-    import json
 
     doc = model()
     for ds in doc["datasets"]:
@@ -254,15 +253,13 @@ def test_composite_join_is_not_weakened_when_one_endpoint_is_unusable(side):
     rel = doc["relationships"][0]
     rel["from_columns"].append("tenant")
     rel["to_columns"].append("tenant")
-    rel["custom_extensions"] = [
+    rel["nonportable_extensions"] = [
         {
             "vendor_name": "CUBE",
-            "data": json.dumps(
-                {
+            "data": {
                     "_v": 1,
                     "sql": "{CUBE}.customer_id = {customers}.customer_id AND 1 = 1",
-                }
-            ),
+                },
         }
     ]
     ds = doc["datasets"][0 if side == "from" else 1]

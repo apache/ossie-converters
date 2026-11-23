@@ -16,7 +16,7 @@
 # under the License.
 
 # An Ossie model authored by hand rather than imported from Cube: no
-# custom_extensions[CUBE] stash anywhere. Export therefore has to derive
+# nonportable_extensions[CUBE] stash anywhere. Export therefore has to derive
 # everything -- the cube layout, the join orientation, and a generated view --
 # instead of restoring it. Also carries the constructs Cube has no field for
 # (unique_keys, a foreign vendor's extensions, structured ai_context), which
@@ -62,9 +62,9 @@ datasets:
       - dialect: ANSI_SQL
         expression: ordered_at
     datatype: Date
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SNOWFLAKE
-    data: '{"warehouse": "ANALYTICS_WH"}'
+    data: {"warehouse": "ANALYTICS_WH"}
 - name: customers
   source: sales.public.customers
   primary_key:

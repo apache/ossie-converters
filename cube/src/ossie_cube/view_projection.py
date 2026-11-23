@@ -18,7 +18,7 @@
 """Project one Cube view's public surface onto an Apache Ossie semantic model.
 
 `convert_cube_to_ossie` is a lossless round-trip import: every cube member becomes an
-Ossie field or metric, and the view's curation rides in `custom_extensions`. Publishing
+Ossie field or metric, and the view's curation rides in `nonportable_extensions`. Publishing
 a view to another tool needs the opposite boundary -- exactly the members the view
 exposes, under the names it exposes them by, and nothing the view keeps private.
 
@@ -181,7 +181,7 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     validate_source_dialect(source_dialect)
 
     # The collection's own issues are about the lossless import -- a file preserved in
-    # custom_extensions only -- which a projection does not do.
+    # nonportable_extensions only -- which a projection does not do.
     cubes, _, views, _, _ = _collect(files, IssueLog())
     if view not in views:
         raise ConversionError(
@@ -1115,7 +1115,7 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues,
     for ds in model["datasets"]:
         name = ds["name"]
         # In the import's key order: fields, then the key, then the stash.
-        extensions = ds.pop("custom_extensions", None)
+        extensions = ds.pop("nonportable_extensions", None)
         ds.pop("fields", None)
         key = ds.pop("primary_key", None)
         if published_fields[name]:
@@ -1125,7 +1125,7 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues,
         if ds.get("unique_keys"):
             ds["unique_keys"] = [[field_aliases[name, n] for n in k] for k in ds["unique_keys"]]
         if extensions:
-            ds["custom_extensions"] = extensions
+            ds["nonportable_extensions"] = extensions
         # The data source is a fact about the published dataset -- which warehouse its
         # table lives in -- so it stays, where the import puts it.
         data_source = cubes[name].get("data_source")
@@ -1211,9 +1211,9 @@ def _report_dropped(issues, element, keys, detail=None):
 def _set_stash(obj, data):
     """Replace the CUBE stash on `obj` with `data`, keeping it ahead of any other
     vendor's entry the way the import orders them, and dropping it when empty."""
-    others = [e for e in obj.get("custom_extensions") or []
+    others = [e for e in obj.get("nonportable_extensions") or []
               if e.get("vendor_name") != VENDOR]
-    obj.pop("custom_extensions", None)
+    obj.pop("nonportable_extensions", None)
     write_stash(obj, data)
     if others:
-        obj.setdefault("custom_extensions", []).extend(others)
+        obj.setdefault("nonportable_extensions", []).extend(others)

@@ -135,7 +135,7 @@ public class RelationshipMappingHandler implements PipelineStep {
             }
         }
 
-        // Store unsupported relationships in custom_extensions at SEMANTIC_MODEL level
+        // Store unsupported relationships in nonportable_extensions at SEMANTIC_MODEL level
         if (!unsupportedRelationships.isEmpty()) {
             storeUnsupportedRelationshipsAtModelLevel(outputData, unsupportedRelationships);
         }
@@ -167,7 +167,7 @@ public class RelationshipMappingHandler implements PipelineStep {
             deconstructCriteria(supportedRelationships, ossieRelationships);
         }
 
-        // Store unmapped SF properties in custom_extensions
+        // Store unmapped SF properties in nonportable_extensions
         customExtensionHandler.storeUnmappedProperties(outputData, sourceData, allHandledProps, Level.RELATIONSHIPS);
 
         // Cleanup: remove processed structural key
@@ -178,7 +178,7 @@ public class RelationshipMappingHandler implements PipelineStep {
      * Decodes the HTML escaping Salesforce applies to a criterion whose join side is a
      * formula rather than a column. Applied before the relationship is sorted into
      * supported or unsupported, so the text is decoded whether it ends up in
-     * {@code from_columns}/{@code to_columns} or is preserved in {@code custom_extensions}.
+     * {@code from_columns}/{@code to_columns} or is preserved in {@code nonportable_extensions}.
      * A plain field apiName cannot contain an entity, so decoding leaves it untouched.
      */
     private void unescapeCriteriaFormulas(Map<String, Object> sfRel) {
@@ -241,7 +241,7 @@ public class RelationshipMappingHandler implements PipelineStep {
     /**
      * Deconstructs criteria for SF→Ossie conversion.
      * Note: This method only processes supported relationships (TableField types).
-     * Unsupported relationships are filtered out earlier and stored in custom_extensions.
+     * Unsupported relationships are filtered out earlier and stored in nonportable_extensions.
      */
     private void deconstructCriteria(List<Object> sfRelationships, List<Object> ossieRelationships) {
         for (int i = 0; i < sfRelationships.size() && i < ossieRelationships.size(); i++) {
@@ -442,7 +442,7 @@ public class RelationshipMappingHandler implements PipelineStep {
     }
 
     /**
-     * Stores unsupported relationships in custom_extensions at the SEMANTIC_MODEL level.
+     * Stores unsupported relationships in nonportable_extensions at the SEMANTIC_MODEL level.
      *
      * @param outputData The output data structure
      * @param unsupportedRelationships List of relationships that cannot be converted

@@ -1009,7 +1009,7 @@ def test_only_the_published_surface_carries_a_stash():
     out, _, issues = _project(text)
     model = model_of(out)
     datasets = by_name(model["datasets"])
-    assert "custom_extensions" not in model
+    assert "nonportable_extensions" not in model
     assert stash_of(datasets["orders"]) == {"cube_extras": {"data_source": "crm"}}
     assert stash_of(datasets["users"]) == {"cube_extras": {"data_source": "crm"}}
     assert stash_of(by_name(datasets["orders"]["fields"])["status"]) == {"format": "id"}

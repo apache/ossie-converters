@@ -103,8 +103,8 @@ def convert_ossie_semantic_model(
         if ossie_semantic_model.ai_context is not None:
             ctx.warn("Not supported", code="ai-context")
 
-    with ctx.problem_scope("custom_extensions"):
-        if ossie_semantic_model.custom_extensions is not None:
+    with ctx.problem_scope("nonportable_extensions"):
+        if ossie_semantic_model.nonportable_extensions is not None:
             ctx.warn("Not supported", code="custom-extensions")
 
     hex_models = ctx.hex_models()
