@@ -39,8 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Exports an Ossie semantic model to an Apache Polaris catalog.
  * <p>
- * Creates namespaces and Iceberg tables in Polaris based on the Ossie model's
- * datasets, mapping Ossie fields to Iceberg schema columns.
+ * Creates namespaces and Iceberg tables via the Iceberg REST Catalog API.
+ * This is table bootstrap, not the Polaris {@code /semantic-models} API.
+ * Metrics, relationships, {@code ai_context}, and computed field expressions
+ * are not written; {@link #warnDroppedSemantics} reports them on stderr.
  */
 public class PolarisExporter {
 
@@ -64,6 +66,7 @@ public class PolarisExporter {
      * Export a single semantic model to Polaris.
      */
     public void exportSemanticModel(SemanticModel sm) throws IOException, InterruptedException {
+        warnDroppedSemantics(sm);
         List<String> namespace = Collections.singletonList(sm.getName());
 
         // Create namespace with description as property
@@ -79,6 +82,57 @@ public class PolarisExporter {
             String tableJson = buildCreateTableRequest(dataset);
             client.createTable(namespace, tableJson);
         }
+    }
+
+    /**
+     * Warn on stderr when Ossie semantics will not be stored on Iceberg tables.
+     */
+    void warnDroppedSemantics(SemanticModel sm) {
+        if (sm.getMetrics() != null && !sm.getMetrics().isEmpty()) {
+            System.err.println(
+                    "Warning: " + sm.getMetrics().size()
+                            + " metric(s) not written to Polaris; this export creates Iceberg tables, "
+                            + "not semantic-model API documents");
+        }
+        if (sm.getRelationships() != null && !sm.getRelationships().isEmpty()) {
+            System.err.println(
+                    "Warning: " + sm.getRelationships().size()
+                            + " relationship(s) not written to Polaris; Iceberg createTable has no Ossie joins");
+        }
+        if (sm.hadAiContext()) {
+            System.err.println(
+                    "Warning: ai_context was dropped; Iceberg tables have no Ossie AI context");
+        }
+        if (sm.getDatasets() == null) {
+            return;
+        }
+        for (Dataset dataset : sm.getDatasets()) {
+            if (dataset.getFields() == null) {
+                continue;
+            }
+            for (Field field : dataset.getFields()) {
+                if (hasNonColumnExpression(field)) {
+                    System.err.println(
+                            "Warning: field '" + field.getName()
+                                    + "': computed expression is not stored on the Iceberg column");
+                }
+            }
+        }
+    }
+
+    static boolean hasNonColumnExpression(Field field) {
+        if (field.getExpressions() == null || field.getName() == null) {
+            return false;
+        }
+        for (DialectExpression expression : field.getExpressions()) {
+            if (expression.getExpression() == null) {
+                continue;
+            }
+            if (!expression.getExpression().trim().equals(field.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

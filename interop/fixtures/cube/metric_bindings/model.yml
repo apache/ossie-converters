@@ -1,0 +1,45 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Independent two-table fixture: each aggregate must remain on its own grain.
+cubes:
+  - name: sales
+    sql_table: analytics.public.sales
+    joins:
+      - name: customer
+        sql: '{CUBE}.sales_customer_id = {customer}.customer_id'
+        relationship: many_to_one
+    dimensions:
+      - {name: sale_id, sql: sale_id, type: number, primary_key: true}
+      - {name: sales_customer_id, sql: sales_customer_id, type: number}
+      - {name: sales_amount, sql: sales_amount, type: number}
+    measures:
+      - {name: total_revenue, sql: '{CUBE}.sales_amount', type: sum}
+      - name: revenue_per_customer
+        sql: '{CUBE.total_revenue} / {customer.customer_count}'
+        type: number
+      - name: revenue_per_credit
+        sql: '{CUBE.total_revenue} / NULLIF({customer.total_credit}, 0)'
+        type: number
+  - name: customer
+    sql_table: analytics.public.customer
+    dimensions:
+      - {name: customer_id, sql: customer_id, type: number, primary_key: true}
+      - {name: credit_limit, sql: credit_limit, type: number}
+    measures:
+      - {name: customer_count, type: count, public: false}
+      - {name: total_credit, sql: '{CUBE}.credit_limit', type: sum, public: false}

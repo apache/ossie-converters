@@ -36,7 +36,7 @@ from ossie_nvidia_auto_ontology.converter import main
 from ossie_nvidia_auto_ontology.ontology import build_ontology_documents
 
 FIXTURES = Path(__file__).parent / "fixtures"
-REPOSITORY = Path(__file__).resolve().parents[3]
+REPOSITORY = Path(__file__).resolve().parents[2] / "ossie"
 VALIDATOR = REPOSITORY / "validation" / "validate.py"
 COLUMN_TYPES = {
     "customer_id": "NUMBER(38,0)",
@@ -246,7 +246,7 @@ def test_cli_requires_the_ontology_and_mapping_outputs_together(
 
 def test_mapping_expressions_quote_only_names_sql_cannot_read_bare() -> None:
     semantic_model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "shop",
         "datasets": [
             {

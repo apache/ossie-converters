@@ -20,7 +20,7 @@
 Datasets become tables, fields become columns, metrics become measures and relationships
 become TMSL relationships. When the document was produced by
 :mod:`semantic_model_to_ossie`, the ``POWER_BI``
-``custom_extensions`` blob is replayed so the original Power BI model is restored rather
+``nonportable_extensions`` object is replayed so the original Power BI model is restored rather
 than approximated.
 
 Power BI evaluates DAX. An expression that cannot be translated is emitted as
@@ -54,9 +54,11 @@ from ._common import (
     OSSIE_TO_TMSL_DATATYPE,
     OSSIE_UNSUPPORTED,
     OSSIE_VERSION,
+    PORTABLE_SQL,
     RELATIONSHIP_CARDINALITY_METADATA,
     RELATIONSHIP_ENDPOINT_METADATA,
     TMSL_TO_OSSIE_DATATYPE,
+    VENDOR,
     ConversionError,
     dialect_expressions,
     foreign_vendor_extensions,
@@ -123,6 +125,63 @@ _DELIMITED_RE = re.compile(r'^\[([^\]]+)\]$|^"([^"]+)"$|^`([^`]+)`$')
 _QUERY_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
 
+def _unwrap_ossie_0_1_1(document):
+    """Normalize the single-model wrapper emitted by Snowflake Semantic Views."""
+    if document.get("version") != "0.1.1":
+        raise ValueError(
+            "Legacy 'semantic_model' wrappers are only supported for Ossie 0.1.1; "
+            "place model properties at the document root for other versions"
+        )
+    models = document["semantic_model"]
+    if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+        raise ValueError("Ossie 0.1.1 'semantic_model' must contain exactly one model object")
+    document_keys = {"version", "semantic_model", "dialects", "vendors"}
+    if document.keys() - document_keys:
+        raise ValueError("Ossie 0.1.1 requires model properties inside 'semantic_model'")
+    model = models[0]
+    if document_keys.intersection(model):
+        raise ValueError("Ossie 0.1.1 requires document properties outside its model")
+    for key in ("dialects", "vendors"):
+        if key in document:
+            warn("document", f"legacy root '{key}' declaration is discarded during migration")
+    return {"version": OSSIE_VERSION, **_normalize_wrapped_extensions(model)}
+
+
+def _normalize_wrapped_extensions(obj):
+    """Migrate legacy extensions on model objects without changing the input."""
+    normalized = dict(obj)
+    if "custom_extensions" in obj:
+        if "nonportable_extensions" in obj:
+            raise ConversionError("A wrapped model object cannot mix legacy and current extensions")
+        extensions = []
+        for ext in normalized.pop("custom_extensions") or []:
+            if not isinstance(ext, dict):
+                raise ConversionError("Legacy custom_extensions entries must be mappings")
+            # Accept vendor/content aliases for compatibility with older caller inputs.
+            # The 0.1.1 schema uses vendor_name/data.
+            vendor = ext.get("vendor_name") or ext.get("vendor")
+            # Foreign payloads are opaque to Power BI. Keep the vendor for the loss notice.
+            data = {}
+            if vendor == VENDOR:
+                data = ext.get("data", ext.get("content")) or {}
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except ValueError as e:
+                        raise ConversionError(
+                            "Legacy POWER_BI extension data is invalid JSON"
+                        ) from e
+            extensions.append({"vendor_name": vendor, "data": data})
+        normalized["nonportable_extensions"] = extensions
+    for key in ("datasets", "fields", "metrics", "relationships"):
+        if isinstance(children := obj.get(key), list):
+            normalized[key] = [
+                _normalize_wrapped_extensions(child) if isinstance(child, dict) else child
+                for child in children
+            ]
+    return normalized
+
+
 def convert_ossie_to_semantic_model(
     ossie_yaml_str,
     source: dict = None,
@@ -132,7 +191,7 @@ def convert_ossie_to_semantic_model(
 
     Args:
         ossie_yaml_str: The Apache Ossie document as YAML text. A parsed mapping is
-            also accepted for compatibility with existing library callers.
+            also accepted. Supports a flat document or a 0.1.1 wrapper with one model.
         source: Optional OneLake location for generated Direct Lake partitions, as
             ``{"workspaceId": ..., "itemId": ...}``.
         output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
@@ -159,10 +218,7 @@ def convert_ossie_to_semantic_model(
         raise TypeError("input must be Apache Ossie YAML text or a parsed document")
 
     if "semantic_model" in document:
-        raise ValueError(
-            "Legacy 'semantic_model' wrappers are not supported; "
-            "place model properties at the document root"
-        )
+        document = _unwrap_ossie_0_1_1(document)
     if "dialects" in document or "vendors" in document:
         raise ValueError("Root dialects and vendors are not supported by the Ossie spec")
     if not document.get("name"):
@@ -232,7 +288,7 @@ def convert_ossie_to_semantic_model(
         compatibility_level = bim["compatibilityLevel"]
         if not isinstance(compatibility_level, int) or isinstance(compatibility_level, bool):
             raise ConversionError(
-                "POWER_BI custom_extensions document 'compatibilityLevel' must be "
+                "POWER_BI nonportable_extensions document 'compatibilityLevel' must be "
                 "an integer when generating Direct Lake partitions, got "
                 f"{compatibility_level!r}"
             )
@@ -656,7 +712,14 @@ def _source_column(expressions, name, stash):
 
 
 def _preferred_expression(expressions):
-    for dialect in (DIALECT_DAX, DIALECT_ANSI, DIALECT_OSSIE_SQL):
+    # DAX is native. The portable `sql` form is the spec's primary form, so it comes
+    # next, ahead of an ANSI_SQL entry that may be a stale copy; it reads as
+    # OSSIE_SQL_2026.
+    if DIALECT_DAX in expressions:
+        return DIALECT_DAX, expressions[DIALECT_DAX]
+    if PORTABLE_SQL in expressions:
+        return DIALECT_OSSIE_SQL, expressions[PORTABLE_SQL]
+    for dialect in (DIALECT_ANSI, DIALECT_OSSIE_SQL):
         if dialect in expressions:
             return dialect, expressions[dialect]
     dialect = next(
@@ -965,10 +1028,11 @@ def _tmsl_text(value):
 
 def _warn_foreign_extensions(scope, obj):
     for ext in foreign_vendor_extensions(obj):
+        vendor = ext.get("vendor_name") or "<unknown>"
         warn(
             scope,
-            f"custom_extensions for vendor '{ext.get('vendor_name')}' have no Power BI "
-            "equivalent and are dropped",
+            f"foreign nonportable_extensions for vendor '{vendor}' "
+            "have no Power BI equivalent and are dropped",
         )
 
 

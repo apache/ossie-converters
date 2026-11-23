@@ -35,7 +35,11 @@ from ossie_thoughtspot.errors import ConversionError
 
 
 def test_write_stash_serialises_data_as_a_json_string_not_an_object():
-    # ossie-schema.json types `data` as "string".
+    # ossie-schema.json types `data` as "string". The reader also accepts the
+    # object form apache/ossie#522 proposes, and the asymmetry is deliberate:
+    # readers move first, writers only once the spec does. Do not "fix" this by
+    # making the writer emit an object -- that would make our output invalid
+    # against the schema in force.
     obj = stash.write_stash({}, {"join_type": "LEFT_OUTER"})
     entry = obj["custom_extensions"][0]
     assert entry["vendor_name"] == VENDOR_KEY
@@ -187,3 +191,123 @@ class TestReadStashShapeVersion:
             {"vendor_name": VENDOR_KEY, "data": json.dumps({"_v": STASH_VERSION, "alias": "X"})}
         ]}
         assert stash.read_stash(obj) == {"_v": STASH_VERSION, "alias": "X"}
+
+
+class TestDataIsAcceptedInBothShapes:
+    """`data` as a JSON string (today's spec) and as an object (apache/ossie#522).
+
+    The reader takes both so that a document written under the new shape is
+    readable here the day it appears, rather than after a release of ours. The
+    writer deliberately still emits the string form; see
+    `test_write_stash_serialises_data_as_a_json_string_not_an_object`.
+    """
+
+    def _payload(self):
+        return {"_v": STASH_VERSION, "alias": "X", "join_type": "LEFT_OUTER"}
+
+    def _obj(self, data):
+        return {"name": "orders", "custom_extensions": [
+            {"vendor_name": VENDOR_KEY, "data": data}
+        ]}
+
+    def test_the_object_form_reads_identically_to_the_string_form(self):
+        payload = self._payload()
+        from_string = stash.read_stash(self._obj(json.dumps(payload)))
+        from_object = stash.read_stash(self._obj(self._payload()))
+        assert from_object == from_string == payload
+
+    def test_the_shape_version_is_still_checked_in_the_object_form(self):
+        # The version gate is the reason the reader refuses a payload it cannot
+        # recognise. Accepting a new *container* shape must not become a way
+        # around it -- that would be a silent misread, the exact failure the
+        # gate exists to prevent.
+        obj = self._obj({"_v": 999, "alias": "X"})
+        with pytest.raises(ConversionError, match="orders") as excinfo:
+            stash.read_stash(obj)
+        assert "999" in str(excinfo.value)
+
+    @pytest.mark.parametrize("data", [["_v", 1], 7, True])
+    def test_a_shape_that_is_neither_still_raises_naming_the_object(self, data):
+        with pytest.raises(ConversionError, match="orders") as excinfo:
+            stash.read_stash(self._obj(data))
+        assert "expected a JSON string or a mapping" in str(excinfo.value)
+
+    def test_a_foreign_vendors_object_payload_is_still_not_read(self):
+        # "Nobody parses another vendor's payload" -- widening our own reader
+        # must not widen what it reads.
+        obj = {"name": "orders", "custom_extensions": [
+            {"vendor_name": "SNOWFLAKE", "data": {"_v": 999, "secret": 1}}
+        ]}
+        assert stash.read_stash(obj) == {}
+
+    def test_writing_over_an_object_form_entry_merges_and_normalises_to_a_string(self):
+        # The realistic round trip: a document arrives in the new shape, we add
+        # to it, and what we emit is the shape the spec defines today.
+        obj = self._obj({"_v": STASH_VERSION, "alias": "X"})
+        out = stash.write_stash(obj, {"join_type": "LEFT_OUTER"})
+        entry = out["custom_extensions"][0]
+        assert isinstance(entry["data"], str)
+        written = json.loads(entry["data"])
+        assert written["alias"] == "X"          # the arriving payload survived
+        assert written["join_type"] == "LEFT_OUTER"
+        assert written["_v"] == STASH_VERSION
+
+
+class TestABoolIsNotTheCurrentShapeVersion:
+    """`_v: true` must not read as version 1, though Python says `True == 1`.
+
+    Live under apache/ossie#522: with `data` an object the payload is YAML,
+    and a bare `true` is a boolean there under both 1.1 and 1.2 rules. The
+    loader's 1.1 narrowing (`yes`, `on` -> strings) does not help, because
+    `true` is a boolean in 1.2 as well.
+    """
+
+    def _obj(self, version):
+        return {"name": "orders", "custom_extensions": [
+            {"vendor_name": VENDOR_KEY, "data": {"_v": version, "alias": "X"}}
+        ]}
+
+    @pytest.mark.parametrize("version", [True, False])
+    def test_a_bool_shape_version_is_refused(self, version):
+        with pytest.raises(ConversionError, match="orders") as excinfo:
+            stash.read_stash(self._obj(version))
+        assert "shape version" in str(excinfo.value)
+
+    @pytest.mark.parametrize("version", [1, 1.0])
+    def test_what_it_still_accepts(self, version):
+        """Guards against fixing the bool by tightening the type too far.
+
+        `1.0` stays accepted deliberately. A float spelling of a version we
+        do recognise is not the hazard: a bool is, because `_v: true` is what
+        a YAML document actually produces and `True == 1` makes it look
+        current. Rejecting every non-int would also refuse a payload a JSON
+        producer may legitimately write, so the exclusion is bool-shaped, not
+        type-shaped, and this pins that distinction.
+        """
+        assert stash.read_stash(self._obj(version))["alias"] == "X"
+
+    def test_it_is_refused_in_the_string_form_too(self):
+        # Both shapes reach the same gate; neither is a way around it.
+        obj = {"name": "orders", "custom_extensions": [
+            {"vendor_name": VENDOR_KEY, "data": json.dumps({"_v": True, "alias": "X"})}
+        ]}
+        with pytest.raises(ConversionError, match="shape version"):
+            stash.read_stash(obj)
+
+    def test_a_yaml_true_loaded_through_our_own_loader_is_refused(self):
+        # End to end through _yaml, the path a hand-edited document takes.
+        from ossie_thoughtspot import _yaml
+
+        document = _yaml.load(
+            "datasets:\n"
+            "  - name: orders\n"
+            "    custom_extensions:\n"
+            "      - vendor_name: THOUGHTSPOT\n"
+            "        data:\n"
+            "          _v: true\n"
+            "          alias: X\n"
+        )
+        dataset = document["datasets"][0]
+        assert dataset["custom_extensions"][0]["data"]["_v"] is True  # the premise
+        with pytest.raises(ConversionError, match="shape version"):
+            stash.read_stash(dataset)

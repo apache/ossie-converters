@@ -167,6 +167,37 @@ def test_serialize_tmdl_returns_a_single_document(tmp_path, monkeypatch):
         tom.serialize_tmdl([], assembly_dir=tmp_path)
 
 
+def test_serialize_tmdl_folder_writes_the_folder_representation(tmp_path, monkeypatch):
+    database = object()
+    written = []
+
+    class JsonSerializer:
+        @staticmethod
+        def DeserializeDatabase(raw):  # noqa: N802 - mirrors TOM's managed API
+            assert json.loads(raw) == {"name": "Sales"}
+            return database
+
+    class TmdlSerializer:
+        @staticmethod
+        def SerializeDatabaseToFolder(value, path):  # noqa: N802
+            written.append((value, path))
+
+    monkeypatch.setattr(
+        tom,
+        "_load_tom",
+        lambda _directory: SimpleNamespace(
+            JsonSerializer=JsonSerializer,
+            TmdlSerializer=TmdlSerializer,
+        ),
+    )
+
+    target = tmp_path / "definition"
+    assert tom.serialize_tmdl_folder('{"name": "Sales"}', target, assembly_dir=tmp_path) is None
+    assert written == [(database, os.fspath(target))]
+    with pytest.raises(TypeError, match="mapping or JSON string"):
+        tom.serialize_tmdl_folder([], target, assembly_dir=tmp_path)
+
+
 def test_split_tmdl_documents_separates_a_nested_model():
     document = (
         "database Sales\r\n"
@@ -213,3 +244,86 @@ def test_validate_bim_reads_a_bom(tmp_path, monkeypatch):
         '{"name": "Sales"}',
         tmp_path,
     )
+
+
+def test_deserialize_tmdl_documents_reads_each_logical_path(tmp_path, monkeypatch):
+    seen = []
+
+    class Context:
+        def ReadFromDocument(self, logical_path, reader, encoding):  # noqa: N802
+            seen.append((logical_path, reader.text, encoding))
+
+        def ToDatabase(self, name):  # noqa: N802
+            assert name is None
+            return {"database": True}
+
+    class Serialization:
+        class MetadataSerializationStyle:
+            Tmdl = "Tmdl"
+
+        class MetadataSerializationContext:
+            @staticmethod
+            def Create(style):  # noqa: N802
+                assert style == "Tmdl"
+                return Context()
+
+    class StringReader:
+        def __init__(self, text):
+            self.text = text
+
+    _string_reader = StringReader
+
+    class System:
+        class IO:
+            StringReader = _string_reader
+
+        class Text:
+            Encoding = SimpleNamespace(UTF8="utf-8")
+
+    class JsonSerializer:
+        @staticmethod
+        def SerializeDatabase(database):  # noqa: N802
+            assert database == {"database": True}
+            return '{"name": "mini"}'
+
+    def fake_import(name):
+        if name == "Microsoft.AnalysisServices.Tabular.Serialization":
+            return Serialization
+        if name == "System":
+            return System
+        raise AssertionError(name)
+
+    monkeypatch.setattr(
+        tom,
+        "_load_tom",
+        lambda _directory: SimpleNamespace(JsonSerializer=JsonSerializer),
+    )
+    monkeypatch.setattr(tom, "import_module", fake_import)
+
+    documents = [
+        ("database.tmdl", "database mini\n"),
+        ("model.tmdl", "model Model\n"),
+        ("tables/Orders.tmdl", "table Orders\n"),
+    ]
+    assert tom.deserialize_tmdl_documents(documents, assembly_dir=tmp_path) == {"name": "mini"}
+    assert seen == [
+        ("database.tmdl", "database mini\n", "utf-8"),
+        ("model.tmdl", "model Model\n", "utf-8"),
+        ("tables/Orders.tmdl", "table Orders\n", "utf-8"),
+    ]
+
+
+def test_deserialize_tmdl_delegates_to_documents(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_documents(documents, *, assembly_dir=None):
+        captured["documents"] = documents
+        captured["assembly_dir"] = assembly_dir
+        return {"name": "Sales"}
+
+    monkeypatch.setattr(tom, "deserialize_tmdl_documents", fake_documents)
+    assert tom.deserialize_tmdl("model Model\n", assembly_dir=tmp_path) == {"name": "Sales"}
+    assert captured == {
+        "documents": [("model.tmdl", "model Model\n")],
+        "assembly_dir": tmp_path,
+    }

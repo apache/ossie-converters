@@ -38,15 +38,23 @@ updates:
   # "pip" ecosystem does not read, so they are updated as "uv" projects.
   - package-ecosystem: "uv"
     directories:
+      - "/ataccama"
+      - "/atlan"
+      - "/bigquery"
       - "/cube"
+      - "/databricks"
       - "/dbt"
       - "/gooddata"
       - "/honeydew"
+      - "/interop"
+      - "/lightdash"
       - "/microsoft"
       - "/nvidia"
       - "/omni"
       - "/ontology"
       - "/orionbelt"
+      - "/relationalai"
+      - "/palantir"
       - "/sigma"
       - "/snowflake"
       - "/tableau"
@@ -62,7 +70,6 @@ updates:
   # Maven / Java converters
   - package-ecosystem: "maven"
     directories:
-      - "/databricks/java"
       - "/polaris"
       - "/salesforce"
     schedule:
@@ -75,3 +82,7 @@ updates:
       # 2.x/3.x introduced breaking package/API changes; only allow minor/patch updates
       - dependency-name: "com.networknt:json-schema-validator"
         update-types: ["version-update:semver-major"]
+      # salesforce relies on JSqlParser 5.3 AST internals that 5.4 broke (#66);
+      # pin to 5.3 and allow patch updates only.
+      - dependency-name: "com.github.jsqlparser:jsqlparser"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

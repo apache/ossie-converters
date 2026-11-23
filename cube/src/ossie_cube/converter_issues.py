@@ -21,7 +21,7 @@ A bare `warnings.warn` is fine for "this label was dropped", but Cube carries
 semantics that an Apache Ossie expression string genuinely cannot hold -- most
 importantly the row-multiplication correction Cube applies at query time (see
 `FANOUT_UNSAFE_METRIC`). Those need to reach the caller as data, not as text on
-stderr, so a pipeline can gate on them. Same approach as the osi-dbt converter's
+stderr, so a pipeline can gate on them. Same approach as the ossie-dbt converter's
 `ConverterIssue`.
 """
 
@@ -71,6 +71,10 @@ class IssueType(Enum):
     # An Ossie construct Cube has no slot for, parked under `meta.ossie` -- so the
     # value survives the round trip even though Cube itself cannot read it.
     PARKED_IN_META = "PARKED_IN_META"
+
+    # A saved expression is restored even though its exported native definition
+    # has since been edited in Cube. The saved form remains authoritative.
+    STALE_PARKED_EXPRESSION = "STALE_PARKED_EXPRESSION"
 
     # A value Cube has nowhere to hold *and* that cannot be parked, so it is gone
     # from the output. Distinct from PARKED_IN_META on purpose: a caller gating on

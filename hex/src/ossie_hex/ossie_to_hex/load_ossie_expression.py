@@ -15,36 +15,51 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from ossie import OssieExpression
+from ossie import OssieDialect, OssieExpression
+
+from ossie_hex.ossie import OssieDialectName
 
 from .context import ExportContext
 from .load_ossie_dialect_expression import (
     validate_ossie_field_dialect_expression,
     validate_ossie_metric_dialect_expression,
 )
-from .pick_ossie_dialect_expression import pick_ossie_dialect_expression
+from .pick_ossie_dialect_expression import (
+    dialect_expressions_of,
+    pick_ossie_dialect_expression,
+)
 
 
 def load_ossie_field_expression(
     ossie_expression: OssieExpression,
     *,
     ctx: ExportContext,
-) -> OssieExpression:
+) -> OssieExpression | None:
     """Load an Ossie expression declared on an Ossie field.
 
     Attempts to find the preferred dialect and validates the expression.
 
-    Returns the original expression regardless of validation problems.
+    Returns the original expression regardless of validation problems, or None if
+    it has no dialect expressions.
     """
     # ASSUMPTION: Ossie field expressions are only allowed to reference underlying
     # physical columns (on database table/view/query) and do not contain logical
     # field references (Ossie FieldExpr of any shape). So we do nothing to validate
     # the parsed output of the dialect expression(s).
     with ctx.problem_scope("dialects"):
-        choice = pick_ossie_dialect_expression(ossie_expression.dialects, ctx=ctx)
-        if choice is not None:
-            with ctx.problem_scope(choice.dialect.value):
-                validate_ossie_field_dialect_expression(choice, ctx=ctx)
+        choice = pick_ossie_dialect_expression(
+            dialect_expressions_of(ossie_expression), ctx=ctx
+        )
+        if choice is None:
+            return None
+        # The pinned SDK returns enums; newer SDKs preserve string tokens.
+        dialect_name: OssieDialectName = (
+            choice.dialect.value
+            if isinstance(choice.dialect, OssieDialect)
+            else choice.dialect
+        )
+        with ctx.problem_scope(dialect_name):
+            validate_ossie_field_dialect_expression(choice, ctx=ctx)
         return ossie_expression
 
 
@@ -64,9 +79,17 @@ def load_ossie_metric_expression(
     Returns the original expression regardless of validation problems.
     """
     with ctx.problem_scope("dialects"):
-        choice = pick_ossie_dialect_expression(expression.dialects, ctx=ctx)
+        choice = pick_ossie_dialect_expression(
+            dialect_expressions_of(expression), ctx=ctx
+        )
         if choice is not None:
-            with ctx.problem_scope(choice.dialect.value):
+            # The pinned SDK returns enums; newer SDKs preserve string tokens.
+            dialect_name: OssieDialectName = (
+                choice.dialect.value
+                if isinstance(choice.dialect, OssieDialect)
+                else choice.dialect
+            )
+            with ctx.problem_scope(dialect_name):
                 validate_ossie_metric_dialect_expression(
                     choice, field_names=field_names, ctx=ctx
                 )

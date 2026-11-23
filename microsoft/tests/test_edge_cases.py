@@ -22,6 +22,7 @@ covered deliberately: a converter whose error handling is never exercised tends 
 in the least helpful way at the least helpful moment.
 """
 
+import copy
 import json
 import warnings
 
@@ -88,7 +89,7 @@ def test_a_stash_merges_into_an_existing_power_bi_entry():
     obj = {}
     write_stash(obj, {"a": 1})
     write_stash(obj, {"b": 2})
-    assert len(obj["custom_extensions"]) == 1
+    assert len(obj["nonportable_extensions"]) == 1
     assert read_stash(obj) == {"b": 2}
 
 
@@ -99,20 +100,43 @@ def test_an_empty_stash_is_not_written():
     assert obj == {}
 
 
-def test_a_stash_that_is_not_json_is_refused():
-    obj = {"custom_extensions": [{"vendor_name": VENDOR, "data": "{not json"}]}
-    with pytest.raises(ConversionError, match="not valid JSON"):
+@pytest.mark.parametrize("data", ['{"lineageTag": "abc"}', "{not json", [1, 2], None, 0, False])
+def test_a_stash_that_is_not_an_object_is_refused(data):
+    obj = {"nonportable_extensions": [{"vendor_name": VENDOR, "data": data}]}
+    with pytest.raises(ConversionError, match="nonportable_extensions data must be an object"):
         read_stash(obj)
 
 
-def test_a_stash_that_is_not_an_object_is_refused():
-    obj = {"custom_extensions": [{"vendor_name": VENDOR, "data": json.dumps([1, 2])}]}
-    with pytest.raises(ConversionError, match="must be a JSON object"):
+def test_a_stash_without_data_is_refused():
+    obj = {"nonportable_extensions": [{"vendor_name": VENDOR}]}
+    with pytest.raises(ConversionError, match="nonportable_extensions data must be an object"):
         read_stash(obj)
+
+
+def test_legacy_extensions_are_refused_with_migration_guidance():
+    obj = {"custom_extensions": [{"vendor_name": VENDOR, "data": '{"lineageTag": "abc"}'}]}
+    with pytest.raises(
+        ConversionError, match="use 'nonportable_extensions' with object-valued data"
+    ):
+        _convert(_model(**obj))
+
+
+def test_stash_payloads_are_detached_from_their_inputs():
+    data = {"annotations": [{"name": "tag", "value": "original"}]}
+    obj = {}
+    write_stash(obj, data)
+    before = copy.deepcopy(obj)
+    data["annotations"][0]["value"] = "edited source"
+    assert obj == before
+
+    stash = read_stash(obj)
+    stash["annotations"][0]["value"] = "edited result"
+    assert obj == before
+    assert read_stash(obj)["annotations"][0]["value"] == "original"
 
 
 def test_a_malformed_extension_entry_is_ignored():
-    assert read_stash({"custom_extensions": ["not a dict", {"vendor_name": "OTHER"}]}) == {}
+    assert read_stash({"nonportable_extensions": ["not a dict", {"vendor_name": "OTHER"}]}) == {}
 
 
 # ---------------------------------------------------------------------------

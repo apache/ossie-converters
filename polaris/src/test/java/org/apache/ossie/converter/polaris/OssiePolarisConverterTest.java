@@ -43,7 +43,7 @@ class OssiePolarisConverterTest {
     Path tempDirectory;
 
     private static final String MINIMAL_MODEL =
-            "version: \"0.2.0.dev0\"\n"
+            "version: \"0.3.0.dev0\"\n"
             + "\n"
             + "name: test_model\n"
             + "description: A test model\n"
@@ -115,7 +115,7 @@ class OssiePolarisConverterTest {
         OssieModel model = parser.parse(
                 new ByteArrayInputStream(MINIMAL_MODEL.getBytes(StandardCharsets.UTF_8)));
 
-        assertEquals("0.2.0.dev0", model.getVersion());
+        assertEquals("0.3.0.dev0", model.getVersion());
         assertNotNull(model.getSemanticModel());
 
         SemanticModel sm = model.getSemanticModel();
@@ -182,7 +182,7 @@ class OssiePolarisConverterTest {
         String yaml = generator.generate(model);
 
         // Verify key elements are present in generated YAML
-        assertTrue(yaml.contains("version: \"0.2.0.dev0\""));
+        assertTrue(yaml.contains("version: \"0.3.0.dev0\""));
         assertTrue(yaml.contains("name: test_model"));
         assertTrue(yaml.contains("name: orders"));
         assertTrue(yaml.contains("source: catalog.ns.orders"));
@@ -261,6 +261,78 @@ class OssiePolarisConverterTest {
         assertEquals("catalog.ns.orders", properties.get("ossie.source").asText());
     }
 
+    @Test
+    void testExportWarnsWhenSemanticsAreDropped() {
+        OssieModelParser parser = new OssieModelParser();
+        OssieModel model = parser.parse(
+                new ByteArrayInputStream(MINIMAL_MODEL.getBytes(StandardCharsets.UTF_8)));
+        PolarisExporter exporter = new PolarisExporter(
+                new PolarisClient("http://localhost:8181", "test_catalog"));
+
+        PrintStream originalErr = System.err;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(buffer, true, StandardCharsets.UTF_8));
+        try {
+            exporter.warnDroppedSemantics(model.getSemanticModel());
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        String err = buffer.toString(StandardCharsets.UTF_8);
+        assertTrue(err.contains("1 metric(s) not written"));
+        assertTrue(err.contains("1 relationship(s) not written"));
+        assertTrue(err.contains("field 'total_amount'"));
+        assertTrue(err.contains("field 'full_name'"));
+        assertFalse(err.contains("field 'order_id'"));
+        assertFalse(err.contains("ai_context"));
+    }
+
+    @Test
+    void testParseRecordsAiContextForExportWarning() {
+        String yaml = MINIMAL_MODEL + "ai_context:\n  instructions: use for sales\n";
+        OssieModelParser parser = new OssieModelParser();
+        OssieModel model = parser.parse(
+                new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
+        assertTrue(model.getSemanticModel().hadAiContext());
+
+        PolarisExporter exporter = new PolarisExporter(
+                new PolarisClient("http://localhost:8181", "test_catalog"));
+        PrintStream originalErr = System.err;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(buffer, true, StandardCharsets.UTF_8));
+        try {
+            exporter.warnDroppedSemantics(model.getSemanticModel());
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertTrue(buffer.toString(StandardCharsets.UTF_8).contains("ai_context was dropped"));
+    }
+
+    @Test
+    void testExportDoesNotWarnOnColumnNameExpressions() {
+        SemanticModel semanticModel = new SemanticModel();
+        semanticModel.setName("m");
+        Dataset dataset = new Dataset();
+        dataset.setName("orders");
+        Field orderId = new Field();
+        orderId.setName("order_id");
+        orderId.setExpressions(Collections.singletonList(new DialectExpression("ANSI_SQL", "order_id")));
+        dataset.setFields(Collections.singletonList(orderId));
+        semanticModel.setDatasets(Collections.singletonList(dataset));
+
+        PolarisExporter exporter = new PolarisExporter(
+                new PolarisClient("http://localhost:8181", "test_catalog"));
+        PrintStream originalErr = System.err;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(buffer, true, StandardCharsets.UTF_8));
+        try {
+            exporter.warnDroppedSemantics(semanticModel);
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertEquals("", buffer.toString(StandardCharsets.UTF_8));
+    }
+
     // -- Importer tests (Iceberg metadata parsing) --------------------------
 
     @Test
@@ -314,6 +386,12 @@ class OssiePolarisConverterTest {
         assertTrue(ds.getFields().get(4).isTime());
         assertEquals("Opaque", ds.getFields().get(5).getDatatype());
 
+        // Table properties are Polaris state, so they go under the Polaris vendor name.
+        assertEquals(1, ds.getCustomExtensions().size());
+        assertEquals("POLARIS", ds.getCustomExtensions().get(0).getVendorName());
+        assertEquals("test_user",
+                mapper.readTree(ds.getCustomExtensions().get(0).getData()).path("owner").asText());
+
         JsonNode tagsExtension = mapper.readTree(
                 ds.getFields().get(5).getCustomExtensions().get(0).getData());
         assertEquals("list", tagsExtension.path("iceberg_type").path("type").asText());
@@ -338,6 +416,7 @@ class OssiePolarisConverterTest {
         assertTrue(yaml.contains("datatype: Decimal"));
         assertTrue(yaml.contains("datatype: Opaque"));
         assertTrue(yaml.contains("vendor_name: POLARIS"));
+        assertFalse(yaml.contains("vendor_name: COMMON"));
 
         // Reparse the generated Ossie YAML and export it again. Exact physical
         // distinctions survive, while nested IDs are regenerated for the new schema.
@@ -418,7 +497,7 @@ class OssiePolarisConverterTest {
     void testTypeInference() throws Exception {
         // Test that the exporter correctly infers Iceberg types from field names
         OssieModel model = new OssieModel();
-        model.setVersion("0.2.0.dev0");
+        model.setVersion("0.3.0.dev0");
 
         SemanticModel sm = new SemanticModel();
         sm.setName("type_test");
@@ -462,7 +541,7 @@ class OssiePolarisConverterTest {
 
     @Test
     void testEmptyModel() {
-        String emptyYaml = "version: \"0.2.0.dev0\"\n";
+        String emptyYaml = "version: \"0.3.0.dev0\"\n";
         OssieModelParser parser = new OssieModelParser();
         assertThrows(IllegalArgumentException.class, () -> parser.parse(
                 new ByteArrayInputStream(emptyYaml.getBytes(StandardCharsets.UTF_8))));
@@ -471,7 +550,7 @@ class OssiePolarisConverterTest {
     @Test
     void testRejectsLegacyWrappedDocuments() {
         for (String value : List.of("[]", "[{name: legacy, datasets: []}]", "{name: legacy, datasets: []}")) {
-            String yaml = "version: 0.2.0.dev0\nsemantic_model: " + value + "\n";
+            String yaml = "version: 0.3.0.dev0\nsemantic_model: " + value + "\n";
             IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
                     () -> new OssieModelParser().parse(
                             new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8))));
@@ -494,7 +573,7 @@ class OssiePolarisConverterTest {
 
     @Test
     void testEmptyDatasetListRoundTrips() {
-        String yaml = "version: 0.2.0.dev0\nname: empty\ndatasets: []\n";
+        String yaml = "version: 0.3.0.dev0\nname: empty\ndatasets: []\n";
         OssieModelParser parser = new OssieModelParser();
         OssieModel model = parser.parse(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         String generated = new OssieYamlGenerator().generate(model);

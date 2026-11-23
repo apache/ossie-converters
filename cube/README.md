@@ -69,9 +69,9 @@ calls inside a composite metric). Python 3.11+.
 
 ```bash
 ossie-cube import -i model/ [-o model.yaml] [--name my_model] [--view sales]
-                            [--strict-fanout]
+                            [--strict-fanout] [--source-dialect BIGQUERY]
 ossie-cube import -i model/ --view sales --project [--source orders]
-                            [--no-strict-fanout]
+                            [--no-strict-fanout] [--source-dialect BIGQUERY]
 ossie-cube export -i model.yaml -o model/ [--dialect SNOWFLAKE] [--base-cube orders]
 ```
 
@@ -116,6 +116,11 @@ for issue in issues:
 
 # One view's public surface; `source` is the dataset it is rooted at.
 ossie_yaml, source, issues = convert_cube_view_to_ossie(files, "sales")
+
+# Parse, label and validate warehouse SQL in both import modes.
+ossie_yaml, issues = convert_cube_to_ossie(files, source_dialect="BIGQUERY")
+ossie_yaml, source, issues = convert_cube_view_to_ossie(
+    files, "sales", source_dialect="BIGQUERY")
 ```
 
 ## Mapping
@@ -151,7 +156,8 @@ to **import** (Cube -> Ossie) or **export** (Ossie -> Cube).
 | — | `type: geo` dimension | An Ossie field holds one expression and a geo dimension has two, so it **splits** into `<name>_latitude` / `<name>_longitude` (`Float`). Reconstruction data rides on the latitude half. See [Geo dimensions](#geo-dimensions). |
 | relationship | `joins[]` on a cube | `many_to_one` on cube A -> `from: A`(many), `to: B`(one). `one_to_many` is flipped so Ossie's `from` is the many side; the declared side and type are stashed so export restores the original. |
 | `from_columns` / `to_columns` | join `sql` | Only an AND-chain of equalities mapping to **physical columns of that dataset** converts. `{CUBE}.user_id` is already one; `{CUBE.user_key}` names a *member*, so it resolves to the column that member reads (`user_id`), following a chain of member references to its end with cycle detection. Everything else preserves the whole join verbatim in the stash rather than describing it wrongly: a member reading an expression (`CONCAT(...)`), a `case`/`switch` dimension (which reads no column at all), an alias belonging to another cube (`{users}.region_id`), or a clause that is not a two-column equality. |
-| metric | `measures[]` on the cube its expression references | Import hoists cube-scoped measures to the model level, qualifying a colliding name as `<cube>__<measure>` and stashing the original name. The owning cube is stashed only when export would not derive it — from the sole cube the expression's dataset references, metric references and attributed fields point at, or (when they span several) from the model's base cube, the FK sink a generated view is rooted at. Collision is judged on the **normalized** identifier, since Ossie's are case-insensitive: `orders.revenue` and `users.Revenue` are one name in the model-level namespace and both get qualified. The emitted name keeps its original spelling. |
+| dataset `metrics[]` | `measures[]` on the declaring dataset's cube | Unqualified names resolve to declared fields, including computed fields. `source.column` reads the physical column even when a field shadows its name, following apache/ossie#633 ahead of the pinned validator. A field named `source` shadows that qualifier. Unresolvable local expressions drop only the affected metric and report why. Local names can repeat across datasets; after import, a local metric keeps its existing Cube member name and a colliding model metric gets a qualified native name. Ordinary import restores dataset scope from `meta.ossie.dataset_metric` only when the native definition and referenced field bindings still match. A changed measure falls back to its current model-level expression when its fields resolve; stale or unverifiable bindings preserve the native measure in the CUBE extension. `--project` continues to publish model-level metrics. |
+| model `metrics[]` | `measures[]` on the cube its expression references | Import hoists ordinary Cube-authored measures to the model level, qualifying a colliding name as `<cube>__<measure>` and stashing the original name. The owning cube is stashed only when export would not derive it — from the sole cube the expression's dataset references, metric references and attributed fields point at, or (when they span several) from the model's base cube, the FK sink a generated view is rooted at. Collision is judged on the **normalized** identifier, since Ossie's are case-insensitive: `orders.revenue` and `users.Revenue` are one name in the model-level namespace and both get qualified. The emitted name keeps its original spelling. |
 | `SUM`/`AVG`/`MIN`/`MAX(x)` | `type: sum`/`avg`/`min`/`max` + `sql` | |
 | `COUNT(DISTINCT x)` | `type: count_distinct` | |
 | `APPROX_COUNT_DISTINCT(x)` | `type: count_distinct_approx` | Cube resolves the warehouse-specific function itself. |
@@ -195,20 +201,60 @@ skipped — and the spec's table decides what it matches: `orders."AMOUNT"` is t
 stays a raw quoted column.
 
 **Expression dialects**: Cube SQL is the SQL of the model's data source, and the
-Ossie dialect enum has no `CUBE` entry -- so import emits `ANSI_SQL`, and export
-prefers `ANSI_SQL` with `--dialect` prepending a warehouse dialect (e.g.
-`SNOWFLAKE` for a Snowflake-backed Cube model). `OSSIE_SQL_2026`, Ossie's portable
-SQL, is ANSI-compatible and taken next; its label is kept in `meta.ossie.dialect` so
-re-import hands it back unchanged.
+Ossie dialect enum has no `CUBE` entry. Pass `--source-dialect ANSI_SQL|SNOWFLAKE|DATABRICKS|BIGQUERY`
+on import (including `--project`) to parse source SQL in that dialect, qualify metric
+columns without treating date units or type arguments as columns, and label generated
+expressions correctly. For example, BigQuery's `` `order-id` `` remains backtick-quoted
+and is labelled `BIGQUERY`. SQL is not transpiled. During column qualification,
+BigQuery paths such as `` `orders.amount` `` are spelled as `` orders.`amount` ``;
+native comments are removed before inlining, while quoted literals stay intact.
+
+With `--source-dialect`, every emitted SQL expression is validated in its declared
+dialect. An unparseable expression is a hard `ConversionError` before output is returned
+or written. Empty and multiple-statement expressions, and SQL commands used as
+expressions, also raise a `ConversionError` with context.
+Original Ossie expressions restored
+from `meta.ossie` retain their own dialects and are validated accordingly; restored
+non-SQL dialects remain opaque. This checks SQL syntax, not warehouse execution or
+the existence of physical columns. One source dialect applies to the whole import;
+import models from different warehouse dialects separately. Dialects absent from the
+specification, such as T-SQL, cannot be selected.
+
+Omitting `--source-dialect` preserves the existing `ANSI_SQL` labels. Ordinary import
+keeps its legacy permissive fallback: unparseable SQL can pass through without a
+syntax-validation error. Other conversion requirements, including column attribution
+checks during view projection, still apply.
+
+Export prefers an explicitly selected `--dialect`, then primary
+`expression.sql`, then `ANSI_SQL` and tagged `OSSIE_SQL_2026`. The primary
+expression and its alternatives are stored in Cube metadata for re-import.
 
 Failing those, export falls back to the **first** dialect on offer that is warehouse SQL
 (`SNOWFLAKE`, `DATABRICKS`, `BIGQUERY`), records which one in `meta.ossie.dialect`, and
 reports it. The record matters: without it re-import would label vendor-specific SQL as
 `ANSI_SQL` and mislead the next converter.
 
+Export uses the chosen expression's grammar to locate aggregates and resolve native
+quoted references. A composite metric's aggregates stay on the datasets they read,
+so Cube can apply its per-cube fan-out correction. Literals, comments and window
+frames are preserved during this analysis.
+
+For portable `DATEADD(part, amount, date)` and `DATEDIFF(part, start, end)`,
+qualification keeps the date part as a keyword and qualifies the operands. For
+example, `DATEDIFF(day, opened_at, day)` becomes
+`DATEDIFF(day, {CUBE}.opened_at, {CUBE}.day)`: the last `day` is a column.
+Native expressions retain their chosen dialect's argument order.
+
 Cube holds one `sql` per member, so an expression offering **several** dialects cannot
 keep its alternatives natively — the whole expression object is parked and restored, since
-nothing less brings them back. This is what
+nothing less brings them back. Exports record the native expression's signature.
+If its SQL, type, filters or evaluation settings change in Cube, import reports
+`STALE_PARKED_EXPRESSION` before restoring the saved Ossie expression. Description,
+title and other presentation edits do not trigger this warning. Remove
+`meta.ossie.expression` to import the current native definition. Editing the saved
+expression does not refresh the native signature, so import can still warn even
+when both definitions were edited consistently. Older exports without
+a signature retain restoration behavior but cannot detect those edits. This is what
 makes another converter's output usable: everything the Databricks converter emits is
 `DATABRICKS` with no ANSI alternative, and requiring ANSI dropped every field and metric
 — producing an *empty* Cube model, which Cube compiles, so nothing downstream noticed.
@@ -382,10 +428,10 @@ surface. The round-trip import is unchanged.
   dataset's; fields stay dataset-scoped. A raw path is a struct field of the declaring
   cube's table, and one starting with the cube's own name is that table's column, since
   Cube aliases the table by it. Comments are dropped, so an inlined `-- note` cannot
-  swallow the rest of an expression. As in the round-trip import, an expression is
-  the data source's own SQL labelled `ANSI_SQL`: backtick- or bracket-quoted
-  identifiers are attributed correctly, but `validation/validate.py` parses the text
-  as ANSI and rejects them.
+  swallow the rest of an expression. Pass `--source-dialect` to select the warehouse
+  grammar and validate the emitted expressions with their correct dialect labels.
+  Without it, expressions retain the legacy `ANSI_SQL` label; warehouse-specific
+  quoting may then be rejected by `validation/validate.py`.
 - A dataset's `primary_key` names the columns its key members read.
 - The CUBE stash keeps only what describes the published model: a member's `format`,
   `currency`, measure `title` and dimension `type`, a join's declared cardinality, and
@@ -453,6 +499,37 @@ Error: Source 'public.orders' must be a fully qualified db.schema.table or a sub
 Import reports this as `SOURCE_NOT_FULLY_QUALIFIED` rather than guessing a catalog
 name, so it surfaces where the Ossie document is produced instead of three hops later.
 
+If the model relies on a warehouse's default namespace, provide it at import:
+
+```bash
+ossie-cube import -i model/ -o model.yaml --default-catalog main --default-schema sales
+```
+
+This converts `orders` to `main.sales.orders` and `reporting.orders` to
+`main.reporting.orders`. Each default must be a single identifier. For
+Snowflake, pass the database as `--default-catalog`. In Bash or Zsh, wrap a
+double-quoted database identifier in shell single quotes so the double quotes
+reach the converter as part of the identifier.
+
+```sh
+ossie-cube import -i model/ -o model.yaml --default-catalog '"Analytics.DB"' --default-schema sales
+```
+
+The Databricks exporter currently rejects identifiers with embedded dots or
+whitespace, even when quoted. Use names without those characters for that route.
+For BigQuery, set `--source-dialect BIGQUERY` so a path quoted as
+`` `project.dataset.table` `` is recognized as already qualified.
+
+The options also work with `--view ... --project` and as `default_catalog` /
+`default_schema` on the Python import functions.
+
+Defaults apply to the tables in the imported model or projected view. They
+preserve explicit qualifiers and quoting and leave SQL queries untouched. A
+catalog alone can complete a two-part name; a one-part name needs both defaults
+or stays unchanged with the warning. Without either option, table names stay as
+written. If you export the resulting Ossie document back to Cube, it uses the
+qualified table name.
+
 ### Measuring it
 
 Both claims above are measurements, so they are reproducible:
@@ -514,6 +591,7 @@ detail string.
 | `TEMPLATED_FILE_SKIPPED` | Jinja templating anywhere in a file, or a `.js`/`.ts` model file. Detected per file, as Cube's own tooling does, so the file is preserved whole rather than half-converted |
 | `NO_USABLE_DIALECT` | Export: no `ANSI_SQL` or preferred-dialect expression |
 | `SOURCE_NOT_FULLY_QUALIFIED` | A `sql_table` shorter than `catalog.schema.table`. Valid Cube and nothing is lost, but the Databricks, Snowflake and NVIDIA Auto Ontology converters reject such a source, so the model cannot convert onward — see [Onward conversion](#onward-conversion) |
+| `STALE_PARKED_EXPRESSION` | A native Cube expression changed; import restored the saved Ossie expression and reported that the edit is not reflected |
 | `PARKED_IN_META` | Preserved in the stash or under `meta.ossie` — invisible to Cube, but intact through a round trip |
 | `DROPPED_NO_CUBE_EQUIVALENT` | **Gone from the output.** Cube has nowhere to hold it and it cannot be parked: relationship `ai_context` (a Cube join entry has no `meta`) and a `dimension.is_time` role or opt-out that Cube expresses only through `type` |
 | `DROPPED_FROM_PROJECTION` | View projection only. **Gone from the output**: a Cube-only property of the view, a projected cube or a published member -- an access policy, pre-aggregations, drill members, extra `meta` -- that the round-trip import would preserve, but a projection of the public surface does not carry |

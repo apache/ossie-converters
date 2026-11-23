@@ -81,7 +81,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 from . import datatypes, formula, identifiers, keys, stash
 from .constants import (
@@ -148,8 +148,8 @@ _REGULAR_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 #: Words a bare column reference cannot be, however regular its spelling.
 #:
-#: Two sources, because each covers the other's blind spot and neither alone
-#: is enough:
+#: Three sources, because each covers the others' blind spots and no one of
+#: them is enough:
 #:
 #: * The words **sqlglot rejects** as a bare column reference. That is the
 #:   parser `validation/validate.py` runs, so one of these left unquoted does
@@ -163,11 +163,23 @@ _REGULAR_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #:   the validator passing says nothing about whether a warehouse will run it.
 #:   These are the 25 the parser alone would have missed, among them `ORDER`,
 #:   `GROUP`, `TABLE`, `USER` and `NULL`.
+#: * The **niladic functions**, which parse perfectly well and mean something
+#:   else. `SELECT CURRENT_DATE` is valid SQL in every engine and returns
+#:   today's date, not the column of that name, so a ThoughtSpot column called
+#:   `CURRENT_DATE` silently reports the wrong value rather than failing. This
+#:   is the worst of the three classes precisely because nothing complains:
+#:   the other two are caught by a parser, this one is only caught by reading
+#:   the answer. Raised by @jbonofre reviewing apache/ossie#463.
 #:
-#: `tests/test_tml_to_ossie_fields.py` re-derives the first source from the
-#: installed sqlglot and asserts this set still covers it, so a sqlglot upgrade
-#: that reserves a new word fails loudly rather than quietly emitting an
-#: expression the validator rejects.
+#: `tests/test_tml_to_ossie_fields.py` re-derives the first and third sources
+#: from the installed sqlglot and asserts this set still covers them, so an
+#: upgrade that reserves a new word, or teaches sqlglot a new niladic
+#: function, fails loudly rather than quietly emitting a bad expression.
+#:
+#: The oracle that test uses is "does `SELECT <word>` parse **as a column**",
+#: not "does it parse". That distinction is the whole of the third bullet:
+#: the first version of this guard asked only whether parsing succeeded, so
+#: every niladic function passed it while being exactly the bug.
 #:
 #: Deliberately NOT the whole ANSI:2016 reserved list (~450 words). That would
 #: quote `YEAR`, `MONTH` and `VALUE` -- ordinary ThoughtSpot column names --
@@ -177,13 +189,19 @@ _REGULAR_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SQL_RESERVED = frozenset({
     "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "BETWEEN", "BY", "CASE", "CHECK",
     "CREATE", "CROSS", "DEFAULT", "DESC", "DISTINCT", "DROP", "ELSE", "END",
-    "EXCEPT", "EXISTS", "FALSE", "FOR", "FROM", "FULL", "GLOB", "GRANT",
-    "GROUP", "HAVING", "ILIKE", "IN", "INNER", "INSERT", "INTERSECT", "INTO",
-    "IS", "JOIN", "LATERAL", "LEFT", "LIKE", "LIMIT", "NOT", "NOTNULL", "NULL",
-    "OFFSET", "ON", "OR", "ORDER", "OUTER", "PARTITIONED_BY", "PRIMARY",
-    "QUALIFY", "REGEXP", "RETURNING", "REVOKE", "RIGHT", "RLIKE", "ROLLBACK",
-    "SELECT", "SOME", "STRAIGHT_JOIN", "TABLE", "THEN", "TRUE", "UNCACHE",
-    "UNION", "UNIQUE", "USER", "USING", "WHEN", "WHERE", "WITH", "XOR",
+    "EXCEPT", "EXISTS", "FALSE", "FETCH", "FOR", "FROM", "FULL", "GLOB",
+    "GRANT", "GROUP", "HAVING", "ILIKE", "IN", "INNER", "INSERT", "INTERSECT",
+    "INTO", "IS", "JOIN", "LATERAL", "LEFT", "LIKE", "LIMIT", "NOT", "NOTNULL",
+    "NULL", "OFFSET", "ON", "OR", "ORDER", "OUTER", "PARTITIONED_BY",
+    "PRIMARY", "QUALIFY", "REGEXP", "RETURNING", "REVOKE", "RIGHT", "RLIKE",
+    "ROLLBACK", "SELECT", "SOME", "STRAIGHT_JOIN", "TABLE", "TABLESAMPLE",
+    "THEN", "TRUE", "UNCACHE", "UNION", "UNIQUE", "USER", "USING", "WHEN",
+    "WHERE", "WITH", "XOR",
+    # Niladic functions -- see the third bullet above. These parse as a
+    # function call, not a column, so they are a wrong answer rather than an
+    # error. `CURRENT_DATE` needs no parentheses in any major engine.
+    "CURRENT_CATALOG", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+    "CURRENT_USER", "LOCALTIME", "LOCALTIMESTAMP", "SESSION_USER",
 })
 
 
@@ -213,6 +231,56 @@ def _sql_identifier(name: str) -> str:
     if _REGULAR_IDENTIFIER.match(name) and name.upper() not in _SQL_RESERVED:
         return name
     return '"' + name.replace('"', '""') + '"'
+
+def _single_aggregate_portable(
+    expr: str,
+    resolve: Callable[[str, str], tuple[str, str] | None],
+    log: IssueLog,
+    *,
+    object_ref: str,
+) -> str | None:
+    """The portable expression for `AGG( <one declared column> )`, or `None`.
+
+    The narrowest shape worth translating, and the one that was being lost in
+    bulk. A metric built from a COLUMN plus an `aggregation` property already
+    composed a portable sibling via `_compose_aggregate_entries`; a metric built
+    from a FORMULA did not, because the only shape `expression_entries` made
+    portable was a BARE column reference and a formula is a call. So
+    `sum ( [T::x] )` -- one catalog aggregate over a column the document already
+    declares as a field -- came out THOUGHTSPOT-only alongside the genuinely
+    untranslatable ones (apache/ossie-converters#30).
+
+    Nothing is parsed that `formula.split_call` cannot already split: one outer
+    call, one argument. A nested call, a second argument, a compound expression
+    or a non-aggregate name all return `None` and fall through to the issue the
+    caller already raises. The operand is resolved by the SAME recursive
+    `expression_entries` call a bare reference uses, so a column the Model does
+    not surface stays unresolvable here exactly as it does there.
+
+    Issues from the operand are deliberately NOT logged twice. This runs before
+    the caller's own non-portability issue and only reports through it, so a
+    failure here is reported once, by the caller, as "no portable sibling".
+    """
+    call = formula.split_call(expr)
+    if call is None:
+        return None
+    name, args = call
+    aggregation = _AGGREGATION_BY_CALL_NAME.get(name.strip().lower())
+    if aggregation is None or len(args) != 1:
+        return None
+    # A throwaway log: the operand's own diagnosis is the caller's to report.
+    inner_entries = expression_entries(
+        args[0], resolve, IssueLog(), object_ref=object_ref, kind="metric"
+    )
+    inner = next(
+        (e["expression"] for e in inner_entries if e["dialect"] == PORTABLE_DIALECT), None
+    )
+    if inner is None:
+        return None
+    if aggregation == "COUNT_DISTINCT":
+        return f"COUNT(DISTINCT {inner})"
+    return f"{_AGGREGATION[aggregation]}({inner})"
+
 
 def expression_entries(
     expr: str,
@@ -338,6 +406,21 @@ def expression_entries(
     # portable sibling for one would need an expression tree this converter does not
     # build — see the module docstring — so the non-portability is recorded instead
     # of guessed at.
+    # Only from the metric path. An aggregate is a metric's shape: a field is a
+    # row-level attribute (core-spec/spec.md), so `sum(...)` has no honest field
+    # expression. The qualified form resolves to nothing -- the qualifier is the
+    # Ossie dataset name and the column half is the warehouse column -- and the
+    # bare form claims a row-level value the column does not have. ThoughtSpot
+    # itself runs such a column as a measure (live: no GROUP BY). So the field
+    # path falls through to the THOUGHTSPOT-only issue below, as it does for
+    # window and level-of-detail constructs. Raised by @christianeu-db reviewing
+    # apache/ossie-converters#209.
+    if kind != "field":
+        portable = _single_aggregate_portable(expr, resolve, log, object_ref=object_ref)
+        if portable is not None:
+            entries.append({"dialect": PORTABLE_DIALECT, "expression": portable})
+            return entries
+
     log.add(
         code="TS-EXPR-THOUGHTSPOT-ONLY",
         severity=Severity.INFO,
@@ -348,6 +431,43 @@ def expression_entries(
         object_ref=object_ref,
     )
     return entries
+
+
+def expression_object(entries: list[dict[str, str]]) -> dict:
+    """One Ossie `expression` built from its dialect entries.
+
+    The portable entry is written TWICE: once as `dialects[ANSI_SQL]`, where
+    it has always been, and once as the top-level `sql`, which apache/ossie#617
+    made the specification's PRIMARY portable form. Both locations may stand
+    alone, so a consumer that reads only `sql` -- which the spec invites --
+    previously saw nothing portable from this converter at all.
+
+    Additive, deliberately. `PORTABLE_DIALECT` is `ANSI_SQL` rather than
+    `OSSIE_SQL_2026` on the emit side because a survey of this repository
+    found omni and sigma drop a metric carrying only `OSSIE_SQL_2026`
+    (apache/ossie-converters#22); moving the expression into `sql` instead of
+    copying it would reintroduce exactly that loss. The one string is valid in
+    both places -- apache/ossie#450 established the two dialects parse
+    identically, which is also what lets a `sql` field (OSSIE_SQL_2026 by
+    definition) carry text composed as ANSI.
+
+    `sql` is omitted entirely when there is no portable entry. An absent
+    `sql` says "no portable form exists", which is true and is already
+    reported under `TS-EXPR-THOUGHTSPOT-ONLY`; an empty one would be a claim
+    about the expression rather than an admission about it.
+
+    The THOUGHTSPOT entry is untouched and still outranks `sql` on the way
+    back in (`ossie_to_thoughtspot.portable_expression_entries` returns
+    `[THOUGHTSPOT, sql]`), so our own round trip is unchanged by this.
+    """
+    expression: dict = {}
+    portable = next(
+        (e["expression"] for e in entries if e["dialect"] == PORTABLE_DIALECT), None
+    )
+    if portable is not None:
+        expression["sql"] = portable
+    expression["dialects"] = entries
+    return expression
 
 
 def attribute_dataset(
@@ -769,9 +889,9 @@ def convert_field(
         )
         field: dict = {"name": field_name, "label": display_name}
         expr = identifiers.format_column_ref(table_name, column_name)
-        field["expression"] = {
-            "dialects": expression_entries(expr, resolve, log, object_ref=object_ref)
-        }
+        field["expression"] = expression_object(
+            expression_entries(expr, resolve, log, object_ref=object_ref)
+        )
         datatype = _physical_datatype(
             table_name, column_name, table_lookup, log, object_ref=object_ref
         )
@@ -810,9 +930,9 @@ def convert_field(
             display_name, None, allocator, log, kind="field", object_ref=object_ref,
         )
         field: dict = {"name": field_name, "label": display_name}
-        field["expression"] = {
-            "dialects": expression_entries(expr, resolve, log, object_ref=object_ref)
-        }
+        field["expression"] = expression_object(
+            expression_entries(expr, resolve, log, object_ref=object_ref)
+        )
     else:
         log.add(
             code="TS-FIELD-NO-SOURCE",
@@ -848,6 +968,17 @@ _AGGREGATION = {
 #: physical column's own warehouse type — a COUNT of DOUBLEs is still a whole number
 #: of rows.
 _COUNT_AGGREGATIONS = frozenset({"COUNT", "COUNT_DISTINCT"})
+
+#: The Ossie datatypes `SUM` is meaningful over. Used only to decide whether
+#: ThoughtSpot's *implicit* SUM default may be applied to a MEASURE column that
+#: declares no `aggregation` -- never to second-guess an aggregation the
+#: document actually states, which is the author's instruction and is emitted
+#: whatever its column's type.
+#:
+#: `Boolean` is excluded deliberately. Some warehouses will sum it as 0/1, but
+#: ThoughtSpot does not model it as numeric and the result of guessing wrong is
+#: a number nobody asked for.
+_SUMMABLE_DATATYPES = frozenset({"Integer", "Decimal", "Float"})
 
 #: The three TML shapes a metric can arrive as (the stash's `shape` key), so a
 #: return trip can reproduce the source shape instead of collapsing every metric
@@ -911,6 +1042,19 @@ _SQL_AGGREGATE_OP_CALLS = frozenset(
 #: which also scans for these names at *any* nesting depth, not only as an
 #: expression's own outer call, because the catalog will always hold aggregate
 #: constructs beyond whatever a fixed enumeration lists.
+#: ThoughtSpot call name -> the TML `aggregation` enum value that renders it.
+#:
+#: The INVERSE of `_AGGREGATION_CATALOG_SPEC`, derived from the same catalog rows
+#: rather than hand-typed, for the reason given above it: "what do we render" and
+#: "what did we just read" cannot silently disagree when both read one source.
+#: Two-word names (`unique count`) come out whole, because `formula.split_call`
+#: returns the call name as one unit.
+_AGGREGATION_BY_CALL_NAME = {
+    formula.split_call(emit_direct(CATALOG[spec], ["x"]))[0].strip().lower(): aggregation
+    for aggregation, spec in _AGGREGATION_CATALOG_SPEC.items()
+}
+
+
 _AGGREGATE_CALL_NAMES = (
     frozenset(
         formula.split_call(emit_direct(CATALOG[spec], ["x"]))[0].lower()
@@ -1186,6 +1330,57 @@ def convert_metric(
         )
         metric: dict = {"name": metric_name}
         field_ref = identifiers.format_column_ref(table_name, column_name)
+        # The implicit SUM default is only safe over a column SUM means
+        # something for. A VARCHAR or DATE column marked MEASURE with no
+        # `aggregation` key would otherwise come out as `sum ( [t::col] )`,
+        # which is not a valid metric -- raised by @jbonofre reviewing
+        # apache/ossie#463 as the cost of the default this converter now
+        # applies.
+        #
+        # Only a *declared, known, non-summable* type declines it. An absent
+        # or unmapped type leaves the default in place: the point of the
+        # default is that ThoughtSpot applies SUM when nothing says otherwise,
+        # and withholding it on a column whose type we merely cannot read
+        # would reintroduce the raw-per-row bug the default exists to fix.
+        #
+        # An aggregation the document STATES is never second-guessed here,
+        # whatever the column's type -- that is the author's instruction, and
+        # `count ( [t::name] )` over a VARCHAR is perfectly ordinary.
+        if aggregation is not None and aggregation_is_default:
+            declared = _physical_datatype(
+                table_name, column_name, table_lookup, IssueLog(),
+                object_ref=object_ref, kind="metric",
+            )
+            if declared is not None and declared not in _SUMMABLE_DATATYPES:
+                log.add(
+                    code="TS-METRIC-AGGREGATION-DEFAULT-NOT-SUMMABLE",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"column {display_name!r} is a MEASURE with no "
+                        f"aggregation, but its type is {declared}, which SUM "
+                        f"is not meaningful over; ThoughtSpot's implicit SUM "
+                        f"default is not applied and the metric is emitted "
+                        f"unaggregated. Set an explicit aggregation on the "
+                        f"column if one is intended"
+                    ),
+                    object_ref=object_ref,
+                )
+                aggregation, aggregation_raw = None, "NONE"
+                # Declining is only half the job. The source column carries no
+                # `aggregation` key, and absent means SUM to ThoughtSpot -- so
+                # emitting the metric unaggregated and saying nothing else puts
+                # the SUM straight back on the return trip, and the document in
+                # between disagrees with both ends of it. Recording the decline
+                # as a load-bearing NONE makes the returned TML say `NONE`
+                # explicitly, which is the one spelling all three agree on.
+                #
+                # This deliberately does NOT reproduce the source byte-for-byte:
+                # the source had no key and the return has `aggregation: NONE`.
+                # That is a repair, not a drift -- a MEASURE column ThoughtSpot
+                # would SUM over a VARCHAR is not a model that works, and the
+                # alternative is to hand back the same broken one. Raised by
+                # @jbonofre reviewing apache/ossie-converters#18.
+                explicit_none_is_load_bearing = True
         if aggregation is None:
             dialects = expression_entries(
                 field_ref, resolve, log, object_ref=object_ref, kind="metric"
@@ -1194,7 +1389,7 @@ def convert_metric(
             dialects = _compose_aggregate_entries(
                 field_ref, aggregation_raw, resolve, log, object_ref=object_ref
             )
-        metric["expression"] = {"dialects": dialects}
+        metric["expression"] = expression_object(dialects)
         datatype = _metric_datatype(
             table_name, column_name, aggregation_raw, table_lookup, log, object_ref=object_ref
         )
@@ -1330,11 +1525,46 @@ def convert_metric(
         else:
             # A genuinely scalar expr: the column aggregation is load-bearing, so
             # compose it.
+            #
+            # When that aggregation is the IMPLICIT default rather than a stated
+            # one, this is the one place the summability guard above cannot
+            # follow. A formula declares no type anywhere in TML -- neither
+            # `columns[]` nor `formulas[]` has a `data_type` key -- so there is
+            # nothing to read, and nothing in this package can supply it: the
+            # forward catalog's `variant` types 37 of 146 constructs and
+            # describes the pass-through SQL op kind rather than a return type,
+            # and `expressions/reverse.py` carries no return types at all.
+            # So `sum ( concat ( [t::a] , [t::b] ) )` is composable here and
+            # cannot be ruled out the way a VARCHAR column can.
+            #
+            # Declining instead would be worse: a formula NEVER has a declared
+            # type, so "decline when untyped" means never defaulting any scalar
+            # formula, which contradicts the rule the default exists to serve.
+            # So it composes, and says that it did so without being able to
+            # check. Measured across 31 real models: all 128 formula-backed
+            # MEASURE columns carry an explicit aggregation, so this reports on
+            # nothing in that corpus -- it is a hole being closed honestly
+            # rather than a common case being made noisy. Raised by @jbonofre
+            # reviewing apache/ossie-converters#18.
+            if aggregation_is_default:
+                log.add(
+                    code="TS-METRIC-AGGREGATION-DEFAULT-UNTYPED-FORMULA",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"column {display_name!r} has no explicit aggregation, so "
+                        f"ThoughtSpot's implicit SUM default is composed around "
+                        f"its formula; a formula declares no datatype in TML, so "
+                        f"unlike a physical column this cannot be checked for "
+                        f"summability. If the expression does not return a "
+                        f"number, set an explicit aggregation on the column"
+                    ),
+                    object_ref=object_ref,
+                )
             metric_shape = METRIC_SHAPE_SCALAR_FORMULA_PLUS_AGGREGATION
             dialects = _compose_aggregate_entries(
                 expr, aggregation_raw, resolve, log, object_ref=object_ref
             )
-        metric["expression"] = {"dialects": dialects}
+        metric["expression"] = expression_object(dialects)
         # A formula carries no declared type anywhere in TML — neither columns[] nor
         # formulas[] has a data_type key — so datatype is always omitted
         # here, and never logged: there was never a value here to lose.
@@ -1949,7 +2179,11 @@ def _strip_wrapping_parens(text: str) -> str:
 
 
 def _parse_join_condition(
-    on_expression: str, from_prefix: str, to_prefix: str
+    on_expression: str,
+    from_physical: str,
+    to_physical: str,
+    from_prefix: str | None = None,
+    to_prefix: str | None = None,
 ) -> tuple[list[tuple[str, str]], list[str]]:
     """Split a join condition into equality pairs and residual predicates.
 
@@ -1983,9 +2217,36 @@ def _parse_join_condition(
             continue
         left_table, left_column = identifiers.split_column_ref(match.group(1))
         right_table, right_column = identifiers.split_column_ref(match.group(2))
-        if left_table == from_prefix and right_table == to_prefix:
+        # EITHER namespace names an endpoint here: strict in what we send,
+        # liberal in what we accept.
+        #
+        # The write leg emits PHYSICAL names, because a Table's joins_with[]
+        # lives on the table, which has no knowledge of the aliases a model
+        # gives it -- structural, not a probe result. This is the read leg,
+        # and it must not mirror that strictness. An inline `joins[]` entry
+        # lives on the MODEL, where every other reference -- `with`, every
+        # `column_id` prefix -- is in the alias namespace, and real documents
+        # write its `on` that way too.
+        #
+        # Matching one namespace alone does not fix the class, it moves it.
+        # Before this function took physical names it matched the model ones,
+        # so an alias-spelled condition parsed and a physical-spelled one was
+        # demoted to an unrepresentable stash entry; matching only physical
+        # names simply swapped which half broke. Neither failure is visible
+        # to a round trip -- the verbatim condition is stashed and replayed,
+        # so the TML returns byte-identical -- and both cost the Ossie
+        # document its relationship, which is what every other converter
+        # reads.
+        #
+        # The two spellings cannot collide: a prefix is either an endpoint's
+        # physical name or its model name, and `with` already had to name a
+        # model_tables entry for this join to be parsed at all. Where nothing
+        # is aliased they coincide and this is the comparison it always was.
+        from_names = {from_physical, from_prefix or from_physical}
+        to_names = {to_physical, to_prefix or to_physical}
+        if left_table in from_names and right_table in to_names:
             equality_pairs.append((left_column, right_column))
-        elif left_table == to_prefix and right_table == from_prefix:
+        elif left_table in to_names and right_table in from_names:
             equality_pairs.append((right_column, left_column))
         else:
             # An equality pair, but not one naming both sides of *this* join --
@@ -2059,6 +2320,8 @@ def _relationship_from_join(
     name: str,
     from_prefix: str,
     to_prefix: str,
+    from_physical: str,
+    to_physical: str,
     on_expression: str | None,
     join_type: str | None,
     cardinality: str | None,
@@ -2120,7 +2383,9 @@ def _relationship_from_join(
         return None, None, False
 
     try:
-        equality_pairs, residuals = _parse_join_condition(on_expression, from_prefix, to_prefix)
+        equality_pairs, residuals = _parse_join_condition(
+            on_expression, from_physical, to_physical, from_prefix, to_prefix
+        )
     except ValueError as exc:
         log.add(
             code="TS-JOIN-MALFORMED",
@@ -2253,6 +2518,7 @@ def _relationship_from_join(
 def _convert_join(
     from_prefix: str, join: dict, from_table_body: dict, known_datasets: frozenset[str],
     table_lookup: Callable[[str], dict | None], log: IssueLog,
+    physical_by_prefix: Mapping[str, str] | None = None,
 ) -> tuple[dict | None, dict | None, keys.Relationship | None]:
     """One `model_tables[].joins[]` entry -> `(relationship,
     unrepresentable_entry, key_candidate)`.
@@ -2326,7 +2592,15 @@ def _convert_join(
                 object_ref=f"relationship:{referencing_join}",
             )
             return None, None, None
-        to_prefix = (destination or {}).get("name")
+        # `with` names the model_tables[] entry, so it is the MODEL namespace
+        # and the only thing that can name a dataset. `destination.name` is
+        # the table's own name -- the PHYSICAL namespace -- which is what the
+        # condition is written in and is no dataset at all once the target is
+        # aliased. Reading the target from `destination` dropped every
+        # relationship in an aliased model. It is kept as the physical name,
+        # with `with` falling back to it for TML that omits `with`.
+        to_prefix = join.get("with") or (destination or {}).get("name")
+        to_physical = (destination or {}).get("name") or to_prefix
         on_expression = matched.get("on")
         join_type = join.get("type", matched.get("type"))
         cardinality = join.get("cardinality", matched.get("cardinality"))
@@ -2338,6 +2612,7 @@ def _convert_join(
         name = referencing_join
     else:
         to_prefix = join.get("with")
+        to_physical = (physical_by_prefix or {}).get(to_prefix, to_prefix)
         on_expression = join.get("on")
         join_type = join.get("type")
         cardinality = join.get("cardinality")
@@ -2350,6 +2625,38 @@ def _convert_join(
             severity=Severity.WARNING,
             message=f"join {name!r} from {from_prefix!r} names no target dataset; it is skipped",
             object_ref=f"relationship:{name}",
+        )
+        return None, None, None
+
+    from_physical = from_table_body.get("name") or from_prefix
+
+    if from_physical == to_physical:
+        # ONE table on both ends -- two aliases of it, or one entry joined to
+        # itself. Either way a condition written in
+        # physical names says the same word on both sides and cannot say
+        # which end is which. ThoughtSpot never produces this -- every
+        # self-join is rejected (13125, and 14565 for a table against
+        # itself) -- so it reaches us only from hand-written TML. Guessing an
+        # orientation there would silently reverse a join, which is worse
+        # than declining to convert it.
+        log.add(
+            code="TS-JOIN-AMBIGUOUS-PREFIX",
+            severity=Severity.WARNING,
+            message=(
+                f"join {name!r} runs "
+                + (f"from {from_prefix!r} to itself over table {from_physical!r}"
+                   if from_prefix == to_prefix
+                   else f"between {from_prefix!r} and {to_prefix!r}, which are "
+                        f"both aliases of table {from_physical!r}")
+                + f"; its condition names that table on both sides, so which end "
+                  f"each column belongs to cannot be determined and the "
+                  f"relationship is dropped"
+            ),
+            object_ref=f"relationship:{name}",
+            remedy=(
+                "ThoughtSpot does not support a self-join; a hierarchy needs one "
+                "alias per level, each joined to a distinct table."
+            ),
         )
         return None, None, None
 
@@ -2371,6 +2678,8 @@ def _convert_join(
         name=name,
         from_prefix=from_prefix,
         to_prefix=to_prefix,
+        from_physical=from_physical,
+        to_physical=to_physical,
         on_expression=on_expression,
         join_type=join_type,
         cardinality=cardinality,
@@ -2885,6 +3194,12 @@ def convert(document_set: DocumentSet) -> OssieConversion:
     relationships: list[dict] = []
     key_candidates: list[keys.Relationship] = []
     known_datasets = frozenset(dataset_bodies)
+    # Model namespace -> physical table name, for the inline join form, whose
+    # `on` is also written in physical names but which carries no
+    # `destination` to read one from.
+    physical_by_prefix = {
+        prefix: (body.get("name") or prefix) for prefix, body in table_docs.items()
+    }
 
     for entry in model_tables:
         table_ref = entry.get("name")
@@ -2894,7 +3209,7 @@ def convert(document_set: DocumentSet) -> OssieConversion:
         for join in entry.get("joins") or []:
             relationship, unrepresentable, candidate = _convert_join(
                 from_prefix, join, table_docs.get(from_prefix) or {}, known_datasets,
-                table_lookup, log,
+                table_lookup, log, physical_by_prefix,
             )
             if relationship is not None:
                 # `Relationship.name` is unique across the model's flat

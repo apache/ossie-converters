@@ -18,6 +18,7 @@
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -29,9 +30,14 @@ pytest.importorskip("clr_loader", reason="optional TOM extra is not installed")
 from ossie_microsoft import (  # noqa: E402
     convert_ossie_to_semantic_model,
     convert_semantic_model_to_ossie,
+    export_powerbi_project,
+    tom,
     validate_bim,
     validate_tmsl,
 )
+from ossie_microsoft._common import read_stash  # noqa: E402
+from ossie_microsoft.cli import main  # noqa: E402
+from ossie_microsoft.pbip import import_powerbi_project  # noqa: E402
 
 HERE = Path(__file__).parent
 FIXTURE = HERE / "fixtures" / "sales_model.bim"
@@ -45,6 +51,86 @@ if not (ASSEMBLIES / "Microsoft.AnalysisServices.Tabular.dll").is_file():
     pytest.skip("optional TOM assemblies have not been restored", allow_module_level=True)
 
 
+@pytest.mark.parametrize(
+    "input_path", ["mini.pbip", "mini.SemanticModel", "mini.SemanticModel/definition"]
+)
+@pytest.mark.parametrize("translate_dax", [False, True])
+def test_a_split_pbip_imports_an_inline_table(input_path, translate_dax, tmp_path):
+    project = HERE / "fixtures" / "mini-pbip"
+    yaml_text = import_powerbi_project(project / input_path, translate_dax=translate_dax)
+    document = yaml.safe_load(yaml_text)
+    assert document["datasets"][0]["name"] == "Orders"
+    # Inline M has no physical relation; the converter uses the model table name.
+    assert document["datasets"][0]["source"] == "Orders"
+    expected = [{"dialect": "DAX", "expression": "SUM(Orders[id])"}]
+    if translate_dax:
+        expected.insert(0, {"dialect": "OSSIE_SQL_2026", "expression": "SUM(Orders.id)"})
+    assert document["metrics"][0]["expression"]["dialects"] == expected
+
+    output = tmp_path / "model.yaml"
+    args = ["import", "-i", str(project / input_path), "-o", str(output)]
+    if translate_dax:
+        args.append("--translate-dax")
+    assert main(args) == 0
+    assert yaml.safe_load(output.read_text(encoding="utf-8")) == document
+
+
+def test_split_tmdl_keeps_a_table_with_a_leading_dot(tmp_path):
+    project = tmp_path / "mini"
+    shutil.copytree(HERE / "fixtures" / "mini-pbip", project)
+    definition = project / "mini.SemanticModel" / "definition"
+    (definition / "tables" / ".Hidden.tmdl").write_text(
+        "table '.Hidden'\n\tcolumn id\n\t\tdataType: int64\n\t\tsourceColumn: id\n",
+        encoding="utf-8",
+    )
+    with (definition / "model.tmdl").open("a", encoding="utf-8") as model:
+        model.write("\nref table '.Hidden'\n")
+
+    document = yaml.safe_load(import_powerbi_project(project / "mini.pbip"))
+    assert [dataset["name"] for dataset in document["datasets"]] == ["Orders", ".Hidden"]
+
+
+def test_a_missing_table_ref_follows_tom_behavior(tmp_path):
+    project = tmp_path / "mini"
+    shutil.copytree(HERE / "fixtures" / "mini-pbip", project)
+    with (project / "mini.SemanticModel" / "definition" / "model.tmdl").open(
+        "a", encoding="utf-8"
+    ) as model:
+        model.write("\nref table Missing\n")
+
+    output = tmp_path / "model.yaml"
+    assert main(["import", "--strict", "-i", str(project / "mini.pbip"), "-o", str(output)]) == 0
+    document = yaml.safe_load(output.read_text(encoding="utf-8"))
+    assert [dataset["name"] for dataset in document["datasets"]] == ["Orders"]
+
+
+def test_split_tmdl_preserves_model_collections_and_vendor_metadata(tmp_path):
+    original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
+    api = tom._load_tom(ASSEMBLIES.resolve())
+    database = api.JsonSerializer.DeserializeDatabase(json.dumps(original))
+    # TOM omits default property values when serializing either representation.
+    normalized = json.loads(api.JsonSerializer.SerializeDatabase(database))
+    definition = tmp_path / "Sales.SemanticModel" / "definition"
+    api.TmdlSerializer.SerializeDatabaseToFolder(database, str(definition))
+
+    expected = yaml.safe_load(convert_semantic_model_to_ossie(normalized))
+    received = yaml.safe_load(import_powerbi_project(definition))
+    assert received["name"] == expected["name"]
+    assert received["description"] == expected["description"]
+    for collection in ("datasets", "metrics", "relationships"):
+        assert [item["name"] for item in received[collection]] == [
+            item["name"] for item in expected[collection]
+        ]
+    for actual, wanted in zip(received["datasets"], expected["datasets"], strict=True):
+        assert actual["source"] == wanted["source"]
+        assert actual.get("fields") == wanted.get("fields")
+    assert received["metrics"] == expected["metrics"]
+    assert received["relationships"] == expected["relationships"]
+    actual_stash, expected_stash = read_stash(received), read_stash(expected)
+    for key in ("roles", "perspectives", "cultures", "expressions"):
+        assert actual_stash[key] == expected_stash[key]
+
+
 def test_sales_fixture_and_round_trip_are_tom_clean():
     original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
     assert validate_tmsl(original, assembly_dir=ASSEMBLIES).is_valid
@@ -54,18 +140,16 @@ def test_sales_fixture_and_round_trip_are_tom_clean():
     assert validate_tmsl(exported, assembly_dir=ASSEMBLIES).is_valid
 
 
-def test_tpcds_export_is_tom_clean():
-    example = HERE.parents[1] / "ossie" / "examples" / "tpcds_semantic_model.yaml"
-    exported = convert_ossie_to_semantic_model(example.read_text(encoding="utf-8"))
+def test_tpcds_export_is_tom_clean(tpcds_osi):
+    exported = convert_ossie_to_semantic_model(tpcds_osi)
     assert validate_tmsl(exported, assembly_dir=ASSEMBLIES).is_valid
 
 
-def test_tmdl_export_is_a_single_document(monkeypatch):
-    example = HERE.parents[1] / "ossie" / "examples" / "tpcds_semantic_model.yaml"
+def test_tmdl_export_is_a_single_document(monkeypatch, tpcds_osi):
     monkeypatch.setenv("OSSIE_MICROSOFT_TOM_ASSEMBLIES", os.fspath(ASSEMBLIES))
 
     tmdl = convert_ossie_to_semantic_model(
-        example.read_text(encoding="utf-8"), output_format="TMDL"
+        tpcds_osi, output_format="TMDL"
     )
 
     assert isinstance(tmdl, str)
@@ -116,3 +200,112 @@ def test_tom_validation_catches_a_dangling_hierarchy_reference(tmp_path):
     assert any("DefaultHierarchy" in error.message for error in result.errors)
     with pytest.raises(ValueError, match="DefaultHierarchy"):
         result.raise_for_errors()
+
+
+def _read_definition_folder(path):
+    """Load a TMDL folder with TOM itself, independently of the converter's own reader."""
+    from ossie_microsoft.tom import _load_tom
+
+    tom = _load_tom(ASSEMBLIES.resolve())
+    database = tom.TmdlSerializer.DeserializeDatabaseFromFolder(os.fspath(path))
+    return json.loads(tom.JsonSerializer.SerializeDatabase(database))
+
+
+def test_pbip_export_writes_the_layout_power_bi_reads(tmp_path):
+    original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
+    ossie = convert_semantic_model_to_ossie(original)
+
+    folder = export_powerbi_project(ossie, tmp_path, assembly_dir=ASSEMBLIES)
+
+    definition = folder / "definition"
+    assert folder.name == "sales_model.SemanticModel"
+    assert json.loads((folder / "definition.pbism").read_text(encoding="utf-8"))["version"] == "4.0"
+    for document in ("database.tmdl", "model.tmdl", "relationships.tmdl", "tables/Sales.tmdl"):
+        assert (definition / document).is_file(), document
+    assert any((definition / "roles").glob("*.tmdl"))
+
+
+def test_pbip_export_matches_the_single_document_tmdl_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("OSSIE_MICROSOFT_TOM_ASSEMBLIES", os.fspath(ASSEMBLIES))
+    original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
+    ossie = convert_semantic_model_to_ossie(original)
+
+    folder = export_powerbi_project(ossie, tmp_path)
+    from_folder = _read_definition_folder(folder / "definition")
+    from_document = convert_semantic_model_to_ossie(
+        convert_ossie_to_semantic_model(ossie, output_format="TMDL")
+    )
+
+    assert validate_tmsl(from_folder, assembly_dir=ASSEMBLIES).is_valid
+    assert yaml.safe_load(convert_semantic_model_to_ossie(from_folder)) == yaml.safe_load(
+        from_document
+    )
+
+
+def test_pbip_export_with_force_drops_documents_of_removed_tables(tmp_path):
+    original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
+    ossie = yaml.safe_load(convert_semantic_model_to_ossie(original))
+    folder = export_powerbi_project(ossie, tmp_path, assembly_dir=ASSEMBLIES)
+    (folder / "diagramLayout.json").write_text("{}", encoding="utf-8")
+    assert (folder / "definition" / "tables" / "Customer.tmdl").is_file()
+
+    # Customer is the "one" side of a relationship, so drop that relationship with it.
+    ossie["datasets"] = [d for d in ossie["datasets"] if d["name"] != "Customer"]
+    ossie["relationships"] = [
+        r for r in ossie["relationships"] if "Customer" not in (r["from"], r["to"])
+    ]
+    export_powerbi_project(ossie, tmp_path, force=True, assembly_dir=ASSEMBLIES)
+
+    assert not (folder / "definition" / "tables" / "Customer.tmdl").exists()
+    assert (folder / "diagramLayout.json").is_file()
+    tables = {t["name"] for t in _read_definition_folder(folder / "definition")["model"]["tables"]}
+    assert "Customer" not in tables
+    assert "Sales" in tables
+
+
+def test_pbip_export_round_trips_through_project_import(tmp_path):
+    original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
+    ossie = convert_semantic_model_to_ossie(original)
+
+    folder = export_powerbi_project(ossie, tmp_path, assembly_dir=ASSEMBLIES)
+    from_project = yaml.safe_load(import_powerbi_project(folder))
+
+    from_document = convert_semantic_model_to_ossie(
+        convert_ossie_to_semantic_model(ossie, output_format="TMDL")
+    )
+    assert from_project == yaml.safe_load(from_document)
+    # TMDL omits TMSL defaults (relationship cardinalities, the implicit RowNumber
+    # column), so only the Power BI stash differs from importing model.bim directly.
+    assert _without_nonportable_extensions(from_project) == _without_nonportable_extensions(
+        yaml.safe_load(convert_semantic_model_to_ossie(original))
+    )
+
+
+def _without_nonportable_extensions(node):
+    if isinstance(node, dict):
+        return {
+            key: _without_nonportable_extensions(value)
+            for key, value in node.items()
+            if key != "nonportable_extensions"
+        }
+    if isinstance(node, list):
+        return [_without_nonportable_extensions(v) for v in node]
+    return node
+
+
+def test_pbip_export_into_a_project_semantic_model_updates_what_the_report_uses(tmp_path):
+    # The #76 review scenario: --pbip given the .SemanticModel folder the .pbip points at.
+    project = tmp_path / "project"
+    shutil.copytree(HERE / "fixtures" / "mini-pbip", project)
+    ossie = convert_semantic_model_to_ossie(json.loads(FIXTURE.read_text(encoding="utf-8-sig")))
+
+    folder = export_powerbi_project(
+        ossie, project / "mini.SemanticModel", force=True, assembly_dir=ASSEMBLIES
+    )
+
+    assert folder == project / "mini.SemanticModel"
+    assert not (folder / "sales_model.SemanticModel").exists()
+    assert (folder / "diagramLayout.json").is_file()
+    through_report = yaml.safe_load(import_powerbi_project(project / "mini.pbip"))
+    assert through_report["name"] == "sales_model"
+    assert {d["name"] for d in through_report["datasets"]} >= {"Sales", "Customer"}
