@@ -15,11 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Shared pieces: the error type and the strict-form helpers.
+"""Shared pieces: the error type and the document loader.
 
-An Ossie document in *strict form* carries every `custom_extensions[].data` as a JSON string,
-which is what the 0.3.0 schema accepts and what every other converter can read. The converter
-works on objects; `converter.export` writes the strict form and `load` here reads it back.
+The converter works on plain dicts; `converter.export` writes an Ossie document and `load` here
+reads one back.
 """
 
 from __future__ import annotations
@@ -32,12 +31,5 @@ class ConversionError(Exception):
 
 
 def load(doc: dict) -> dict:
-    """Strict form -> working form: extension data from JSON strings back to objects."""
-    out = json.loads(json.dumps(doc))
-    holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", []) + d.get("metrics", [])] \
-        + out.get("relationships", []) + out.get("metrics", [])
-    for h in holders:
-        for x in h.get("custom_extensions") or []:
-            if isinstance(x["data"], str):
-                x["data"] = json.loads(x["data"])
-    return out
+    """A deep copy of an Ossie document, so the converter can edit it freely."""
+    return json.loads(json.dumps(doc))

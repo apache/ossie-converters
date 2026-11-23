@@ -241,8 +241,8 @@ class SpecToOssieConverter:
             name=lm_spec.name,
             description=lm_spec.description,
             ai_context=lm_spec.ai_context,
-            custom_extensions=[
-                _convert_custom_extension(ce) for ce in lm_spec.custom_extensions
+            nonportable_extensions=[
+                _convert_custom_extension(ce) for ce in lm_spec.nonportable_extensions
             ],
         )
         for ds_spec in lm_spec.datasets:
@@ -559,7 +559,7 @@ def _convert_dataset_field(fl: SpecDatasetField) -> DatasetField:
         label=fl.label,
         description=fl.description,
         ai_context=fl.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in fl.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in fl.nonportable_extensions],
     )
 
 
@@ -573,7 +573,7 @@ def _convert_dataset(ds: SpecDataset) -> Dataset:
         unique_keys=ds.unique_keys,
         description=ds.description,
         ai_context=ds.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in ds.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in ds.nonportable_extensions],
     )
 
 
@@ -607,7 +607,7 @@ def _convert_join_path(jp: SpecJoinPath, lm: SemanticModel) -> JoinPath:
         from_columns=from_columns,
         to_columns=to_columns,
         ai_context=jp.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in jp.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in jp.nonportable_extensions],
     )
 
 
@@ -617,6 +617,6 @@ def _convert_metric(m: SpecMetric) -> Metric:
         expression=_convert_expression(m.expression),
         description=m.description,
         ai_context=m.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in m.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in m.nonportable_extensions],
         datatype=DataType(m.datatype) if m.datatype is not None else None,
     )

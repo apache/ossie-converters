@@ -22,7 +22,7 @@ Pure offline conversion. Accepts the Omni model-directory layout as a mapping of
 `views/*.view.yaml`, `topics/*.topic.yaml`. Omni features Ossie has no native field
 for (formats, timeframes, hidden/tags, topic curation, the model file itself,
 query views, extends-only views, non-equi joins, ...) are preserved in
-`custom_extensions[OMNI]` so that converting back reproduces the original files.
+`nonportable_extensions[OMNI]` so that converting back reproduces the original files.
 See README.md.
 
 Usage (CLI):
@@ -135,7 +135,7 @@ def convert_omni_to_ossie(files, model_name=None, topic=None):
             # Query views are backed by a saved query, not a table; Ossie has no
             # dataset form for them. Preserved verbatim, restored on export.
             _warn(f"file '{fname}'", "query views have no Ossie dataset form; "
-                                     "preserved in custom_extensions only")
+                                     "preserved in nonportable_extensions only")
             unmapped_views.add(_canonical_view_name(text, qv.group(1)))
             extra_files[fname] = text
             continue
@@ -150,7 +150,7 @@ def convert_omni_to_ossie(files, model_name=None, topic=None):
                 # has no standalone Ossie dataset form. Preserved verbatim.
                 _warn(f"view '{vname}'",
                       "no `schema`/`sql` source (an extends-only view?); "
-                      "preserved in custom_extensions only")
+                      "preserved in nonportable_extensions only")
                 unmapped_views.add(vname)
                 extra_files[fname] = text
                 continue
@@ -177,7 +177,7 @@ def convert_omni_to_ossie(files, model_name=None, topic=None):
             rel_entries = parsed
             continue
         _warn(f"file '{fname}'", "unrecognized file; preserved in "
-                                 "custom_extensions only")
+                                 "nonportable_extensions only")
         extra_files[fname] = text
 
     if not views:
@@ -197,7 +197,7 @@ def convert_omni_to_ossie(files, model_name=None, topic=None):
         mapped_name = next(iter(topics))
     elif len(topics) > 1:
         _warn("model", f"{len(topics)} topics found and none chosen with --topic; "
-                       f"topic metadata is preserved in custom_extensions only")
+                       f"topic metadata is preserved in nonportable_extensions only")
 
     model = {"name": model_name or mapped_name or "omni_model"}
 
@@ -227,7 +227,7 @@ def convert_omni_to_ossie(files, model_name=None, topic=None):
         if endpoints & unmapped_views:
             _warn(f"relationship #{i + 1}",
                   "references a view with no Ossie dataset form; preserved in "
-                  "custom_extensions only")
+                  "nonportable_extensions only")
         else:
             rel = _convert_relationship(entry, i, views)
         if rel is None:
@@ -329,7 +329,7 @@ def _convert_view(vname, view, meta):
             for n in templated:
                 _warn(f"{kind[:-1]} '{vname}.{n}'",
                       "sql uses Omni template syntax ('{{'), which has no "
-                      "Ossie form; preserved in custom_extensions only")
+                      "Ossie form; preserved in nonportable_extensions only")
                 entries.pop(n)
             stash[key] = templated
 
@@ -467,7 +467,7 @@ def _convert_relationship(entry, index, views):
             _warn(what, f"('{from_view}' -> '{to_view}'): on_sql clause "
                         f"'{clause.strip()}' is not an equi-join of two "
                         f"${{view.field}} references, so it has no Ossie "
-                        f"relationship form; preserved in custom_extensions only")
+                        f"relationship form; preserved in nonportable_extensions only")
             return None
         la, lf, ra, rf = m.groups()
         if aliases.get(la) == from_view and aliases.get(ra) == to_view:
@@ -479,7 +479,7 @@ def _convert_relationship(entry, index, views):
         else:
             _warn(what, f"on_sql clause '{clause.strip()}' references views other "
                         f"than '{from_view}'/'{to_view}' (or their aliases); "
-                        f"preserved in custom_extensions only")
+                        f"preserved in nonportable_extensions only")
             return None
 
     # The declared type/join_type are stashed verbatim whenever present -- even
@@ -507,7 +507,7 @@ def _convert_relationship(entry, index, views):
         # orientation.
         _warn(what, "many_to_many has no Ossie orientation (Ossie `to` is the one "
                     "side); orientation kept as declared, type preserved in "
-                    "custom_extensions")
+                    "nonportable_extensions")
 
     rel = {"name": f"{from_view}_to_{to_view}", "from": from_view, "to": to_view,
            "from_columns": from_cols, "to_columns": to_cols}
@@ -517,7 +517,7 @@ def _convert_relationship(entry, index, views):
     if entry.get("where_sql"):
         stash["where_sql"] = entry["where_sql"]
         _warn(what, "where_sql (join filter) has no Ossie form; preserved in "
-                    "custom_extensions only")
+                    "nonportable_extensions only")
     for key in ("reversible", "id", "join_from_view_as", "join_from_view_as_label",
                 "join_to_view_as", "join_to_view_as_label"):
         if key in entry:
@@ -614,7 +614,7 @@ def _convert_measure(vname, mname, metric_name, measure, effective_base):
         expr = _exotic_expr(agg, inner, measure)
         _warn(scope, f"aggregate_type '{agg}' has no exact ANSI form; emitted a "
                      f"best-effort expression, original measure preserved in "
-                     f"custom_extensions")
+                     f"nonportable_extensions")
         reconstructible = False
     else:
         raise ConversionError(
@@ -622,7 +622,7 @@ def _convert_measure(vname, mname, metric_name, measure, effective_base):
 
     if measure.get("filters"):
         _warn(scope, "measure filters have no Ossie form; expression emitted "
-                     "unfiltered, original measure preserved in custom_extensions")
+                     "unfiltered, original measure preserved in nonportable_extensions")
         reconstructible = False
 
     # Placement/name recovery: only stashed when the exporter would otherwise

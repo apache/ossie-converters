@@ -41,10 +41,18 @@ metrics:
   description: Count of customers whose preferred flag is set
   ai_context:
     instructions: 'Grain: customer. Counts: Customers flagged as preferred.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_preferred_customer_count", "definition_version": 1}, "agent_context":
-      {"grain": "customer", "population": "Customers flagged as preferred", "sql_dialect": "snowflake"}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_preferred_customer_count
+        definition_version: 1
+      agent_context:
+        grain: customer
+        population: Customers flagged as preferred
+        sql_dialect: snowflake
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

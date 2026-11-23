@@ -34,22 +34,18 @@ from ossie_thoughtspot.constants import (
 from ossie_thoughtspot.errors import ConversionError
 
 
-def test_write_stash_serialises_data_as_a_json_string_not_an_object():
-    # ossie-schema.json types `data` as "string". The reader also accepts the
-    # object form apache/ossie#522 proposes, and the asymmetry is deliberate:
-    # readers move first, writers only once the spec does. Do not "fix" this by
-    # making the writer emit an object -- that would make our output invalid
-    # against the schema in force.
+def test_write_stash_serialises_data_as_an_object():
+    # ossie-schema.json types `data` as "object" since apache/ossie#522.
     obj = stash.write_stash({}, {"join_type": "LEFT_OUTER"})
-    entry = obj["custom_extensions"][0]
+    entry = obj["nonportable_extensions"][0]
     assert entry["vendor_name"] == VENDOR_KEY
-    assert isinstance(entry["data"], str)
-    assert json.loads(entry["data"])["join_type"] == "LEFT_OUTER"
+    assert isinstance(entry["data"], dict)
+    assert entry["data"]["join_type"] == "LEFT_OUTER"
 
 
 def test_write_stash_stamps_the_shape_version():
     obj = stash.write_stash({}, {"k": "v"})
-    assert json.loads(obj["custom_extensions"][0]["data"])["_v"] == STASH_VERSION
+    assert obj["nonportable_extensions"][0]["data"]["_v"] == STASH_VERSION
 
 
 def test_write_stash_writes_nothing_for_an_empty_payload():
@@ -61,10 +57,10 @@ def test_write_stash_merges_into_the_existing_own_entry():
     # One entry per object, merged — never a second THOUGHTSPOT entry.
     obj = stash.write_stash({}, {"a": 1})
     obj = stash.write_stash(obj, {"b": 2})
-    own = [e for e in obj["custom_extensions"] if e["vendor_name"] == VENDOR_KEY]
+    own = [e for e in obj["nonportable_extensions"] if e["vendor_name"] == VENDOR_KEY]
     assert len(own) == 1
-    assert json.loads(own[0]["data"])["a"] == 1
-    assert json.loads(own[0]["data"])["b"] == 2
+    assert own[0]["data"]["a"] == 1
+    assert own[0]["data"]["b"] == 2
 
 
 def test_foreign_vendor_entries_pass_through_untouched():

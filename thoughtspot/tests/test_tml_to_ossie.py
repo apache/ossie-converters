@@ -122,10 +122,10 @@ def _document_set(model_doc, *table_docs):
 
 
 def _own_stash(obj):
-    """The parsed THOUGHTSPOT custom_extensions payload on `obj`, or None."""
-    for entry in obj.get("custom_extensions") or []:
+    """The parsed THOUGHTSPOT nonportable_extensions payload on `obj`, or None."""
+    for entry in obj.get("nonportable_extensions") or []:
         if entry["vendor_name"] == "THOUGHTSPOT":
-            return json.loads(entry["data"])
+            return entry["data"]
     return None
 
 
@@ -634,14 +634,14 @@ class TestStashProtocol:
         result = convert(_document_set(model, orders))
 
         dataset = result.model["datasets"][0]
-        dataset.setdefault("custom_extensions", []).append(
-            {"vendor_name": "SNOWFLAKE", "data": '{"x": 1}'}
+        dataset.setdefault("nonportable_extensions", []).append(
+            {"vendor_name": "SNOWFLAKE", "data": {"x": 1}}
         )
         merged = stash.write_stash(dataset, {"extra": "value"})
-        vendor_names = {e["vendor_name"] for e in merged["custom_extensions"]}
+        vendor_names = {e["vendor_name"] for e in merged["nonportable_extensions"]}
         assert vendor_names == {"THOUGHTSPOT", "SNOWFLAKE"}
-        foreign = next(e for e in merged["custom_extensions"] if e["vendor_name"] == "SNOWFLAKE")
-        assert foreign == {"vendor_name": "SNOWFLAKE", "data": '{"x": 1}'}
+        foreign = next(e for e in merged["nonportable_extensions"] if e["vendor_name"] == "SNOWFLAKE")
+        assert foreign == {"vendor_name": "SNOWFLAKE", "data": {"x": 1}}
 
     def test_no_guid_obj_id_or_fqn_appears_anywhere_in_the_output(self):
         # Nested guids on the model_tables[] entry (fqn) and the model
@@ -678,7 +678,7 @@ class TestStashProtocol:
         )
         result = convert(_document_set(model, orders))
         semantic_model = result.model
-        assert "custom_extensions" not in semantic_model
+        assert "nonportable_extensions" not in semantic_model
 
 
 class TestSchemaValidation:
@@ -835,7 +835,7 @@ class TestUnconsumedColumnProperties:
     def test_a_column_with_no_extra_properties_gets_no_extension_entry(self):
         result = self._convert_one({"column_type": "ATTRIBUTE"})
         field = result.model["datasets"][0]["fields"][0]
-        assert "custom_extensions" not in field
+        assert "nonportable_extensions" not in field
 
     def test_an_unknown_invented_property_name_is_preserved(self):
         # The fail-closed property itself: a name this converter has never
@@ -1522,7 +1522,7 @@ class TestPhysicalColumnStash:
         result = convert(_document_set(model, orders))
         field = result.model["datasets"][0]["fields"][0]
         assert field["datatype"] == "Boolean"
-        assert "custom_extensions" not in field
+        assert "nonportable_extensions" not in field
 
     def test_a_float_column_stashes_its_float_spelling(self):
         orders = _table("ORDERS", columns=[_column("Rate", "Rate", "FLOAT")])
@@ -1544,7 +1544,7 @@ class TestPhysicalColumnStash:
         model = _model(model_tables=[{"name": "ORDERS"}], columns=[_attribute("Amount", "ORDERS::Amount")])
         result = convert(_document_set(model, orders))
         field = result.model["datasets"][0]["fields"][0]
-        assert "custom_extensions" not in field
+        assert "nonportable_extensions" not in field
 
     def test_a_sql_view_column_never_gets_a_db_column_name_stash(self):
         # sql_output_columns (dataset-level) already carries this fact for
@@ -1554,7 +1554,7 @@ class TestPhysicalColumnStash:
         model = _model(model_tables=[{"name": "VW"}], columns=[_attribute("Cid", "VW::CID")])
         result = convert(_document_set(model, vw))
         field = result.model["datasets"][0]["fields"][0]
-        assert "custom_extensions" not in field
+        assert "nonportable_extensions" not in field
         dataset_stash = _own_stash(result.model["datasets"][0])
         assert dataset_stash[DATASET_STASH_SQL_OUTPUT_COLUMNS] == {"cid": "c_id"}
 

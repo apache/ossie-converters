@@ -26,8 +26,6 @@ tool can read: ``ANSI_SQL`` by default, or ``OSSIE_SQL_2026`` when the
 import is told that is what the Lightdash SQL is written in.
 """
 
-import json
-
 import pytest
 
 from ossie import OssieDialect, OssieDocument
@@ -103,9 +101,9 @@ def _round_trip(document: OssieDocument, import_dialect=OssieDialect.ANSI_SQL):
 
 
 def _lightdash_name(metric) -> str:
-    for extension in metric.custom_extensions or []:
+    for extension in metric.nonportable_extensions or []:
         if extension.vendor_name.upper() == "LIGHTDASH":
-            return json.loads(extension.data)["name"]
+            return extension.data["name"]
     return metric.name
 
 

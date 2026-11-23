@@ -111,10 +111,17 @@ datasets:
       is_time: false
     datatype: String
     description: Customer segment.
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: ATLAN
-      data: '{"values": ["Majors", "Growth"], "value_map": {"Majors": "large accounts", "Growth": "mid-size
-        accounts"}, "values_truncated": true, "filter_form": "customer.segment = :value"}'
+      data:
+        values:
+        - Majors
+        - Growth
+        value_map:
+          Majors: large accounts
+          Growth: mid-size accounts
+        values_truncated: true
+        filter_form: customer.segment = :value
     ai_context: 'Values: Majors, Growth (sample, more exist). Meaning: Majors = large accounts; Growth
       = mid-size accounts. Filter as: customer.segment = :value.'
   - name: c_is_active
@@ -190,31 +197,61 @@ metrics:
     examples:
     - Which stores have the most sales per shopper this quarter?
     - What is the sales-per-shopper ratio for the Majors segment?
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_sales_per_shopper", "definition_version": 1}, "agent_context":
-      {"grain": "store_sk, state", "population": "Store-channel sales to active Majors customers, excluding
-      test emails", "exclusions": ["online channel (SS_CHANNEL != ''store'')", "test accounts (email ILIKE
-      ''%@example.com%'')"], "unit": "sales per shopper", "reaggregation": "not additive: recompute sales
-      and distinct shoppers, then divide", "null_handling": "shoppers with no sales are not counted",
-      "sql_dialect": "snowflake", "window": ["store_sales.ss_sold_timestamp >= :start_date", "store_sales.ss_sold_timestamp
-      < DATEADD(DAY, 1, :end_date)"], "dimensions": ["store_sales.store_sk", "customer_address.state",
-      "store_sales.sale_date", "customer.segment"], "relationships": ["store_sales_to_customer", "customer_to_customer_address"],
-      "timeframe_field": "store_sales.ss_sold_timestamp", "parameters": [{"name": "start_date", "datatype":
-      "date", "default": "2026-03-18"}, {"name": "end_date", "datatype": "date", "default": "2026-06-16"}],
-      "depends_on": ["store_sales_count"], "examples": [{"question": "Which stores have the most sales
-      per shopper this quarter?", "sql": "SELECT m.SS_STORE_SK, COALESCE(NULLIF(u.CA_STATE,''''),''(unknown)'')
-      AS STATE, COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES
-      m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) LEFT JOIN
-      TPCDS.PUBLIC.CUSTOMER_ADDRESS u ON a.C_CURRENT_ADDR_SK = u.CA_ADDRESS_SK WHERE a.C_SEGMENT = ''Majors''
-      AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = ''store'' AND m.SS_CUSTOMER_EMAIL NOT ILIKE ''%@example.com%''
-      AND m.SS_SOLD_TIMESTAMP >= ''2026-03-18'' AND m.SS_SOLD_TIMESTAMP < DATEADD(day,1,''2026-06-16'')
-      GROUP BY 1, 2 ORDER BY SALES_PER_SHOPPER DESC"}, {"question": "What is the sales-per-shopper ratio
-      for the Majors segment?", "sql": "SELECT a.C_SEGMENT AS SEGMENT, COUNT(*) / NULLIF(COUNT(DISTINCT
-      m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER
-      a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) WHERE a.C_SEGMENT = ''Majors'' AND a.C_IS_ACTIVE
-      = TRUE AND m.SS_CHANNEL = ''store'' AND m.SS_SOLD_TIMESTAMP >= ''2026-03-18'' GROUP BY 1"}], "trust":
-      {"score": 8.0}}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_sales_per_shopper
+        definition_version: 1
+      agent_context:
+        grain: store_sk, state
+        population: Store-channel sales to active Majors customers, excluding test emails
+        exclusions:
+        - online channel (SS_CHANNEL != 'store')
+        - test accounts (email ILIKE '%@example.com%')
+        unit: sales per shopper
+        reaggregation: 'not additive: recompute sales and distinct shoppers, then divide'
+        null_handling: shoppers with no sales are not counted
+        sql_dialect: snowflake
+        window:
+        - store_sales.ss_sold_timestamp >= :start_date
+        - store_sales.ss_sold_timestamp < DATEADD(DAY, 1, :end_date)
+        dimensions:
+        - store_sales.store_sk
+        - customer_address.state
+        - store_sales.sale_date
+        - customer.segment
+        relationships:
+        - store_sales_to_customer
+        - customer_to_customer_address
+        timeframe_field: store_sales.ss_sold_timestamp
+        parameters:
+        - name: start_date
+          datatype: date
+          default: '2026-03-18'
+        - name: end_date
+          datatype: date
+          default: '2026-06-16'
+        depends_on:
+        - store_sales_count
+        examples:
+        - question: Which stores have the most sales per shopper this quarter?
+          sql: SELECT m.SS_STORE_SK, COALESCE(NULLIF(u.CA_STATE,''),'(unknown)') AS STATE, COUNT(*) /
+            NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES
+            m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15)
+            LEFT JOIN TPCDS.PUBLIC.CUSTOMER_ADDRESS u ON a.C_CURRENT_ADDR_SK = u.CA_ADDRESS_SK WHERE a.C_SEGMENT
+            = 'Majors' AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = 'store' AND m.SS_CUSTOMER_EMAIL NOT
+            ILIKE '%@example.com%' AND m.SS_SOLD_TIMESTAMP >= '2026-03-18' AND m.SS_SOLD_TIMESTAMP < DATEADD(day,1,'2026-06-16')
+            GROUP BY 1, 2 ORDER BY SALES_PER_SHOPPER DESC
+        - question: What is the sales-per-shopper ratio for the Majors segment?
+          sql: SELECT a.C_SEGMENT AS SEGMENT, COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS
+            SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15)
+            WHERE a.C_SEGMENT = 'Majors' AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = 'store' AND m.SS_SOLD_TIMESTAMP
+            >= '2026-03-18' GROUP BY 1
+        trust:
+          score: 8.0
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

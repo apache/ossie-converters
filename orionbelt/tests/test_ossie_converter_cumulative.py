@@ -18,12 +18,11 @@
 """Tests for Ossie ↔ OBML cumulative metric conversion.
 
 Validates that cumulative metrics survive the OBML → Ossie → OBML roundtrip
-via custom_extensions preservation.
+via nonportable_extensions preservation.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -98,7 +97,7 @@ _OBML_WITH_CUMULATIVES: dict[str, Any] = {
 
 
 class TestOBMLtoOssieCumulative:
-    """OBML → Ossie: cumulative metrics are serialized into custom_extensions."""
+    """OBML → Ossie: cumulative metrics are serialized into nonportable_extensions."""
 
     def _convert(self) -> tuple[dict, list[str]]:
         converter = conv.OBMLtoOssie(_OBML_WITH_CUMULATIVES)
@@ -121,7 +120,7 @@ class TestOBMLtoOssieCumulative:
         assert "OVER" in expr
         assert "UNBOUNDED PRECEDING" in expr
 
-        # Has custom_extensions with cumulative config
+        # Has nonportable_extensions with cumulative config
         ext = self._get_cumulative_ext(m)
         assert ext["obml_metric_type"] == "cumulative"
         assert ext["obml_cumulative_measure"] == "Revenue"
@@ -173,9 +172,9 @@ class TestOBMLtoOssieCumulative:
 
     @staticmethod
     def _get_cumulative_ext(metric: dict) -> dict:
-        for ext in metric.get("custom_extensions", []):
+        for ext in metric.get("nonportable_extensions", []):
             if ext.get("vendor_name") == "ORIONBELT":
-                data = json.loads(ext["data"])
+                data = ext["data"]
                 if data.get("obml_metric_type") == "cumulative":
                     return data
         pytest.fail("No cumulative custom_extension found")
@@ -187,7 +186,7 @@ class TestOBMLtoOssieCumulative:
 
 
 class TestOssietoOBMLCumulative:
-    """Ossie → OBML: cumulative metrics are reconstructed from custom_extensions."""
+    """Ossie → OBML: cumulative metrics are reconstructed from nonportable_extensions."""
 
     def _roundtrip_ossie(self) -> dict:
         """OBML → Ossie → OBML roundtrip."""

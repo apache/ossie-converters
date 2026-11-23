@@ -42,9 +42,6 @@ class ConverterIssueType(Enum):
     # Export: the relationship's `from_columns` and `to_columns` differ in
     # length, so no correct `sql_on` exists.
     RELATIONSHIP_COLUMNS_MISMATCHED = "RELATIONSHIP_COLUMNS_MISMATCHED"
-    # Export: the `LIGHTDASH` extension's data is not valid JSON. Its
-    # presentation attributes are lost.
-    EXTENSION_DATA_INVALID = "EXTENSION_DATA_INVALID"
     # Import: the model-level metric has no `sql`, so it has no Ossie
     # expression. The metric is skipped.
     METRIC_SQL_MISSING = "METRIC_SQL_MISSING"
@@ -107,7 +104,6 @@ ISSUE_EXPLANATIONS = {
     ConverterIssueType.JOIN_STASHED: "chained join, expression join or extra conditions; kept verbatim for Lightdash, relationships derived from the column pairs",
     ConverterIssueType.CROSS_DATASET_METRIC_DROPPED: "no single model joins every dataset the expression references",
     ConverterIssueType.RELATIONSHIP_COLUMNS_MISMATCHED: "from_columns and to_columns differ in length; skipped",
-    ConverterIssueType.EXTENSION_DATA_INVALID: "LIGHTDASH extension data is not valid JSON; its attributes are lost",
     ConverterIssueType.METRIC_SQL_MISSING: "model-level metric without sql; skipped",
     ConverterIssueType.TIME_ROLE_NOT_REPRESENTABLE: "is_time on a non-date type (for example, an integer year); Lightdash has no such marker, so the column is a plain dimension",
     ConverterIssueType.FOREIGN_EXTENSION_IGNORED: "another vendor's extension; left untouched in the Ossie document",
