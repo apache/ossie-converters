@@ -15,15 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""The `HOLISTICS` entry in `custom_extensions`.
+"""The `HOLISTICS` entry in `nonportable_extensions`.
 
 Every AML property the core specification has no field for travels here. The
-entry's `data` is a single JSON-encoded string, never a nested object, because
-the specification requires that:
+entry's `data` is an object, as the specification requires:
 
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: HOLISTICS
-      data: '{"_v": 1, "aml_type": "TableModel", "table_name": "`ecommerce`.`orders`"}'
+      data: {"_v": 1, "aml_type": "TableModel", "table_name": "`ecommerce`.`orders`"}
 
 `_v` is the shape version. `read` fails on a version it does not know rather
 than misreading a shape it has never seen.
@@ -33,7 +32,7 @@ object with nothing to stash gets no `HOLISTICS` entry at all.
 """
 from __future__ import annotations
 
-import json
+import copy
 from typing import Any
 
 from .errors import ConversionError
@@ -44,21 +43,21 @@ VENDOR = "HOLISTICS"
 VERSION = 1
 
 
-def entry(data: dict[str, Any]) -> dict[str, str] | None:
-    """One `custom_extensions` entry, or None when there is nothing to carry."""
+def entry(data: dict[str, Any]) -> dict[str, Any] | None:
+    """One `nonportable_extensions` entry, or None when there is nothing to carry."""
     if not data:
         return None
     payload = {"_v": VERSION}
-    payload.update(data)
-    return {"vendor_name": VENDOR, "data": json.dumps(payload, sort_keys=True)}
+    payload.update(copy.deepcopy(data))
+    return {"vendor_name": VENDOR, "data": dict(sorted(payload.items()))}
 
 
 def attach(target: dict[str, Any], data: dict[str, Any]) -> None:
-    """Append the `HOLISTICS` entry to `target['custom_extensions']`, if any."""
+    """Append the `HOLISTICS` entry to `target['nonportable_extensions']`, if any."""
     stashed = entry(data)
     if stashed is None:
         return
-    target.setdefault("custom_extensions", []).append(stashed)
+    target.setdefault("nonportable_extensions", []).append(stashed)
 
 
 def read(obj: Any) -> dict[str, Any]:
@@ -69,25 +68,20 @@ def read(obj: Any) -> dict[str, Any]:
     """
     if not isinstance(obj, dict):
         return {}
-    extensions = obj.get("custom_extensions")
+    extensions = obj.get("nonportable_extensions")
     if not isinstance(extensions, list):
         return {}
     for extension in extensions:
         if not isinstance(extension, dict) or extension.get("vendor_name") != VENDOR:
             continue
         raw = extension.get("data")
-        if not isinstance(raw, str):
-            raise ConversionError(f"{VENDOR} custom_extensions data is not a string")
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ConversionError(f"{VENDOR} custom_extensions data is not valid JSON: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise ConversionError(f"{VENDOR} custom_extensions data is not a JSON object")
+        if not isinstance(raw, dict):
+            raise ConversionError(f"{VENDOR} nonportable_extensions data is not an object")
+        payload = copy.deepcopy(raw)
         version = payload.pop("_v", None)
         if version != VERSION:
             raise ConversionError(
-                f"{VENDOR} custom_extensions data has _v={version!r}, "
+                f"{VENDOR} nonportable_extensions data has _v={version!r}, "
                 f"and this converter writes and reads _v={VERSION}"
             )
         return payload

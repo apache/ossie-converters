@@ -31,7 +31,7 @@ Apache License 2.0). A complete record is
 
 | Field | Read for |
 |---|---|
-| `id` | carried to Ossie as `custom_extensions[ATLAN].registry.id`, the reference for write-back |
+| `id` | carried to Ossie as `nonportable_extensions[ATLAN].registry.id`, the reference for write-back |
 | `name` | the Ossie metric name, slugged to an identifier (`Store Sale Errors` -> `store_sale_errors`) |
 | `description` | the Ossie metric description |
 | `workspace_id` | one Ossie file per workspace; carried on the semantic model |

@@ -58,11 +58,20 @@ metrics:
   ai_context:
     instructions: 'Grain: one row per distinct manufacturer. Counts: Items in the Books category. Excludes:
       brands containing ''importo''.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_book_manufacturer_count", "definition_version": 1}, "agent_context":
-      {"grain": "one row per distinct manufacturer", "population": "Items in the Books category", "exclusions":
-      ["brands containing ''importo''"], "sql_dialect": "snowflake"}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_book_manufacturer_count
+        definition_version: 1
+      agent_context:
+        grain: one row per distinct manufacturer
+        population: Items in the Books category
+        exclusions:
+        - brands containing 'importo'
+        sql_dialect: snowflake
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

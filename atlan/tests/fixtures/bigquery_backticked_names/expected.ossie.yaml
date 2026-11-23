@@ -87,11 +87,24 @@ metrics:
   ai_context:
     instructions: 'Grain: sale. Counts: Store sales with a positive quantity. Unit: currency. Re-aggregation:
       sum.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_paid_by_birth_country", "definition_version": 1}, "agent_context":
-      {"grain": "sale", "population": "Store sales with a positive quantity", "unit": "currency", "reaggregation":
-      "sum", "sql_dialect": "bigquery", "dimensions": ["customer.birth_country"], "relationships": ["store_sales_to_customer"]}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_paid_by_birth_country
+        definition_version: 1
+      agent_context:
+        grain: sale
+        population: Store sales with a positive quantity
+        unit: currency
+        reaggregation: sum
+        sql_dialect: bigquery
+        dimensions:
+        - customer.birth_country
+        relationships:
+        - store_sales_to_customer
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

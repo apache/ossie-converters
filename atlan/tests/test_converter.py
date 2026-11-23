@@ -316,7 +316,7 @@ def test_reverse_of_a_metric_on_the_joined_table_has_no_self_join():
                                             "sql": "s.SS_ITEM_SK = m.C_ITEM_SK"}])
     rec["metadata"]["definition"]["source"].update({"table": "TPCDS.PUBLIC.ITEM", "entity": "TPCDS.PUBLIC.ITEM"})
     doc = _doc(rec)
-    doc["metrics"][0]["custom_extensions"] = []            # as another tool would write it
+    doc["metrics"][0]["nonportable_extensions"] = []  # as another tool would write it
     back = convert_ossie_to_registry(doc, doc["metrics"][0]["name"])["definition"]
     assert back["source"]["table"] == "TPCDS.PUBLIC.STORE_SALES" and back["joins"] == []
     assert back["formula"] == "SUM(m.SS_NET_PAID)"

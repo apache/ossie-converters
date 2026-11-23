@@ -36,7 +36,7 @@ Columns:
 
   result   OK / EMPTY (exit 0, nothing written) / FAIL / SKIP (deps not installed)
   warns    lines the spoke wrote to stderr that read as warnings
-  foreign  those warnings that name a `custom_extensions` vendor -- the cost this
+  foreign  those warnings that name a `nonportable_extensions` vendor -- the cost this
            converter imposes on every other spoke by stashing, and the number to
            watch when deciding whether something belongs in a stash at all
 
@@ -82,7 +82,7 @@ _WARN_RE = re.compile(r"warn", re.I)
 # Python's `warnings.warn` prints the message and then echoes the calling source
 # line, which would otherwise count the same warning twice.
 _ECHO_RE = re.compile(r"^\s*warnings\.warn\b")
-_FOREIGN_RE = re.compile(r"custom_extension|vendor|foreign", re.I)
+_FOREIGN_RE = re.compile(r"nonportable_extension|vendor|foreign", re.I)
 
 
 def repo_root():

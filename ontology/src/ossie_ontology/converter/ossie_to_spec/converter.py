@@ -154,7 +154,7 @@ def _convert_semantic_model(semantic_model: SemanticModel) -> SpecSemanticModel:
         datasets=[_convert_dataset(ds) for ds in semantic_model.datasets],
         relationships=[_convert_join_path(jp) for jp in semantic_model.join_paths],
         metrics=[_convert_metric(metric) for metric in semantic_model.metrics],
-        custom_extensions=[_convert_custom_extension(ce) for ce in semantic_model.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in semantic_model.nonportable_extensions],
     )
 
 
@@ -167,7 +167,7 @@ def _convert_dataset(ds: Dataset) -> SpecDataset:
         description=ds.description,
         ai_context=ds.ai_context,
         fields=[_convert_dataset_field(fl) for fl in ds.fields],
-        custom_extensions=[_convert_custom_extension(ce) for ce in ds.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in ds.nonportable_extensions],
     )
 
 
@@ -180,7 +180,7 @@ def _convert_dataset_field(fl: DatasetField) -> SpecDatasetField:
         label=fl.label,
         description=fl.description,
         ai_context=fl.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in fl.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in fl.nonportable_extensions],
     )
 
 
@@ -204,7 +204,7 @@ def _convert_join_path(jp: JoinPath) -> SpecJoinPath:
         from_columns=[from_col.name for from_col in jp.from_columns],
         to_columns=[to_col.name for to_col in jp.to_columns],
         ai_context=jp.ai_context,
-        custom_extensions=[_convert_custom_extension(ce) for ce in jp.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in jp.nonportable_extensions],
     )
 
 
@@ -215,7 +215,7 @@ def _convert_metric(metric: Metric) -> SpecMetric:
         description=metric.description,
         ai_context=metric.ai_context,
         datatype=metric.datatype.value if metric.datatype is not None else None,
-        custom_extensions=[_convert_custom_extension(ce) for ce in metric.custom_extensions],
+        nonportable_extensions=[_convert_custom_extension(ce) for ce in metric.nonportable_extensions],
     )
 
 

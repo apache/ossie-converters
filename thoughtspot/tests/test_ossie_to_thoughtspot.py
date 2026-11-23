@@ -719,8 +719,8 @@ class TestFullRoundTripBothEntryPoints:
         # "foreign vendor extension" can meaningfully appear in a
         # TML -> Ossie -> TML round trip, since TML itself has no
         # extension mechanism at all for one to originate from.
-        foreign_entry = {"vendor_name": "DATABRICKS", "data": json.dumps({"note": "unrelated"})}
-        orders_dataset.setdefault("custom_extensions", []).append(foreign_entry)
+        foreign_entry = {"vendor_name": "DATABRICKS", "data": {"note": "unrelated"}}
+        orders_dataset.setdefault("nonportable_extensions", []).append(foreign_entry)
 
         result = convert(ossie_document)
         assert not result.issues.has_errors()
@@ -731,7 +731,7 @@ class TestFullRoundTripBothEntryPoints:
         orders_dataset = next(
             d for d in ossie_document["datasets"] if d["name"] == "ORDERS"
         )
-        assert foreign_entry in orders_dataset["custom_extensions"]
+        assert foreign_entry in orders_dataset["nonportable_extensions"]
 
     def test_both_joins_restore_their_exact_original_condition_type_and_cardinality(self):
         original, _ossie_document, _foreign, result = self._round_trip()

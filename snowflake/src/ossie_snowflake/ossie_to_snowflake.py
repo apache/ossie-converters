@@ -536,7 +536,7 @@ def _extract_synonyms(ai_context):
 def _warn_dropped_fields(source, context, extra_dropped=None):
     """Warns about Ossie fields that have no Snowflake counterpart and are dropped.
 
-    Checks for universally-dropped fields (custom_extensions, label, version).
+    Checks for universally-dropped fields (nonportable_extensions, label, version).
     Callers handle ai_context warnings themselves since consumption logic varies.
 
     Args:
@@ -547,8 +547,8 @@ def _warn_dropped_fields(source, context, extra_dropped=None):
     """
     dropped = list(extra_dropped) if extra_dropped else []
 
-    if source.get("custom_extensions"):
-        dropped.append("custom_extensions")
+    if source.get("nonportable_extensions"):
+        dropped.append("nonportable_extensions")
 
     if source.get("version"):
         dropped.append("version")

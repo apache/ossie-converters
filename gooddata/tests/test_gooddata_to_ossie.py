@@ -19,8 +19,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from ossie_gooddata.gooddata_to_ossie import (
@@ -97,7 +95,7 @@ def test_unknown_source_type_becomes_opaque_and_is_preserved(source_type: str, c
     ossie_field = converter(model, "orders")
 
     assert ossie_field["datatype"] == "Opaque"
-    extension = json.loads(ossie_field["custom_extensions"][0]["data"])
+    extension = ossie_field["nonportable_extensions"][0]["data"]
     assert extension["source_column_data_type"] == source_type
 
 
@@ -236,23 +234,23 @@ def test_references_become_relationships(gooddata_tpcds_model: GdDeclarativeMode
 
 
 def test_date_instance_converted(gooddata_tpcds_model: GdDeclarativeModel):
-    """Verify date instances become Ossie datasets with custom_extensions."""
+    """Verify date instances become Ossie datasets with nonportable_extensions."""
     result = gooddata_to_ossie(gooddata_tpcds_model)
     sm = result
 
     date_ds = next(ds for ds in sm["datasets"] if ds["name"] == "date_dim")
-    assert "custom_extensions" in date_ds
+    assert "nonportable_extensions" in date_ds
 
-    ext = date_ds["custom_extensions"][0]
+    ext = date_ds["nonportable_extensions"][0]
     assert ext["vendor_name"] == "GOODDATA"
 
-    ext_data = json.loads(ext["data"])
+    ext_data = ext["data"]
     assert ext_data["date_dimension"] is True
     assert "DAY" in ext_data["granularities"]
 
 
 def test_labels_in_custom_extensions(gooddata_tpcds_model: GdDeclarativeModel):
-    """Verify attribute labels are preserved in custom_extensions."""
+    """Verify attribute labels are preserved in nonportable_extensions."""
     result = gooddata_to_ossie(gooddata_tpcds_model)
     sm = result
 
@@ -260,9 +258,9 @@ def test_labels_in_custom_extensions(gooddata_tpcds_model: GdDeclarativeModel):
     # First attribute (c_customer_sk) has 2 labels
     sk_field = next(f for f in customer["fields"] if f["name"] == "c_customer_sk")
 
-    assert "custom_extensions" in sk_field
+    assert "nonportable_extensions" in sk_field
 
-    ext_data = json.loads(sk_field["custom_extensions"][0]["data"])
+    ext_data = sk_field["nonportable_extensions"][0]["data"]
     assert ext_data["field_type"] == "attribute"
     assert len(ext_data["labels"]) == 2
 
@@ -271,11 +269,11 @@ def test_labels_in_custom_extensions(gooddata_tpcds_model: GdDeclarativeModel):
 
 
 def test_data_source_id_extension(gooddata_tpcds_model: GdDeclarativeModel):
-    """Verify data_source_id is stored in model-level custom_extensions."""
+    """Verify data_source_id is stored in model-level nonportable_extensions."""
     result = gooddata_to_ossie(gooddata_tpcds_model, data_source_id="my_pg")
     sm = result
 
-    assert "custom_extensions" in sm
+    assert "nonportable_extensions" in sm
 
-    ext_data = json.loads(sm["custom_extensions"][0]["data"])
+    ext_data = sm["nonportable_extensions"][0]["data"]
     assert ext_data["data_source_id"] == "my_pg"

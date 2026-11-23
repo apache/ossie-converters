@@ -56,7 +56,7 @@ def test_roundtrip_fixture_b_is_byte_identical():
 
 
 def test_foreign_origin_document_synthesizes_valid_spec():
-    """An Ossie document never touched by Sigma (no SIGMA custom_extensions) must
+    """An Ossie document never touched by Sigma (no SIGMA nonportable_extensions) must
     still convert to a structurally valid Sigma spec, with synthesized ids and
     formulas best-effort translated from ANSI SQL."""
     document = OssieDocument.model_validate(

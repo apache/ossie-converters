@@ -34,7 +34,7 @@ and none for filters, windows, parameters, additivity or units, so:
   inside every aggregate as `CASE WHEN`, parameters are bound to their defaults, columns are
   rewritten to `dataset.field`, a whole-query formula becomes one metric per aggregate
   output. Everything an agent needs that Ossie core cannot hold goes to
-  `custom_extensions[ATLAN]` on the metric as `agent_context`, plus the registry id and
+  `nonportable_extensions[ATLAN]` on the metric as `agent_context`, plus the registry id and
   definition version (`registry`), so another tool can map the metric back.
 - **Export** (`ossie-atlan export`): Ossie metrics -> registry records (`{"artifacts": [...]}`),
   or with `--metric` one registry definition. A metric that came from the registry keeps its
@@ -80,7 +80,7 @@ per workspace.
 ```python
 from ossie_atlan import convert_registry_to_ossie, convert_ossie_to_records, convert_ossie_to_registry, write_back
 
-doc, issues = convert_registry_to_ossie(records)           # list of dicts -> Ossie dict (strict form)
+doc, issues = convert_registry_to_ossie(records)           # list of dicts -> Ossie dict
 records, issues = convert_ossie_to_records(doc)           # -> {"artifacts": [record, ...]}
 definition = convert_ossie_to_registry(doc, "metric_name") # -> registry definition dict
 patch = write_back(doc, "metric_name", record)             # -> {} when nothing changed
@@ -94,16 +94,16 @@ for issue in issues:
 |---|---|
 | `source.table`, `joins[].to` | `datasets[].source` (one dataset per table; `primary_key` from a declared join's key) |
 | `joins[]` (`many_to_one`, with a cardinality) | `relationships[]` (`<from>_to_<to>`; a computed key becomes a field, `LEFT(ID, 15)` -> `left_id_15`) |
-| `dimensions[]`, columns in the formula, `source.timeframe_column` | `datasets[].fields[]` (`dimension.is_time` from the dimension kind; dimension values and value map as the field's `ai_context` and `custom_extensions[ATLAN]`) |
+| `dimensions[]`, columns in the formula, `source.timeframe_column` | `datasets[].fields[]` (`dimension.is_time` from the dimension kind; dimension values and value map as the field's `ai_context` and `nonportable_extensions[ATLAN]`) |
 | `formula` + `filters` + `mandatory_filters` + `aggregation.zero_denominator` | `metrics[].expression` under `OSSIE_SQL_2026` and `ANSI_SQL` (the same text, in the record's dialect; no translation) |
 | `output.datatype` | `metrics[].datatype` |
 | `description` | `metrics[].description` |
-| `grain`, `population`, `exclusions`, `output.unit`, `aggregation.reaggregation`, `aggregation.null_handling` | `metrics[].ai_context.instructions` (generated sentence) **and** `custom_extensions[ATLAN].agent_context.<key>` (the value) |
+| `grain`, `population`, `exclusions`, `output.unit`, `aggregation.reaggregation`, `aggregation.null_handling` | `metrics[].ai_context.instructions` (generated sentence) **and** `nonportable_extensions[ATLAN].agent_context.<key>` (the value) |
 | `examples[].question` | `metrics[].ai_context.examples` |
-| `examples[].sql` (with its question, so the pair survives), `provenance.observed_sql`, `dialect`, `source.parameters`, `depends_on`, `provenance.trust_score`, which fields are this metric's dimensions and time field | `custom_extensions[ATLAN].agent_context` (`examples`, `verified_sql`, `sql_dialect`, `parameters`, `depends_on`, `trust`, `dimensions`, `relationships`, `timeframe_field`) |
-| a fixed date range in `filters` (`d >= '2026-04-01'`, `d < :end_date`) | `custom_extensions[ATLAN].agent_context.window` (parked, one predicate per conjunct, in `dataset.field` names with `:parameter` placeholders kept) + a sentence in `ai_context.instructions`; **not** applied by the expression |
-| `id`, `definition.version` | `custom_extensions[ATLAN].registry` (the reference used to map back) |
-| `workspace_id` | `custom_extensions[ATLAN].registry.workspace_id` on the semantic model |
+| `examples[].sql` (with its question, so the pair survives), `provenance.observed_sql`, `dialect`, `source.parameters`, `depends_on`, `provenance.trust_score`, which fields are this metric's dimensions and time field | `nonportable_extensions[ATLAN].agent_context` (`examples`, `verified_sql`, `sql_dialect`, `parameters`, `depends_on`, `trust`, `dimensions`, `relationships`, `timeframe_field`) |
+| a fixed date range in `filters` (`d >= '2026-04-01'`, `d < :end_date`) | `nonportable_extensions[ATLAN].agent_context.window` (parked, one predicate per conjunct, in `dataset.field` names with `:parameter` placeholders kept) + a sentence in `ai_context.instructions`; **not** applied by the expression |
+| `id`, `definition.version` | `nonportable_extensions[ATLAN].registry` (the reference used to map back) |
+| `workspace_id` | `nonportable_extensions[ATLAN].registry.workspace_id` on the semantic model |
 
 Not carried, on purpose: `display_name` (the registry holds it under the id we carry),
 `artifact_status`, owner, source lineage, `search_text`, producer `extensions`, the registry's
@@ -116,9 +116,6 @@ rewrites the formula. Only a range comparison of a column against a fixed date (
 `BETWEEN`, a date literal or a date parameter) counts as a window: an equality to one date, a
 range relative to the current date, and any other predicate in the same filter string stay in
 the metric.
-
-The extension data is written as a JSON string (strict 0.3.0 form), so every other converter
-reads the file.
 
 ## What the converter refuses
 
