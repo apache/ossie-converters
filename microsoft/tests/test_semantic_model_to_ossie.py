@@ -300,6 +300,46 @@ def test_bigquery_navigator_source_uses_the_visible_parts(expression, expected_s
     assert document["datasets"][0]["source"] == expected_source
 
 
+@pytest.mark.parametrize(
+    "expression,expected_source",
+    [
+        (
+            [
+                "let",
+                '    Source = Snowflake.Databases("acct.snowflakecomputing.com",'
+                '"WH",[Implementation="2.0", Role="MY_ROLE"]),',
+                '    ANALYTICS_DB = Source{[Name="ANALYTICS",Kind="Database"]}[Data],',
+                '    SALES_Schema = ANALYTICS_DB{[Name="SALES",Kind="Schema"]}[Data],',
+                '    CUSTOMERS_Table = SALES_Schema{[Name="CUSTOMERS",Kind="Table"]}[Data]',
+                "in",
+                "    CUSTOMERS_Table",
+            ],
+            "ANALYTICS.SALES.CUSTOMERS",
+        ),
+        (
+            "let\n"
+            '    Source = Snowflake.Databases("acct.snowflakecomputing.com","WH"),'
+            '    ANALYTICS_DB = Source{[Kind="Database",Name="ANALYTICS"]}[Data],'
+            '    SALES_Schema = ANALYTICS_DB{[Kind="Schema",Name="SALES"]}[Data],'
+            '    ORDERS_View = SALES_Schema{[Kind="View",Name="ORDERS"]}[Data]\n'
+            "in\n"
+            "    ORDERS_View",
+            "ANALYTICS.SALES.ORDERS",
+        ),
+        (
+            'let Source = Snowflake.Databases("acct.snowflakecomputing.com","WH"), '
+            'PUBLIC_Schema = Source{[Name="PUBLIC",Kind="Schema"]}[Data], '
+            'ORDERS_Table = PUBLIC_Schema{[Name="ORDERS",Kind="Table"]}[Data] in ORDERS_Table',
+            "PUBLIC.ORDERS",
+        ),
+    ],
+)
+def test_snowflake_navigator_source_uses_the_visible_parts(expression, expected_source):
+    document = build_ossie_document(_m_table(expression))
+    assert document["datasets"][0]["source"] == expected_source
+
+
+
 def test_an_unrecognized_m_navigator_falls_back_to_the_table_name():
     document = build_ossie_document(
         _m_table('let Source = Something{[Name="not-a-warehouse-table"]}[Data] in Source')
