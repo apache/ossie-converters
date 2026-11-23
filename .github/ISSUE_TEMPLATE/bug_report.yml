@@ -29,6 +29,9 @@ body:
       description: Which converter(s) does this affect? Select all that apply.
       multiple: true
       options:
+        - ataccama
+        - atlan
+        - bigquery
         - cube
         - databricks
         - dbt
@@ -36,6 +39,7 @@ body:
         - hex
         - holistics
         - honeydew
+        - lightdash
         - microsoft
         - nvidia
         - omni
