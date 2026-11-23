@@ -1,0 +1,68 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# `annotations` at every level that accepts them.
+#
+# Derived from apache/ossie's examples/foaf_owl_import.yaml, with two additions
+# that example lacks: a role annotation, and a nested value, because annotation
+# values may be any JSON rather than only strings.
+version: 0.2.0.dev0
+name: foaf
+prefixes:
+  foaf: "http://xmlns.com/foaf/0.1/"
+  rdfs: "http://www.w3.org/2000/01/rdf-schema#"
+  owl: "http://www.w3.org/2002/07/owl#"
+  dc: "http://purl.org/dc/elements/1.1/"
+  vs: "http://www.w3.org/2003/06/sw-vocab-status/ns#"
+annotations:
+  dc:title: "Friend of a Friend (FOAF) vocabulary"
+ontology:
+  - concept: Person
+    type: EntityType
+    description: "A person."
+    iri: foaf:Person
+    annotations:
+      rdfs:label: "Person"
+      owl:equivalentClass: "http://schema.org/Person"
+      vs:term_status: "stable"
+    relationships:
+      - name: name
+        description: "A name for some thing."
+        iri: foaf:name
+        roles:
+          - concept: String
+        verbalizes: [ "{Person} has name {String}" ]
+        multiplicity: ManyToOne
+        annotations:
+          rdfs:label: "name"
+          rdfs:subPropertyOf: "rdfs:label"
+          vs:term_status: "testing"
+      - name: knows
+        description: "A person known by this person."
+        iri: foaf:knows
+        roles:
+          - concept: Person
+            name: acquaintance
+            annotations:
+              rdfs:comment: "The person being known."
+              source:
+                vocabulary: foaf
+                versions: [ "0.1", "0.99" ]
+        verbalizes: [ "{Person} knows {Person:acquaintance}" ]
+        annotations:
+          rdfs:label: "knows"
+          vs:term_status: "stable"
