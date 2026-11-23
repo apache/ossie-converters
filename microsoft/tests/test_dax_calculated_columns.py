@@ -166,6 +166,11 @@ def test_calculated_column_refusals(dax, reason):
         ("[First]", "number", "text"),
         ("[Visits] > 3", "number", "boolean"),
         ("[Visits]", "dateTime", "number"),
+        # int64 and decimal keep their own name: the value is converted to a whole
+        # number or to a fixed decimal, even when the expression is a number.
+        ("[Visits] / 3", "int64", "number"),
+        ("[Visits] * 2", "int64", "number"),
+        ("[Visits] / 3", "decimal", "number"),
     ],
 )
 def test_an_expression_of_another_kind_than_the_declared_type_is_refused(dax, declared, kind):
@@ -284,12 +289,32 @@ def test_default_keeps_calculated_columns_as_dax_only(bim):
 
 
 def test_flag_translates_a_calculated_column_and_keeps_the_dax(bim):
-    field = _field(_build(bim, translate_dax=True), "Sales", "AmountWithTax")
+    model = _with_columns(
+        bim,
+        {"name": "AmountGross", "type": "calculated", "dataType": "double",
+         "expression": "Sales[Amount] * 1.2"},
+    )
+    field = _field(build_ossie_document(model, translate_dax=True), "Sales", "AmountGross")
     assert field["expression"]["dialects"][0] == {
         "dialect": "OSSIE_SQL_2026",
         "expression": "amount * 1.2",  # Amount reads the source column `amount`
     }
     assert _dialects(field)["DAX"] == "Sales[Amount] * 1.2"
+
+
+def test_flag_keeps_the_fixture_decimal_calculated_column_as_dax(bim):
+    # The fixture declares AmountWithTax as `decimal`: DAX stores amount * 1.2 as a fixed
+    # decimal, which the translation would not, so the column stays DAX with the reason.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        document = build_ossie_document(bim, translate_dax=True)
+    field = _field(document, "Sales", "AmountWithTax")
+    assert _dialects(field) == {"DAX": "Sales[Amount] * 1.2"}
+    assert any(
+        "AmountWithTax'" in str(w.message)
+        and "is declared as decimal and its expression is a number value" in str(w.message)
+        for w in caught
+    ), [str(w.message) for w in caught]
 
 
 def _with_columns(bim, *columns):
@@ -348,6 +373,65 @@ def test_a_declared_type_the_expression_does_not_have_keeps_the_dax(bim):
     assert any(
         "AmountDay" in m and "and its expression is a number value" in m for m in messages
     ), messages
+
+
+def test_int64_and_decimal_calculated_columns_keep_the_dax(bim):
+    # DAX stores [Amount] / 3 in an int64 column as a whole number and in a decimal
+    # column with four decimals; amount / 3 is neither. A double column is not converted.
+    model = _with_columns(
+        bim,
+        {"name": "AmountThird", "type": "calculated", "dataType": "int64",
+         "expression": "[Amount] / 3"},
+        {"name": "AmountTwiceWhole", "type": "calculated", "dataType": "int64",
+         "expression": "[Amount] * 2"},
+        {"name": "AmountThirdFixed", "type": "calculated", "dataType": "decimal",
+         "expression": "[Amount] / 3"},
+        {"name": "AmountThirdAgain", "type": "calculated", "dataType": "double",
+         "expression": "[AmountThird]"},
+        {"name": "AmountThirdFloat", "type": "calculated", "dataType": "double",
+         "expression": "[Amount] / 3"},
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        document = build_ossie_document(model, translate_dax=True)
+    for name in ("AmountThird", "AmountTwiceWhole", "AmountThirdFixed", "AmountThirdAgain"):
+        assert list(_dialects(_field(document, "Sales", name))) == ["DAX"], name
+    third = _dialects(_field(document, "Sales", "AmountThirdFloat"))
+    assert third["OSSIE_SQL_2026"] == "amount / 3"
+    messages = [str(w.message) for w in caught]
+    for name, declared in (
+        ("AmountThird'", "int64"),
+        ("AmountTwiceWhole'", "int64"),
+        ("AmountThirdFixed'", "decimal"),
+    ):
+        assert any(
+            name in m and f"is declared as {declared} and its expression is a number value" in m
+            for m in messages
+        ), (name, messages)
+    # The reference names the int64 column as the reason.
+    assert any(
+        "AmountThirdAgain'" in m and "column [AmountThird] is declared as int64" in m
+        for m in messages
+    ), messages
+
+
+@pytest.mark.parametrize("data_type", ["automatic", "unknown", None])
+def test_a_calculated_column_without_a_resolved_type_is_translated(bim, data_type):
+    # `automatic` and `unknown` declare nothing, like a missing dataType: there is no
+    # type to convert to, so the column's type is its expression's.
+    declared = {} if data_type is None else {"dataType": data_type}
+    model = _with_columns(
+        bim,
+        {"name": "AmountTwice", "type": "calculated", "expression": "[Amount] * 2", **declared},
+        {"name": "AmountFour", "type": "calculated", "dataType": "double",
+         "expression": "[AmountTwice] * 2"},
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        document = build_ossie_document(model, translate_dax=True)
+    assert _dialects(_field(document, "Sales", "AmountTwice"))["OSSIE_SQL_2026"] == "amount * 2"
+    # The untyped column is expanded inline where a typed column refers to it.
+    assert _dialects(_field(document, "Sales", "AmountFour"))["OSSIE_SQL_2026"] == "amount * 2 * 2"
 
 
 def test_round_trip_with_translation_is_unchanged(bim):

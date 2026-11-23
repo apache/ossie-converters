@@ -121,7 +121,10 @@ of its own table (row context). The same rules apply, plus:
 * A calculated column stores its expression's value converted to the column's declared
   ``dataType``. The conversion is not translated, so a column whose expression is of
   another kind than its declared type (a number in a column declared as text) is
-  refused, and so is a reference to such a column.
+  refused, and so is a reference to such a column. A column declared ``int64`` or
+  ``decimal`` is always refused: its value is converted to a whole number or to a fixed
+  decimal, and numbers are not typed that finely here yet. ``automatic`` and ``unknown``
+  declare nothing.
 * Refused: an aggregate (in a calculated column it ranges over the whole table, which a
   field expression cannot express), a measure reference (evaluated with context
   transition), a column of another table (needs ``RELATED``, a later tier), and a date or
@@ -335,7 +338,9 @@ class RowColumn:
 
     For a calculated column ``kind`` is the kind of its declared data type: None when it
     declares none (its type is then its expression's), and the name of the declared type
-    itself when that type is none of these kinds.
+    itself when the column is not translated under that type (``dateTime``, and ``int64``
+    and ``decimal``, whose conversion to a whole number or a fixed decimal is not
+    translated).
     """
 
     source: str | None

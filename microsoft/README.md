@@ -491,7 +491,11 @@ table. A column reference becomes the referenced column's *source column*, becau
 spec's field expressions refer to source columns, not to other fields; a referenced
 calculated column is expanded inline. A calculated column stores its value converted to
 its declared `dataType`, so a column whose expression is of another kind than that type
-(a number in a column declared as text) stays DAX. An aggregate (which in a calculated
+(a number in a column declared as text) stays DAX. A calculated column declared `int64`
+or `decimal` always stays DAX, because DAX converts its value to a whole number or to a
+fixed decimal and the translator does not type numbers that finely yet; `double`,
+`string` and `boolean` columns are translated, and `automatic` or `unknown` declare
+nothing. An aggregate (which in a calculated
 column ranges over the whole table), a measure, a column of another table (`RELATED`), a
 date column, and `TRIM`, `SUBSTITUTE`, `EXACT`, `VALUE`, `FIND`, `SEARCH` and
 `CONTAINSSTRING` are refused with a reason:
@@ -501,6 +505,8 @@ LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
 [First] & " " & [Last]      ->  refused: & of a value that may be BLANK
 [SalesKey]                  ->  refused in a column declared as text: the column is
                                 declared as text and its expression is a number value
+[Amount] / 3                ->  refused in a column declared as int64: DAX stores a
+                                whole number there, amount / 3 is not one
 ```
 
 `_dax_to_sql.py` documents each rule and each refusal.

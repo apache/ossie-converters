@@ -547,6 +547,28 @@ _ROW_KINDS = {
     "boolean": "boolean",
 }
 
+# The declared types a calculated column is translated under. ``int64`` and ``decimal``
+# are left out on purpose: DAX stores the expression's value converted to a whole number
+# or to a fixed decimal, and the translator does not tell those from other numbers yet,
+# so ``[Amount] / 3`` in an ``int64`` column would come out as ``amount / 3``.
+_CALCULATED_ROW_KINDS = {
+    "string": "text",
+    "double": "number",
+    "boolean": "boolean",
+}
+
+
+def _row_kind(data_type, calculated):
+    """Return the ``RowColumn.kind`` of a column with this TMSL ``dataType``."""
+    if not calculated:
+        return _ROW_KINDS.get(data_type)
+    if not data_type or data_type in TMSL_UNTYPED:
+        # Nothing is declared (``automatic`` and ``unknown`` mean the engine has not
+        # resolved a type), so the column's type is its expression's.
+        return None
+    # Any other declared type keeps its own name, so no expression is taken for it.
+    return _CALCULATED_ROW_KINDS.get(data_type, data_type)
+
 
 def _row_columns(table):
     """Describe ``table``'s columns for translating its calculated columns."""
@@ -557,13 +579,10 @@ def _row_columns(table):
         if column.get("type") == "rowNumber":
             continue
         calculated = column.get("type") == "calculated"
-        data_type = column.get("dataType")
         columns[column["name"]] = RowColumn(
             source=None if calculated else (column.get("sourceColumn") or column["name"]),
             dax=text(column.get("expression", "")) if calculated else None,
-            # A calculated column keeps the name of a declared type that is none of the
-            # kinds, so an expression of another kind is not taken for it.
-            kind=_ROW_KINDS.get(data_type, data_type if calculated else None),
+            kind=_row_kind(column.get("dataType"), calculated),
             # TOM's default is nullable; only an explicit false rules BLANK out.
             nullable=column.get("isNullable") is not False,
         )
