@@ -38,13 +38,17 @@ updates:
   # "pip" ecosystem does not read, so they are updated as "uv" projects.
   - package-ecosystem: "uv"
     directories:
+      - "/ataccama"
+      - "/atlan"
       - "/bigquery"
       - "/cube"
+      - "/databricks"
       - "/dbt"
       - "/gooddata"
       - "/honeydew"
       - "/interop"
       - "/lightdash"
+      - "/linkml"
       - "/microsoft"
       - "/nvidia"
       - "/omni"
@@ -54,6 +58,7 @@ updates:
       - "/palantir"
       - "/sigma"
       - "/snowflake"
+      - "/tableau"
       - "/thoughtspot"
       - "/wisdom"
     schedule:
@@ -66,7 +71,6 @@ updates:
   # Maven / Java converters
   - package-ecosystem: "maven"
     directories:
-      - "/databricks/java"
       - "/polaris"
       - "/salesforce"
     schedule:

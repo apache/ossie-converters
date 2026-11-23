@@ -101,17 +101,17 @@ Path("data_model.json").write_text(json.dumps(result.output, indent=2))
 
 | Sigma concept | Ossie concept | Notes |
 |---|---|---|
-| Data model (`name`, `description`) | `OssieDocument` root | `dataModelId`, `folderId`, `documentVersion`, `schemaVersion`, `createdAt`, `createdBy`, `updatedAt`, `updatedBy`, `ownerId`, `url` preserved in `custom_extensions` and written back on export |
-| Page | *(none)* | Ossie has no page/folder-of-elements concept, but `pages` is a required part of the spec, so page membership is preserved per-dataset in `custom_extensions` and rebuilt on export |
-| Element (`kind: table`) | `OssieDataset` | `source` = warehouse path joined with `.` for `warehouse-table`; the other five source kinds get a marker plus the native `source` block in `custom_extensions` |
-| Element (any other `kind`) | *not modeled* | Preserved verbatim in a model-level `custom_extensions` entry so `ossie-to-sigma` restores it unchanged |
+| Data model (`name`, `description`) | `OssieDocument` root | `dataModelId`, `folderId`, `documentVersion`, `schemaVersion`, `createdAt`, `createdBy`, `updatedAt`, `updatedBy`, `ownerId`, `url` preserved in `nonportable_extensions` and written back on export |
+| Page | *(none)* | Ossie has no page/folder-of-elements concept, but `pages` is a required part of the spec, so page membership is preserved per-dataset in `nonportable_extensions` and rebuilt on export |
+| Element (`kind: table`) | `OssieDataset` | `source` = warehouse path joined with `.` for `warehouse-table`; the other five source kinds get a marker plus the native `source` block in `nonportable_extensions` |
+| Element (any other `kind`) | *not modeled* | Preserved verbatim in a model-level `nonportable_extensions` entry so `ossie-to-sigma` restores it unchanged |
 | Column (`formula`) | `OssieField.expression` | See [Expression translation](#expression-translation) |
-| Element `uniqueKeys` | `OssieDataset.primary_key` | Column ids resolved to field names; the raw `uniqueKeys` list (including any entry that failed to resolve) is also preserved in `custom_extensions` for exact round-trip reconstruction |
+| Element `uniqueKeys` | `OssieDataset.primary_key` | Column ids resolved to field names; the raw `uniqueKeys` list (including any entry that failed to resolve) is also preserved in `nonportable_extensions` for exact round-trip reconstruction |
 | Element `metrics[]` | `OssieMetric` | Promoted to model level (Ossie metrics are not dataset-scoped); the formula is re-qualified with the owning dataset name |
 | `relationships[]` (join keys) | `OssieRelationship` | See [Relationship resolution](#relationship-resolution) |
-| Column/element/relationship native `id` | *(preserved, not surfaced)* | Stashed in `custom_extensions` (`vendor_name: SIGMA`) so re-export can reuse Sigma's own stable ids rather than minting new ones — see [Stable ids](#stable-ids) |
-| Column `format` | `datatype` (coarse) + `custom_extensions` | Sigma has no column datatype, only a display format with two kinds (`number`, `datetime`); anything else becomes `Opaque`. Ossie → Sigma writes a `number` kind for numeric columns only; date columns get no `format`, so Sigma uses its own default. The native format object is always preserved |
-| `filters`, `folders`, `order`, `sort`, `summary`, `groupings`, `columnSecurities`, `visibleAsSource`, `hidden`, metric `timeline`/`isHighlighted`/`format`, `relationshipType` | *not modeled* | Presentation/governance state with no Ossie equivalent, preserved verbatim under a `native` key in `custom_extensions`. Captured by subtraction, so fields added by a future `schemaVersion` round-trip too |
+| Column/element/relationship native `id` | *(preserved, not surfaced)* | Stashed in `nonportable_extensions` (`vendor_name: SIGMA`) so re-export can reuse Sigma's own stable ids rather than minting new ones — see [Stable ids](#stable-ids) |
+| Column `format` | `datatype` (coarse) + `nonportable_extensions` | Sigma has no column datatype, only a display format with two kinds (`number`, `datetime`); anything else becomes `Opaque`. Ossie → Sigma writes a `number` kind for numeric columns only; date columns get no `format`, so Sigma uses its own default. The native format object is always preserved |
+| `filters`, `folders`, `order`, `sort`, `summary`, `groupings`, `columnSecurities`, `visibleAsSource`, `hidden`, metric `timeline`/`isHighlighted`/`format`, `relationshipType` | *not modeled* | Presentation/governance state with no Ossie equivalent, preserved verbatim under a `native` key in `nonportable_extensions`. Captured by subtraction, so fields added by a future `schemaVersion` round-trip too |
 
 ### Expression translation
 
@@ -156,7 +156,7 @@ schemes to a modeled column name using the element's own column formulas; when r
 resolved (the physical column has no corresponding modeled column, e.g. it was never referenced
 anywhere in the element as a column), the physical column name is used verbatim and a converter
 issue is recorded. **The raw, unresolved `sourceColumnId`/`targetColumnId` values are always
-preserved in the relationship's `custom_extensions`,** so `ossie-to-sigma` reconstructs the exact
+preserved in the relationship's `nonportable_extensions`,** so `ossie-to-sigma` reconstructs the exact
 original join regardless of whether name resolution succeeded — see [Limitations](#limitations).
 
 ### Stable ids
@@ -165,7 +165,7 @@ Sigma column, element, and relationship ids are load-bearing: other parts of a S
 (controls, other data models' relationships, materializations) reference them, so an export that
 mints new ids for unchanged objects would silently break those references. `sigma_to_ossie.py`
 therefore never invents an id for anything that already has one — it always preserves the native
-Sigma id in that object's `custom_extensions` and `ossie-to-sigma` reuses it verbatim. Ids are only
+Sigma id in that object's `nonportable_extensions` and `ossie-to-sigma` reuses it verbatim. Ids are only
 synthesized (as a deterministic `uuid5` of a fixed namespace plus the object's dataset/field path)
 for objects that originate purely in Ossie and have never been round-tripped through Sigma before.
 

@@ -211,7 +211,7 @@ public class FieldMappingHandler implements PipelineStep {
             ossieField.put(EXPRESSION, wrapExpression(dataObjectFieldName));
         }
 
-        // Store unmapped properties in custom_extensions
+        // Store unmapped properties in nonportable_extensions
         customExtensionHandler.storeUnmappedItemProperties(ossieField, sfDimension, SF_FIELD_HANDLED_PROPS);
 
         return ossieField;
@@ -230,7 +230,7 @@ public class FieldMappingHandler implements PipelineStep {
             ossieField.put(EXPRESSION, wrapExpression(dataObjectFieldName));
         }
 
-        // Store unmapped properties in custom_extensions
+        // Store unmapped properties in nonportable_extensions
         customExtensionHandler.storeUnmappedItemProperties(ossieField, sfMeasurement, SF_FIELD_HANDLED_PROPS);
 
         return ossieField;
@@ -645,7 +645,7 @@ public class FieldMappingHandler implements PipelineStep {
      * Defaults are applied AFTER custom extensions and mappings.
      *
      * <p>An Ossie field's label is optional, so an exported dimension or measurement carries
-     * one only when the field sets it or custom_extensions restored it. Salesforce requires a
+     * one only when the field sets it or nonportable_extensions restored it. Salesforce requires a
      * label, so it falls back to the apiName, matching
      * DatasetMappingHandler/MetricMappingHandler. An empty or blank label is treated as
      * missing, because Salesforce rejects it with the same RequiredFieldException.
@@ -678,7 +678,7 @@ public class FieldMappingHandler implements PipelineStep {
 
     /**
      * Applies the portable Ossie datatype when no exact Salesforce dataType was
-     * restored from custom_extensions. Exact extension data wins to preserve
+     * restored from nonportable_extensions. Exact extension data wins to preserve
      * Salesforce-specific distinctions such as Email and Currency.
      */
     private void applyOssieDatatype(
@@ -758,7 +758,7 @@ public class FieldMappingHandler implements PipelineStep {
             Map<String, Object> calcDim = asMap(calcDimObj);
 
             // Salesforce returns formulas HTML-escaped; decode before the dimension is
-            // either converted to a field or preserved in custom_extensions.
+            // either converted to a field or preserved in nonportable_extensions.
             String expressionValue = getString(calcDim, EXPRESSION);
             if (expressionValue != null) {
                 calcDim.put(EXPRESSION, SalesforceFormulaEscaping.unescape(expressionValue));

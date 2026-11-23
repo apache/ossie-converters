@@ -58,6 +58,7 @@ from ._common import (
     RELATIONSHIP_CARDINALITY_METADATA,
     RELATIONSHIP_ENDPOINT_METADATA,
     TMSL_TO_OSSIE_DATATYPE,
+    VENDOR,
     ConversionError,
     dialect_expressions,
     foreign_vendor_extensions,
@@ -102,12 +103,19 @@ def _untranslatable(scope, kind, dialect, reason=None):
         f"Supply a '{DIALECT_DAX}' expression to convert it.",
     )
 
-# Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
-# every temporal value as `dateTime`, so a time-of-day type gains a date part and a
-# timezone-aware type loses its offset.
-_LOSSY_TEMPORAL = {
+# Apache Ossie types that Power BI cannot represent faithfully. Power BI stores every
+# temporal value as `dateTime`, so a time-of-day type gains a date part and a
+# timezone-aware type loses its offset. Its fixed-decimal type is limited to 4 digits
+# after the point, while the Ossie `Decimal` leaves precision and scale unspecified, so
+# the converter cannot prove a column fits.
+_LOSSY_DATATYPE = {
     "Time": "Power BI has no time-only data type; stored as dateTime with a date part",
     "DateTimeTz": "Power BI has no timezone-aware data type; the UTC offset is lost",
+    "Decimal": (
+        "Power BI 'Fixed Decimal Number' keeps only 4 decimal places (19 significant "
+        "digits) and the Apache Ossie 'Decimal' leaves precision and scale "
+        "unspecified; values with more decimal places are not kept"
+    ),
 }
 
 DIRECT_LAKE_COMPATIBILITY_LEVEL = 1702
@@ -128,6 +136,63 @@ _SNOWFLAKE_BINDING_REQUIRED = {"server", "warehouse", "database", "schema", "tab
 _SNOWFLAKE_BINDING_FIELDS = _SNOWFLAKE_BINDING_REQUIRED | {"kind", "role"}
 
 
+def _unwrap_ossie_0_1_1(document):
+    """Normalize the single-model wrapper emitted by Snowflake Semantic Views."""
+    if document.get("version") != "0.1.1":
+        raise ValueError(
+            "Legacy 'semantic_model' wrappers are only supported for Ossie 0.1.1; "
+            "place model properties at the document root for other versions"
+        )
+    models = document["semantic_model"]
+    if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+        raise ValueError("Ossie 0.1.1 'semantic_model' must contain exactly one model object")
+    document_keys = {"version", "semantic_model", "dialects", "vendors"}
+    if document.keys() - document_keys:
+        raise ValueError("Ossie 0.1.1 requires model properties inside 'semantic_model'")
+    model = models[0]
+    if document_keys.intersection(model):
+        raise ValueError("Ossie 0.1.1 requires document properties outside its model")
+    for key in ("dialects", "vendors"):
+        if key in document:
+            warn("document", f"legacy root '{key}' declaration is discarded during migration")
+    return {"version": OSSIE_VERSION, **_normalize_wrapped_extensions(model)}
+
+
+def _normalize_wrapped_extensions(obj):
+    """Migrate legacy extensions on model objects without changing the input."""
+    normalized = dict(obj)
+    if "custom_extensions" in obj:
+        if "nonportable_extensions" in obj:
+            raise ConversionError("A wrapped model object cannot mix legacy and current extensions")
+        extensions = []
+        for ext in normalized.pop("custom_extensions") or []:
+            if not isinstance(ext, dict):
+                raise ConversionError("Legacy custom_extensions entries must be mappings")
+            # Accept vendor/content aliases for compatibility with older caller inputs.
+            # The 0.1.1 schema uses vendor_name/data.
+            vendor = ext.get("vendor_name") or ext.get("vendor")
+            # Foreign payloads are opaque to Power BI. Keep the vendor for the loss notice.
+            data = {}
+            if vendor == VENDOR:
+                data = ext.get("data", ext.get("content")) or {}
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except ValueError as e:
+                        raise ConversionError(
+                            "Legacy POWER_BI extension data is invalid JSON"
+                        ) from e
+            extensions.append({"vendor_name": vendor, "data": data})
+        normalized["nonportable_extensions"] = extensions
+    for key in ("datasets", "fields", "metrics", "relationships"):
+        if isinstance(children := obj.get(key), list):
+            normalized[key] = [
+                _normalize_wrapped_extensions(child) if isinstance(child, dict) else child
+                for child in children
+            ]
+    return normalized
+
+
 def convert_ossie_to_semantic_model(
     ossie_yaml_str,
     source: dict = None,
@@ -140,7 +205,7 @@ def convert_ossie_to_semantic_model(
 
     Args:
         ossie_yaml_str: The Apache Ossie document as YAML text. A parsed mapping is
-            also accepted for compatibility with existing library callers.
+            also accepted. Supports a flat document or a 0.1.1 wrapper with one model.
         source: Optional OneLake location for generated Direct Lake partitions, as
             ``{"workspaceId": ..., "itemId": ...}``.
         output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
@@ -172,10 +237,7 @@ def convert_ossie_to_semantic_model(
         raise TypeError("input must be Apache Ossie YAML text or a parsed document")
 
     if "semantic_model" in document:
-        raise ValueError(
-            "Legacy 'semantic_model' wrappers are not supported; "
-            "place model properties at the document root"
-        )
+        document = _unwrap_ossie_0_1_1(document)
     if "dialects" in document or "vendors" in document:
         raise ValueError("Root dialects and vendors are not supported by the Ossie spec")
     if not document.get("name"):
@@ -780,8 +842,8 @@ def _map_datatype(datatype, scope):
     if tmsl_type is None:
         warn(scope, f"unrecognized Apache Ossie data type '{datatype}'; left unspecified")
         return None
-    if datatype in _LOSSY_TEMPORAL:
-        warn(scope, _LOSSY_TEMPORAL[datatype])
+    if datatype in _LOSSY_DATATYPE:
+        warn(scope, _LOSSY_DATATYPE[datatype])
     return tmsl_type
 
 
@@ -1067,9 +1129,10 @@ def _tmsl_text(value):
 
 def _warn_foreign_extensions(scope, obj):
     for ext in foreign_vendor_extensions(obj):
+        vendor = ext.get("vendor_name") or "<unknown>"
         warn(
             scope,
-            f"foreign nonportable_extensions for vendor '{ext.get('vendor_name')}' "
+            f"foreign nonportable_extensions for vendor '{vendor}' "
             "have no Power BI equivalent and are dropped",
         )
 

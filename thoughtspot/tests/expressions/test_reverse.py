@@ -182,98 +182,10 @@ def test_rank_percentile_composes_with_scale_and_inversion_reversed():
     )
 
 
-def test_moving_sum_composes_the_frame_and_loses_the_partition():
-    log = _log()
-    result = translate_thoughtspot("moving_sum", ["m", "2", "0", "ord"], log, object_ref=OBJ)
-    assert result == "SUM(m) OVER (ORDER BY ord ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)"
-    assert len(log.issues) == 1
-    issue = log.issues[0]
-    assert issue.severity is Severity.WARNING
-    assert "moving_sum" in issue.message
-    assert "partition" in issue.message.lower()
-    assert issue.object_ref == OBJ
 
 
-def test_moving_average_max_min_compose_with_sign_conventions():
-    log = _log()
-    # The two offsets count in OPPOSITE directions: argument 2 is rows BACKWARD
-    # (positive -> PRECEDING), argument 3 is rows FORWARD (positive -> FOLLOWING).
-    # Both bounds shared one "positive means PRECEDING" rule until 2026-09, which
-    # made every window with a non-zero forward count wrong -- and this test
-    # asserted that behaviour, its comment recording the misreading as fact.
-    #
-    # The convention is ThoughtSpot's own, documented in its public formula
-    # reference: `moving_average(measure, num_backward, num_forward, ...)`.
-    # The two argument NAMES are the whole argument -- one counts backward, the
-    # other forward, so a positive value cannot mean PRECEDING in both.
-    #
-    # Deliberately NOT cited to the internal mapping documents that first
-    # settled this for me: they live in a private repository, and a citation an
-    # ASF reader cannot open is not evidence. (For the record, the corroboration
-    # they gave was also weaker than I first claimed -- one of the two examples
-    # has a forward count of 0, which renders CURRENT ROW under the old rule and
-    # the new one alike, so it distinguishes nothing.)
-    assert translate_thoughtspot("moving_average", ["m", "1", "-1", "ord"], log, object_ref=OBJ) == (
-        "AVG(m) OVER (ORDER BY ord ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING)"
-    )
-    # The Looker mapping's own worked example, asserted directly.
-    assert translate_thoughtspot("moving_average", ["m", "3", "-1", "d"], log, object_ref=OBJ) == (
-        "AVG(m) OVER (ORDER BY d ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING)"
-    )
-    # The Tableau mapping's own worked example.
-    assert translate_thoughtspot("moving_average", ["m", "3", "0", "d"], log, object_ref=OBJ) == (
-        "AVG(m) OVER (ORDER BY d ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)"
-    )
-    # A forward-looking window, which the old rule rendered as PRECEDING --
-    # valid SQL over the wrong rows, the silent kind of wrong.
-    assert translate_thoughtspot("moving_average", ["m", "2", "3", "d"], log, object_ref=OBJ) == (
-        "AVG(m) OVER (ORDER BY d ROWS BETWEEN 2 PRECEDING AND 3 FOLLOWING)"
-    )
-    assert translate_thoughtspot("moving_max", ["m", "-1", "1", "ord"], log, object_ref=OBJ) == (
-        "MAX(m) OVER (ORDER BY ord ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING)"
-    )
-    assert translate_thoughtspot("moving_min", ["m", "0", "0", "ord"], log, object_ref=OBJ) == (
-        "MIN(m) OVER (ORDER BY ord ROWS BETWEEN CURRENT ROW AND CURRENT ROW)"
-    )
 
 
-def test_moving_sum_accepts_multiple_order_columns():
-    log = _log()
-    # This test's subject is the ORDER BY list, not the frame; the bounds follow
-    # the convention pinned in test_moving_average_max_min_compose_with_sign_conventions.
-    result = translate_thoughtspot("moving_sum", ["m", "1", "-1", "ord1", "ord2"], log, object_ref=OBJ)
-    assert result == "SUM(m) OVER (ORDER BY ord1, ord2 ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING)"
-
-
-def test_cumulative_sum_composes_the_running_total_and_loses_the_partition():
-    log = _log()
-    result = translate_thoughtspot("cumulative_sum", ["m", "ord"], log, object_ref=OBJ)
-    assert result == (
-        "SUM(m) OVER (ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
-    )
-    assert len(log.issues) == 1
-    assert log.issues[0].severity is Severity.WARNING
-
-
-def test_cumulative_average_max_min_compose():
-    log = _log()
-    assert translate_thoughtspot("cumulative_average", ["m", "ord"], log, object_ref=OBJ) == (
-        "AVG(m) OVER (ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
-    )
-    assert translate_thoughtspot("cumulative_max", ["m", "ord"], log, object_ref=OBJ) == (
-        "MAX(m) OVER (ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
-    )
-    assert translate_thoughtspot("cumulative_min", ["m", "ord"], log, object_ref=OBJ) == (
-        "MIN(m) OVER (ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
-    )
-
-
-def test_cumulative_sum_accepts_multiple_order_columns():
-    log = _log()
-    result = translate_thoughtspot("cumulative_sum", ["m", "ord1", "ord2"], log, object_ref=OBJ)
-    assert result == (
-        "SUM(m) OVER (ORDER BY ord1, ord2 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
-    )
 
 
 def test_group_aggregate_with_query_groups_alone_becomes_a_plain_aggregate():
@@ -285,21 +197,6 @@ def test_group_aggregate_with_query_groups_alone_becomes_a_plain_aggregate():
     assert log.issues == []
 
 
-def test_group_aggregate_with_a_fixed_list_becomes_partition_by():
-    log = _log()
-    result = translate_thoughtspot(
-        "group_aggregate", ["SUM(m)", "{ a , b }", "query_filters ( )"], log, object_ref=OBJ
-    )
-    assert result == "SUM(m) OVER (PARTITION BY a , b)"
-    assert log.issues == []
-
-
-def test_group_aggregate_with_an_empty_list_becomes_over_with_no_partition():
-    log = _log()
-    result = translate_thoughtspot(
-        "group_aggregate", ["SUM(m)", "{ }", "query_filters ( )"], log, object_ref=OBJ
-    )
-    assert result == "SUM(m) OVER ()"
 
 
 def test_group_aggregate_with_a_dynamic_partition_stashes():
@@ -339,24 +236,6 @@ def test_group_aggregate_with_a_non_default_filter_stashes():
     assert "filter" in log.issues[0].message.lower()
 
 
-def test_group_sum_shorthand_composes_like_group_aggregate():
-    log = _log()
-    result = translate_thoughtspot("group_sum", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ)
-    assert result == "SUM(m) OVER (PARTITION BY a)"
-    assert log.issues == []
-
-
-def test_group_count_stddev_variance_shorthands_compose():
-    log = _log()
-    assert translate_thoughtspot(
-        "group_count", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
-    ) == "COUNT(m) OVER (PARTITION BY a)"
-    assert translate_thoughtspot(
-        "group_stddev", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
-    ) == "STDDEV(m) OVER (PARTITION BY a)"
-    assert translate_thoughtspot(
-        "group_variance", ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
-    ) == "VARIANCE(m) OVER (PARTITION BY a)"
 
 
 def test_group_sum_shorthand_also_stashes_a_dynamic_partition():
@@ -688,3 +567,161 @@ class TestTheFiscalGateSeesTheWholeInventory:
         # `min(?:ute)?` without word boundaries matched the AGGREGATE `min`,
         # re-creating the over-inclusion the gate exists to prevent.
         assert name not in reverse._fiscal_capable_functions()
+
+
+# ---------------------------------------------------------------------------
+# The window family after the 2026-11-16 live probe (see reverse.py's
+# _DYNAMIC_PARTITION_ISSUE). Measured on se-thoughtspot by generating the
+# warehouse SQL for one formula under two different queries.
+# ---------------------------------------------------------------------------
+
+class TestAnOrderedWindowIsRefusedBecauseItsPartitionIsTheQuerys:
+    """Composing these produced a different number, not an approximate one.
+
+    `moving_sum(m, 1, 0, ts)` compiled, on a real cluster, to
+    `... over (partition by CATEGORY order by TIMESTAMP ...)` when the query
+    grouped by Category, and to `partition by BRAND` when the same formula was
+    asked for by Brand. The partition is injected from the query every time.
+
+    What we used to emit carried NO partition at all, which in SQL means one
+    partition over the whole result -- a running total across every category
+    where ThoughtSpot computes one per category. That is a wrong number, and
+    nothing in an Ossie document can mark it as approximate: `Expression` has
+    exactly two fields, `sql` and `dialects`. So the warning stayed with us
+    and the wrong SQL travelled.
+    """
+
+    def test_moving_sum_emits_no_expression(self):
+        log = _log()
+        assert translate_thoughtspot(
+            "moving_sum", ["m", "2", "0", "ord"], log, object_ref=OBJ
+        ) is None
+
+    def test_moving_sum_reports_why(self):
+        log = _log()
+        translate_thoughtspot("moving_sum", ["m", "2", "0", "ord"], log, object_ref=OBJ)
+        [issue] = log.issues
+        assert issue.code == "TS-EXPR-DYNAMIC-PARTITION"
+        assert issue.severity is Severity.ERROR
+        assert "moving_sum" in issue.message
+        assert "partition" in issue.message.lower()
+        assert issue.object_ref == OBJ
+
+    def test_every_moving_and_cumulative_variant_with_an_order_is_refused(self):
+        for name, args in (
+            ("moving_average", ["m", "1", "-1", "ord"]),
+            ("moving_max", ["m", "0", "0", "ord"]),
+            ("moving_min", ["m", "0", "0", "ord"]),
+            ("cumulative_sum", ["m", "ord"]),
+            ("cumulative_average", ["m", "ord"]),
+            ("cumulative_max", ["m", "ord"]),
+            ("cumulative_min", ["m", "ord"]),
+        ):
+            log = _log()
+            assert translate_thoughtspot(name, args, log, object_ref=OBJ) is None, name
+            assert log.issues[0].code == "TS-EXPR-DYNAMIC-PARTITION", name
+
+
+class TestTheUnorderedCumulativeFormIsExactAndIsKept:
+    """The one form with nothing left to the query.
+
+    `cumulative_sum(m)` -- measure only, no order columns -- compiled to
+    `sum(...) over ()` on the same cluster, unchanged whether the query
+    grouped by Category alone or by Category and Date. An empty OVER clause
+    has one meaning, so this one translates exactly.
+
+    It is also the form the old composer could not produce: it required at
+    least two arguments and raised on this one.
+    """
+
+    def test_a_bare_cumulative_sum_composes_an_empty_over_clause(self):
+        log = _log()
+        assert translate_thoughtspot("cumulative_sum", ["m"], log, object_ref=OBJ) == (
+            "SUM(m) OVER ()"
+        )
+
+    def test_it_reports_nothing(self):
+        log = _log()
+        translate_thoughtspot("cumulative_sum", ["m"], log, object_ref=OBJ)
+        assert log.issues == []
+
+    def test_the_other_aggregates_follow(self):
+        for name, agg in (("cumulative_average", "AVG"), ("cumulative_max", "MAX"),
+                          ("cumulative_min", "MIN")):
+            log = _log()
+            assert translate_thoughtspot(name, ["m"], log, object_ref=OBJ) == f"{agg}(m) OVER ()"
+            assert log.issues == []
+
+
+class TestALevelOfDetailGrainIsNotAWindow:
+    """`group_aggregate` is a level-of-detail definition, not a window function.
+
+    That is why ThoughtSpot compiles it to a nested GROUP BY -- a derived
+    table at the finer grain with an outer re-aggregation -- and never to an
+    OVER clause. Live-probed 2026-11-16 on a cluster: the inner GROUP BY
+    tracked the query's own dimension, and no window function appeared in the
+    SQL for any `group_aggregate` form.
+
+    The two shapes do not even return the same thing. A derived table returns
+    one row per group; `OVER (PARTITION BY ...)` returns one row per input
+    row with the group total attached. Rendering an LOD as a window was the
+    wrong construct, not a lossy version of the right one.
+
+    Ossie has no level-of-detail concept to target instead, so there is no
+    portable expression to emit, and we do not emit one we cannot guarantee.
+    """
+
+    FIXED = ["SUM(m)", "{ a , b }", "query_filters ( )"]
+
+    def test_a_fixed_grain_emits_no_expression(self):
+        log = _log()
+        assert translate_thoughtspot(
+            "group_aggregate", self.FIXED, log, object_ref=OBJ
+        ) is None
+
+    def test_it_reports_why(self):
+        log = _log()
+        translate_thoughtspot("group_aggregate", self.FIXED, log, object_ref=OBJ)
+        [issue] = log.issues
+        assert issue.code == "TS-EXPR-LEVEL-OF-DETAIL"
+        assert issue.severity is Severity.ERROR
+        assert "group_aggregate" in issue.message
+
+    def test_an_empty_grain_is_refused_too(self):
+        log = _log()
+        assert translate_thoughtspot(
+            "group_aggregate", ["SUM(m)", "{ }", "query_filters ( )"], log, object_ref=OBJ
+        ) is None
+
+    def test_the_shorthand_family_follows(self):
+        # Replaces test_group_count_stddev_variance_shorthands_compose, which
+        # asserted the OVER (PARTITION BY ...) rendering for the same names.
+        for name in ("group_sum", "group_count", "group_stddev", "group_variance"):
+            log = _log()
+            assert translate_thoughtspot(
+                name, ["m", "{ a }", "query_filters ( )"], log, object_ref=OBJ
+            ) is None, name
+            assert log.issues[0].code == "TS-EXPR-LEVEL-OF-DETAIL", name
+
+
+class TestTheQueryGrainFormIsStillTheOneExactCase:
+    """`query_groups ( )` alone asks for the query's OWN grain.
+
+    An aggregate evaluated at the query's grain is what a bare aggregate
+    already means, so this one needs no window and no derived table.
+    Live-probed 2026-11-16: it compiled to a plain GROUP BY on the query's
+    dimension, identical in shape to an ordinary SUM.
+
+    Note the reason, which an earlier docstring had backwards. This is NOT
+    "the partition is declared in the formula" -- `query_groups ( )` is
+    explicitly the dynamic one. It is exact *because* it is dynamic: it
+    always means whatever the query means.
+    """
+
+    def test_it_composes_a_bare_aggregate(self):
+        log = _log()
+        assert translate_thoughtspot(
+            "group_aggregate", ["SUM(m)", "query_groups ( )", "query_filters ( )"],
+            log, object_ref=OBJ,
+        ) == "SUM(m)"
+        assert log.issues == []

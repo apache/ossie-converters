@@ -18,7 +18,7 @@
 """Shared test helpers for Ossie converter tests."""
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDataType,
     OssieDialect,
@@ -176,7 +176,7 @@ def _ossie_field(
     is_time: bool | None = None,
     description: str | None = None,
     label: str | None = None,
-    custom_extensions: list[OssieCustomExtension] | None = None,
+    nonportable_extensions: list[OssieNonportableExtension] | None = None,
     datatype: OssieDataType | None = None,
 ) -> OssieField:
     return OssieField(
@@ -185,7 +185,7 @@ def _ossie_field(
         dimension=OssieDimension(is_time=is_time) if is_time is not None else None,
         description=description,
         label=label,
-        custom_extensions=custom_extensions,
+        nonportable_extensions=nonportable_extensions,
         datatype=datatype,
     )
 
@@ -197,7 +197,7 @@ def _ossie_dataset(
     primary_key: list[str] | None = None,
     unique_keys: list[list[str]] | None = None,
     description: str | None = None,
-    custom_extensions: list[OssieCustomExtension] | None = None,
+    nonportable_extensions: list[OssieNonportableExtension] | None = None,
 ) -> OssieDataset:
     return OssieDataset(
         name=name,
@@ -206,7 +206,7 @@ def _ossie_dataset(
         primary_key=primary_key,
         unique_keys=unique_keys,
         description=description,
-        custom_extensions=custom_extensions,
+        nonportable_extensions=nonportable_extensions,
     )
 
 
@@ -215,14 +215,14 @@ def _ossie_metric(
     expression: str,
     description: str | None = None,
     dialect: OssieDialect = OssieDialect.ANSI_SQL,
-    custom_extensions: list[OssieCustomExtension] | None = None,
+    nonportable_extensions: list[OssieNonportableExtension] | None = None,
     datatype: OssieDataType | None = None,
 ) -> OssieMetric:
     return OssieMetric(
         name=name,
         expression=_ossie_expr(expression, dialect=dialect),
         description=description,
-        custom_extensions=custom_extensions,
+        nonportable_extensions=nonportable_extensions,
         datatype=datatype,
     )
 

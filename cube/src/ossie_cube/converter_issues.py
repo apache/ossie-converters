@@ -72,6 +72,10 @@ class IssueType(Enum):
     # value survives the round trip even though Cube itself cannot read it.
     PARKED_IN_META = "PARKED_IN_META"
 
+    # A saved expression is restored even though its exported native definition
+    # has since been edited in Cube. The saved form remains authoritative.
+    STALE_PARKED_EXPRESSION = "STALE_PARKED_EXPRESSION"
+
     # A value Cube has nowhere to hold *and* that cannot be parked, so it is gone
     # from the output. Distinct from PARKED_IN_META on purpose: a caller gating on
     # issue types has to be able to tell "preserved but invisible to Cube" from
@@ -80,7 +84,7 @@ class IssueType(Enum):
 
     # A Cube property of a projected view, cube or published member that a view
     # projection does not carry -- an access policy, pre-aggregations, drill members.
-    # The lossless import would preserve it in custom_extensions; a projection carries
+    # The lossless import would preserve it in nonportable_extensions; a projection carries
     # only the view's public surface, so it is gone from the output.
     DROPPED_FROM_PROJECTION = "DROPPED_FROM_PROJECTION"
 

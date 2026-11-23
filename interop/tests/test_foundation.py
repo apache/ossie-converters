@@ -42,7 +42,7 @@ def test_evidence_link_escapes_table_cell_and_markdown_delimiters(tmp_path):
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "orders",
     "datasets": [
         {
@@ -64,15 +64,15 @@ MODEL = {
 
 def test_committed_manifest_registers_all_converter_projects():
     manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
+    # polaris and salesforce are Maven projects with no pyproject.toml.
     assert set(manifest.converters) == {
         p.parent.name
         for p in ROOT.glob("*/pyproject.toml")
         if p.parent.name != "interop"
-    } | {"databricks", "polaris", "salesforce"}
+    } | {"polaris", "salesforce"}
     assert sum(a != b for a in manifest.converters for b in manifest.converters) == len(
         manifest.converters
     ) * (len(manifest.converters) - 1)
-    assert manifest.converters["databricks"].toolchain == "maven"
     assert manifest.converters["dbt"].fixtures["orders"].is_file()
 
 
@@ -187,7 +187,7 @@ def test_validator_checks_schema_and_semantic_constraints(tmp_path):
     assert result[
         "errors"
     ]  # Duplicate fields are schema-shaped but semantically invalid.
-    path.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    path.write_text("version: '0.3.0.dev0'\nsemantic_model: []\n")
     _, result = validator.validate(path)
     assert any("Schema" in error for error in result["errors"])
 
@@ -218,14 +218,14 @@ def test_extension_moves_between_owners_are_structural_changes(tmp_path, target)
     before = yaml.safe_load(
         (ROOT / "interop/fixtures/contracts/keys-joined/input.yaml").read_text()
     )
-    extension = {"vendor_name": "CUBE", "data": '{"type":"time"}'}
-    before["datasets"][0]["fields"][0]["custom_extensions"] = [extension]
+    extension = {"vendor_name": "CUBE", "data": {"type": "time"}}
+    before["datasets"][0]["fields"][0]["nonportable_extensions"] = [extension]
     after = deepcopy(before)
-    moved = after["datasets"][0]["fields"][0].pop("custom_extensions")
+    moved = after["datasets"][0]["fields"][0].pop("nonportable_extensions")
     owner = after
     for part in target:
         owner = owner[part]
-    owner["custom_extensions"] = moved
+    owner["nonportable_extensions"] = moved
     validator = Validator(ROOT)
     for name, data in (("before", before), ("after", after)):
         path = tmp_path / f"{name}.yaml"
@@ -233,10 +233,10 @@ def test_extension_moves_between_owners_are_structural_changes(tmp_path, target)
         assert validator.validate(path)[1] == {"errors": [], "warnings": []}
     changes = compare_inventory(before, after)
     assert changes["removed"] == [
-        ["extension", "field", "orders", "order_id", "CUBE", extension["data"]]
+        ["extension", "field", "orders", "order_id", "CUBE", json.dumps(extension["data"])]
     ]
     assert len(changes["added"]) == 1
-    assert changes["added"][0][-2:] == ["CUBE", extension["data"]]
+    assert changes["added"][0][-2:] == ["CUBE", json.dumps(extension["data"])]
     # Ownership changes must also be detected in the opposite direction.
     reverse = compare_inventory(after, before)
     assert reverse["removed"] == changes["added"]
@@ -249,16 +249,16 @@ def test_extension_ownership_is_stable_when_named_objects_are_reordered():
     )
     for ds in before["datasets"]:
         for field in ds["fields"]:
-            field["custom_extensions"] = [
-                {"vendor_name": "CUBE", "data": json.dumps({"field": field["name"]})},
-                {"vendor_name": "DBT", "data": "{}"},
+            field["nonportable_extensions"] = [
+                {"vendor_name": "CUBE", "data": {"field": field["name"]}},
+                {"vendor_name": "DBT", "data": {}},
             ]
     after = deepcopy(before)
     after["datasets"].reverse()
     for ds in after["datasets"]:
         ds["fields"].reverse()
         for field in ds["fields"]:
-            field["custom_extensions"].reverse()
+            field["nonportable_extensions"].reverse()
     changes = compare_inventory(before, after)
     assert not changes["removed"]
     assert not changes["added"]
@@ -476,12 +476,12 @@ def test_silent_key_loss_is_lossy_even_without_warnings(matrix):
 def test_silent_extension_move_is_lossy_even_without_warnings(matrix):
     converter, _, path = matrix
     before = deepcopy(MODEL)
-    before["datasets"][0]["fields"][0]["custom_extensions"] = [
-        {"vendor_name": "CUBE", "data": "{}"}
+    before["datasets"][0]["fields"][0]["nonportable_extensions"] = [
+        {"vendor_name": "CUBE", "data": {}}
     ]
     after = deepcopy(before)
-    after["datasets"][0]["custom_extensions"] = after["datasets"][0]["fields"][0].pop(
-        "custom_extensions"
+    after["datasets"][0]["nonportable_extensions"] = after["datasets"][0]["fields"][0].pop(
+        "nonportable_extensions"
     )
     payload = path / "returned.json"
     payload.write_text(json.dumps(after))

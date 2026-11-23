@@ -83,7 +83,7 @@ def _metric(name, expr, dialect="ANSI_SQL", **extra):
 
 
 def _model(datasets, relationships=None, metrics=None, **extra):
-    model = {"version": "0.2.0.dev0", "name": "test_model", "datasets": datasets}
+    model = {"version": "0.3.0.dev0", "name": "test_model", "datasets": datasets}
     if relationships is not None:
         model["relationships"] = relationships
     if metrics is not None:
@@ -102,7 +102,7 @@ def _minimal_model(**overrides):
 
 
 def _wrap_ossie(model_dict):
-    return yaml.dump({"version": "0.2.0.dev0", **model_dict}, default_flow_style=False)
+    return yaml.dump({"version": "0.3.0.dev0", **model_dict}, default_flow_style=False)
 
 
 def _convert(yaml_str):
@@ -151,12 +151,12 @@ class TestEnvelope:
             convert_ossie_to_lookml("- just\n- a\n- list\n")
 
     def test_rejects_legacy_semantic_model_wrapper(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "semantic_model": [_minimal_model()]})
+        bad = yaml.dump({"version": "0.3.0.dev0", "semantic_model": [_minimal_model()]})
         with pytest.raises(OssieConversionError, match="Legacy 'semantic_model'"):
             convert_ossie_to_lookml(bad)
 
     def test_rejects_root_dialects(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "dialects": ["ANSI_SQL"], **_minimal_model()})
+        bad = yaml.dump({"version": "0.3.0.dev0", "dialects": ["ANSI_SQL"], **_minimal_model()})
         with pytest.raises(OssieConversionError, match="Root dialects"):
             convert_ossie_to_lookml(bad)
 
@@ -219,6 +219,57 @@ class TestConvertSource:
 # ---------------------------------------------------------------------------
 
 class TestExtractExpression:
+    @pytest.mark.parametrize("tag", [None, "OSSIE_SQL_2026", "ossie_sql_2026"])
+    def test_primary_sql_is_the_authoritative_portable_expression(self, tag):
+        expression = {"sql": "refund_id"}
+        if tag is not None:
+            expression["dialects"] = [{"dialect": tag, "expression": "refund_id + 1"}]
+        assert _extract_expression(expression, "f") == ("refund_id", "OSSIE_SQL_2026")
+
+    @pytest.mark.parametrize("dialect", ["BIGQUERY", "ANSI_SQL"])
+    def test_selected_dialect_precedes_primary_portable_sql(self, dialect):
+        expression = {
+            "sql": "primary_column",
+            "dialects": [
+                {"dialect": dialect, "expression": "preferred_column"},
+                {"dialect": "OSSIE_SQL_2026", "expression": "legacy_column"},
+            ],
+        }
+        assert _extract_expression(expression, "f") == ("preferred_column", dialect)
+
+    @pytest.mark.parametrize("primary", [None, "", "   "])
+    def test_unusable_primary_sql_falls_back_to_tagged_portable_sql(self, primary):
+        expression = {
+            "sql": primary,
+            "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "legacy_column"}],
+        }
+        assert _extract_expression(expression, "f") == ("legacy_column", "OSSIE_SQL_2026")
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    @pytest.mark.parametrize("dialect", ["BIGQUERY", "ANSI_SQL"])
+    def test_blank_tagged_expression_falls_back_to_primary_sql(self, dialect, blank):
+        expression = {"sql": "amount", "dialects": [{"dialect": dialect, "expression": blank}]}
+        assert _extract_expression(expression, "f") == ("amount", "OSSIE_SQL_2026")
+
+    def test_blank_bigquery_expression_falls_back_to_ansi(self):
+        expression = {
+            "dialects": [
+                {"dialect": "BIGQUERY", "expression": " "},
+                {"dialect": "ANSI_SQL", "expression": "amount"},
+            ]
+        }
+        assert _extract_expression(expression, "f") == ("amount", "ANSI_SQL")
+
+    def test_blank_only_dialects_warn_and_skip(self):
+        expression = {"dialects": [{"dialect": "BIGQUERY", "expression": "  "}]}
+        with pytest.warns(UserWarning, match="no usable BigQuery-compatible expression"):
+            assert _extract_expression(expression, "f") == (None, None)
+
+    @pytest.mark.parametrize("primary", ["", "   "])
+    def test_blank_primary_sql_without_dialects_raises(self, primary):
+        with pytest.raises(OssieConversionError, match="Missing expression for f"):
+            _extract_expression({"sql": primary}, "f")
+
     def test_prefers_bigquery_over_ansi(self):
         expression = {
             "dialects": [
@@ -254,6 +305,52 @@ class TestExtractExpression:
 # ---------------------------------------------------------------------------
 # Fields -> dimensions / dimension_groups
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("with_conflicts", [False, True])
+def test_primary_sql_preserves_fields_and_metric_ownership(with_conflicts):
+    def expression(primary, legacy):
+        value = {"sql": primary}
+        if with_conflicts:
+            value["dialects"] = [{"dialect": "OSSIE_SQL_2026", "expression": legacy}]
+        return value
+
+    model = _model(
+        [
+            _dataset("refunds", [
+                {"name": "refund_id", "expression": expression("refund_id", "refund_id + 1")},
+                {"name": "refund_amount", "expression": expression("amount", "amount * 2")},
+            ]),
+            _dataset("orders", [
+                {"name": "amount", "expression": expression("amount", "amount * 2")},
+                {"name": "net_amount", "expression": expression("amount * 0.9", "amount * 0.8")},
+            ], metrics=[{
+                "name": "local_total",
+                "expression": expression("SUM(amount)", "MAX(amount)"),
+            }]),
+        ],
+        metrics=[{
+            "name": "total_amount",
+            "expression": expression("SUM(orders.amount)", "SUM(refunds.refund_amount)"),
+        }],
+    )
+    views = {view["name"]: view for view in lkml.load(_convert(model))["views"]}
+    refund_fields = {field["name"]: field["sql"] for field in views["refunds"]["dimensions"]}
+    assert refund_fields == {
+        "refund_id": "${TABLE}.refund_id",
+        "refund_amount": "${TABLE}.amount",
+    }
+    order_fields = {field["name"]: field["sql"] for field in views["orders"]["dimensions"]}
+    assert order_fields == {
+        "amount": "${TABLE}.amount",
+        "net_amount": "${TABLE}.amount * 0.9",
+    }
+    assert not views["refunds"].get("measures")
+    measures = {measure["name"]: measure for measure in views["orders"]["measures"]}
+    assert measures["total_amount"]["type"] == "sum"
+    assert measures["total_amount"]["sql"] == "${orders.amount}"
+    assert measures["local_total"]["type"] == "sum"
+    assert measures["local_total"]["sql"] == "${TABLE}.amount"
+
 
 class TestFields:
     def _view(self, *fields, **dataset_kwargs):
@@ -719,11 +816,11 @@ class TestRelationships:
     def test_relationship_extensions_are_reported_as_dropped(self):
         rel = _rel("o2c", "orders", "customers", ["customer_id"], ["id"])
         rel["ai_context"] = {"instructions": "x"}
-        rel["custom_extensions"] = [{"vendor": "X", "attributes": {}}]
+        rel["nonportable_extensions"] = [{"vendor": "X", "attributes": {}}]
         with pytest.warns(UserWarning, match="relationship 'o2c'") as record:
             convert_ossie_to_lookml(_model([ORDERS, CUSTOMERS], [rel]))
         messages = [str(w.message) for w in record if "relationship 'o2c'" in str(w.message)]
-        assert any("ai_context" in m and "custom_extensions" in m for m in messages)
+        assert any("ai_context" in m and "nonportable_extensions" in m for m in messages)
 
 
 class TestExplores:
@@ -837,7 +934,7 @@ class TestInputValidation:
         ],
     )
     def test_wrongly_typed_containers_are_conversion_errors(self, model, message):
-        doc = yaml.dump({"version": "0.2.0.dev0", "name": "m", **model})
+        doc = yaml.dump({"version": "0.3.0.dev0", "name": "m", **model})
         with pytest.raises(OssieConversionError, match=message):
             convert_ossie_to_lookml(doc)
 

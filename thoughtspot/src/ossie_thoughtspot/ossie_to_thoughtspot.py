@@ -67,10 +67,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from . import datatypes, formula, identifiers, stash
 from .constants import (
+    EXTENSIONS_FIELD,
+    EXTENSIONS_FIELD_RENAMED,
     FIELD_STASH_FORMULA_ID,
     FIELD_STASH_FORMULA_NAME,
     MODEL_STASH_OBJ_ID,
@@ -110,6 +112,8 @@ from .constants import (
     MODEL_STASH_UNATTRIBUTED_FORMULAS,
     MODEL_STASH_UNREPRESENTABLE_JOINS,
     PORTABLE_DIALECTS_ACCEPTED,
+    PORTABLE_SQL_DIALECT,
+    VENDOR_KEY,
     RELATIONSHIP_STASH_CARDINALITY,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED,
     RELATIONSHIP_STASH_ENDPOINTS_SWAPPED_WITNESS,
@@ -118,6 +122,9 @@ from .constants import (
     RELATIONSHIP_STASH_ON_EXPRESSION_WITNESS,
     RELATIONSHIP_STASH_REFERENCING_JOIN,
     RELATIONSHIP_STASH_TYPE,
+    ASSUMED_JOIN_TYPE,
+    ASSUMED_JOIN_TYPE_BY_CARDINALITY,
+    WRITABLE_CARDINALITIES,
     STASH_TML_NAME,
 )
 from .errors import ConversionError
@@ -211,6 +218,74 @@ def _bare_sql_identifier(expression: str) -> str | None:
     return text
 
 
+def portable_expression_entries(expression: Any) -> list[dict]:
+    """The dialect entries to read from one Ossie `expression`, with a
+    top-level `expression.sql` folded in as the entry it already is.
+
+    apache/ossie#617 moved the portable expression to a top-level `sql`
+    field, which is `OSSIE_SQL_2026` by definition; `expression.dialects[]`
+    keeps carrying portable expressions too, tagged, so a document may use
+    either location or both. apache/ossie-converters#79 tracks teaching every
+    converter to read both, readers first, "preferring expression.sql when
+    both are present". The schema is narrower than that wording: `sql`'s own
+    description makes it authoritative only against an `OSSIE_SQL_2026`
+    entry. Preferring it over a tagged `ANSI_SQL` entry too follows #79 and
+    the merged databricks reader, not a requirement of the schema.
+
+    A usable `sql` therefore SUPERSEDES every other entry except THOUGHTSPOT,
+    and the list it returns is `[THOUGHTSPOT entry (if any), sql]`.
+
+    Superseding rather than joining is the whole point, and it has to cover
+    EVERY other dialect, not just the portable ones. Three readers consume
+    this list and they ask different questions of it: one picks by dialect
+    name, two scan for the first entry that is a bare column identifier, in
+    list order, from any dialect at all. Leave a losing entry in the list and
+    those two will read it -- so a `DATABRICKS` entry naming `legacy_amt`
+    beside `sql: amount` produced a Table column reading the WRONG warehouse
+    column, and beside `sql: SUM(orders.qty)` produced a physical column
+    where the authoritative expression is an aggregate. Both silently, with
+    no issue raised. Dropping the superseded entries here states the
+    precedence once, where all three readers inherit it, instead of leaving
+    each to re-derive it.
+
+    THOUGHTSPOT survives because it outranks `sql`, and that is round-trip
+    fidelity rather than preference: it is the verbatim text a prior
+    `TML -> Ossie` trip preserved, already naming this document's own tables
+    and columns. Keeping it also keeps `_physical_identity`'s existing
+    short-circuit intact -- a THOUGHTSPOT entry that is not a bare reference
+    still means "computed", and no other entry is consulted.
+
+    Nothing legitimate is lost by dropping the rest: no reader in this module
+    consults a foreign vendor dialect except through the bare-identifier scan
+    this is correcting, and no stash key preserves foreign dialect entries,
+    so the `Ossie -> TML` direction never needed them.
+
+    **A superseded sibling is not a fallback.** When `sql` is present but
+    this converter cannot translate it, the field or metric is reported and
+    dropped; it does NOT quietly convert through the tagged entry instead.
+    Converting through the loser would emit a model built on an expression
+    the document itself marks as not authoritative -- silent wrong output in
+    place of a declared loss, which is the trade this converter refuses
+    everywhere else. `test_expression_sql.py` pins it.
+
+    An unusable `sql` -- absent, not a string, or blank -- supersedes
+    nothing, so a document carrying `sql: ""` beside a real tagged entry
+    still converts through the tagged one.
+    """
+    if not isinstance(expression, dict):
+        return []
+
+    entries = [e for e in (expression.get("dialects") or []) if isinstance(e, dict)]
+
+    sql = expression.get("sql")
+    if not isinstance(sql, str) or not sql.strip():
+        return entries
+
+    return [e for e in entries if e.get("dialect") == DIALECT] + [
+        {"dialect": PORTABLE_SQL_DIALECT, "expression": sql}
+    ]
+
+
 def _physical_identity(field: dict, log: IssueLog, *, object_ref: str) -> tuple[str, str] | None:
     """`(display name, warehouse identifier)` for a physical field, or `None`
     when the field is computed and has no single physical column to become.
@@ -224,7 +299,7 @@ def _physical_identity(field: dict, log: IssueLog, *, object_ref: str) -> tuple[
     hand-authored document) does a bare, unqualified SQL identifier in any
     other dialect count as a physical reference instead.
     """
-    dialects = ((field.get("expression") or {}).get("dialects")) or []
+    dialects = portable_expression_entries(field.get("expression"))
     if not dialects:
         log.add(
             code="TS-FIELD-NO-EXPRESSION",
@@ -286,6 +361,27 @@ def _physical_identity(field: dict, log: IssueLog, *, object_ref: str) -> tuple[
         )
         if isinstance(stashed_db_column_name, str) and stashed_db_column_name:
             return column, stashed_db_column_name
+        raw_stashed = field_stash.get(FIELD_STASH_DB_COLUMN_NAME)
+        if was_stashed and not (isinstance(raw_stashed, str) and raw_stashed):
+            # The stash is unusable, but NOT because the field was
+            # retargeted -- the value simply is not a warehouse column name.
+            # A hand-written object-form payload gets its scalars typed by
+            # the YAML loader, so an unquoted `2024` arrives as an int. The
+            # stale message below would tell the user their field had been
+            # repointed, which is a wrong diagnosis of a real problem and
+            # worse than no message.
+            log.add(
+                code="TS-FIELD-DB-COLUMN-NAME-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    f"the stashed warehouse column name for this field is "
+                    f"{type(raw_stashed).__name__}, not a non-empty string, "
+                    f"so it is dropped and db_column_name is set equal to "
+                    f"the display name {column!r} instead"
+                ),
+                object_ref=object_ref,
+            )
+            return column, column
         if was_stashed:
             log.add(
                 code="TS-FIELD-DB-COLUMN-NAME-STALE",
@@ -539,17 +635,36 @@ def _source_parts(dataset: dict, payload: dict, log: IssueLog, *, object_ref: st
             stashed.get(DATASET_STASH_SOURCE_PARTS_SCHEMA, ""),
             stashed.get(DATASET_STASH_SOURCE_PARTS_DB_TABLE, ""),
         )
-        if ".".join((db, schema, db_table)) == source:
+        if not all(isinstance(part, str) for part in (db, schema, db_table)):
+            # Not stale -- malformed. A hand-written object-form payload gets
+            # its scalars typed by the YAML loader, so an unquoted schema
+            # named `2024` arrives as an int and `".".join` below raises a
+            # bare TypeError the CLI does not catch. Reported under its own
+            # code rather than the stale one, because "the dataset was edited
+            # since the stash was written" is a different thing to tell a
+            # user than "this payload is not the shape we wrote".
+            log.add(
+                code="TS-DATASET-SOURCE-PARTS-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    "the stashed source_parts are not all strings, so they "
+                    "cannot name a db/schema/table; the source is re-split "
+                    "instead"
+                ),
+                object_ref=object_ref,
+            )
+        elif ".".join((db, schema, db_table)) == source:
             return db, schema, db_table
-        log.add(
-            code="TS-DATASET-SOURCE-PARTS-STALE",
-            severity=Severity.WARNING,
-            message=(
-                "the stashed source_parts no longer reconstruct this dataset's "
-                "current source; the source is re-split instead"
-            ),
-            object_ref=object_ref,
-        )
+        else:
+            log.add(
+                code="TS-DATASET-SOURCE-PARTS-STALE",
+                severity=Severity.WARNING,
+                message=(
+                    "the stashed source_parts no longer reconstruct this "
+                    "dataset's current source; the source is re-split instead"
+                ),
+                object_ref=object_ref,
+            )
 
     parts = _split_three_part_identifier(source)
     if parts is not None and len(parts) == 3 and all(parts):
@@ -1212,14 +1327,22 @@ def _translate_ansi_sql(
 
 
 def to_thoughtspot_expression(
-    entries: Sequence[dict],
+    expression: Any,
     resolve_field: Callable[[str], tuple[str, str] | None],
     log: IssueLog,
     *,
     object_ref: str,
 ) -> str | None:
-    """One Ossie `expression.dialects[]` list -> a ThoughtSpot formula string,
-    or `None`.
+    """One Ossie `expression` -> a ThoughtSpot formula string, or `None`.
+
+    Takes the whole `expression` mapping, not one of its keys, because a
+    portable expression lives in either of two places -- the top-level `sql`
+    field (apache/ossie#617) or a tagged `dialects[]` entry -- and choosing
+    between them is this function's job. `portable_expression_entries` folds
+    the two into one list, with `sql` superseding every entry but
+    THOUGHTSPOT; the selection below is unchanged from when `dialects[]` was
+    the only location. Honeydew (apache/ossie-converters#182) takes the same
+    mapping for the same reason.
 
     Mirrors the reference converters' own `pick_expression`, and the same
     dialect-selection order `tml_to_ossie.py`'s own `expression_entries` uses
@@ -1244,7 +1367,8 @@ def to_thoughtspot_expression(
     caller stashes rather than guessing); one dialect is never re-rendered
     into another.
     """
-    by_dialect = {e.get("dialect"): e.get("expression") for e in entries if isinstance(e, dict)}
+    entries = portable_expression_entries(expression)
+    by_dialect = {e.get("dialect"): e.get("expression") for e in entries}
 
     ts_expr = by_dialect.get(DIALECT)
     if isinstance(ts_expr, str) and ts_expr:
@@ -1292,7 +1416,7 @@ def _field_physical_display_name(field: dict) -> str | None:
     reporting it again here would be the same double report this function's
     own docstring already rules out for db_column_name.
     """
-    dialects = ((field.get("expression") or {}).get("dialects")) or []
+    dialects = portable_expression_entries(field.get("expression"))
     ts_entry = next((d for d in dialects if d.get("dialect") == DIALECT), None)
     if ts_entry is not None:
         try:
@@ -1463,6 +1587,36 @@ def _build_field(
     display_name = field.get("label") or field.get("name") or "<unnamed>"
     object_ref = f"field:{display_name}"
     name = allocator.allocate(display_name, log, object_ref=object_ref)
+
+    dimension = field.get("dimension") or {}
+    if "is_time" in dimension:
+        # What is lost is not `is_time`, it is any DISAGREEMENT between it and
+        # the datatype. The spec defaults the flag FROM the datatype -- true
+        # for Date/Time/DateTime/DateTimeTz, false otherwise -- and ThoughtSpot
+        # derives exactly that same default from the column's own type, with no
+        # flag to override it. So a flag that agrees with its datatype costs
+        # nothing and reporting it would name a loss that did not happen, while
+        # one that disagrees cannot be carried in either direction: `is_time:
+        # true` on an integer year grain, and equally `is_time: false` on an
+        # audit timestamp the author wants off the time axis.
+        wanted = bool(dimension.get("is_time"))
+        implied = field.get("datatype") in datatypes.TEMPORAL_DATATYPES
+        if wanted != implied:
+            log.add(
+                code="TS-FIELD-IS-TIME-DROPPED",
+                severity=Severity.INFO,
+                message=(
+                    f"field {display_name!r} sets `dimension.is_time` to "
+                    f"{wanted!r}, which disagrees with the role ThoughtSpot "
+                    f"will derive from its datatype "
+                    f"({field.get('datatype') or 'undeclared'}); ThoughtSpot "
+                    f"has no separate temporal-role flag, so the field is "
+                    f"treated as {'a time dimension' if implied else 'a regular dimension'} "
+                    f"regardless"
+                ),
+                object_ref=object_ref,
+            )
+
     properties: dict = {"column_type": "ATTRIBUTE"}
     formulas_entry: dict | None = None
 
@@ -1492,8 +1646,7 @@ def _build_field(
         }
     else:
         expr = to_thoughtspot_expression(
-            (field.get("expression") or {}).get("dialects") or [],
-            resolve_field, log, object_ref=object_ref,
+            field.get("expression"), resolve_field, log, object_ref=object_ref,
         )
         if expr is None:
             log.add(
@@ -1581,8 +1734,7 @@ def _build_metric(
     formula_id = stash.read_stash(metric).get(FIELD_STASH_FORMULA_ID) or _formula_id_from(name)
 
     ts_expr = to_thoughtspot_expression(
-        (metric.get("expression") or {}).get("dialects") or [],
-        resolve_field, log, object_ref=object_ref,
+        metric.get("expression"), resolve_field, log, object_ref=object_ref,
     )
     if ts_expr is None:
         log.add(
@@ -1759,6 +1911,48 @@ def _normalise_join_type(value: str) -> str:
     return value
 
 
+def _join_type_for(
+    stashed: object, cardinality: str, log: IssueLog, *, name: object, object_ref: str
+) -> str:
+    """The join type to write for one relationship.
+
+    A stashed type is recovered fact -- the author's own choice, carried out of
+    a ThoughtSpot export and back in -- so it is used as it stands (modulo the
+    `FULL OUTER` rename `_normalise_join_type` performs) and nothing is logged.
+
+    Absent one, nothing in the document declares a join type, because an Ossie
+    relationship has no field for it. See `ASSUMED_JOIN_TYPE` for why the
+    assumption is the row-preserving one. It is logged at WARNING, not INFO:
+    the chosen type decides which rows reach every measure in the model, and an
+    author who knows their source joined differently has to be told to change
+    it. Nothing else in the conversion will fail on their behalf.
+    """
+    if stashed:
+        return _normalise_join_type(str(stashed))
+    assumed = ASSUMED_JOIN_TYPE_BY_CARDINALITY.get(cardinality, ASSUMED_JOIN_TYPE)
+    many_side = "to" if assumed == "RIGHT_OUTER" else "from"
+    log.add(
+        code="TS-JOIN-TYPE-ASSUMED",
+        severity=Severity.WARNING,
+        message=(
+            f"relationship {name!r} declares no join type -- an Ossie "
+            f"relationship has no field for one -- but ThoughtSpot requires "
+            f"`type` on every join, so {assumed} is assumed; with cardinality "
+            f"{cardinality} the many side is `{many_side}`, and {assumed} keeps "
+            f"every row of it where INNER would drop those that match nothing "
+            f"on the one side and lower every measure computed over them "
+            f"without saying so"
+        ),
+        object_ref=object_ref,
+        remedy=(
+            f"If the source joined these tables more narrowly, set `type` on "
+            f"this join in the generated Model TML (one of INNER, LEFT_OUTER, "
+            f"RIGHT_OUTER, OUTER)."
+        ),
+    )
+    return assumed
+
+
 def _restore_relationship_condition(
     from_prefix: str, to_prefix: str, from_columns: list[str], to_columns: list[str]
 ) -> str:
@@ -1788,7 +1982,9 @@ def _restore_relationship_condition(
     )
 
 
-def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, dict | None]:
+def _join_entry_for_relationship(
+    rel: dict, log: IssueLog, physical_by_prefix: Mapping[str, str] | None = None,
+) -> tuple[str, dict | None, dict | None]:
     """One Ossie relationship -> `(from_prefix, model join entry,
     Table joins_with[] entry or None)`.
 
@@ -1838,6 +2034,22 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
     all would be) and an issue records it.
     """
     payload = stash.read_stash(rel)
+    if rel.get("ai_context"):
+        # The one `ai_context` scope with no issue of its own. A ThoughtSpot
+        # join -- inline or `joins_with[]` -- carries no description,
+        # synonyms or instructions in any spelling, so there is nowhere for
+        # this to go. Reported before the self-join guard below, which
+        # returns early: the context is lost either way.
+        log.add(
+            code="TS-JOIN-AI-CONTEXT-UNSUPPORTED",
+            severity=Severity.WARNING,
+            message=(
+                f"relationship {rel.get('name')!r} carries ai_context; a "
+                f"ThoughtSpot join has no description, synonym or instruction "
+                f"field in any form, so it is not carried into the model"
+            ),
+            object_ref=f"relationship:{rel.get('name')}",
+        )
     live_from = rel.get("from") or ""
     live_to = rel.get("to") or ""
     live_from_columns = rel.get("from_columns") or []
@@ -1872,6 +2084,17 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
         from_prefix, to_prefix = live_from, live_to
         from_columns, to_columns = live_from_columns, live_to_columns
 
+    # The MODEL namespace (the dataset names above) is what `model_tables[]`
+    # and `joins[].with` use. The PHYSICAL namespace is the table each
+    # dataset sits on, and it is what a Table's `joins_with[]` uses -- its
+    # `destination`, and every prefix inside its `on`. They differ exactly
+    # when the model aliases a table, and ThoughtSpot refuses an alias name
+    # in either place ("Invalid srcTable or destTable in join expression" --
+    # see tests/test_alias_joins.py for exactly how far that probe reaches).
+    physical = physical_by_prefix or {}
+    from_physical = physical.get(from_prefix, from_prefix)
+    to_physical = physical.get(to_prefix, to_prefix)
+
     had_stashed_on_expression = RELATIONSHIP_STASH_ON_EXPRESSION in payload
     on_expression = stash.restore(
         payload, RELATIONSHIP_STASH_ON_EXPRESSION, None,
@@ -1898,8 +2121,9 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
                 ),
                 object_ref=f"relationship:{rel.get('name')}",
             )
-        on_expression = _restore_relationship_condition(from_prefix, to_prefix, from_columns, to_columns)
-    join_type = _normalise_join_type(payload.get(RELATIONSHIP_STASH_TYPE) or "INNER")
+        on_expression = _restore_relationship_condition(
+            from_physical, to_physical, from_columns, to_columns
+        )
     # Gated on the SAME witness as the endpoint swap, because it states the same
     # fact. An Ossie relationship carries no cardinality field: `from` is the many
     # side and `to` is the one side, so direction IS cardinality. When the witness
@@ -1920,6 +2144,72 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
     cardinality = (
         "MANY_TO_ONE" if stashed_swap_is_stale
         else (payload.get(RELATIONSHIP_STASH_CARDINALITY) or "MANY_TO_ONE")
+    )
+
+    if from_physical == to_physical:
+        # ONE table on both ends. Ossie allows it; ThoughtSpot has no
+        # self-join in any spelling (13125 for a table against an alias of
+        # itself, 14565 for a table against itself), so there is no TML to
+        # write. Emitting it anyway produced a Model the target platform
+        # refuses to import, with nothing said here about why.
+        #
+        # Not conditioned on the two DATASETS differing, which is how this
+        # guard was first written. That excluded the plainest case of all --
+        # a dataset related to itself, `from` and `to` the same name -- which
+        # then sailed through and emitted `[EMPLOYEE::MGR_ID] =
+        # [EMPLOYEE::ID]`, the 14565 refusal exactly. One physical table on
+        # both ends is the whole cause; how many datasets sit over it is not
+        # part of it.
+        log.add(
+            code="TS-JOIN-SELF-UNWRITABLE",
+            severity=Severity.ERROR,
+            message=(
+                f"relationship {rel.get('name')!r} runs "
+                + (f"from dataset {from_prefix!r} to itself"
+                   if from_prefix == to_prefix
+                   else f"between datasets {from_prefix!r} and {to_prefix!r}, "
+                        f"which share the table {from_physical!r}")
+                + f"; ThoughtSpot does not support a self-join in any form, so "
+                  f"no join is written for it"
+            ),
+            object_ref=f"relationship:{rel.get('name')}",
+            remedy=(
+                "Model the hierarchy with one table per level, each joined to a "
+                "distinct table, or keep the relationship outside ThoughtSpot. "
+                "Both datasets are still emitted as model tables; without this "
+                "join nothing connects them."
+            ),
+        )
+        return from_prefix, None, None
+
+    if cardinality not in WRITABLE_CARDINALITIES:
+        # Not a join type question. ThoughtSpot refuses the CARDINALITY
+        # itself (see WRITABLE_CARDINALITIES for the probe), so there is no
+        # join to give a type to, and any type chosen writes a Model the
+        # platform will not import. Same shape as the self-join guard above.
+        log.add(
+            code="TS-JOIN-CARDINALITY-UNWRITABLE",
+            severity=Severity.ERROR,
+            message=(
+                f"relationship {rel.get('name')!r} declares cardinality "
+                f"{cardinality!r}, which ThoughtSpot does not accept on a join "
+                f"(it allows only {', '.join(sorted(WRITABLE_CARDINALITIES))}); "
+                f"no join is written for it"
+            ),
+            object_ref=f"relationship:{rel.get('name')}",
+            remedy=(
+                "Model the many-to-many through a bridge table, joined to each "
+                "side many-to-one, or keep the relationship outside ThoughtSpot."
+            ),
+        )
+        return from_prefix, None, None
+
+    # Below the guards above, deliberately. An assumption reported for a join
+    # that is then not written is noise carrying a false remedy -- it told
+    # the author to set `type` on a join that is not in the output.
+    join_type = _join_type_for(
+        payload.get(RELATIONSHIP_STASH_TYPE), cardinality, log,
+        name=rel.get("name"), object_ref=f"relationship:{rel.get('name')}",
     )
 
     live_name = rel.get("name")
@@ -1959,7 +2249,10 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
             model_join_entry["cardinality"] = cardinality
         joins_with_entry = {
             "name": stashed_referencing_join,
-            "destination": {"name": to_prefix},
+            # PHYSICAL, not the dataset name. A `joins_with[]` entry lives on
+            # the Table, which has no knowledge of the aliases a model gives
+            # it; naming an alias here is rejected by ThoughtSpot.
+            "destination": {"name": to_physical},
             "on": on_expression,
             "type": join_type,
             "cardinality": cardinality,
@@ -1971,7 +2264,7 @@ def _join_entry_for_relationship(rel: dict, log: IssueLog) -> tuple[str, dict, d
     }, None
 
 
-def _join_entry_for_unrepresentable(entry: dict) -> tuple[str, dict]:
+def _join_entry_for_unrepresentable(entry: dict, log: IssueLog) -> tuple[str, dict]:
     """One `unrepresentable_joins[]` stash entry -> `(from_prefix, inline join
     entry)` -- these carry the verbatim `on_expression` unconditionally (they
     exist only because their condition has no equality pair at all), so the
@@ -1979,8 +2272,16 @@ def _join_entry_for_unrepresentable(entry: dict) -> tuple[str, dict]:
     from_prefix = entry.get("from") or ""
     to_prefix = entry.get("to") or ""
     on_expression = entry.get(RELATIONSHIP_STASH_ON_EXPRESSION) or ""
-    join_type = _normalise_join_type(entry.get(RELATIONSHIP_STASH_TYPE) or "INNER")
     cardinality = entry.get(RELATIONSHIP_STASH_CARDINALITY) or "MANY_TO_ONE"
+    join_type = _join_type_for(
+        entry.get(RELATIONSHIP_STASH_TYPE), cardinality, log,
+        name=f"{from_prefix} -> {to_prefix}",
+        # Distinct from a real relationship's `relationship:<name>`, which is
+        # auto-named `<from>_to_<to>` by exactly this pattern -- an
+        # unrepresentable join and a real one for the same pair would
+        # otherwise share an object_ref and read as one object.
+        object_ref=f"unrepresentable_join:{from_prefix}_to_{to_prefix}",
+    )
     return from_prefix, {
         "with": to_prefix, "on": on_expression, "type": join_type, "cardinality": cardinality,
     }
@@ -2162,6 +2463,29 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
                 )
                 formulas.append(formulas_entry)
 
+    for dataset in datasets:
+        dataset_metrics = dataset.get("metrics") or []
+        if not dataset_metrics:
+            continue
+        # Only `SemanticModel.metrics` is read above. A dataset-scoped metric
+        # resolves its operands within its own dataset by single-part name
+        # (core-spec "Metric Scoping"), a namespace this converter's
+        # `resolve_field` does not implement -- see
+        # apache/ossie-converters#101. Until it does, the metric cannot be
+        # built, and a measure vanishing from a model is worth a WARNING.
+        names = ", ".join(repr(m.get("name") or "<unnamed>") for m in dataset_metrics)
+        log.add(
+            code="TS-DATASET-METRICS-DROPPED",
+            severity=Severity.WARNING,
+            message=(
+                f"dataset {dataset.get('name') or '<unnamed>'!r} declares the "
+                f"dataset-scoped metric(s) {names}, whose expressions resolve "
+                f"against its own fields by single-part name; this converter "
+                f"reads only model-scoped metrics, so they are not built"
+            ),
+            object_ref=f"dataset:{dataset.get('name') or '<unnamed>'}",
+        )
+
     for metric in semantic_model.get("metrics") or []:
         built = _build_metric(metric, allocator, resolve_field, log)
         if built is None:
@@ -2192,6 +2516,36 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         formulas.append(unsurfaced_entry)
 
     for entry in model_payload.get(MODEL_STASH_UNATTRIBUTED_FORMULAS) or []:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("name", ""), str)
+            or not isinstance(entry.get("expr") or "", str)
+            or not isinstance(entry.get(FIELD_STASH_FORMULA_NAME) or "", str)
+        ):
+            # `_formula_id_from` normalises the display name and raises a bare
+            # TypeError on anything that is not a string. A hand-written
+            # object-form payload gets its scalars typed by the YAML loader,
+            # so an unquoted name like `2024` arrives as an int. Report and
+            # skip rather than abort the whole model for one entry.
+            #
+            # All three texts, not just the name: each reaches a string-only
+            # operation further down this loop, and each was measured doing it
+            # bare (christianeu-db's review on PR #137). `expr` ends in
+            # `TypeError: 'int' object is not iterable` and the stashed
+            # formula name in `AttributeError: 'int' object has no attribute
+            # 'strip'` -- both escape the CLI's handler and print a traceback,
+            # which is the one thing this reader promises not to do.
+            log.add(
+                code="TS-MODEL-UNATTRIBUTED-FORMULA-MALFORMED",
+                severity=Severity.WARNING,
+                message=(
+                    "a stashed unattributed formula is not a mapping whose "
+                    "name, expression and stashed formula name are all text, "
+                    "so it is skipped; the formula it described is not restored"
+                ),
+                object_ref=object_ref,
+            )
+            continue
         # A formula spanning two or more Ossie datasets has no single
         # dataset to belong to, which is exactly why the forward direction
         # could not turn it into an ordinary Ossie field -- but a TML
@@ -2244,7 +2598,10 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
             formula_name = allocator.allocate(
                 formula_name_raw, log, object_ref=f"formula:{formula_name_raw}"
             )
-        expr = entry.get("expr", "")
+        # `or ""`, not `.get("expr", "")`: an explicit `expr: null` is a
+        # present key, so the two-argument default never fires and None would
+        # reach the same non-iterable failure an int does.
+        expr = entry.get("expr") or ""
         formula_id = _formula_id_from(formula_name)
         # Raw, unwrapped `expr` -- see the matching comment in _build_field.
         unattributed_entry = {"id": formula_id, "name": formula_name, "expr": expr}
@@ -2290,9 +2647,21 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         entry["expr"] = _maybe_block_scalar(rewritten)
 
     covered_columns_by_dataset: dict[str, list[set]] = {}
+    # Dataset name -> the table it sits on. They differ only where the model
+    # aliases a table; `table_doc_by_prefix` already holds one Table document
+    # per PHYSICAL table, shared by every alias of it.
+    physical_by_prefix = {
+        prefix: (doc.body.get("name") or prefix)
+        for prefix, doc in table_doc_by_prefix.items()
+        if doc is not None
+    }
 
     for rel in semantic_model.get("relationships") or []:
-        from_prefix, join_entry, joins_with_entry = _join_entry_for_relationship(rel, log)
+        from_prefix, join_entry, joins_with_entry = _join_entry_for_relationship(
+            rel, log, physical_by_prefix,
+        )
+        if join_entry is None:
+            continue
         target = model_tables_by_prefix.get(from_prefix)
         if target is None:
             log.add(
@@ -2322,7 +2691,7 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
             covered_columns_by_dataset.setdefault(to_prefix, []).append(set(to_columns))
 
     for entry in model_payload.get(MODEL_STASH_UNREPRESENTABLE_JOINS) or []:
-        from_prefix, join_entry = _join_entry_for_unrepresentable(entry)
+        from_prefix, join_entry = _join_entry_for_unrepresentable(entry, log)
         target = model_tables_by_prefix.get(from_prefix)
         if target is None:
             log.add(
@@ -2611,6 +2980,73 @@ def _deduplicate_table_documents(
     return [by_name[key] for key in order]
 
 
+def _report_foreign_extensions(ossie_document: dict, log: IssueLog) -> None:
+    """Report every vendor, other than this one, whose extensions are lost.
+
+    The forward leg deliberately keeps other vendors' entries alongside its
+    own (`stash.write_stash` splices rather than replaces), so a document
+    that passed through here still carries whatever the converter before it
+    stashed. The return leg has nowhere to put them: a TML document has no
+    vendor-extension field in any spelling, so they end at this boundary.
+
+    Reported once per vendor for the whole document, not once per object. A
+    foreign converter typically stashes on every field it writes, and one
+    issue per field would bury the rest of the log in a restatement of a
+    single fact. The vendor name is what an author needs -- it says which
+    tool's information will not survive the next hop.
+    """
+    vendors: dict[str, None] = {}
+
+    # Iterative, with a visited set. Plain recursion made this reporting pass
+    # the thing that FAILED the conversion: a document carrying a cycle (a
+    # YAML alias produces one, and the safe loader really does build it) or
+    # merely nested deeply raised RecursionError, which `cli.py` does not
+    # catch -- so a document that converted before arrived as a bare
+    # traceback. A pass that only reports must never do that.
+    stack: list[object] = [ossie_document]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, dict):
+            for field in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED):
+                extensions = node.get(field)
+                if not isinstance(extensions, list):
+                    continue
+                for entry in extensions:
+                    if not isinstance(entry, dict):
+                        continue
+                    vendor = entry.get("vendor_name")
+                    if isinstance(vendor, str) and vendor != VENDOR_KEY:
+                        vendors[vendor] = None
+            for key, value in node.items():
+                # Skipping the extensions list is an optimisation, not a
+                # rule: `data` is vendor state, so an extensions field nested
+                # under it is not one this document declares.
+                if key not in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED) and isinstance(
+                    value, (dict, list)
+                ):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(item for item in node if isinstance(item, (dict, list)))
+
+    if not vendors:
+        return
+    log.add(
+        code="TS-VENDOR-EXTENSIONS-DROPPED",
+        severity=Severity.INFO,
+        message=(
+            f"the document carries custom_extensions owned by "
+            f"{', '.join(sorted(vendors))}; ThoughtSpot TML has no vendor "
+            f"extension field, so those entries are not carried into the "
+            f"model and will not survive a conversion back to Ossie"
+        ),
+        object_ref=f"model:{ossie_document.get('name') or '<unnamed>'}",
+    )
+
+
 def convert(ossie_document: dict) -> TmlConversion:
     """Convert one Ossie document into one ThoughtSpot TML document set.
 
@@ -2659,6 +3095,7 @@ def convert(ossie_document: dict) -> TmlConversion:
         raise ConversionError("the Ossie document has no datasets to convert")
 
     log = IssueLog()
+    _report_foreign_extensions(semantic_model, log)
     tables = _deduplicate_table_documents(
         [build_table(dataset, log) for dataset in semantic_model.get("datasets") or []], log
     )

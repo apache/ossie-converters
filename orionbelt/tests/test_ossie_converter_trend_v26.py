@@ -27,7 +27,6 @@ Validates that:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import ossie_orionbelt.converter as conv
@@ -128,9 +127,9 @@ def _ossie_metric(ossie: dict, name: str) -> dict:
 
 
 def _extras(ossie_metric: dict) -> dict:
-    for ext in ossie_metric.get("custom_extensions", []):
+    for ext in ossie_metric.get("nonportable_extensions", []):
         if ext.get("vendor_name") == "ORIONBELT":
-            return json.loads(ext["data"])
+            return ext["data"]
     return {}
 
 

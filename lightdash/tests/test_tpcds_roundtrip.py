@@ -24,7 +24,6 @@ model metrics cannot reference other tables, so the export direction drops
 them with a CROSS_DATASET_METRIC_DROPPED issue.
 """
 
-import json
 from pathlib import Path
 
 import yaml
@@ -42,10 +41,18 @@ from tests.conftest import TPCDS_PATH
 
 
 def _lightdash_name(metric) -> str:
-    for extension in metric.custom_extensions or []:
+    for extension in metric.nonportable_extensions or []:
         if extension.vendor_name.upper() == "LIGHTDASH":
-            return json.loads(extension.data)["name"]
+            return extension.data["name"]
     return metric.name
+
+
+def _expression_text(expression) -> str:
+    """The SQL text of an expression: its first dialect entry, or the portable
+    `sql` form when the expression carries no dialects."""
+    if expression.dialects:
+        return expression.dialects[0].expression
+    return expression.sql
 
 
 def _load_tpcds() -> OssieDocument:
@@ -142,7 +149,7 @@ class TestTpcdsRoundtrip:
             if issue.issue_type is ConverterIssueType.CROSS_DATASET_METRIC_DROPPED
         }
         original_metrics = {
-            metric.name: metric.expression.dialects[0].expression
+            metric.name: _expression_text(metric.expression)
             for metric in original.metrics or []
             if metric.name not in dropped
         }
@@ -151,7 +158,7 @@ class TestTpcdsRoundtrip:
         for dataset in original.datasets:
             for metric in dataset.metrics or []:
                 original_metrics[metric.name] = qualify_bare_columns(
-                    metric.expression.dialects[0].expression,
+                    _expression_text(metric.expression),
                     dataset.name,
                     [field.name for field in dataset.fields or []],
                 )
@@ -159,7 +166,7 @@ class TestTpcdsRoundtrip:
         # Re-imported metrics carry Lightdash's `<model>_<metric>` id as their
         # Ossie name; the original name is the stashed Lightdash name.
         roundtripped_metrics = {
-            _lightdash_name(metric): metric.expression.dialects[0].expression
+            _lightdash_name(metric): _expression_text(metric.expression)
             for metric in reimported.output.metrics or []
         }
         assert set(roundtripped_metrics) == set(original_metrics)

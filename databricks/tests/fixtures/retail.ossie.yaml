@@ -1,0 +1,91 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Two datasets, a relationship, and model-scoped metrics. `discount` reads a source column that
+# is not a field, and `big_orders` has only a Databricks expression.
+version: 0.3.0.dev0
+name: retail
+description: Orders and customers of a retail shop
+datasets:
+  - name: orders
+    source: main.raw.orders
+    primary_key: [order_id]
+    description: One row for each order
+    fields:
+      - name: order_id
+        expression:
+          sql: o_orderkey
+      - name: customer_id
+        expression:
+          sql: o_custkey
+      - name: Order Date
+        expression:
+          sql: CAST(o_orderdate AS DATE)
+        label: Order date
+        ai_context:
+          synonyms: [purchase date]
+      - name: region
+        expression:
+          sql: UPPER(region)
+      - name: raw_region
+        expression:
+          sql: region
+      - name: amount
+        expression:
+          sql: o_totalprice
+        description: Price of the order
+    metrics:
+      - name: revenue
+        expression:
+          sql: SUM(amount)
+        description: Sum of the order prices
+        ai_context:
+          synonyms: [sales, turnover]
+      - name: discount
+        expression:
+          sql: SUM(source.o_discount)
+      - name: recent_orders
+        expression:
+          sql: COUNT(*) FILTER (WHERE "Order Date" >= DATE '2024-01-01')
+      - name: big_orders
+        expression:
+          dialects:
+            - dialect: DATABRICKS
+              expression: count_if(amount > 100)
+  - name: customers
+    source: main.raw.customers
+    primary_key: [customer_id]
+    fields:
+      - name: customer_id
+        expression:
+          sql: c_custkey
+      - name: segment
+        expression:
+          sql: c_mktsegment
+relationships:
+  - name: orders_to_customers
+    from: orders
+    to: customers
+    from_columns: [customer_id]
+    to_columns: [customer_id]
+metrics:
+  - name: revenue_per_customer
+    expression:
+      sql: AGG(orders.revenue) / COUNT(DISTINCT customers.customer_id)
+  - name: average_amount
+    expression:
+      sql: AVG(orders.amount)

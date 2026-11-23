@@ -21,7 +21,7 @@
 into a dbt project that Lightdash reads. ``convert_models`` produces native
 Lightdash model files (``type: model``, ``sql_from``, typed dimensions),
 which ``lightdash deploy`` reads directly. Lightdash presentation attributes
-that have no Ossie vocabulary round-trip through ``custom_extensions``
+that have no Ossie vocabulary round-trip through ``nonportable_extensions``
 entries with ``vendor_name: LIGHTDASH``. Their keys are merged into the
 generated definitions and win for presentation attributes. Structural keys
 (``sql`` and ``label`` on dimensions, ``sql`` and ``description`` on metrics,
@@ -29,7 +29,6 @@ generated definitions and win for presentation attributes. Structural keys
 definition derived from Ossie.
 """
 
-import json
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -88,19 +87,11 @@ JoinReferences = Dict[str, str]
 def _lightdash_extension_data(element: Any, issues: List[ConverterIssue]) -> Dict[str, Any]:
     """Gets the ``LIGHTDASH`` extension data of an Ossie element, or an empty mapping."""
     data: Dict[str, Any] = {}
-    for extension in element.custom_extensions or []:
+    for extension in element.nonportable_extensions or []:
         # The vendor name is LIGHTDASH. Documents written before it was
         # registered used the lowercase name.
         if extension.vendor_name.upper() == LIGHTDASH_VENDOR_NAME:
-            try:
-                data.update(json.loads(extension.data))
-            except (TypeError, ValueError):
-                issues.append(
-                    ConverterIssue(
-                        issue_type=ConverterIssueType.EXTENSION_DATA_INVALID,
-                        element_name=getattr(element, "name", "<unnamed>"),
-                    )
-                )
+            data.update(extension.data)
         else:
             issues.append(
                 ConverterIssue(
@@ -285,11 +276,13 @@ class OssieToLightdashConverter:
     ) -> str:
         by_dialect = {
             dialect_expression.dialect: dialect_expression.expression
-            for dialect_expression in expression.dialects
+            for dialect_expression in expression.dialects or []
         }
         for dialect in (self._dialect, OssieDialect.OSSIE_SQL_2026, OssieDialect.ANSI_SQL):
             if dialect in by_dialect:
                 return by_dialect[dialect]
+        if expression.sql is not None:
+            return expression.sql
         if not expression.dialects:
             return ""
         issues.append(

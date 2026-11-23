@@ -23,7 +23,7 @@ the canonical ``examples/tpcds_semantic_model.yaml`` from the Ossie repository
 
     https://github.com/apache/ossie-converters/blob/main/README.md#example-conceptual-conversion-flow
 
-The canonical example carries ``SALESFORCE`` and ``DBT`` custom_extensions, so
+The canonical example carries ``SALESFORCE`` and ``DBT`` nonportable_extensions, so
 this also pins step 7 of that flow: third-party vendor extensions are preserved
 when the model round-trips back to Ossie.
 """

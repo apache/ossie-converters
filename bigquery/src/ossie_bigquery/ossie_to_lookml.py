@@ -21,8 +21,8 @@ language for Looker (Google Cloud's semantic layer over BigQuery). Pure offline
 conversion: no BigQuery or Looker connection required.
 
 The converter prefers BIGQUERY-dialect expressions, then ANSI_SQL, then
-OSSIE_SQL_2026, mirroring the dialect-selection contract documented in
-../README.md. Expressions are parsed with sqlglot so that every column
+OSSIE_SQL_2026. The primary expression.sql supplies the authoritative
+OSSIE_SQL_2026 expression. Expressions are parsed with sqlglot so that every column
 reference can be rewritten to the LookML substitution operator (`${TABLE}.col`
 inside a view, `${view.field}` across views) and so that aggregate metrics can
 be typed as native LookML measures.
@@ -45,7 +45,7 @@ import yaml
 from sqlglot import exp
 
 
-SUPPORTED_VERSION = "0.2.0.dev0"
+SUPPORTED_VERSION = "0.3.0.dev0"
 
 # Dialects the converter can emit, in order of preference.
 _DIALECT_PREFERENCE = ("BIGQUERY", "ANSI_SQL", "OSSIE_SQL_2026")
@@ -105,7 +105,7 @@ def convert_ossie_to_lookml(ossie_yaml_str):
 
     Expects the standard Ossie document format::
 
-        version: "0.2.0.dev0"
+        version: "0.3.0.dev0"
         name: ...
         datasets: [...]
 
@@ -639,16 +639,23 @@ def _convert_source(source, dataset_name):
 def _extract_expression(expression, context):
     """Selects the best dialect expression for BigQuery/LookML.
 
-    Prefers BIGQUERY, then ANSI_SQL, then OSSIE_SQL_2026. Returns
-    (expression, dialect), or (None, None) if only unsupported dialects are
-    present (the caller skips the entry). Raises OssieConversionError if the
+    Prefers BIGQUERY, then ANSI_SQL, then OSSIE_SQL_2026, where primary sql
+    supersedes a tagged OSSIE_SQL_2026 entry. Returns
+    (expression, dialect), or (None, None) if only unsupported or blank
+    dialect entries are present (the caller skips the entry). Raises OssieConversionError if the
     expression block is missing or malformed.
     """
     if expression is None or not isinstance(expression, dict):
         raise OssieConversionError(f"Missing or malformed expression for {context}")
 
     dialects = _require_list(expression, "dialects", context)
+    # The top-level sql is the authoritative OSSIE_SQL_2026 expression.
+    portable_sql = expression.get("sql")
+    if not isinstance(portable_sql, str) or not portable_sql.strip():
+        portable_sql = None
     if not dialects:
+        if portable_sql is not None:
+            return portable_sql, "OSSIE_SQL_2026"
         raise OssieConversionError(f"Missing expression for {context}")
 
     available = {}
@@ -665,7 +672,13 @@ def _extract_expression(expression, context):
                 f"{context}: dialect #{index}: expression must be a string, "
                 f"got {type(value).__name__}"
             )
+        # A blank entry is unusable; let a lower-priority expression stand in.
+        if not value.strip():
+            continue
         available.setdefault(dialect_name.upper(), value)
+
+    if portable_sql is not None:
+        available["OSSIE_SQL_2026"] = portable_sql
 
     for dialect_name in _DIALECT_PREFERENCE:
         if dialect_name in available:
@@ -673,7 +686,7 @@ def _extract_expression(expression, context):
 
     dialect_names = [str(d.get("dialect", "")) for d in dialects]
     warnings.warn(
-        f"Skipping {context}: no BigQuery-compatible expression "
+        f"Skipping {context}: no usable BigQuery-compatible expression "
         f"(has dialects: {', '.join(dialect_names)}; requires one of "
         f"{', '.join(_DIALECT_PREFERENCE)})"
     )
@@ -1287,7 +1300,7 @@ def _indent(text, levels):
 def _warn_dropped_fields(source, context, extra=None, skip=()):
     """Warns about Ossie properties that have no LookML counterpart."""
     dropped = list(extra or [])
-    for key in ("custom_extensions", "version", "label"):
+    for key in ("nonportable_extensions", "version", "label"):
         if key not in skip and source.get(key):
             dropped.append(key)
     if dropped:

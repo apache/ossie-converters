@@ -22,8 +22,8 @@ Covers the v2.6 spec bump from Ossie v0.1.1 → v0.2.0.dev0:
 - Emitted ``version`` is the v0.2 constant
 - Dialects and vendors are represented per expression and extension, not at the root
 - Dataset ``primary_key`` is promoted from per-column ``primaryKey: true``
-- Dataset ``unique_keys`` round-trips lossly via OBSL custom_extensions
-- Field ``label`` round-trips via OBSL custom_extensions
+- Dataset ``unique_keys`` round-trips lossly via OBSL nonportable_extensions
+- Field ``label`` round-trips via OBSL nonportable_extensions
 - Legacy v0.1.1 inputs are normalized in place by the shim
 - Every emitted document validates against the resolved v0.2 core schema
 """
@@ -54,12 +54,12 @@ def schema_validator() -> Any:
 
 
 def _collect_vendor_names(ossie: dict[str, Any]) -> set[str]:
-    """Every ``custom_extensions[].vendor_name`` anywhere in an Ossie document."""
+    """Every ``nonportable_extensions[].vendor_name`` anywhere in an Ossie document."""
     found: set[str] = set()
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
-            for ext in node.get("custom_extensions", []) or []:
+            for ext in node.get("nonportable_extensions", []) or []:
                 if isinstance(ext, dict) and ext.get("vendor_name"):
                     found.add(ext["vendor_name"])
             for v in node.values():
@@ -167,7 +167,7 @@ class TestEmittedVersion:
     def test_top_level_version_is_v02(self) -> None:
         ossie = conv.OBMLtoOssie(_OBML_WITH_PK_AND_LABEL).convert()
         assert ossie["version"] == conv._OSSIE_VERSION
-        assert ossie["version"].startswith("0.2")
+        assert ossie["version"].startswith("0.3")
 
     def test_no_root_dialects_or_vendors(self) -> None:
         # Root advertisements are optional; the converter emits dialects and
@@ -186,7 +186,7 @@ class TestEmittedVersion:
             assert "ANSI_SQL" in tags
 
     def test_vendor_tagged_per_entity_not_root(self) -> None:
-        # ORIONBELT tags our roundtrip metadata in per-entity custom_extensions,
+        # ORIONBELT tags our roundtrip metadata in per-entity nonportable_extensions,
         # not a root array. The OBML field label round-trips as a *native* Ossie
         # field label (no vendor tag needed).
         ossie = conv.OBMLtoOssie(_OBML_WITH_PK_AND_LABEL).convert()
@@ -219,7 +219,7 @@ class TestPrimaryKey:
 
     def test_unknown_pk_column_emits_warning(self) -> None:
         bad = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "x",
             "datasets": [
                 {
@@ -305,7 +305,7 @@ class TestLegacyShim:
     def test_v02_input_not_normalized(self) -> None:
         # v0.2 input declaring primary_key directly — shim must be a no-op
         v02 = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "x",
             "datasets": [
                 {
@@ -377,7 +377,7 @@ class TestSchemaValidation:
 class TestMAQLDialect:
     def test_maql_only_metric_does_not_raise(self) -> None:
         ossie_in: dict[str, Any] = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "gd",
             "datasets": [
                 {
@@ -420,7 +420,7 @@ class TestMAQLDialect:
     [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
 )
 def test_legacy_model_wrappers_are_rejected(wrapper):
-    document = {"version": "0.2.0.dev0", "semantic_model": wrapper}
+    document = {"version": "0.3.0.dev0", "semantic_model": wrapper}
     assert not conv.validate_ossie(document).valid
     with pytest.raises(ValueError, match="Legacy 'semantic_model'"):
         conv.OssietoOBML(document).convert()

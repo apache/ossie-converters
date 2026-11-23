@@ -16,7 +16,7 @@
 # under the License.
 
 name: snow_tpch
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 description: TPC-H ontology with customers, orders, line items, parts, suppliers, nations, and regions, mapped to the KSE.TPCH_SF1 Snowflake schema.
 
 ontology requires:

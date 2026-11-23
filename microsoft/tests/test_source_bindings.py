@@ -268,3 +268,36 @@ def test_snowflake_navigation_supports_quoted_steps_and_reordered_keys(model, or
     assert {dataset["source"] for dataset in returned["datasets"]} == {
         "RETAIL.REPORTING.SALES_ORDERS"
     }
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_strict_source_bindings_work_with_pbip_export(
+    tmp_path, model, orders_binding, monkeypatch, capsys, missing,
+):
+    bindings = dict.fromkeys(("orders", "customers"), orders_binding)
+    if missing:
+        bindings.pop("customers")
+    args, output = _export_args(tmp_path, model, yaml.safe_dump(bindings))
+    args = args[:-2] + ["--pbip", str(tmp_path / "project"), "--strict"]
+    written = []
+
+    def serialize(document, path, *, assembly_dir=None):
+        written.append(document)
+        path.mkdir(parents=True)
+        (path / "database.tmdl").write_text("database retail")
+
+    monkeypatch.setattr("ossie_microsoft.pbip_export.serialize_tmdl_folder", serialize)
+    assert main(args) == int(missing)
+    assert capsys.readouterr().out == ""
+    assert not output.exists()
+    if missing:
+        assert not written
+        assert not (tmp_path / "project").exists()
+    else:
+        [bim] = written
+        assert "expressions" not in bim["model"]
+        for table in bim["model"]["tables"]:
+            partition = table["partitions"][0]
+            assert partition["mode"] == "import"
+            assert "Snowflake.Databases" in "\n".join(partition["source"]["expression"])
+        assert (tmp_path / "project/retail.SemanticModel/definition.pbism").is_file()

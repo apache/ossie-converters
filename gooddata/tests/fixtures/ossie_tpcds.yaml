@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: "0.2.0.dev0"
+version: "0.3.0.dev0"
 
 name: tpcds_model
 description: TPC-DS retail model
@@ -200,9 +200,9 @@ datasets:
   - name: date_dim
     source: date_dim
     description: Date dimension with calendar attributes
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: GOODDATA
-        data: '{"date_dimension": true, "granularities": ["DAY", "WEEK", "MONTH", "QUARTER", "YEAR"]}'
+        data: {"date_dimension": true, "granularities": ["DAY", "WEEK", "MONTH", "QUARTER", "YEAR"]}
 
 relationships:
   - name: store_sales_to_date_dim

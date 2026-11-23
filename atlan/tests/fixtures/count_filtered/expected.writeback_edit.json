@@ -1,0 +1,8 @@
+{
+ "expected_version": 1,
+ "new_version": 2,
+ "set": {
+  "description": "Customers whose preferred flag is set.",
+  "grain": "one row per preferred customer"
+ }
+}

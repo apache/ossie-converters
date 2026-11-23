@@ -387,8 +387,8 @@ def _metric(name: str, sql: str, **stashed) -> dict:
         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]},
     }
     if stashed:
-        payload["custom_extensions"] = [
-            {"vendor_name": "HOLISTICS", "data": json.dumps({"_v": 1, **stashed})}
+        payload["nonportable_extensions"] = [
+            {"vendor_name": "HOLISTICS", "data": {"_v": 1, **stashed}}
         ]
     return payload
 
@@ -576,12 +576,10 @@ STASH_VALUES = {
 
 def _with_persistence(value):
     document = _two_dataset_document([])
-    document["datasets"][0]["custom_extensions"] = [
+    document["datasets"][0]["nonportable_extensions"] = [
         {
             "vendor_name": "HOLISTICS",
-            "data": json.dumps(
-                {"_v": 1, "persistence": {"__type__": "FullPersistence", "opt": value}}
-            ),
+            "data": {"_v": 1, "persistence": {"__type__": "FullPersistence", "opt": value}},
         }
     ]
     return document
@@ -634,10 +632,10 @@ def _dataset_text(document):
 
 def _with_relationship_stash(**stashed):
     document = _two_dataset_document([])
-    document["relationships"][0]["custom_extensions"] = [
+    document["relationships"][0]["nonportable_extensions"] = [
         {
             "vendor_name": "HOLISTICS",
-            "data": json.dumps({"_v": 1, "type": "many_to_one", "active": True, **stashed}),
+            "data": {"_v": 1, "type": "many_to_one", "active": True, **stashed},
         }
     ]
     return document
@@ -736,3 +734,13 @@ def test_a_match_relationship_is_stashed_and_written_back(kind, aml_type):
     assert f"type: '{kind}'" in text
     assert "match: @aql order_items.id >= products.id;;" in text
     assert "rel: items_near_products" in text
+
+def test_clickhouse_dialect_parses_and_rewrites_column_references():
+    from ossie_holistics import sqlrefs
+
+    assert sqlrefs.SQLGLOT_DIALECT["CLICKHOUSE"] == "clickhouse"
+    cols = sqlrefs.columns(
+        "toStartOfMonth(created_at) + nullIf(revenue, 0)",
+        dialect="CLICKHOUSE",
+    )
+    assert [c.name for c in cols] == ["created_at", "revenue"]
