@@ -863,16 +863,20 @@ def _end_from_unit(unit, original):
         return unit
     if _is_date_literal(name, original):
         return exp.Literal.string(name)
+    if original and re.search('"' + re.escape(name) + '"', original):
+        return exp.column(name, quoted=True)
     match = re.search(r"(?i)\b" + re.escape(name) + r"\b", original or "")
     return exp.column(match.group(0) if match else name)
 
 
 def _is_date_literal(name, original):
+    """True when *name* was a single-quoted string in *original*.
+
+    Double quotes delimit an identifier in ANSI_SQL and OSSIE_SQL_2026.
+    """
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T].*)?", name):
         return True
-    return bool(
-        original and re.search(r"(['\"])" + re.escape(name) + r"\1", original)
-    )
+    return bool(original and re.search("'" + re.escape(name) + "'", original))
 
 
 def _anonymous_time_unit_call(node):

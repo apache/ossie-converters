@@ -1076,6 +1076,10 @@ class TestSourceDialects:
                 "DATEDIFF(day, start_date, '2024-12-31')",
                 "DATE_DIFF('2024-12-31', ${TABLE}.start_date, DAY)",
             ),
+            (
+                'DATEDIFF(day, "ORDER_DATE", "SHIP_DATE")',
+                "DATE_DIFF(${TABLE}.`SHIP_DATE`, ${TABLE}.`ORDER_DATE`, DAY)",
+            ),
         ],
     )
     def test_ossie_date_arithmetic_is_transpiled(self, dialect, expr, sql):
