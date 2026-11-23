@@ -1644,3 +1644,57 @@ def test_a_solid_column_given_a_computed_expression_stays_a_column():
     assert "ss_customer_sk" in [c["name"] for c in table["dimensions"]]
     assert any("'store_sales.ss_customer_sk' is a computed field (`ss_customer_sk + 0`); "
                "it was a column of the Solid table" in w for w in warnings_), warnings_
+
+
+@pytest.mark.parametrize("alias_first", [False, True])
+def test_an_alias_is_kept_when_the_same_named_field_is_dropped_as_computed(alias_first):
+    """If `customer_id` is dropped as computed, an alias `cust` reading `customer_id`
+    must still export `customer_id` rather than being dropped as a duplicate."""
+    computed = {"name": "customer_id", "datatype": "String",
+                "expression": _ansi("TRIM(customer_id)")}
+    alias = {"name": "cust", "datatype": "String", "expression": _ansi("customer_id")}
+    fields = [alias, computed] if alias_first else [computed, alias]
+    ossie = {"version": "0.3.0.dev0", "name": "m", "datasets": [
+        {"name": "orders", "source": "db.s.orders", "fields": fields}]}
+    model, warnings_ = _export(ossie)
+    dims = model["tables"][0]["dimensions"]
+    assert [c["name"] for c in dims] == ["customer_id"]
+    assert dims[0]["synonyms"] == ["cust"]
+    assert not any("which another field already exports" in w for w in warnings_)
+
+
+def test_an_alias_is_kept_when_the_same_named_field_is_an_unedited_undeclared_key():
+    """An unedited `undeclared` key column is omitted from the Solid table, so an alias
+    field reading that column should still export it."""
+    undeclared = {
+        "name": "customer_id",
+        "expression": _ansi("customer_id"),
+        "nonportable_extensions": [{"vendor_name": "SOLID", "data": {"undeclared": True}}],
+    }
+    alias = {"name": "cust", "datatype": "String", "expression": _ansi("customer_id")}
+    ossie = {"version": "0.3.0.dev0", "name": "m", "datasets": [
+        {"name": "orders", "source": "db.s.orders", "primary_key": ["customer_id"],
+         "fields": [undeclared, alias]}]}
+    model, warnings_ = _export(ossie)
+    dims = model["tables"][0]["dimensions"]
+    assert [c["name"] for c in dims] == ["customer_id"]
+    assert dims[0]["synonyms"] == ["cust"]
+    assert not any("which another field already exports" in w for w in warnings_)
+
+
+def test_a_primary_key_listing_an_alias_and_its_column_is_deduplicated():
+    ossie = {
+        "version": "0.3.0.dev0", "name": "m",
+        "datasets": [{
+            "name": "orders", "source": "db.s.orders",
+            "primary_key": ["cust", "customer_id"],
+            "fields": [
+                {"name": "cust", "datatype": "Integer",
+                 "expression": _ansi("customer_id")},
+                {"name": "customer_id", "datatype": "Integer",
+                 "expression": _ansi("customer_id")},
+            ],
+        }],
+    }
+    model, _ = _export(ossie)
+    assert model["tables"][0]["primary_key"] == "customer_id"

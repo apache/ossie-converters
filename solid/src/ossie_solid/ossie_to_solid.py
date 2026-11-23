@@ -557,25 +557,40 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
                         f"table level and was dropped")
 
     fields = as_list(dataset.get("fields"), f"dataset '{name}': fields")
-    # Which field each column name belongs to, starting with the name of every field that
-    # is not itself over another column: an alias for a column another field already is
-    # would list it twice. A field over another column exports that column, never its own
-    # name, so its name stays free for the field that does read that column.
-    taken = {f["name"].lower(): f["name"] for f in fields
-             if isinstance(f, dict) and isinstance(f.get("name"), str)
-             and _alias_read(f, dialect) is None}
-    dimensions, facts, aliases = [], [], {}
-    unreadable = set()
     for field in fields:
         if not isinstance(field, dict):
             raise ConversionError(f"Dataset '{name}': each field must be a mapping")
-        try:
-            column, is_dimension, alias = _convert_field(
-                field, dialect, recorded_dialect, name, marks_dimensions, taken)
-        except _Unreadable as e:
-            warn("field", str(e))
-            unreadable.add(field["name"])
+    # Convert non-alias fields first so `taken` tracks only columns actually exported
+    # (not fields dropped as computed/unreadable or omitted as unedited key columns),
+    # while keeping original `fields` order in the emitted `dimensions` / `facts`.
+    is_alias = [
+        isinstance(field.get("name"), str) and _alias_read(field, dialect) is not None
+        for field in fields
+    ]
+    results = [None] * len(fields)
+    taken = {}
+    unreadable = set()
+    for pass_aliases in (False, True):
+        for idx, field in enumerate(fields):
+            if is_alias[idx] != pass_aliases:
+                continue
+            try:
+                result = _convert_field(
+                    field, dialect, recorded_dialect, name, marks_dimensions, taken)
+            except _Unreadable as e:
+                warn("field", str(e))
+                unreadable.add(field["name"])
+                continue
+            results[idx] = result
+            column = result[0]
+            if not pass_aliases and column is not None:
+                taken.setdefault(column["name"].lower(), field["name"])
+
+    dimensions, facts, aliases = [], [], {}
+    for field, result in zip(fields, results):
+        if result is None:
             continue
+        column, is_dimension, alias = result
         if alias:
             aliases[field["name"]] = alias
         if column is not None:
@@ -590,7 +605,7 @@ def _convert_dataset(dataset, dialect, recorded_dialect, marks_dimensions):
     elif primary_key:
         # Solid stores a composite key as one comma-joined scalar.
         table["primary_key"] = PK_SEPARATOR.join(
-            _column_names(primary_key, aliases))
+            dict.fromkeys(_column_names(primary_key, aliases)))
     unique_keys = as_list(dataset.get("unique_keys"), f"dataset '{name}': unique_keys")
     if unique_keys and unique_keys != [primary_key]:
         warn("dataset", f"'{name}': unique_keys have no Solid equivalent and were "

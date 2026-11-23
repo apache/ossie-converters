@@ -437,3 +437,11 @@ def test_a_stripped_name_that_would_become_a_function_is_quoted(dialect, expecte
     the column."""
     assert unqualify_metric("MAX(snapshots.current_date)", dialect, ["snapshots"],
                             {"snapshots": ["current_date"]}) == (expected, UNQUALIFIED)
+
+
+def test_a_column_sharing_a_datasets_name_does_not_double_qualify():
+    assert qualify_metric("SUM(orders.amount)", "SNOWFLAKE", "orders",
+                          ["orders", "amount"]) == ("SUM(orders.amount)", UNCHANGED)
+    assert qualify_metric("SUM(orders.amount + orders)", "SNOWFLAKE", "orders",
+                          ["orders", "amount"]) == (
+        "SUM(orders.amount + orders.orders)", QUALIFIED)
