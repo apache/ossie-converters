@@ -1687,6 +1687,28 @@ class TestOssieToMSIRoundTrip:
         assert backward.issues == []
         assert [m.name for m in backward.output.metrics or []] == ["nested_avg"]
 
+    def test_metric_field_alias_round_trips_to_its_source_expression(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("distinct_names", AggregationType.COUNT_DISTINCT, expr="customer_full_name")],
+        )
+        original = _manifest([orders], [_simple_metric("unique_customer_names", "distinct_names")])
+        exported = MSIToOssieConverter().convert(original).output
+        result = OssieToMSIConverter().convert(exported)
+
+        assert result.issues == []
+        assert result.output.metrics[0].type_params.expr == "customer_full_name"
+
+    def test_compound_field_expression_expands_with_correct_precedence(self) -> None:
+        original = _ossie_doc(
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("net", "gross - tax")])],
+            metrics=[_ossie_metric("doubled_net", "SUM(2 * orders.net)")],
+        )
+        result = OssieToMSIConverter().convert(original)
+
+        assert result.issues == []
+        assert result.output.metrics[0].type_params.expr == "2 * (gross - tax)"
+
     def test_sum_over_case_round_trip_does_not_double_aggregate(self) -> None:
         expression = "SUM(CASE WHEN orders.status = 'paid' THEN amount ELSE 0 END)"
         original = _ossie_doc(
