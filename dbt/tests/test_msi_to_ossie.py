@@ -1908,25 +1908,66 @@ class TestMetricFilterFlattening:
         )
         assert result.to_ossie_yaml() == snapshot
 
-    def test_jinja_dimension_reference_rendered(self) -> None:
+    @pytest.mark.parametrize(
+        ("reference", "field"),
+        [
+            ("Dimension('order_id__country')", "orders.country"),
+            ("Dimension('country')", "orders.country"),
+            ("TimeDimension('ordered_at')", "orders.ordered_at"),
+            ("Entity('customer_id')", "orders.customer_id"),
+            ("Dimension('customer_id__country')", "customer_id__country"),
+            ("TimeDimension('ordered_at', 'week')", "ordered_at__week"),
+        ],
+    )
+    def test_jinja_filter_resolution_stays_within_the_input_dataset(self, reference: str, field: str) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
-            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+            entities=[_entity("order_id"), _entity("customer_id", EntityType.FOREIGN)],
+            dimensions=[
+                _dimension("country", expr="country_code"),
+                _dimension("ordered_at", DimensionType.TIME, granularity=TimeGranularity.DAY),
+                _dimension("amount"),
+            ],
         )
-        metric = PydanticMetric(
-            name="us_revenue",
-            description=None,
-            type=MetricType.SIMPLE,
-            type_params=PydanticMetricTypeParams(measure=PydanticMetricInputMeasure(name="revenue")),
-            filter=_filter("{{ Dimension('order__country') }} = 'US'"),
-            metadata=default_meta(),
-            config=None,
+        metric = _metric_with_agg(
+            "filtered_revenue",
+            AggregationType.SUM,
+            "amount",
+            "orders",
+            filter_sql=f"{{{{ {reference} }}}} IS NOT NULL",
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
         assert (
             _ossie_metrics(result)[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN order__country = 'US' THEN orders.amount END)"
+            == f"SUM(CASE WHEN {field} IS NOT NULL THEN orders.amount END)"
+        )
+
+    def test_inherited_jinja_filter_uses_each_input_metrics_dataset(self) -> None:
+        models = [
+            semantic_model_with_guaranteed_meta(name=name, dimensions=[_dimension("status"), _dimension("amount")])
+            for name in ("orders", "returns")
+        ]
+        revenue = _metric_with_agg("revenue", AggregationType.SUM, "amount", "orders")
+        refunds = _metric_with_agg("refunds", AggregationType.SUM, "amount", "returns")
+        ratio = PydanticMetric(
+            name="completed_refund_ratio",
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(name="refunds"),
+                denominator=PydanticMetricInput(name="revenue"),
+            ),
+            filter=_filter("{{ Dimension('status') }} = 'completed'"),
+            metadata=default_meta(),
+        )
+        result = (
+            MSIToOssieConverter().convert(_manifest(semantic_models=models, metrics=[revenue, refunds, ratio])).output
+        )
+
+        exported = next(metric for metric in _ossie_metrics(result) if metric.name == ratio.name)
+        assert exported.expression.dialects[0].expression == (
+            "(SUM(CASE WHEN returns.status = 'completed' THEN returns.amount END))"
+            " / NULLIF(SUM(CASE WHEN orders.status = 'completed' THEN orders.amount END), 0)"
         )
 
     def test_ratio_metric_filter_propagated_to_both_sides(self) -> None:
