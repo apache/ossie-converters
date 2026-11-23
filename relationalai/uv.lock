@@ -262,7 +262,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "apache-ossie-ontology", editable = "../ontology" },
-    { name = "relationalai", marker = "extra == 'relationalai'", specifier = "==2.2.0" },
+    { name = "relationalai", marker = "extra == 'relationalai'", specifier = "==2.2.1" },
 ]
 provides-extras = ["relationalai"]
 
@@ -2008,7 +2008,7 @@ wheels = [
 
 [[package]]
 name = "relationalai"
-version = "2.2.0"
+version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2043,9 +2043,9 @@ dependencies = [
     { name = "websockets" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/43/cb/c694521abbf1936502f7df2f50d2e4e39a874eabdcff6313875d99a97210/relationalai-2.2.0.tar.gz", hash = "sha256:8c2ea4cdafafb304202825c47de23d767d9af02d43ff9cc4c9f0630abfb4aefd", size = 4778372, upload-time = "2026-11-17T23:33:22.641Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/2c/f433f1c96aee817b3573a78506e2fb86667a9317b8fc1065c6c3333cc1c6/relationalai-2.2.1.tar.gz", hash = "sha256:76f69cc892998227a5c18fc8029870bef003b79217189a69ad9bff84103823f6", size = 4795594, upload-time = "2026-11-19T05:20:41.067Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/ee/b1cc6775993d982a91c79c6a5004499655f166c9328c2f9917dec08f1a48/relationalai-2.2.0-py3-none-any.whl", hash = "sha256:192b05d74cb28408b0cbfd1ed470e89a530454e061901f9e9b7333a5ef748714", size = 5518203, upload-time = "2026-11-17T23:33:20.995Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/c1/262f8cc0cb3f66f7016520baadbcfabe14655cad3b376d58c81433275081/relationalai-2.2.1-py3-none-any.whl", hash = "sha256:9bb034dd2f4bc59e8a21e6f192c45469ab202adcbdc86466cde9a2be1f09b93d", size = 5539739, upload-time = "2026-11-19T05:20:39.309Z" },
 ]
 
 [[package]]
