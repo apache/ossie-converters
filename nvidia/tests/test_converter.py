@@ -1375,6 +1375,70 @@ def test_inlined_formula_maps_to_the_calculated_field_not_its_source_column() ->
     )
 
 
+def test_inlined_field_is_not_remapped_to_a_pass_through_of_the_same_name() -> None:
+    # amount is calculated from source column amount; amount_cents passes that
+    # column through. Reverse-inline puts orders.amount back; pass-through
+    # must not then rename it to amount_cents.
+    ossie = _orders_with_amount_metric("amount / 100.0")
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    orders["fields"].append(
+        {
+            "name": "amount_cents",
+            "expression": {
+                "dialects": [{"dialect": "ANSI_SQL", "expression": "amount"}]
+            },
+        }
+    )
+    native_yaml = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie, sort_keys=False))
+    model = yaml.safe_load(convert_auto_ontology_to_ossie(native_yaml))
+
+    assert (
+        model["metrics"][0]["expression"]["dialects"][0]["expression"]
+        == "SUM(orders.amount)"
+    )
+
+
+def test_a_metric_that_is_exactly_a_calculated_field_imports() -> None:
+    ossie = _orders_with_amount_metric("o_totalprice / 100.0")
+    ossie["metrics"][0]["expression"]["dialects"][0]["expression"] = "orders.amount"
+    native_yaml = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie, sort_keys=False))
+    model = yaml.safe_load(convert_auto_ontology_to_ossie(native_yaml))
+
+    assert (
+        model["metrics"][0]["expression"]["dialects"][0]["expression"] == "orders.amount"
+    )
+
+
+def test_export_regenerates_analysis_sql_when_the_inlined_field_changes() -> None:
+    ossie = yaml.safe_load(
+        convert_auto_ontology_to_ossie(
+            convert_ossie_to_auto_ontology(
+                yaml.safe_dump(
+                    _orders_with_amount_metric("o_totalprice / 100.0"), sort_keys=False
+                )
+            )
+        )
+    )
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    amount = next(field for field in orders["fields"] if field["name"] == "amount")
+    amount["expression"]["dialects"][0]["expression"] = "o_totalprice / 1000.0"
+
+    regenerated = yaml.safe_load(
+        convert_ossie_to_auto_ontology(yaml.safe_dump(ossie, sort_keys=False))
+    )
+    analysis = regenerated["semantic_layer"]["custom_analyses"][0]
+    sql_attribute = next(
+        attribute
+        for group in regenerated["semantic_layer"]["sql_attributes"].values()
+        for attribute in group
+        if attribute["name"] == "amount"
+    )
+
+    assert "/ 1000" in sql_attribute["sql"]
+    assert "/ 1000" in analysis["sql"]
+    assert "/ 100.0" not in analysis["sql"]
+
+
 def test_keys_and_relationships_may_name_columns_or_fields() -> None:
     """Earlier exports and other tools name physical columns; both import alike."""
     by_field = yaml.safe_load(
