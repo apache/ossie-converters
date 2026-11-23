@@ -19,7 +19,7 @@
 """Converter from an RDFS vocabulary to OssieOntology (runtime semantic model).
 
 `ohi_linkml` – the `neverblink-linkml` distribution – reads the vocabulary
-into a LinkML schema (`from_owl`, which reads RDFS as well as OWL) and emits
+into a LinkML schema (`load_owl`, which reads RDFS as well as OWL) and emits
 an Ossie document from that (`Schema.ossie`). This module feeds the document
 through the existing spec -> model conversion from `apache-ossie-ontology`,
 so the result is the same OssieOntology every other Ossie converter produces.
@@ -126,11 +126,10 @@ class RdfsToOssieConverter:
         # Called straight from every public method, so stacklevel=3 always
         # points the warnings at the caller's code rather than at this module.
         # No input format is passed: ohi's Turtle reader also reads N-Triples.
-        result = ohi_linkml.from_owl(document, config={"name": name} if name else None)
-        # One line per kind of thing the import does not read, e.g. individuals.
-        for warning in result["warnings"]:
-            warnings.warn(warning, UserWarning, stacklevel=3)
-        with ohi_linkml.load_string(result["schema"]) as schema:
+        with ohi_linkml.load_owl(document, config={"name": name} if name else None) as schema:
+            # One line per kind of thing the import does not read, e.g. individuals.
+            for warning in schema.not_imported["warnings"]:
+                warnings.warn(warning, UserWarning, stacklevel=3)
             # "schema" keeps what the vocabulary defines, and leaves out the
             # LinkML built-in types it imports (Int8, Float16, ...).
             return OssieSpec.load_yaml(schema.ossie(

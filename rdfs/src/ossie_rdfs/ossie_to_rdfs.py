@@ -20,7 +20,7 @@
 
 There is no RDFS code here. The ontology goes through LinkML, with both steps
 done by `ohi_linkml` – the `neverblink-linkml` distribution, a natively
-compiled LinkML implementation: Ossie -> LinkML (`from_ossie`), then
+compiled LinkML implementation: Ossie -> LinkML (`load_ossie`), then
 LinkML -> RDFS (`Schema.rdfs`).
 
 Pairs with rdfs_to_ossie.RdfsToOssieConverter for the other direction."""
@@ -114,13 +114,12 @@ class OssieToRdfsConverter:
     ) -> str:
         # Called straight from every public method, so stacklevel=3 always points
         # the warnings at the caller's code rather than at this module.
-        result = ohi_linkml.from_ossie(spec.dump_yaml(), schema_id=schema_id)
-        # One line per kind of thing LinkML has no place for, e.g. `derived_by`.
-        for warning in result["warnings"]:
-            warnings.warn(warning, UserWarning, stacklevel=3)
         # The schema's own lint warnings (no tree_root class, missing
         # descriptions, ...) are left out: they are about the LinkML in the
-        # middle, which the caller never sees. A schema that fails to load
-        # raises SchemaLoadError.
-        with ohi_linkml.load_string(result["schema"]) as schema:
+        # middle, which the caller never sees. A document that cannot be
+        # imported raises SchemaConversionError.
+        with ohi_linkml.load_ossie(spec.dump_yaml(), schema_id=schema_id) as schema:
+            # One line per kind of thing LinkML has no place for, e.g. `derived_by`.
+            for warning in schema.not_imported["warnings"]:
+                warnings.warn(warning, UserWarning, stacklevel=3)
             return schema.rdfs(format=output_format)
