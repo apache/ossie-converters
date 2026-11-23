@@ -61,10 +61,10 @@ def _auto_ontology_yaml() -> str:
 def _native_extension(item: dict[str, Any]) -> dict[str, Any]:
     extension = next(
         value
-        for value in item.get("custom_extensions") or []
+        for value in item.get("nonportable_extensions") or []
         if value["vendor_name"] == "NVIDIA_AUTO_ONTOLOGY"
     )
-    return json.loads(extension["data"])
+    return extension["data"]
 
 
 def _manual_sql(native: dict[str, Any], name: str) -> str:

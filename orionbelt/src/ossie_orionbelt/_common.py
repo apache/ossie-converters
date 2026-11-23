@@ -64,7 +64,7 @@ _COLUMN_REF_RE = re.compile(
     r"\s*\.\s*"
     r'(?P<col>[A-Za-z_]\w*|"[^"]+"|`[^`]+`|\[[^\]]+\])'
 )
-# Vendor identities for custom_extensions.
+# Vendor identities for nonportable_extensions.
 #   ORIONBELT - OrionBelt/OBML-proprietary payloads we author on OBML -> Ossie.
 #   Ossie       - Ossie-native fields OBML can't hold (unique_keys, field label,
 #               ai_context leftovers), stashed into OBML on Ossie -> OBML.

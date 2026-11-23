@@ -1300,7 +1300,7 @@ def _indent(text, levels):
 def _warn_dropped_fields(source, context, extra=None, skip=()):
     """Warns about Ossie properties that have no LookML counterpart."""
     dropped = list(extra or [])
-    for key in ("custom_extensions", "version", "label"):
+    for key in ("nonportable_extensions", "version", "label"):
         if key not in skip and source.get(key):
             dropped.append(key)
     if dropped:

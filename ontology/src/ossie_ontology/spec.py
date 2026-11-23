@@ -44,11 +44,11 @@ AiContext = str | dict[str, Any]
 class CustomExtension(OssieObject):
     """Vendor-specific metadata attached to any logical-model element (core.md).
 
-    `data` is a JSON-encoded string so vendors can carry arbitrary payloads
-    without extending the core schema.
+    `data` is an object with vendor-defined keys, so vendors can carry arbitrary
+    payloads without extending the core schema.
     """
     vendor_name: str
-    data: str
+    data: dict[str, Any]
 
 
 # ---------- Ontology ----------
@@ -147,7 +147,7 @@ class DatasetField(OssieObject):
     description: str | None = None
     datatype: DataType | None = None
     ai_context: AiContext | None = None
-    custom_extensions: list[CustomExtension] = Field(default_factory=list)
+    nonportable_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
 class Dataset(OssieObject):
@@ -161,7 +161,7 @@ class Dataset(OssieObject):
     ai_context: AiContext | None = None
     fields: list[DatasetField] = Field(default_factory=list)
     metrics: list[Metric] = Field(default_factory=list)
-    custom_extensions: list[CustomExtension] = Field(default_factory=list)
+    nonportable_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
 class JoinPath(OssieObject):
@@ -174,7 +174,7 @@ class JoinPath(OssieObject):
     from_columns: list[str]
     to_columns: list[str]
     ai_context: AiContext | None = None
-    custom_extensions: list[CustomExtension] = Field(default_factory=list)
+    nonportable_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
 class Metric(OssieObject):
@@ -185,7 +185,7 @@ class Metric(OssieObject):
     description: str | None = None
     datatype: DataType | None = None
     ai_context: AiContext | None = None
-    custom_extensions: list[CustomExtension] = Field(default_factory=list)
+    nonportable_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
 # The core semantic model version this package reads and writes.
@@ -201,7 +201,7 @@ class SemanticModel(OssieObject):
     datasets: list[Dataset] = Field(min_length=1)
     relationships: list[JoinPath] = Field(default_factory=list)
     metrics: list[Metric] = Field(default_factory=list)
-    custom_extensions: list[CustomExtension] = Field(default_factory=list)
+    nonportable_extensions: list[CustomExtension] = Field(default_factory=list)
 
 
 # ---------- Ontology mapping ----------

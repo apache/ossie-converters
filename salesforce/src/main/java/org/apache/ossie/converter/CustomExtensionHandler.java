@@ -31,7 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Handler for adding and restoring custom_extensions in the Semantic Model.
+ * Handler for adding and restoring nonportable_extensions in the Semantic Model.
  *
  * <p>Handles identifying unmapped properties during Salesforce-to-Ossie conversion
  * and restoring them during Ossie-to-Salesforce conversion.</p>
@@ -48,7 +48,7 @@ public class CustomExtensionHandler {
     }
 
     /**
-     * Unified method to restore custom_extensions at any level.
+     * Unified method to restore nonportable_extensions at any level.
      *
      * @param outputData The output data containing semanticModel
      * @param sourceData The source Ossie data
@@ -79,7 +79,7 @@ public class CustomExtensionHandler {
     }
 
     /**
-     * Restores custom_extensions for an array at a specific level.
+     * Restores nonportable_extensions for an array at a specific level.
      * Generic method that works for datasets, relationships, etc.
      *
      * @param semanticModel The semanticModel object
@@ -108,7 +108,7 @@ public class CustomExtensionHandler {
         }
 
         streamMaps(sourceArray).forEach(sourceItem -> {
-            // Check if source item has SALESFORCE custom_extensions
+            // Check if source item has SALESFORCE nonportable_extensions
             if (!hasSalesforceCustomExtension(sourceItem)) {
                 return;
             }
@@ -120,16 +120,16 @@ public class CustomExtensionHandler {
             Map<String, Object> targetItem = findItemById(targetArray, targetIdKey, itemId);
             if (targetItem == null) return;
 
-            // Restore custom_extensions
+            // Restore nonportable_extensions
             restoreSalesforceCustomExtension(targetItem, sourceItem);
         });
     }
 
     /**
-     * Checks if an item has SALESFORCE vendor custom_extensions.
+     * Checks if an item has SALESFORCE vendor nonportable_extensions.
      *
      * @param item The item to check
-     * @return true if the item has SALESFORCE custom_extensions
+     * @return true if the item has SALESFORCE nonportable_extensions
      */
     private boolean hasSalesforceCustomExtension(Map<String, Object> item) {
         Object customExtensionsObj = item.get(CUSTOM_EXTENSIONS);
@@ -144,7 +144,7 @@ public class CustomExtensionHandler {
     }
 
     /**
-     * Unified method to store unmapped properties as custom_extensions at any level.
+     * Unified method to store unmapped properties as nonportable_extensions at any level.
      * This is the inverse of restoreCustomExtensionsAtLevel.
      *
      * @param outputData The output Ossie data
@@ -231,7 +231,7 @@ public class CustomExtensionHandler {
                 }
             }
 
-            // Store unmapped properties in custom_extensions
+            // Store unmapped properties in nonportable_extensions
             if (!unmappedProperties.isEmpty()) {
                 addCustomExtension(ossieItem, unmappedProperties);
             }
@@ -239,10 +239,10 @@ public class CustomExtensionHandler {
     }
 
     /**
-     * Stores unmapped properties from a source item into an Ossie item's custom_extensions.
+     * Stores unmapped properties from a source item into an Ossie item's nonportable_extensions.
      * Generic method that can be used for fields or any other individual items.
      *
-     * @param ossieItem The target Ossie item to add custom_extensions to
+     * @param ossieItem The target Ossie item to add nonportable_extensions to
      * @param sfItem The source Salesforce item
      * @param handledProps Set of property keys that were handled (mapped or programmatically processed)
      */
@@ -256,11 +256,11 @@ public class CustomExtensionHandler {
             }
         }
 
-        // Store in custom_extensions
+        // Store in nonportable_extensions
         if (!unmappedProps.isEmpty()) {
             String itemName = getString(ossieItem, NAME);
             if (itemName == null) {
-                logger.warn("Item has no name, skipping custom_extensions storage for unmapped properties");
+                logger.warn("Item has no name, skipping nonportable_extensions storage for unmapped properties");
                 return;
             }
             addCustomExtension(ossieItem, unmappedProps);
@@ -268,7 +268,7 @@ public class CustomExtensionHandler {
     }
 
     /**
-     * Adds a custom_extensions entry with SALESFORCE vendor data.
+     * Adds a nonportable_extensions entry with SALESFORCE vendor data.
      * If a SALESFORCE custom_extension already exists, merges the data.
      */
     public void addCustomExtension(Map<String, Object> target, Map<String, Object> customData) {
@@ -279,22 +279,20 @@ public class CustomExtensionHandler {
             if (!customExtensions.isEmpty()) {
                 // Merge into existing extension
                 Map<String, Object> salesforceExtension = asMap(customExtensions.get(0));
-                String existingDataJson = (String) salesforceExtension.get(DATA);
-                Map<String, Object> existingData = jsonMapper.readValue(
-                    existingDataJson, new TypeReference<LinkedHashMap<String, Object>>() {});
+                Map<String, Object> existingData = new LinkedHashMap<>(asMap(salesforceExtension.get(DATA)));
 
                 existingData.putAll(customData);
-                salesforceExtension.put(DATA, jsonMapper.writeValueAsString(existingData));
+                salesforceExtension.put(DATA, existingData);
             } else {
                 // Create new extension
                 Map<String, Object> extension = new LinkedHashMap<>();
                 extension.put(VENDOR_NAME, VENDOR_NAME_VALUE);
-                extension.put(DATA, jsonMapper.writeValueAsString(customData));
+                extension.put(DATA, new LinkedHashMap<>(customData));
                 customExtensions.add(extension);
             }
 
         } catch (Exception e) {
-            logger.warn("Failed to store custom_extensions: {}", e.getMessage());
+            logger.warn("Failed to store nonportable_extensions: {}", e.getMessage());
         }
     }
 
@@ -303,7 +301,7 @@ public class CustomExtensionHandler {
      * This is a generic method that can be used for any level (dataset, field, relationship, metric).
      *
      * @param sfItem The Salesforce item to merge properties into
-     * @param ossieItem The Ossie item containing custom_extensions
+     * @param ossieItem The Ossie item containing nonportable_extensions
      */
     public void restoreSalesforceCustomExtension(Map<String, Object> sfItem, Map<String, Object> ossieItem) {
         Object customExtensionsObj = ossieItem.get(CUSTOM_EXTENSIONS);
@@ -324,15 +322,14 @@ public class CustomExtensionHandler {
             }
 
             try {
-                // Parse JSON string to Map
-                Map<String, Object> salesforceProperties = jsonMapper.readValue(
-                    (String) dataObj,
+                Map<String, Object> salesforceProperties = jsonMapper.convertValue(
+                    dataObj,
                     new TypeReference<LinkedHashMap<String, Object>>() {}
                 );
 
                 String itemName = getString(ossieItem, NAME);
                 if (itemName == null) {
-                    logger.warn("Item has no name, skipping custom_extensions restoration");
+                    logger.warn("Item has no name, skipping nonportable_extensions restoration");
                     return;
                 }
 
@@ -343,7 +340,7 @@ public class CustomExtensionHandler {
                 }
 
             } catch (Exception e) {
-                logger.warn("Failed to restore custom_extensions: {}", e.getMessage());
+                logger.warn("Failed to restore nonportable_extensions: {}", e.getMessage());
             }
         });
     }

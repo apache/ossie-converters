@@ -36,7 +36,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ossie import (
     OssieAIContextObject,
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
     OssieDocument,
@@ -143,15 +143,15 @@ class OssieToWisdomConverter:
     def _report_custom_extensions(
         self, model: OssieSemanticModel, consumed: set[int], issues: List[ConverterIssue]
     ) -> None:
-        elements = [(model.name, model.custom_extensions)]
+        elements = [(model.name, model.nonportable_extensions)]
         for dataset in model.datasets:
-            elements.append((dataset.name, dataset.custom_extensions))
+            elements.append((dataset.name, dataset.nonportable_extensions))
             for field in dataset.fields or []:
-                elements.append((f"{dataset.name}.{field.name}", field.custom_extensions))
+                elements.append((f"{dataset.name}.{field.name}", field.nonportable_extensions))
         for relationship in model.relationships or []:
-            elements.append((relationship.name, relationship.custom_extensions))
+            elements.append((relationship.name, relationship.nonportable_extensions))
         for metric in model.metrics or []:
-            elements.append((metric.name, metric.custom_extensions))
+            elements.append((metric.name, metric.nonportable_extensions))
         for name, extensions in elements:
             # Entries already read by _convert_relationships (keyed by id) are not dropped.
             if any(id(extension) not in consumed for extension in extensions or []):
@@ -443,14 +443,14 @@ class OssieToWisdomConverter:
             )
         return edges
 
-    def _wisdom_extension(self, relationship: OssieRelationship) -> OssieCustomExtension | None:
-        for extension in relationship.custom_extensions or []:
+    def _wisdom_extension(self, relationship: OssieRelationship) -> OssieNonportableExtension | None:
+        for extension in relationship.nonportable_extensions or []:
             if extension.vendor_name == OssieVendor.WISDOM.value:
                 return extension
         return None
 
     def _stored_relationship_type(
-        self, extension: OssieCustomExtension, relationship: OssieRelationship
+        self, extension: OssieNonportableExtension, relationship: OssieRelationship
     ) -> str | None:
         """Returns the type to export for the relationship as it stands, or None when the entry is
         malformed or stale."""

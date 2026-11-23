@@ -38,7 +38,7 @@ OSSIE_VERSION = "0.3.0.dev0"
 
 def convert_registry_to_ossie(records: list[dict], name: str = "atlan_registry",
                               description: str | None = None) -> tuple[dict, IssueLog]:
-    """Registry records -> one Ossie document (strict form) plus the issues.
+    """Registry records -> one Ossie document plus the issues.
 
     Each record converts on its own; one that Ossie cannot express becomes a
     METRIC_NOT_CONVERTIBLE issue and the rest still convert. Records of one workspace share

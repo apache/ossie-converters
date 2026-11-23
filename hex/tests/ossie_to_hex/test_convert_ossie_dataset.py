@@ -17,7 +17,7 @@
 
 import pytest
 from inline_snapshot import snapshot
-from ossie import OssieAIContextObject, OssieCustomExtension
+from ossie import OssieAIContextObject, OssieNonportableExtension
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.convert_ossie_dataset import convert_ossie_dataset
@@ -197,12 +197,12 @@ def test_warns_about_ai_context(ctx: ExportContext) -> None:
 
 
 def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
-    custom_extension = OssieCustomExtension(vendor_name="foo", data="bar")
+    custom_extension = OssieNonportableExtension(vendor_name="foo", data={"foo": "bar"})
     foo = Quick.dataset(
         "foo",
         "public.foo",
         [("id", "String", [("OSSIE_SQL_2026", "id")])],
-        custom_extensions=[custom_extension],
+        nonportable_extensions=[custom_extension],
     )
     convert_ossie_dataset(foo, ctx=ctx)
     assert problems_snapshot(ctx.problems) == snapshot("[WARNING] Not supported")

@@ -1632,11 +1632,15 @@ def _index_attribute_columns(
 
     This is the set `resolve()` gates cross-references against: a bare
     `[TABLE::Column]` reference is portable only when it names a column the
-    model actually surfaces as a field. It has to be built ahead of Phase 3
-    (fields and metrics) because a formula processed early in that phase can
-    reference a column defined later in the same `columns[]` list -- the gate
-    needs to already know about every ATTRIBUTE column, not just the ones
-    converted so far.
+    model actually surfaces as a field. MEASURE-only columns are deliberately
+    excluded -- Name Resolution in core-spec/spec.md says metrics refer to
+    dataset fields, not source columns, so a metric over a MEASURE with no
+    ATTRIBUTE sibling stays THOUGHTSPOT-only (`TS-EXPR-UNRESOLVED`) rather
+    than emitting an ANSI_SQL sibling that names an unsurfaced warehouse
+    column. It has to be built ahead of Phase 3 (fields and metrics) because
+    a formula processed early in that phase can reference a column defined
+    later in the same `columns[]` list -- the gate needs to already know
+    about every ATTRIBUTE column, not just the ones converted so far.
 
     Membership only -- no identifier value. An earlier revision stored
     `identifiers.normalise(column["name"])` as the value here, on the theory
@@ -2895,7 +2899,10 @@ def convert(document_set: DocumentSet) -> OssieConversion:
         column (db_column_name, or a SQL View's sql_output_column), never the
         Ossie field's display-derived identifier, which is not a column on the
         underlying table at all. `attribute_index` still gates whether the
-        reference is one the model surfaces as a field.
+        reference is one the model surfaces as a field (ATTRIBUTE only;
+        MEASURE-only columns stay out -- see `_index_attribute_columns`).
+        A follow-up can have metric references emit the field identifier
+        while field expressions keep the warehouse column.
         """
         if table not in dataset_bodies:
             return None

@@ -206,7 +206,7 @@ def test_parse_ossie_source(source, expected_sql, expected_type):
     ({}, "number"),
     # A round-tripped Honeydew datatype outranks the declared one
     ({"datatype": "String",
-      "custom_extensions": [{"vendor_name": "HONEYDEW", "data": '{"datatype": "bool"}'}]}, "bool"),
+      "nonportable_extensions": [{"vendor_name": "HONEYDEW", "data": {"datatype": "bool"}}]}, "bool"),
 ])
 def test_ossie_field_to_honeydew_datatype(field, expected_dt):
     assert _ossie_field_to_honeydew_datatype(field) == expected_dt
@@ -303,7 +303,7 @@ def test_build_and_read_unique_keys():
 
 
 def test_build_and_read_custom_extensions():
-    exts = [{"vendor_name": "SNOWFLAKE", "data": '{"warehouse": "WH"}'}]
+    exts = [{"vendor_name": "SNOWFLAKE", "data": {"warehouse": "WH"}}]
     section = _build_ossie_metadata(custom_extensions=exts)
     result = _read_ossie_metadata({"metadata": [section]})
     assert result["custom_extensions"] == exts
@@ -318,7 +318,7 @@ def test_read_legacy_osi_metadata_section():
     section = _build_ossie_metadata(
         ai_context={"synonyms": ["orders"]},
         unique_keys=[["col1"]],
-        custom_extensions=[{"vendor_name": "SNOWFLAKE", "data": "{}"}],
+        custom_extensions=[{"vendor_name": "SNOWFLAKE", "data": {}}],
     )
     legacy = {**section, "name": "osi"}
     assert _read_ossie_metadata({"metadata": [legacy]}) == _read_ossie_metadata(
@@ -348,7 +348,7 @@ def test_assign_metrics_honeydew_hint_takes_priority():
     metrics = [{
         "name": "cnt",
         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.x)"}]},
-        "custom_extensions": [{"vendor_name": "HONEYDEW", "data": '{"entity": "customers"}'}],
+        "nonportable_extensions": [{"vendor_name": "HONEYDEW", "data": {"entity": "customers"}}],
     }]
     result = _assign_metrics_to_entities(metrics, ["orders", "customers"])
     assert result == {"customers": [(metrics[0], "SUM(orders.x)")]}
@@ -545,14 +545,14 @@ _REL_MODEL = {
     # ── non-HONEYDEW custom_extensions → entity metadata ──────────────────────
     pytest.param(
         {"name": "m", "datasets": [{"name": "orders", "source": "db.s.orders",
-            "custom_extensions": [{"vendor_name": "SNOWFLAKE", "data": '{"warehouse": "WH"}'}],
+            "nonportable_extensions": [{"vendor_name": "SNOWFLAKE", "data": {"warehouse": "WH"}}],
             "fields": []}]},
         "schema/orders/orders.yml",
         {
             "type": "entity", "name": "orders", "key_dataset": "orders", "relations": [],
             "metadata": [{"name": "ossie", "metadata": [
                 {"name": "custom_extensions",
-                 "value": '[{"vendor_name": "SNOWFLAKE", "data": "{\\"warehouse\\": \\"WH\\"}"}]'},
+                 "value": '[{"vendor_name": "SNOWFLAKE", "data": {"warehouse": "WH"}}]'},
             ]}],
         },
         id="custom-ext",
@@ -721,7 +721,7 @@ def test_ossie_to_honeydew_metric_entity_hint_overrides_expression():
         "metrics": [{
             "name": "cnt",
             "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.x)"}]},
-            "custom_extensions": [{"vendor_name": "HONEYDEW", "data": '{"entity": "customers"}'}],
+            "nonportable_extensions": [{"vendor_name": "HONEYDEW", "data": {"entity": "customers"}}],
         }]}
     files = convert_ossie_to_honeydew(_ossie(model))
     assert "schema/customers/metrics/cnt.yml" in files
@@ -852,8 +852,8 @@ def _ansi(expr):
                 "dimension": {"is_time": False},
                 "ai_context": {"synonyms": ["sales", "reporting"]},
                 "label": "sales",
-                "custom_extensions": [
-                    {"vendor_name": "HONEYDEW", "data": '{"labels": ["sales", "reporting"]}'},
+                "nonportable_extensions": [
+                    {"vendor_name": "HONEYDEW", "data": {"labels": ["sales", "reporting"]}},
                 ],
             }],
         }]}),
@@ -920,7 +920,7 @@ def _ansi(expr):
         ], "metrics": [{
             "name": "count",
             "expression": _ansi("COUNT(*)"),
-            "custom_extensions": [{"vendor_name": "HONEYDEW", "data": '{"entity": "orders"}'}],
+            "nonportable_extensions": [{"vendor_name": "HONEYDEW", "data": {"entity": "orders"}}],
         }]}),
         id="metric",
     ),
@@ -938,9 +938,9 @@ def _ansi(expr):
             "fields": [{
                 "name": "discounted",
                 "expression": _ansi("orders.price * (1 - orders.discount)"),
-                "custom_extensions": [
+                "nonportable_extensions": [
                     {"vendor_name": "HONEYDEW",
-                     "data": '{"type": "calculated_attribute", "entity": "orders"}'},
+                     "data": {"type": "calculated_attribute", "entity": "orders"}},
                 ],
             }],
         }]}),
@@ -1081,9 +1081,9 @@ def test_honeydew_to_ossie_relation_target_columns_are_unique_keys(tmp_path):
                         "description": "Use for revenue analysis",
                         "ai_context": {"instructions": "Use for revenue analysis",
                                        "synonyms": ["revenue", "sales"]},
-                        "custom_extensions": [
+                        "nonportable_extensions": [
                             {"vendor_name": "HONEYDEW",
-                             "data": '{"labels": ["revenue", "sales"]}'},
+                             "data": {"labels": ["revenue", "sales"]}},
                         ]}]}]},
         id="ai-context-dict",
     ),
@@ -1096,10 +1096,10 @@ def test_honeydew_to_ossie_relation_target_columns_are_unique_keys(tmp_path):
     ),
     pytest.param(
         {"name": "m", "datasets": [{"name": "orders", "source": "db.s.orders",
-            "custom_extensions": [{"vendor_name": "SNOWFLAKE", "data": '{"warehouse": "WH"}'}],
+            "nonportable_extensions": [{"vendor_name": "SNOWFLAKE", "data": {"warehouse": "WH"}}],
             "fields": []}]},
         {"name": "m", "datasets": [{"name": "orders", "source": "db.s.orders",
-            "custom_extensions": [{"vendor_name": "SNOWFLAKE", "data": '{"warehouse": "WH"}'}]}]},
+            "nonportable_extensions": [{"vendor_name": "SNOWFLAKE", "data": {"warehouse": "WH"}}]}]},
         id="custom-ext",
     ),
     pytest.param(
@@ -1124,8 +1124,8 @@ def test_honeydew_to_ossie_relation_target_columns_are_unique_keys(tmp_path):
          "datasets": [{"name": "orders", "source": "db.s.orders"}],
          "metrics": [{"name": "total_revenue",
                       "expression": _ansi("SUM(orders.total)"),
-                      "custom_extensions": [
-                          {"vendor_name": "HONEYDEW", "data": '{"entity": "orders"}'},
+                      "nonportable_extensions": [
+                          {"vendor_name": "HONEYDEW", "data": {"entity": "orders"}},
                       ],
                       "description": "Sum of sales"}]},
         id="metric",
@@ -1498,7 +1498,7 @@ def test_metric_string_ai_context_preserved_in_roundtrip(tmp_path):
         "metrics": [{
             "name": "rev",
             "expression": _ansi("SUM(orders.total)"),
-            "custom_extensions": [{"vendor_name": "HONEYDEW", "data": '{"entity": "orders"}'}],
+            "nonportable_extensions": [{"vendor_name": "HONEYDEW", "data": {"entity": "orders"}}],
             "description": "Use for revenue analysis",
             "ai_context": "Use for revenue analysis",
         }],

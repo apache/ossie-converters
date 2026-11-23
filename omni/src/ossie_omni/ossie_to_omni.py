@@ -367,7 +367,7 @@ def _convert_dataset(ds, vname, view_names, dialect):
     if dimensions:
         view["dimensions"] = dimensions
     if foreign_vendor_extensions(ds):
-        _warn(scope, "foreign-vendor custom_extensions dropped")
+        _warn(scope, "foreign-vendor nonportable_extensions dropped")
     return view, {"cols": col_to_dim, "names": set(dimensions),
                   "fields": field_to_dim,
                   "declared": {f["name"] for f in ds.get("fields", []) or []}}
@@ -424,7 +424,7 @@ def _convert_field(field, dname, expr, fscope):
         dim[key] = value
 
     if foreign_vendor_extensions(field):
-        _warn(fscope, "foreign-vendor custom_extensions dropped")
+        _warn(fscope, "foreign-vendor nonportable_extensions dropped")
     return dim
 
 
@@ -480,7 +480,7 @@ def _convert_relationship(rel, view_names, imported=False):
     if rel.get("ai_context"):
         _warn(scope, "relationship ai_context has no Omni home; dropped")
     if foreign_vendor_extensions(rel):
-        _warn(scope, "foreign-vendor custom_extensions dropped")
+        _warn(scope, "foreign-vendor nonportable_extensions dropped")
     return entry
 
 
@@ -676,7 +676,7 @@ def _convert_metric(metric, resolve_base, view_names, dims_by_view, dialect,
     target = own_view or stash.get("view") or target or resolve_base()
     _apply_metric_metadata(metric, measure)
     if foreign_vendor_extensions(metric):
-        _warn(scope, "foreign-vendor custom_extensions dropped")
+        _warn(scope, "foreign-vendor nonportable_extensions dropped")
     return target, mname, measure
 
 
@@ -705,7 +705,7 @@ def _balanced(s):
 
 def _warn_dropped_model(model):
     if foreign_vendor_extensions(model):
-        _warn("model", "foreign-vendor custom_extensions dropped")
+        _warn("model", "foreign-vendor nonportable_extensions dropped")
     ai = model.get("ai_context")
     if isinstance(ai, dict):
         if ai.get("synonyms"):

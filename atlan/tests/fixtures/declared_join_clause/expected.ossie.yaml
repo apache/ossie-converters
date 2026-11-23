@@ -95,12 +95,27 @@ metrics:
   ai_context:
     instructions: 'Grain: sale. Counts: Store sales joined to their customer. Unit: sales. Re-aggregation:
       sum.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_sales_to_active_customers", "definition_version": 1}, "agent_context":
-      {"grain": "sale", "population": "Store sales joined to their customer", "unit": "sales", "reaggregation":
-      "sum", "sql_dialect": "snowflake", "dimensions": ["store_sales.ss_sold_date", "customer.preferred",
-      "customer.birth_country"], "relationships": ["store_sales_to_customer"], "timeframe_field": "store_sales.ss_sold_date"}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_sales_to_active_customers
+        definition_version: 1
+      agent_context:
+        grain: sale
+        population: Store sales joined to their customer
+        unit: sales
+        reaggregation: sum
+        sql_dialect: snowflake
+        dimensions:
+        - store_sales.ss_sold_date
+        - customer.preferred
+        - customer.birth_country
+        relationships:
+        - store_sales_to_customer
+        timeframe_field: store_sales.ss_sold_date
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds
