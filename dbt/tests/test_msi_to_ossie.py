@@ -735,6 +735,53 @@ class TestMetricConversion:
 
         assert _ossie_metrics(result)[0].expression.dialects[0].expression == "AVG(orders.price)"
 
+    @pytest.mark.parametrize(
+        ("sql", "fields", "qualified"),
+        [
+            ("COALESCE(amount, 0)", [("amount", "amount")], "COALESCE(orders.amount, 0)"),
+            (
+                "COALESCE(DATEDIFF(day, started_at, ended_at), 0)",
+                [("started_at", "started_at"), ("ended_at", "ended_at")],
+                "COALESCE(DATEDIFF(day, orders.started_at, orders.ended_at), 0)",
+            ),
+            ('COALESCE("amount paid", 0)', [("amount paid", '"amount paid"')], 'COALESCE(orders."amount paid", 0)'),
+            ("NVL(amount, 0)", [("amount", "amount")], "NVL(orders.amount, 0)"),
+        ],
+    )
+    def test_compound_metric_input_qualifies_declared_fields(
+        self, sql: str, fields: list[tuple[str, str]], qualified: str
+    ) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders", dimensions=[_dimension(name, expr=expr) for name, expr in fields]
+        )
+        metric = _metric_with_agg("total", AggregationType.SUM, sql, "orders")
+        output = MSIToOssieConverter().convert(_manifest([orders], [metric])).output
+
+        assert [field.name for field in _fields(output)] == [name for name, _ in fields]
+        expression = _ossie_metrics(output)[0].expression
+        assert (expression.sql or expression.dialects[0].expression) == f"SUM({qualified})"
+
+    @pytest.mark.parametrize(
+        ("sql", "fields"),
+        [
+            ("COALESCE(amount, tax)", [("amount", "amount")]),
+            ("COALESCE(amount, 0)", [("sale_amount", "amount")]),
+            ("COALESCE(amount, 0)", [("amount", "net_amount")]),
+            ("COALESCE(other.amount, 0)", [("amount", "amount")]),
+        ],
+    )
+    def test_compound_metric_input_requires_matching_declared_fields(
+        self, sql: str, fields: list[tuple[str, str]]
+    ) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders", dimensions=[_dimension(name, expr=expr) for name, expr in fields]
+        )
+        metric = _metric_with_agg("total", AggregationType.SUM, sql, "orders")
+        output = MSIToOssieConverter().convert(_manifest([orders], [metric])).output
+
+        assert [field.name for field in _fields(output)] == [name for name, _ in fields]
+        assert _ossie_metrics(output)[0].expression.dialects[0].expression == f"SUM({sql})"
+
     @pytest.mark.parametrize("agg", [AggregationType.COUNT, AggregationType.SUM])
     def test_a_row_count_always_comes_back_as_portable_sum_1(self, agg: AggregationType) -> None:
         """A COUNT/expr=1 metric comes back as SUM(1), like a SUM/expr=1 one.

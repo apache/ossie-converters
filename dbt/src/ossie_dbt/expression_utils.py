@@ -26,6 +26,29 @@ from metricflow_semantic_interfaces.type_enums import AggregationType
 ROW_COUNT_EXPR = "1"
 
 
+def column_span(column: exp.Column) -> tuple[int, int] | None:
+    """Return the source interval of a complete column reference when the parser supplies it."""
+    parts = column.parts
+    start = parts[0].meta.get("start")
+    end = parts[-1].meta.get("end")
+    if isinstance(start, int) and isinstance(end, int) and 0 <= start <= end:
+        return start, end + 1
+    return None
+
+
+def replace_columns_in_sql(sql: str, replacements: dict[tuple[int, int], str]) -> str:
+    """Rewrite only column tokens, keeping the original spelling of SQL functions and literals."""
+    segments: list[str] = []
+    cursor = 0
+    for (start, end), name in sorted(replacements.items()):
+        if start < cursor or end > len(sql):
+            raise ValueError("Overlapping or out-of-range SQL column references")
+        segments.extend((sql[cursor:start], name))
+        cursor = end
+    segments.append(sql[cursor:])
+    return "".join(segments)
+
+
 def _strip_qualifier(col: str) -> str:
     """Strip a leading dataset qualifier, e.g. 'orders.amount' → 'amount'."""
     return col.rsplit(".", 1)[-1] if "." in col else col
