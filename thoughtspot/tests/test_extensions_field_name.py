@@ -17,12 +17,10 @@
 
 """The two names the vendor-extensions field goes by.
 
-`custom_extensions` is what the spec says today. apache/ossie#522 renames it to
-`nonportable_extensions` and does NOT accept the old name, so unlike the object
-form of `data` -- where a reader could in principle wait, because the string
-form stays valid -- there is no version of that change under which waiting
-costs nothing. The reader takes both names from now; the writer keeps each
-document on the name it already carries.
+apache/ossie#522 renames `custom_extensions` to `nonportable_extensions` and
+does NOT accept the old name. The reader takes both names; the writer keeps
+each document on the name it already carries, and uses the new name for an
+object that carries neither.
 
 The name and the shape of `data` are independent axes. `test_object_form_types`
 owns the shape axis; this file owns the name axis and crosses the two once.
@@ -166,16 +164,16 @@ class TestBothNamesAtOnceIsRefused:
             stash.write_stash(obj, {"alias": "Y"})
 
 
-class TestTheWriterHasNotMoved:
-    """Readers first. The writer emits today's name, and keeps a document that
-    already uses the new one on the new one -- it never introduces it."""
+class TestTheWriterKeepsTheDocumentsName:
+    """The writer emits the new name, and keeps a document that still uses the
+    old one on the old one -- it never hands back both."""
 
-    def test_an_object_with_no_extensions_gets_todays_name(self):
+    def test_an_object_with_no_extensions_gets_the_new_name(self):
         out = stash.write_stash({"name": "orders"}, {"alias": "X"})
-        assert EXTENSIONS_FIELD in out
-        assert EXTENSIONS_FIELD_RENAMED not in out
+        assert EXTENSIONS_FIELD_RENAMED in out
+        assert EXTENSIONS_FIELD not in out
 
-    def test_a_document_on_todays_name_stays_on_it(self):
+    def test_a_document_on_the_old_name_stays_on_it(self):
         obj = _obj(EXTENSIONS_FIELD, json.dumps({"_v": STASH_VERSION, "alias": "X"}))
         out = stash.write_stash(obj, {"join_type": "LEFT_OUTER"})
         assert EXTENSIONS_FIELD_RENAMED not in out
@@ -184,22 +182,19 @@ class TestTheWriterHasNotMoved:
         assert written["join_type"] == "LEFT_OUTER"
 
     def test_a_document_on_the_new_name_stays_on_the_new_name(self):
-        # The case that makes this more than a rename: writing
-        # EXTENSIONS_FIELD here would hand back a document carrying both, which
-        # the reader above refuses -- we would have broken our own round trip.
-        obj = _obj(EXTENSIONS_FIELD_RENAMED, json.dumps({"_v": STASH_VERSION, "alias": "X"}))
+        obj = _obj(EXTENSIONS_FIELD_RENAMED, {"_v": STASH_VERSION, "alias": "X"})
         out = stash.write_stash(obj, {"join_type": "LEFT_OUTER"})
         assert EXTENSIONS_FIELD not in out
-        written = json.loads(out[EXTENSIONS_FIELD_RENAMED][0]["data"])
+        written = out[EXTENSIONS_FIELD_RENAMED][0]["data"]
         assert written["alias"] == "X"
         assert written["join_type"] == "LEFT_OUTER"
 
-    @pytest.mark.parametrize("field", BOTH_NAMES)
-    def test_data_is_still_a_json_string_under_either_name(self, field):
-        # The shape axis does not move either, whichever name carries it.
+    @pytest.mark.parametrize("field,shape", [(EXTENSIONS_FIELD, str),
+                                             (EXTENSIONS_FIELD_RENAMED, dict)])
+    def test_data_takes_the_shape_that_goes_with_the_name(self, field, shape):
         out = stash.write_stash(_obj(field, {"_v": STASH_VERSION, "alias": "X"}),
                                 {"join_type": "LEFT_OUTER"})
-        assert isinstance(out[field][0]["data"], str)
+        assert isinstance(out[field][0]["data"], shape)
 
     @pytest.mark.parametrize("field", BOTH_NAMES)
     def test_foreign_vendor_entries_survive_under_either_name(self, field):

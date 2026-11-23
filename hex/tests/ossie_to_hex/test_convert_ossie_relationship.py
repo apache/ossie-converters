@@ -17,7 +17,7 @@
 
 import pytest
 from inline_snapshot import snapshot
-from ossie import OssieAIContextObject, OssieCustomExtension
+from ossie import OssieAIContextObject, OssieNonportableExtension
 
 from ossie_hex.hex import HexRelationType
 from ossie_hex.ossie_to_hex.build_assignments import build_assignments
@@ -65,14 +65,14 @@ def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
     assignment = RelationshipAssignment("foo", "from_to", "bar", "baz")
     ctx.assignment.set_for_relationship(assignment)
 
-    custom_extension = OssieCustomExtension(vendor_name="foo", data="bar")
+    custom_extension = OssieNonportableExtension(vendor_name="foo", data={"foo": "bar"})
     foo = Quick.relationship(
         "foo",
         "bar",
         "baz",
         ["qux"],
         ["qoz"],
-        custom_extensions=[custom_extension],
+        nonportable_extensions=[custom_extension],
     )
 
     convert_ossie_relationship(foo, ctx=ctx)

@@ -216,7 +216,7 @@ wheels = [
 
 [[package]]
 name = "metricflow"
-version = "0.213.0"
+version = "0.214.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "importlib-metadata" },
@@ -232,9 +232,9 @@ dependencies = [
     { name = "tabulate" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/ae/0c75d87f004cd56f30862fa1330f6a4e36a26ea32463a6d17d5d1ab32413/metricflow-0.213.0.tar.gz", hash = "sha256:e6b5e8f05a0b9b0183430416052a61747fc89f809c39f2cdc5a3d9ba7a3f6931", size = 643641, upload-time = "2026-09-10T19:24:20.562Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/a2/4dcedc873f8d040db833adc2470dbe315825ed53a7d1c0f4181cf61f84ba/metricflow-0.214.0.tar.gz", hash = "sha256:4fb323a0107617f7c17d9e4888d25ebe3948cd807e72173074614a244a0bc452", size = 660974, upload-time = "2026-11-16T16:24:28.042Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/6c/2ec7e3c433bdab3cf15f4424769794f6d0dab9ecd3c43da00cdb85435d44/metricflow-0.213.0-py3-none-any.whl", hash = "sha256:6e1865535a200607529970f6ca1a9fcd22b7814d0b71cd654d9ee01eecf0157b", size = 999530, upload-time = "2026-09-10T19:24:17.846Z" },
+    { url = "https://files.pythonhosted.org/packages/23/65/cd4aa5d727c59609890e7548b8ac89b0cfde03228c14e7a1b42d5227c425/metricflow-0.214.0-py3-none-any.whl", hash = "sha256:d5d33ef49a0d0d7dbc8ad9529bad7105849e2579168b77d9a73e641bd7a26833", size = 1016528, upload-time = "2026-11-16T16:24:25.962Z" },
 ]
 
 [[package]]
@@ -734,23 +734,23 @@ wheels = [
 
 [[package]]
 name = "sqlglot"
-version = "30.31.0"
+version = "30.33.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/89/de/aa6cc05536bec18c7ad7d3def4d724d1d7086cbc9e96dc1e39fdaf83965d/sqlglot-30.31.0.tar.gz", hash = "sha256:448404736cb0ed1335774e34399a3a99d28274778fb718877556fb7d475d8808", size = 6198638, upload-time = "2026-11-10T18:02:51.359Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/4d/ce64044d87620a6cfeb0de779359400f29730ad169d7f804c050f8de7c5e/sqlglot-30.33.0.tar.gz", hash = "sha256:9c007e0471c93e778d8613f25853543b959a3f793d9dadf1341b3d6bd53246a8", size = 6253207, upload-time = "2026-11-17T12:19:03.18Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/68/e351109f7732f193133c67fbf104178f79b534a925db8f69c074fd190c2c/sqlglot-30.31.0-py3-none-any.whl", hash = "sha256:51a876a43edecf8ee6fd4c872cf6713d899c4234256bba0be96a8c7c8d8781e8", size = 811981, upload-time = "2026-11-10T18:02:49.108Z" },
+    { url = "https://files.pythonhosted.org/packages/32/b2/564252e22f8e0a383adee6b38afc4a0e38fccbc4046b5c36a387a2308f23/sqlglot-30.33.0-py3-none-any.whl", hash = "sha256:a5b279fe7397a9fb6cdd0274a13a5fcee0fa83ac6ff617083f1f2832031e90bc", size = 829420, upload-time = "2026-11-17T12:19:01.389Z" },
 ]
 
 [[package]]
 name = "syrupy"
-version = "7.0.1"
+version = "7.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/a5/8c7a369e4476f6d311d2a46b2e11d3a3f62b7c435e8904c71014c0678d52/syrupy-7.0.1.tar.gz", hash = "sha256:90450e89d06a09b40ae028c6a3a7c51a6d0fc97bb275dcfd7e6eddddcb469d69", size = 122297, upload-time = "2026-11-14T21:11:09.421Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/ff/308f191363c1bc456323918619597aaf9f3a37405d038a350b45f90b6e9f/syrupy-7.0.2.tar.gz", hash = "sha256:b35d3efc800a3362c20f24026d1d116b91fcd4578a315745860ec234e023592c", size = 122668, upload-time = "2026-11-16T04:40:28.401Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/b9/2e2e6696f095881ade3136001a89fed8bbb97fa556ff8d454ae9c0f7c83f/syrupy-7.0.1-py3-none-any.whl", hash = "sha256:a34b0486259d666d5341df324754b3b438b2b12603620e1e8db607af6506d079", size = 68915, upload-time = "2026-11-14T21:11:08.141Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/eb/72e4460a4d36cf6781f3eacc8dd17256d067c841d147a011956c0d6218ef/syrupy-7.0.2-py3-none-any.whl", hash = "sha256:bb7999d6cc1cce6731154fe46ad98874b484904d3e3fba950e244c5666c53c1b", size = 68914, upload-time = "2026-11-16T04:40:26.776Z" },
 ]
 
 [[package]]

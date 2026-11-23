@@ -46,16 +46,16 @@ Original file paths are preserved through a round trip.
   view they reference, and the model becomes a topic (rooted at the
   fact/FK-sink dataset, or `--base-view`).
 - **Import** (`ossie-omni import`): Omni files -> Ossie. Omni features Ossie has no
-  native field for are preserved in `custom_extensions[OMNI]`, so
+  native field for are preserved in `nonportable_extensions[OMNI]`, so
   **Omni -> Ossie -> Omni is lossless**.
 
 On **export** (Ossie -> Omni), Ossie features with no Omni slot -- `unique_keys`,
 relationship `ai_context`, dataset-level `ai_context` synonyms, model-level
-`ai_context` synonyms/examples, foreign-vendor `custom_extensions`, fields and
+`ai_context` synonyms/examples, foreign-vendor `nonportable_extensions`, fields and
 metrics without a usable dialect -- are **dropped with a warning**. On
 **import** (Omni -> Ossie), Omni-only features (formats, timeframes, hidden/tags,
 topic curation, the model file, ...) are instead **preserved** in
-`custom_extensions[OMNI]`. Any input that breaks a
+`nonportable_extensions[OMNI]`. Any input that breaks a
 [requirement](#requirements) **raises a `ConversionError`** -- the converter
 never silently drops a field or produces an invalid result.
 
@@ -123,7 +123,7 @@ specific to **export** (Ossie -> Omni) or **import** (Omni -> Ossie).
 | `dataset.metrics[]` | measure on the owning dataset's view | Export: unqualified declared fields (`SUM(net_amount)`) reference the corresponding Omni dimensions, including computed fields. `COUNT(*)` stays on its owning view even when another view is the topic base. |
 | model-root `metrics[]` | measure on the view its expression references (else the base view) | `AGG(view.field)` <-> `aggregate_type` + `sql: ${field}`; `COUNT(*)` <-> `aggregate_type: count`; anything else <-> a raw-`sql` measure. |
 | `metric.description` / `ai_context` | measure `description` / `synonyms` / `ai_context` | |
-| `custom_extensions[OMNI]` | everything Omni-only | Import stashes; export restores -- keeping `Omni -> Ossie -> Omni` lossless. |
+| `nonportable_extensions[OMNI]` | everything Omni-only | Import stashes; export restores -- keeping `Omni -> Ossie -> Omni` lossless. |
 
 **Stashed on import** (and restored on export): the model file (verbatim),
 topics (verbatim, minus the natively-mapped description/AI context), original

@@ -126,7 +126,7 @@ class SalesforceFormulaEscapingTest {
     @Test
     void decodesFormulaJoinCriteriaPreservedAsCustomExtensions() {
         // A criterion whose join side is a Formula makes the relationship unsupported, so it
-        // is kept verbatim in custom_extensions rather than becoming from_columns/to_columns.
+        // is kept verbatim in nonportable_extensions rather than becoming from_columns/to_columns.
         Map<String, Object> source = new LinkedHashMap<>(Map.of(
                 "semanticRelationships", mutableList(Map.of(
                         "apiName", "Orders_Customers",
@@ -145,7 +145,7 @@ class SalesforceFormulaEscapingTest {
                 source, output);
 
         assertTrue(customExtensionData(output).contains("LEFT('A&B' + [Customers].[Id], 4)"),
-                "formula kept escaped in custom_extensions: " + customExtensionData(output));
+                "formula kept escaped in nonportable_extensions: " + customExtensionData(output));
     }
 
     @Test
@@ -206,8 +206,8 @@ class SalesforceFormulaEscapingTest {
 
     @SuppressWarnings("unchecked")
     private static String customExtensionData(Map<String, Object> container) {
-        List<Object> extensions = (List<Object>) container.get("custom_extensions");
-        assertNotNull(extensions, "custom_extensions missing from " + container.keySet());
-        return (String) ((Map<String, Object>) extensions.get(0)).get("data");
+        List<Object> extensions = (List<Object>) container.get("nonportable_extensions");
+        assertNotNull(extensions, "nonportable_extensions missing from " + container.keySet());
+        return String.valueOf(((Map<String, Object>) extensions.get(0)).get("data"));
     }
 }

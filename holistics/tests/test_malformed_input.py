@@ -215,9 +215,9 @@ def test_an_aggregation_that_does_not_wrap_the_whole_expression_is_kept_whole():
             "expression": {"dialects": [
                 {"dialect": "ANSI_SQL", "expression": "SUM(orders.a) + SUM(orders.b)"}
             ]},
-            "custom_extensions": [{
+            "nonportable_extensions": [{
                 "vendor_name": "HOLISTICS",
-                "data": '{"_v": 1, "model": "orders", "aml_name": "total", "aggregation_type": "sum"}',
+                "data": {"_v": 1, "model": "orders", "aml_name": "total", "aggregation_type": "sum"},
             }],
         }],
     )

@@ -39,6 +39,13 @@ uv sync
 uv run ossie-snowflake -i input.yaml -o output.yaml
 ```
 
+## Expression dialects
+
+The exporter prefers `SNOWFLAKE`, `ANSI_SQL`, and tagged `OSSIE_SQL_2026`
+expressions in that order. It then translates supported `BIGQUERY` field and
+metric expressions to Snowflake SQL using SQLGlot. Untranslatable expressions
+are skipped with a warning.
+
 ## Data Type Mapping
 
 The exporter maps the optional logical `datatype` on Ossie fields to Snowflake
@@ -81,3 +88,9 @@ metric with a warning.
 A unique key that repeats the dataset's primary key, with its columns in any
 order, is not emitted as a `unique_keys` entry: Snowflake semantic views
 declare a column as `PRIMARY KEY` or `UNIQUE`, not both.
+
+Successful BigQuery-to-Snowflake expression translations emit a warning for each
+field or metric. A translation that parses successfully can still change results,
+including failed-cast behavior and NULL handling; review the generated SQL before use.
+Existing Snowflake, ANSI_SQL and OSSIE_SQL_2026 alternatives retain their precedence
+and do not produce this translation warning.

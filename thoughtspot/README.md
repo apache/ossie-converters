@@ -103,11 +103,11 @@ for what gets declared and why.
 | `dataset` | `table:`/`sql_view:` document, surfaced via the Model's `model_tables[]` entry | One dataset per participating `model_tables[]` entry, not per physical table — a self-join or a table used twice gets two datasets sharing one `source` |
 | `dataset.source` | `db`.`schema`.`db_table`, or `sql_query` for a SQL View | A dotted part is stashed individually (`source_parts`) when the joined form would be ambiguous |
 | `dataset.fields` | Table `columns[]` (physical) or Model `formulas[]` + surfacing `columns[]` entry (computed) | A computed field is attributed to the one dataset every column reference in its expression resolves to; ambiguous or cross-dataset references raise an issue instead of guessing |
-| `relationship` | `model_tables[].joins[]` (inline) or Table `joins_with[]` (referencing) | `from_columns`/`to_columns` are the join's equality pairs; a join with a non-equality residual (range/ASOF) narrows the same pairs, with the verbatim condition stashed — see [the payload section](#the-custom_extensionsthoughtspot-payload) below |
+| `relationship` | `model_tables[].joins[]` (inline) or Table `joins_with[]` (referencing) | `from_columns`/`to_columns` are the join's equality pairs; a join with a non-equality residual (range/ASOF) narrows the same pairs, with the verbatim condition stashed — see [the payload section](#the-nonportable_extensionsthoughtspot-payload) below |
 | `dataset.primary_key` / `unique_keys` | *(not native to TML)* | TML declares no keys; Ossie's are derived from to-one relationships targeting the dataset |
 | `metric` | Model `formulas[]` + surfacing `columns[]` entry with `column_type: MEASURE` | Three TML shapes compose into one metric: a bare aggregate formula, a scalar formula plus the surfacing column's `aggregation`, or a physical column plus `aggregation` |
 | `field`/`metric` `expression.sql` / `expression.dialects` | `formulas[].expr` or a physical `db_column_name` | Read from either location, `sql` first; written to `dialects[]`, and to `sql` as well when a portable form exists. See [Expression translation](#expression-translation-what-is-not-translated-and-why) |
-| `custom_extensions[THOUGHTSPOT]` | TML fields with no Ossie equivalent | See [The `custom_extensions[THOUGHTSPOT]` payload](#the-custom_extensionsthoughtspot-payload) below |
+| `nonportable_extensions[THOUGHTSPOT]` | TML fields with no Ossie equivalent | See [The `nonportable_extensions[THOUGHTSPOT]` payload](#the-nonportable_extensionsthoughtspot-payload) below |
 
 ### Where a portable expression is read from
 
@@ -172,32 +172,31 @@ document outright otherwise, so there is no join for a type to be chosen for.
 That is reported under `TS-JOIN-CARDINALITY-UNWRITABLE`, with the bridge-table
 remedy.
 
-## The `custom_extensions[THOUGHTSPOT]` payload
+## The `nonportable_extensions[THOUGHTSPOT]` payload
 
 TML carries properties Ossie's core specification has no field for — a Connection name,
 search-indexing settings, a display column's warehouse name when it differs from its
 label, a join's exact type, and more. `TML → Ossie` stashes each one under a single
-`custom_extensions` entry (`vendor_name: THOUGHTSPOT`) attached to the Ossie object it
+`nonportable_extensions` entry (`vendor_name: THOUGHTSPOT`) attached to the Ossie object it
 came from; `Ossie → TML` reads the same entry back to reconstruct the original TML
 property, so `TML → Ossie → TML` is lossless for everything TML itself can express.
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
 - vendor_name: THOUGHTSPOT
-  data: '{"_v": 1, "connection_name": "My Snowflake", "tml_object": "table"}'
+  data: {"_v": 1, "connection_name": "My Snowflake", "tml_object": "table"}
 ```
 
-`data` is always a single JSON-encoded string (never a nested object — the core
-specification requires this), carrying:
+`data` is an object, as the core specification requires, carrying:
 
 - `_v`, a shape version bumped only when the payload's *shape* changes, never for a
   value change — an unrecognised version is a hard failure rather than a silent
   misread of a shape this converter has never seen.
 - Never a `guid`, `obj_id`, or `fqn` at any depth — object identity is instance-local
   and is refused outright rather than carried, at write time.
-- Foreign-vendor `custom_extensions` entries on the same object pass through untouched
+- Foreign-vendor `nonportable_extensions` entries on the same object pass through untouched
   in both directions.
-- An object with nothing to stash gets no `custom_extensions[THOUGHTSPOT]` entry at
+- An object with nothing to stash gets no `nonportable_extensions[THOUGHTSPOT]` entry at
   all, so a converted document stays as small as its content requires.
 
 `Ossie → TML` restores a stashed value only when it is still current: several keys
@@ -336,7 +335,7 @@ drift from it:
 - [`docs/datatype-map.md`](docs/datatype-map.md) — the bidirectional datatype map and
   which types are declared lossy, generated from `datatypes.py`.
 - [`docs/vendor-payload.md`](docs/vendor-payload.md) — every
-  `custom_extensions[THOUGHTSPOT]` key, its scope and how it is treated on the return
+  `nonportable_extensions[THOUGHTSPOT]` key, its scope and how it is treated on the return
   trip, generated from `constants.py`'s `STASH_KEY_CLASSIFICATION`.
 
 `tools/generate_reference_docs.py` produces all four; it is dev/tooling only — not a

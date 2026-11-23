@@ -20,10 +20,10 @@
 The stash lives in the *Ossie* document, so it is written on the way in and read
 on the way out. It follows that the stash can only carry what TML contains.
 
-The field holding those entries goes by two names: `custom_extensions`, which is
-what the spec says today, and `nonportable_extensions`, which apache/ossie#522
-renames it to without accepting the old one. `_extensions_field` is the single
-place that decides which name a given document is on.
+The field holding those entries goes by two names: `nonportable_extensions`,
+which is what the spec says since apache/ossie#522, and `custom_extensions`, the
+name it had before. `_extensions_field` is the single place that decides which
+name a given document is on.
 """
 import json
 from typing import Any
@@ -68,8 +68,8 @@ def _extensions_field(obj: dict) -> str:
     does not accept the old name even carrying nothing.
 
     Neither name present is the ordinary case -- an object with no extensions
-    at all -- and answers with today's name, so `write_stash` writes what the
-    spec says.
+    at all -- and answers with the name the spec uses since apache/ossie#522,
+    so `write_stash` writes what the spec says.
     """
     present = [name for name in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED) if name in obj]
     if len(present) > 1:
@@ -78,7 +78,7 @@ def _extensions_field(obj: dict) -> str:
             f"{EXTENSIONS_FIELD_RENAMED}; apache/ossie#522 renames the field "
             f"rather than adding one, so a document uses one name or the other"
         )
-    return present[0] if present else EXTENSIONS_FIELD
+    return present[0] if present else EXTENSIONS_FIELD_RENAMED
 
 
 def find_forbidden_key(value: Any, forbidden: frozenset[str] | None = None) -> str | None:
@@ -170,13 +170,8 @@ def read_stash(obj: dict) -> dict[str, Any]:
                     f"{_object_label(obj)!r}: {exc}"
                 ) from exc
         elif isinstance(raw, dict):
-            # The object form apache/ossie#522 proposes. The reader accepts it
-            # before any writer emits it: a document written under the new shape
-            # is then readable here whenever that lands, and whichever way the
-            # vote goes, where the reverse order would leave every such document
-            # unreadable until we shipped a release of our own. `write_stash`
-            # deliberately still emits the string form, which is what the spec
-            # says today -- a test pins that, and it is not an oversight.
+            # The object form apache/ossie#522 defines, and the form
+            # `write_stash` emits under `nonportable_extensions`.
             #
             # Round-tripped through JSON rather than taken as-is, for two
             # reasons that are easy to miss:
@@ -254,19 +249,22 @@ def write_stash(obj: dict, payload: dict[str, Any]) -> dict:
         return dict(obj)
 
     merged["_v"] = STASH_VERSION  # stamp the shape version so a future reader can recognise it
-    # Whichever name this document already uses, NOT whichever the spec will
-    # settle on. Emitting EXTENSIONS_FIELD unconditionally would hand a
-    # #522-shaped document back under both names; emitting
-    # EXTENSIONS_FIELD_RENAMED unconditionally would make every document we
-    # write unreadable to the spec as it stands. Neither present answers with
-    # today's name, so the writer has not moved -- a test pins that.
+    # Whichever name this document already uses: emitting one name
+    # unconditionally would hand a document on the other back under both.
+    # Neither present answers with the name the spec uses since
+    # apache/ossie#522. A document still on the old name keeps the old
+    # JSON-string `data` that goes with it.
     field = _extensions_field(obj)
     others = [e for e in obj.get(field) or [] if e.get("vendor_name") != VENDOR_KEY]
     out = dict(obj)
+    data = json.dumps(merged, sort_keys=True)
     # Exactly one own entry, merged rather than appended.
     out[field] = [
         *others,
-        {"vendor_name": VENDOR_KEY, "data": json.dumps(merged, sort_keys=True)},
+        {
+            "vendor_name": VENDOR_KEY,
+            "data": data if field == EXTENSIONS_FIELD else json.loads(data),
+        },
     ]
     return out
 

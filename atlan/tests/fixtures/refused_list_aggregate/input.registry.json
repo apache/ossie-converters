@@ -1,0 +1,48 @@
+{
+ "id": "metric_synth_item_names_by_category",
+ "kind": "metric",
+ "app": "metric",
+ "name": "item_names_by_category",
+ "display_name": "Item Names By Category",
+ "description": "Item names and counts per category",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:item_names_by_category",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "item_names_by_category",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [],
+   "grain": "category",
+   "population": "Current items",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "SELECT I_CATEGORY, ARRAY_AGG(I_PRODUCT_NAME) AS names, COUNT(*) AS n FROM TPCDS.PUBLIC.ITEM WHERE I_REC_END_DATE IS NULL GROUP BY I_CATEGORY",
+   "source": {
+    "sql": null,
+    "table": "TPCDS.PUBLIC.ITEM",
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.ITEM",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}

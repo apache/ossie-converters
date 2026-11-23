@@ -25,11 +25,12 @@ Usage:
 """
 
 import re
+import reprlib
 import warnings
 
 import yaml
-from sqlglot import exp, parse_one, tokenize
-from sqlglot.errors import ParseError, TokenError
+from sqlglot import exp, parse, parse_one, tokenize
+from sqlglot.errors import ErrorLevel, ParseError, SqlglotError, TokenError
 from sqlglot.tokens import TokenType
 
 
@@ -456,10 +457,8 @@ def _convert_relationship(rel):
 def _extract_expression(expression, field_name):
     """Selects the best dialect expression for Snowflake.
 
-    Preference order: SNOWFLAKE, then ANSI_SQL, then OSSIE_SQL_2026 (the last two
-    are ANSI-SQL-compatible fallbacks). Returns the expression string, or None if
-    only unsupported dialects are present (the field should be skipped). Raises
-    OssieConversionError if the expression or dialects list is missing entirely.
+    Prefer SNOWFLAKE, ANSI_SQL, and tagged OSSIE_SQL_2026 in that order, then
+    translate a BIGQUERY alternative. Return None when no usable dialect exists.
     """
     if expression is None or not isinstance(expression, dict):
         raise OssieConversionError(
@@ -482,6 +481,7 @@ def _extract_expression(expression, field_name):
     ansi_expr = None
     # OSSIE_SQL_2026 is ANSI-SQL-compatible; treated as an ANSI_SQL-equivalent fallback.
     ossie_sql_expr = None
+    bigquery_expr = None
 
     for d in dialects:
         dialect_name = (d.get("dialect") or "").upper()
@@ -491,6 +491,8 @@ def _extract_expression(expression, field_name):
             ansi_expr = d.get("expression")
         elif dialect_name == "OSSIE_SQL_2026":
             ossie_sql_expr = d.get("expression")
+        elif dialect_name == "BIGQUERY":
+            bigquery_expr = d.get("expression")
 
     if snowflake_expr is not None:
         return snowflake_expr
@@ -498,14 +500,49 @@ def _extract_expression(expression, field_name):
         return ansi_expr
     if ossie_sql_expr is not None:
         return ossie_sql_expr
+    if bigquery_expr is not None:
+        try:
+            translated = _translate_bigquery_expression(bigquery_expr)
+        except (SqlglotError, ValueError) as error:
+            warnings.warn(
+                f"Skipping field/metric '{field_name}': "
+                f"could not translate BIGQUERY SQL to Snowflake "
+                f"({reprlib.repr(bigquery_expr)}): {error}",
+                stacklevel=2,
+            )
+            return None
+        warnings.warn(
+            f"Translated field/metric '{field_name}' from BIGQUERY to SNOWFLAKE; "
+            "SQL translation can change results, including cast failures and NULL "
+            "handling. Review the generated expression.",
+            stacklevel=2,
+        )
+        return translated
 
     dialect_names = [d.get("dialect", "") for d in dialects]
     warnings.warn(
         f"Skipping field/metric '{field_name}': no Snowflake-compatible expression "
         f"(has dialects: {', '.join(dialect_names)}; requires SNOWFLAKE, ANSI_SQL, "
-        f"or OSSIE_SQL_2026)"
+        f"OSSIE_SQL_2026, or translatable BIGQUERY SQL)",
+        stacklevel=2,
     )
     return None
+
+
+def _translate_bigquery_expression(sql):
+    if not isinstance(sql, str):
+        raise ValueError("expected SQL text")
+    statements = parse(sql, read="bigquery")
+    if len(statements) != 1 or statements[0] is None:
+        raise ValueError("expected a single SQL expression")
+    tree = statements[0]
+    if tree.find(exp.Query, exp.Command, exp.DDL, exp.DML):
+        raise ValueError("expected a scalar or aggregate expression")
+    # SQLGlot can render unrecognized functions verbatim across dialects.
+    unknown = tree.find(exp.Anonymous)
+    if unknown is not None:
+        raise ValueError(f"unsupported function '{unknown.name}'")
+    return tree.sql(dialect="snowflake", unsupported_level=ErrorLevel.RAISE)
 
 
 def _normalize_identifier(identifier):
@@ -613,7 +650,7 @@ def _extract_synonyms(ai_context):
 def _warn_dropped_fields(source, context, extra_dropped=None):
     """Warns about Ossie fields that have no Snowflake counterpart and are dropped.
 
-    Checks for universally-dropped fields (custom_extensions, label, version).
+    Checks for universally-dropped fields (nonportable_extensions, label, version).
     Callers handle ai_context warnings themselves since consumption logic varies.
 
     Args:
@@ -624,8 +661,8 @@ def _warn_dropped_fields(source, context, extra_dropped=None):
     """
     dropped = list(extra_dropped) if extra_dropped else []
 
-    if source.get("custom_extensions"):
-        dropped.append("custom_extensions")
+    if source.get("nonportable_extensions"):
+        dropped.append("nonportable_extensions")
 
     if source.get("version"):
         dropped.append("version")

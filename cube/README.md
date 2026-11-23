@@ -36,7 +36,7 @@ file at any depth, several per file, and original file paths are preserved throu
 a round trip.
 
 - **Import** (`ossie-cube import`): Cube files -> Ossie. Cube features Ossie has
-  no native field for are preserved in `custom_extensions[CUBE]`, so
+  no native field for are preserved in `nonportable_extensions[CUBE]`, so
   **Cube -> Ossie -> Cube is lossless**.
 - **Export** (`ossie-cube export`): Ossie -> Cube files. Ossie features with no
   Cube slot are parked under `meta.ossie` rather than dropped -- Cube has a `meta`
@@ -152,7 +152,7 @@ to **import** (Cube -> Ossie) or **export** (Ossie -> Cube).
 | — | `sub_query: true` dimension | The sql references a *measure* through a correlated subquery, which an Ossie field expression has no form for. Emitting the flattened reference claimed a column no dataset has — text that reads as valid SQL and computes nothing anywhere — so the dimension is **parked whole** with a `PARKED_IN_META` issue (the same protocol `switch` dimensions use) and restored verbatim at its position. The aggregate itself still reaches the model: the referenced measure is hoisted as a metric like any other. |
 | `metric.datatype` | `meta.ossie.datatype` | Cube has no field for a measure's result type. Import infers one for the count family (whose result type does not depend on the operand) and reads a parked one otherwise, so a `Decimal` sum survives. |
 | several relationships between the same two datasets | — | **Refused.** A cube's `joins` are keyed by target, so Cube holds one join per target; emitting two does not fail but silently keeps the last, and every query through the lost relationship then joins on the surviving predicate. Model the second path as its own dataset. |
-| relationship `custom_extensions` | cube `meta.ossie.join_extensions` | A Cube join entry takes only name/sql/relationship, so a relationship's foreign-vendor extensions ride on the declaring cube keyed by join target. |
+| relationship `nonportable_extensions` | cube `meta.ossie.join_extensions` | A Cube join entry takes only name/sql/relationship, so a relationship's foreign-vendor extensions ride on the declaring cube keyed by join target. |
 | — | `type: geo` dimension | An Ossie field holds one expression and a geo dimension has two, so it **splits** into `<name>_latitude` / `<name>_longitude` (`Float`). Reconstruction data rides on the latitude half. See [Geo dimensions](#geo-dimensions). |
 | relationship | `joins[]` on a cube | `many_to_one` on cube A -> `from: A`(many), `to: B`(one). `one_to_many` is flipped so Ossie's `from` is the many side; the declared side and type are stashed so export restores the original. |
 | `from_columns` / `to_columns` | join `sql` | Only an AND-chain of equalities mapping to **physical columns of that dataset** converts. `{CUBE}.user_id` is already one; `{CUBE.user_key}` names a *member*, so it resolves to the column that member reads (`user_id`), following a chain of member references to its end with cycle detection. Everything else preserves the whole join verbatim in the stash rather than describing it wrongly: a member reading an expression (`CONCAT(...)`), a `case`/`switch` dimension (which reads no column at all), an alias belonging to another cube (`{users}.region_id`), or a clause that is not a two-column equality. |
@@ -171,8 +171,8 @@ to **import** (Cube -> Ossie) or **export** (Ossie -> Cube).
 | Cube-only measure keys (`format`, `drill_members`, `public`, …) | flat stash entries | The same protocol dimensions use. Import used to stash a *copy of the whole measure* whenever any extra key was present, which duplicated the `sql`/`type`/`filters` the expression already carries; now only the keys the expression cannot carry ride along. |
 | `metric.datatype` | — | Import emits `Integer` for the count family, whose result type Cube does know, and reads a parked one otherwise. |
 | `metric.description` / `ai_context` | measure `description` / `meta.ai_context` | |
-| `custom_extensions[CUBE]` | everything Cube-only | Import stashes; export restores -- keeping `Cube -> Ossie -> Cube` lossless. |
-| foreign-vendor `custom_extensions` | `meta.ossie.custom_extensions` | Parked so a multi-vendor Ossie model survives the round trip. |
+| `nonportable_extensions[CUBE]` | everything Cube-only | Import stashes; export restores -- keeping `Cube -> Ossie -> Cube` lossless. |
+| foreign-vendor `nonportable_extensions` | `meta.ossie.nonportable_extensions` | Parked so a multi-vendor Ossie model survives the round trip. |
 
 **Stashed on import** (and restored on export): the views verbatim (minus the
 natively mapped description/AI context) -- unless the sole view is exactly the one
@@ -238,6 +238,12 @@ Export uses the chosen expression's grammar to locate aggregates and resolve nat
 quoted references. A composite metric's aggregates stay on the datasets they read,
 so Cube can apply its per-cube fan-out correction. Literals, comments and window
 frames are preserved during this analysis.
+
+For portable `DATEADD(part, amount, date)` and `DATEDIFF(part, start, end)`,
+qualification keeps the date part as a keyword and qualifies the operands. For
+example, `DATEDIFF(day, opened_at, day)` becomes
+`DATEDIFF(day, {CUBE}.opened_at, {CUBE}.day)`: the last `day` is a column.
+Native expressions retain their chosen dialect's argument order.
 
 Cube holds one `sql` per member, so an expression offering **several** dialects cannot
 keep its alternatives natively — the whole expression object is parked and restored, since
@@ -330,7 +336,7 @@ the spoke on the other side with nothing. Pass `--strict-fanout` to refuse inste
 mirroring Cube's own refusal.
 
 The issue is reported to the caller, not written into the Ossie model: the spec has
-no additivity declaration to write it into (see below), and a `custom_extensions`
+no additivity declaration to write it into (see below), and a `nonportable_extensions`
 entry would only give every other converter something to warn about and discard.
 
 Because a bare `count` maps through the primary key, a cube carrying one **must**
@@ -389,7 +395,7 @@ One documented normalization follows: after a round trip such a metric names the
 ## View projection
 
 The import above is a round trip: every cube member becomes an Ossie field or metric,
-and view curation rides in `custom_extensions`. Publishing a view to a tool whose users
+and view curation rides in `nonportable_extensions`. Publishing a view to a tool whose users
 should see what Cube users see needs the opposite boundary, which
 `convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True)` (CLI:
 `--project`) provides. It returns `(ossie_yaml, resolved_source, IssueLog)`, where
@@ -471,7 +477,7 @@ Ossie is a hub, so the useful question is not only whether `Cube → Ossie → C
 round-trips but whether the Ossie model then reaches the other spokes. Two things
 matter in practice.
 
-**Keep Cube-only detail out of `custom_extensions`.** Converters that do not read
+**Keep Cube-only detail out of `nonportable_extensions`.** Converters that do not read
 foreign extensions warn about and discard every one, so anything placed there is
 noise to them. This converter therefore stashes only what is genuinely Cube-specific
 — segments, pre-aggregations, hierarchies, view curation, geo reconstruction, and
@@ -559,7 +565,7 @@ polaris      --                       Java converter, needs Maven
 salesforce   --                       Java converter, needs Maven
 ```
 
-`foreign` counts warnings that name a `custom_extensions` vendor — the cost this
+`foreign` counts warnings that name a `nonportable_extensions` vendor — the cost this
 converter imposes on the others by stashing, and the number to watch when deciding
 whether something belongs in a stash at all. The dbt `FAIL` is unrelated to this
 converter: its CLI crashes on every input, including this repo's own examples
@@ -619,7 +625,7 @@ invalid) when an input breaks one of these:
 - two cubes, two views, or two derived metric names collide;
 - a dimension has an unknown `type`, or a `geo` dimension is missing
   `latitude.sql` / `longitude.sql`;
-- the model carries foreign-vendor `custom_extensions` but no view is mapped, so
+- the model carries foreign-vendor `nonportable_extensions` but no view is mapped, so
   there is nowhere to park them (re-import with `--view <name>`). The model's own
   name, description and AI context are carried on a cube in this case; foreign
   extensions are not, because import restores those only from the mapped view --

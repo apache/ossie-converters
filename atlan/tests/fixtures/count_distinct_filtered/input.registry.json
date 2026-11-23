@@ -1,0 +1,50 @@
+{
+ "id": "metric_synth_book_manufacturer_count",
+ "kind": "metric",
+ "app": "metric",
+ "name": "book_manufacturer_count",
+ "display_name": "Book Manufacturer Count",
+ "description": "Distinct manufacturers of items in the Books category, excluding one brand family",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "synthetic:book_manufacturer_count",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "count_distinct"
+   },
+   "output": {
+    "alias": "book_manufacturer_count",
+    "datatype": "integer"
+   },
+   "joins": [],
+   "dimensions": [],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [],
+   "exclusions": [
+    "brands containing 'importo'"
+   ],
+   "grain": "one row per distinct manufacturer",
+   "population": "Items in the Books category",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "COUNT(DISTINCT I_MANUFACT_ID)",
+   "source": {
+    "sql": "SELECT * FROM TPCDS.PUBLIC.ITEM WHERE I_CATEGORY = 'Books' AND NOT I_BRAND LIKE '%importo%'",
+    "table": null,
+    "alias": "m",
+    "entity": "TPCDS.PUBLIC.ITEM",
+    "parameters": []
+   }
+  },
+  "validation_warnings": []
+ }
+}
