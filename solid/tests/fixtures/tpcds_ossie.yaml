@@ -18,7 +18,7 @@
 # Expected output of `ossie-solid import -i tpcds_solid.yaml`. Regenerate with:
 #   ossie-solid import -i tests/fixtures/tpcds_solid.yaml -o tests/fixtures/tpcds_ossie.yaml
 # then re-add this header.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: tpcds_retail_model
 description: 'TPC-DS retail semantic model for sales and customer analytics. Supports time-based
 
@@ -61,9 +61,12 @@ datasets:
       synonyms:
       - sale date
       - transaction date
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: ss_item_sk
     expression:
       dialects:
@@ -77,9 +80,12 @@ datasets:
       synonyms:
       - product
       - item
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: ss_ticket_number
     expression:
       dialects:
@@ -89,9 +95,12 @@ datasets:
     datatype: Integer
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: ss_customer_sk
     expression:
       dialects:
@@ -105,9 +114,12 @@ datasets:
       synonyms:
       - customer
       - buyer
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: ss_store_sk
     expression:
       dialects:
@@ -121,9 +133,12 @@ datasets:
       synonyms:
       - store
       - location
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: ss_sold_at
     expression:
       dialects:
@@ -133,9 +148,12 @@ datasets:
     datatype: DateTime
     dimension:
       is_time: true
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TIMESTAMP_NTZ", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TIMESTAMP_NTZ
+        role: dimension
   - name: ss_quantity
     expression:
       dialects:
@@ -147,9 +165,12 @@ datasets:
       synonyms:
       - units sold
       - quantity
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "fact"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: fact
   - name: ss_sales_price
     expression:
       dialects:
@@ -162,9 +183,12 @@ datasets:
       synonyms:
       - unit price
       - price
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
+      data:
+        _v: 1
+        type: NUMBER(7,2)
+        role: fact
   - name: ss_ext_sales_price
     expression:
       dialects:
@@ -176,9 +200,12 @@ datasets:
       synonyms:
       - total price
       - line total
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
+      data:
+        _v: 1
+        type: NUMBER(7,2)
+        role: fact
   - name: ss_net_profit
     expression:
       dialects:
@@ -190,9 +217,12 @@ datasets:
       synonyms:
       - profit
       - margin
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
+      data:
+        _v: 1
+        type: NUMBER(7,2)
+        role: fact
   - name: ss_discount_pct
     expression:
       dialects:
@@ -202,12 +232,19 @@ datasets:
     ai_context:
       synonyms:
       - discount rate
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "role": "metric"}'
-  custom_extensions:
+      data:
+        _v: 1
+        role: metric
+  nonportable_extensions:
   - vendor_name: SOLID
-    data: '{"_v": 1, "quality_rank": "high", "indexes": ["ss_sold_date_sk", "ss_customer_sk"]}'
+    data:
+      _v: 1
+      quality_rank: high
+      indexes:
+      - ss_sold_date_sk
+      - ss_customer_sk
 - name: date_dim
   source: tpcds.public.date_dim
   primary_key:
@@ -228,9 +265,12 @@ datasets:
     datatype: Integer
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: d_date
     expression:
       dialects:
@@ -244,9 +284,12 @@ datasets:
       synonyms:
       - date
       - day
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "DATE", "role": "dimension"}'
+      data:
+        _v: 1
+        type: DATE
+        role: dimension
   - name: d_year
     expression:
       dialects:
@@ -259,10 +302,16 @@ datasets:
     ai_context:
       synonyms:
       - year
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension", "sample_values": ["2022", "2023",
-        "2024"]}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
+        sample_values:
+        - '2022'
+        - '2023'
+        - '2024'
   - name: d_quarter_name
     expression:
       dialects:
@@ -276,9 +325,15 @@ datasets:
       synonyms:
       - quarter
       - fiscal quarter
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension", "sample_values": ["2024Q1", "2024Q2"]}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
+        sample_values:
+        - 2024Q1
+        - 2024Q2
   - name: d_month_name
     expression:
       dialects:
@@ -291,12 +346,17 @@ datasets:
     ai_context:
       synonyms:
       - month
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
-  custom_extensions:
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
+  nonportable_extensions:
   - vendor_name: SOLID
-    data: '{"_v": 1, "quality_rank": "high"}'
+    data:
+      _v: 1
+      quality_rank: high
 - name: customer
   source: tpcds.public.customer
   primary_key:
@@ -317,9 +377,12 @@ datasets:
     datatype: Integer
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: c_customer_id
     expression:
       dialects:
@@ -333,9 +396,12 @@ datasets:
       synonyms:
       - customer ID
       - customer number
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: c_first_name
     expression:
       dialects:
@@ -345,9 +411,12 @@ datasets:
     datatype: String
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: c_last_name
     expression:
       dialects:
@@ -357,9 +426,12 @@ datasets:
     datatype: String
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: c_email_address
     expression:
       dialects:
@@ -374,9 +446,12 @@ datasets:
       synonyms:
       - email
       - contact
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: c_preferences
     expression:
       dialects:
@@ -386,12 +461,17 @@ datasets:
     datatype: Opaque
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "VARIANT", "role": "dimension"}'
-  custom_extensions:
+      data:
+        _v: 1
+        type: VARIANT
+        role: dimension
+  nonportable_extensions:
   - vendor_name: SOLID
-    data: '{"_v": 1, "quality_rank": "mediocre"}'
+    data:
+      _v: 1
+      quality_rank: mediocre
 - name: item
   source: tpcds.public.item
   primary_key:
@@ -412,9 +492,12 @@ datasets:
     datatype: Integer
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: i_item_id
     expression:
       dialects:
@@ -429,9 +512,12 @@ datasets:
       - item ID
       - product ID
       - SKU
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: i_item_desc
     expression:
       dialects:
@@ -445,9 +531,12 @@ datasets:
       synonyms:
       - product description
       - item name
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: i_brand
     expression:
       dialects:
@@ -461,9 +550,12 @@ datasets:
       synonyms:
       - brand
       - manufacturer
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: i_category
     expression:
       dialects:
@@ -477,9 +569,16 @@ datasets:
       synonyms:
       - product category
       - department
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension", "sample_values": ["Electronics", "Home", "Sports"]}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
+        sample_values:
+        - Electronics
+        - Home
+        - Sports
   - name: i_current_price
     expression:
       dialects:
@@ -491,12 +590,17 @@ datasets:
       synonyms:
       - price
       - list price
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(7,2)", "role": "fact"}'
-  custom_extensions:
+      data:
+        _v: 1
+        type: NUMBER(7,2)
+        role: fact
+  nonportable_extensions:
   - vendor_name: SOLID
-    data: '{"_v": 1, "quality_rank": "high"}'
+    data:
+      _v: 1
+      quality_rank: high
 - name: store
   source: tpcds.public.store
   primary_key:
@@ -517,9 +621,12 @@ datasets:
     datatype: Integer
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "dimension"}'
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: dimension
   - name: s_store_id
     expression:
       dialects:
@@ -533,9 +640,12 @@ datasets:
       synonyms:
       - store ID
       - store number
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: s_store_name
     expression:
       dialects:
@@ -549,9 +659,12 @@ datasets:
       synonyms:
       - store name
       - location name
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: s_city
     expression:
       dialects:
@@ -565,9 +678,12 @@ datasets:
       synonyms:
       - city
       - location
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension"}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
   - name: s_state
     expression:
       dialects:
@@ -581,9 +697,16 @@ datasets:
       synonyms:
       - state
       - region
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "TEXT", "role": "dimension", "sample_values": ["CA", "NY", "TX"]}'
+      data:
+        _v: 1
+        type: TEXT
+        role: dimension
+        sample_values:
+        - CA
+        - NY
+        - TX
   - name: s_is_franchise
     expression:
       dialects:
@@ -593,9 +716,12 @@ datasets:
     datatype: Boolean
     dimension:
       is_time: false
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "BOOLEAN", "role": "dimension"}'
+      data:
+        _v: 1
+        type: BOOLEAN
+        role: dimension
   - name: s_number_employees
     expression:
       dialects:
@@ -607,12 +733,17 @@ datasets:
       synonyms:
       - employee count
       - staff size
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SOLID
-      data: '{"_v": 1, "type": "NUMBER(38,0)", "role": "fact"}'
-  custom_extensions:
+      data:
+        _v: 1
+        type: NUMBER(38,0)
+        role: fact
+  nonportable_extensions:
   - vendor_name: SOLID
-    data: '{"_v": 1, "quality_rank": "high"}'
+    data:
+      _v: 1
+      quality_rank: high
 relationships:
 - name: store_sales_to_date_dim
   from: store_sales
@@ -621,9 +752,11 @@ relationships:
   - ss_sold_date_sk
   to_columns:
   - d_date_sk
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SOLID
-    data: '{"_v": 1, "flipped": true}'
+    data:
+      _v: 1
+      flipped: true
 - name: store_sales_to_customer
   from: store_sales
   to: customer
@@ -679,9 +812,12 @@ metrics:
     - dialect: SNOWFLAKE
       expression: COUNT(*)
   description: Row count, used as a denominator in coverage checks.
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SOLID
-    data: '{"_v": 1, "tables": ["tpcds.public.store_sales"]}'
+    data:
+      _v: 1
+      tables:
+      - tpcds.public.store_sales
 - name: CUSTOMER_LIFETIME_VALUE
   expression:
     dialects:
@@ -694,25 +830,51 @@ metrics:
     synonyms:
     - CLV
     - LTV
-custom_extensions:
+nonportable_extensions:
 - vendor_name: SOLID
-  data: '{"_v": 1, "dialect": "SNOWFLAKE", "model_llm_description": "TPC-DS retail semantic model for
-    sales and customer analytics. Supports time-based\nanalysis, customer segmentation, product performance,
-    and store operations metrics.", "model_description": "Retail analytics for the TPC-DS benchmark schema:
-    store sales transactions joined\nto their date, customer, item, and store dimensions.", "custom_instructions":
-    "- Always join through @<assetlink id=''11111111-1111-4111-8111-111111111111'' type=''table'' name=''public.store_sales''>
-    rather than aggregating a dimension on its own.\n- Revenue means @<assetlink id=''22222222-2222-4222-8222-222222222222''
-    type=''column'' name=''store_sales.ss_ext_sales_price''>, not ss_sales_price, which is a per-unit
-    figure.\n- Exclude rows where ss_sold_date_sk is null; those are unshipped orders.", "example_queries":
-    [{"name": "Monthly revenue and profit", "description": "Revenue and profit by calendar month for the
-    trailing twelve months.\n", "sql": "SELECT d.d_year,\n       d.d_month_name,\n       SUM(ss.ss_ext_sales_price)
-    AS revenue,\n       SUM(ss.ss_net_profit)      AS profit\nFROM tpcds.public.store_sales ss\nJOIN tpcds.public.date_dim
-    d ON d.d_date_sk = ss.ss_sold_date_sk\nWHERE d.d_date >= DATEADD(month, -12, CURRENT_DATE())\nGROUP
-    BY 1, 2\nORDER BY 1, 2\n"}, {"name": "Sales per employee by state", "description": "Store productivity,
-    ranked within each state.\n", "sql": "SELECT s.s_state,\n       s.s_store_name,\n       SUM(ss.ss_ext_sales_price)
-    / NULLIF(MAX(s.s_number_employees), 0) AS sales_per_employee\nFROM tpcds.public.store_sales ss\nJOIN
-    tpcds.public.store s ON s.s_store_sk = ss.ss_store_sk\nGROUP BY 1, 2\nORDER BY 1, 3 DESC\n"}], "benchmark_questions":
-    [{"question": "What was total revenue in 2024Q1?", "is_enabled": true, "expected_sql": "SELECT SUM(ss.ss_ext_sales_price)
-    AS revenue\nFROM tpcds.public.store_sales ss\nJOIN tpcds.public.date_dim d ON d.d_date_sk = ss.ss_sold_date_sk\nWHERE
-    d.d_quarter_name = ''2024Q1''\n"}, {"question": "Which brand had the highest revenue in the Electronics
-    category?", "is_enabled": false}]}'
+  data:
+    _v: 1
+    dialect: SNOWFLAKE
+    model_llm_description: 'TPC-DS retail semantic model for sales and customer analytics. Supports time-based
+
+      analysis, customer segmentation, product performance, and store operations metrics.'
+    model_description: 'Retail analytics for the TPC-DS benchmark schema: store sales transactions joined
+
+      to their date, customer, item, and store dimensions.'
+    custom_instructions: '- Always join through @<assetlink id=''11111111-1111-4111-8111-111111111111''
+      type=''table'' name=''public.store_sales''> rather than aggregating a dimension on its own.
+
+      - Revenue means @<assetlink id=''22222222-2222-4222-8222-222222222222'' type=''column'' name=''store_sales.ss_ext_sales_price''>,
+      not ss_sales_price, which is a per-unit figure.
+
+      - Exclude rows where ss_sold_date_sk is null; those are unshipped orders.'
+    example_queries:
+    - name: Monthly revenue and profit
+      description: 'Revenue and profit by calendar month for the trailing twelve months.
+
+        '
+      sql: "SELECT d.d_year,\n       d.d_month_name,\n       SUM(ss.ss_ext_sales_price) AS revenue,\n\
+        \       SUM(ss.ss_net_profit)      AS profit\nFROM tpcds.public.store_sales ss\nJOIN tpcds.public.date_dim\
+        \ d ON d.d_date_sk = ss.ss_sold_date_sk\nWHERE d.d_date >= DATEADD(month, -12, CURRENT_DATE())\n\
+        GROUP BY 1, 2\nORDER BY 1, 2\n"
+    - name: Sales per employee by state
+      description: 'Store productivity, ranked within each state.
+
+        '
+      sql: "SELECT s.s_state,\n       s.s_store_name,\n       SUM(ss.ss_ext_sales_price) / NULLIF(MAX(s.s_number_employees),\
+        \ 0) AS sales_per_employee\nFROM tpcds.public.store_sales ss\nJOIN tpcds.public.store s ON s.s_store_sk\
+        \ = ss.ss_store_sk\nGROUP BY 1, 2\nORDER BY 1, 3 DESC\n"
+    benchmark_questions:
+    - question: What was total revenue in 2024Q1?
+      is_enabled: true
+      expected_sql: 'SELECT SUM(ss.ss_ext_sales_price) AS revenue
+
+        FROM tpcds.public.store_sales ss
+
+        JOIN tpcds.public.date_dim d ON d.d_date_sk = ss.ss_sold_date_sk
+
+        WHERE d.d_quarter_name = ''2024Q1''
+
+        '
+    - question: Which brand had the highest revenue in the Electronics category?
+      is_enabled: false

@@ -27,7 +27,7 @@ from ossie_solid.cli import main
 def test_import_writes_an_ossie_model_to_a_file(tmp_path):
     out = tmp_path / "model.yaml"
     assert main(["import", "-i", str(FIXTURES / "tpcds_solid.yaml"), "-o", str(out)]) == 0
-    assert yaml.safe_load(out.read_text())["version"] == "0.2.0.dev0"
+    assert yaml.safe_load(out.read_text())["version"] == "0.3.0.dev0"
 
 
 def test_import_writes_to_stdout_without_an_output_path(capsys):
@@ -77,7 +77,7 @@ def test_a_conversion_error_exits_non_zero_with_a_message(capsys, tmp_path):
         # Valid YAML in the wrong shape: a scalar where a list or a mapping belongs.
         ("import", ("semantic_model:\n  name: m\n  tables:\n    - name: db.s.t\n"
                     "      dimensions: true\n")),
-        ("export", ("version: 0.2.0.dev0\nname: m\ndatasets:\n  - name: t\n"
+        ("export", ("version: 0.3.0.dev0\nname: m\ndatasets:\n  - name: t\n"
                     "    source: db.s.t\n    fields:\n      - name: a\n"
                     "        expression: a\n")),
     ],
@@ -97,7 +97,7 @@ def test_a_malformed_model_exits_non_zero_without_a_traceback(
 def test_input_nested_too_deeply_exits_non_zero_without_a_traceback(
         command, capsys, tmp_path):
     deep = tmp_path / "deep.yaml"
-    deep.write_text("version: 0.2.0.dev0\nname: m\ndatasets: " + "[" * 5000 + "]" * 5000)
+    deep.write_text("version: 0.3.0.dev0\nname: m\ndatasets: " + "[" * 5000 + "]" * 5000)
     assert main([command, "-i", str(deep)]) == 1
     err = capsys.readouterr().err
     assert err.startswith("Error: ")
@@ -106,12 +106,13 @@ def test_input_nested_too_deeply_exits_non_zero_without_a_traceback(
 
 def test_a_stash_nested_too_deeply_exits_non_zero_without_a_traceback(capsys, tmp_path):
     deep = tmp_path / "deep.yaml"
-    deep.write_text(yaml.safe_dump({
-        "version": "0.2.0.dev0", "name": "m",
-        "custom_extensions": [{"vendor_name": "SOLID", "data": "[" * 200000}],
-        "datasets": [{"name": "t", "source": "db.s.t", "fields": [
-            {"name": "a", "expression": {"sql": "a"}}]}],
-    }))
+    deep.write_text(
+        "version: 0.3.0.dev0\nname: m\n"
+        "nonportable_extensions:\n  - vendor_name: SOLID\n    data:\n"
+        "      x: " + "[" * 5000 + "]" * 5000 + "\n"
+        "datasets:\n  - name: t\n    source: db.s.t\n"
+        "    fields:\n      - name: a\n        expression:\n          sql: a\n"
+    )
     assert main(["export", "-i", str(deep)]) == 1
     err = capsys.readouterr().err
     assert err.startswith("Error: ")

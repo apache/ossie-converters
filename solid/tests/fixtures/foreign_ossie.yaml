@@ -26,7 +26,7 @@
 #
 # What makes it "foreign", and what each construct exercises:
 #
-#   - no `custom_extensions[SOLID]` stash anywhere, so every fallback path is used
+#   - no `nonportable_extensions[SOLID]` stash anywhere, so every fallback path is used
 #   - no `dimension` block anywhere, so the fact/dimension split falls back to
 #     Solid's own data-type rule
 #   - `datatype` omitted on most fields (it is optional in the spec, and the other
@@ -39,17 +39,18 @@
 #   - `order_count`: `COUNT(*)`, which references no column at all
 #   - `revenue`: a metric `datatype`
 #   - `store_sales_to_date`: a relationship annotation
-#   - foreign `custom_extensions` at the model, dataset, field and metric levels
-version: "0.2.0.dev0"
+#   - foreign `nonportable_extensions` at the model, dataset, field and metric levels
+version: "0.3.0.dev0"
 name: foreign_retail_model
 description: Retail sales, as another vendor's converter would emit it.
 ai_context:
   instructions: Prefer net sales over gross for revenue questions.
   examples:
     - What were total sales last quarter?
-custom_extensions:
+nonportable_extensions:
   - vendor_name: DBT
-    data: '{"package": "jaffle_shop"}'
+    data:
+      package: jaffle_shop
 datasets:
   - name: store_sales
     source: tpcds.public.store_sales
@@ -59,9 +60,10 @@ datasets:
       - ss_ticket_number
     unique_keys:
       - - ss_ticket_number
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DATABRICKS
-        data: '{"table_type": "MANAGED"}'
+        data:
+          table_type: MANAGED
     fields:
       - name: ss_item_sk
         expression:
@@ -86,9 +88,10 @@ datasets:
           dialects:
             - dialect: ANSI_SQL
               expression: ss_ticket_number
-        custom_extensions:
+        nonportable_extensions:
           - vendor_name: DATABRICKS
-            data: '{"comment": "renamed for readability"}'
+            data:
+              comment: renamed for readability
       - name: ss_net_paid
         datatype: Decimal
         expression:
@@ -136,9 +139,10 @@ metrics:
       dialects:
         - dialect: ANSI_SQL
           expression: SUM(ss_net_paid)
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DBT
-        data: '{"agg": "sum"}'
+        data:
+          agg: sum
   # References no column at all.
   - name: order_count
     description: Number of tickets.

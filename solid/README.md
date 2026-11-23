@@ -24,7 +24,7 @@ semantic model and a [Solid](https://www.getsolid.ai/) semantic model YAML expor
 Solid connection required.
 
 - **Import** (`ossie-solid import`): Solid → Apache Ossie. Solid features Apache Ossie
-  has no native field for are preserved in `custom_extensions[SOLID]`, so a model Solid
+  has no native field for are preserved in `nonportable_extensions[SOLID]`, so a model Solid
   exported comes back unchanged from `Solid → Apache Ossie → Solid`. A model edited in
   Apache Ossie along the way is converted as edited, and anything that can't be carried
   back is reported as a warning.
@@ -39,10 +39,10 @@ layer version.
 On **export** (Apache Ossie → Solid), Apache Ossie constructs with no Solid slot —
 `unique_keys`, field `label`, computed fields, an explicit `dimension.is_time` the
 datatype does not imply, metric `datatype` and `ai_context.instructions`, relationship
-`ai_context`, foreign-vendor `custom_extensions`, model-level `ai_context.synonyms`,
+`ai_context`, foreign-vendor `nonportable_extensions`, model-level `ai_context.synonyms`,
 `ai_context.examples` below the model level, and any key outside the spec — are
 **dropped with a warning**. On **import** (Solid → Apache Ossie), Solid-only features are
-instead **preserved** in `custom_extensions[SOLID]`. So is a key this converter has no
+instead **preserved** in `nonportable_extensions[SOLID]`. So is a key this converter has no
 mapping for, such as one a later solid-server adds: it is carried unchanged and
 restored on export, with a warning, since an Apache Ossie consumer cannot see it. Where
 a stashed value stands in for an Apache Ossie field, export uses it only while that
@@ -168,7 +168,7 @@ For an older export from a warehouse Apache Ossie has no dialect for (Teradata,
 Starburst, Fabric, Athena, Vertica), inference can still be misled by a type name that
 warehouse shares with one of the three, so pass `--dialect ANSI_SQL` explicitly.
 
-The resolved dialect is recorded in `custom_extensions[SOLID]`, so an export reads
+The resolved dialect is recorded in `nonportable_extensions[SOLID]`, so an export reads
 expressions back in the dialect they were written in without being told again.
 
 On export, `--dialect` selects which expression dialect to *read*; without it the
@@ -206,7 +206,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 | `description` | `model_llm_description` | Import falls back to `business_context.model_description` when the model has no LLM description, and stashes both. An edit made in Apache Ossie replaces whichever one `description` was written from. |
 | `ai_context.instructions` | `business_context.custom_instructions` and the root `custom_instructions` list | Solid holds free text in `business_context` and, in its structured form, a list of titled entries, each enabled or not and optionally scoped by a condition and to catalog assets. Import renders the free text and then each enabled entry (title, condition, assets, content) into one text, resolving Solid's `@<assetlink …>` markup to the display names it carries, and stashes the originals, so an export restores both and the live catalog references. If the instructions were edited in Apache Ossie, the edited text is used instead, as free text. |
 | `ai_context.examples` | `business_context.business_questions` | |
-| `custom_extensions[SOLID]` | `business_context.model_description`, the `custom_instructions` entries, `version_number`, `source_system`, `target_system`, `model_llm_short_description`, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. Export writes `source_system` for a model not from Solid from its dialect; see [Dialect resolution](#dialect-resolution). |
+| `nonportable_extensions[SOLID]` | `business_context.model_description`, the `custom_instructions` entries, `version_number`, `source_system`, `target_system`, `model_llm_short_description`, `example_queries`, `benchmark_questions` | No Apache Ossie core equivalent. Export writes `source_system` for a model not from Solid from its dialect; see [Dialect resolution](#dialect-resolution). |
 
 ### Datasets
 
@@ -218,7 +218,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 | `ai_context.instructions` | `manual_description` | Solid's human-written annotation. |
 | `ai_context.synonyms` | `synonyms` | |
 | `primary_key` (array) | `primary_key` (scalar) | Solid joins a composite key with `", "` into one scalar; import splits it, export rejoins it. |
-| `custom_extensions[SOLID]` | `quality_rank`, `indexes` | No Apache Ossie core equivalent. Export emits `quality_rank` even when unknown, as Solid does. |
+| `nonportable_extensions[SOLID]` | `quality_rank`, `indexes` | No Apache Ossie core equivalent. Export emits `quality_rank` even when unknown, as Solid does. |
 
 ### Fields
 
@@ -231,7 +231,7 @@ Each row maps in both directions; the **Notes** flag where a behavior is specifi
 | `description` | `description` | |
 | `ai_context.instructions` | `manual_description` | |
 | `ai_context.synonyms` | `synonyms` | |
-| `custom_extensions[SOLID]` | `type` (raw), `sample_values`, role | The raw warehouse type is always kept, since the portable `datatype` is lossy; the role is described under [Dimensions and facts](#dimensions-and-facts). |
+| `nonportable_extensions[SOLID]` | `type` (raw), `sample_values`, role | The raw warehouse type is always kept, since the portable `datatype` is lossy; the role is described under [Dimensions and facts](#dimensions-and-facts). |
 
 ### Dimensions and facts
 
@@ -294,7 +294,7 @@ column the catalog has. A field renamed again in Apache Ossie keeps its new name
 | `from_columns` / `to_columns` | `join_keys.left` / `join_keys.right` | Positional; import rejects a length mismatch. |
 | `name` | — | Solid relationships are unnamed. Import generates `{from}_to_{to}`, suffixed if that collides. |
 | `ai_context` | — | A Solid relationship is a table pair and its join keys, with no free text. Export warns — except for the one-to-one note import itself writes, which is this converter's own marker and means nothing to Solid. |
-| `custom_extensions[SOLID]` | — | Records when import flipped a pair to put the many side on `from`, so an export restores Solid's left/right orientation. Relationships keep their list position in both directions. |
+| `nonportable_extensions[SOLID]` | — | Records when import flipped a pair to put the many side on `from`, so an export restores Solid's left/right orientation. Relationships keep their list position in both directions. |
 
 ### Metrics
 
@@ -307,7 +307,7 @@ column the catalog has. A field renamed again in Apache Ossie keeps its new name
 | `description` | `description` | |
 | `datatype` | — | Solid types a metric by evaluating its formula against the warehouse, so there is no slot for a declared result type. Export warns. |
 | `ai_context.synonyms` | `synonyms` | |
-| `custom_extensions[SOLID]` | `tables[]` | Stashed only when the qualified expression does not already name the same datasets — for a cross-table metric that reads a column more than one of its tables has, or one referencing no column at all (`COUNT(*)`). If the expression was edited in Apache Ossie to read a dataset the stash does not list, export takes the tables from the expression instead. |
+| `nonportable_extensions[SOLID]` | `tables[]` | Stashed only when the qualified expression does not already name the same datasets — for a cross-table metric that reads a column more than one of its tables has, or one referencing no column at all (`COUNT(*)`). If the expression was edited in Apache Ossie to read a dataset the stash does not list, export takes the tables from the expression instead. |
 
 ## Cardinality
 
@@ -474,7 +474,7 @@ It raises when:
 - an Apache Ossie document has no `version` (export), or a `semantic_model` key that
   is not a non-empty list of mappings — see [Spec versions](#spec-versions);
 - a value has the wrong YAML kind — a scalar where a list or mapping belongs, a list
-  item that is itself a list or mapping, or a `custom_extensions` entry that is not a
+  item that is itself a list or mapping, or a `nonportable_extensions` entry that is not a
   mapping with string `vendor_name` and `data`. A null is read as empty, since Solid
   writes an empty list as one;
 - a required part is missing: a Solid model's `tables`, an Apache Ossie model's
@@ -486,7 +486,7 @@ It raises when:
 - nothing convertible is left: every dataset's `source` is a SQL query, or no field
   has SQL Solid can run in the selected dialect (export);
 - `--dialect` names a dialect outside `ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS`,
-  `BIGQUERY`, or the recorded `custom_extensions[SOLID]` dialect is not one of them,
+  `BIGQUERY`, or the recorded `nonportable_extensions[SOLID]` dialect is not one of them,
   which only a hand-edited stash can produce (export).
 
 It warns and drops the one construct when:
@@ -503,20 +503,20 @@ It warns and drops the one construct when:
 
 ## Spec versions
 
-Output is always written as **`0.2.0.dev0`**, the current draft. On export, a document
-declaring `0.2.0.dev0` or **`0.1.1`** is read as such. A document declaring any other
-version is read as `0.2.0.dev0`, with a warning, rather than rejected, so a spec release
+Output is always written as **`0.3.0.dev0`**, the current draft. On export, a document
+declaring `0.3.0.dev0`, `0.2.0.dev0` or **`0.1.1`** is read as such. A document declaring any other
+version is read as `0.3.0.dev0`, with a warning, rather than rejected, so a spec release
 does not make every document fail; a real incompatibility still surfaces when the content
 is read.
 
 `0.1.1` is accepted because it is the only *released* spec version, so it is what models
-in the wild declare. It differs from `0.2.0.dev0` in one structural way: a `0.1.1`
-document wraps its model in a `semantic_model` list, where a `0.2.0.dev0` document puts
+in the wild declare. It differs from `0.3.0.dev0` in one structural way: a `0.1.1`
+document wraps its model in a `semantic_model` list, where a `0.3.0.dev0` document puts
 one model's properties directly at the root beside `version`. Export reads both layouts,
 warning when it meets the wrapper (early `0.2.0.dev0` snapshots used it too). The other
 differences are additive — `datatype` on `Field` and `Metric`, `BIGQUERY` and
 `OSSIE_SQL_2026` in the dialect enum, and a free-form `vendor_name` — and only the
-absence of `datatype` is visible to this converter; a `0.2.0.dev0` model that simply
+absence of `datatype` is visible to this converter; a `0.3.0.dev0` model that simply
 omits it — as most do — is handled the same way. Reading a `0.1.1` document warns,
 naming that gap.
 
@@ -551,7 +551,7 @@ a Databricks and a BigQuery model — and validates every converted document aga
 both read from the `ossie` submodule.
 
 `tests/test_cross_vendor.py` covers the case the round-trip tests cannot: an Apache Ossie
-model produced by *another vendor's* converter, which carries no `custom_extensions[SOLID]`
+model produced by *another vendor's* converter, which carries no `nonportable_extensions[SOLID]`
 stash, no `dimension` blocks, usually no `datatype`, and metrics written against bare
 column names. It sweeps every Apache Ossie document in the other converters' test data — YAML or
 JSON, at any depth under their test directories — asserting that each converts to a

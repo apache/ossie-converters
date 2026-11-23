@@ -108,20 +108,19 @@ def _mutations(document):
 
 
 def _stash_mutations(document):
-    """The same, inside each SOLID stash: its `data` is a JSON string, which the plain
-    sweep only ever replaces whole."""
+    """The same, inside each SOLID stash, including tagged date shapes."""
     for path in _paths(document):
-        if path[-1] != "custom_extensions" or not isinstance(_at(document, path), list):
+        if (path[-1] != "nonportable_extensions"
+                or not isinstance(_at(document, path), list)):
             continue
         for index, ext in enumerate(_at(document, path)):
             if not (isinstance(ext, dict) and ext.get("vendor_name") == "SOLID"):
                 continue
-            data = json.loads(ext["data"])
+            data = ext["data"]
             for inner in _paths(data):
                 for kind, value in STASH_REPLACEMENTS.items():
                     mutated = copy.deepcopy(document)
-                    _at(mutated, path)[index]["data"] = json.dumps(
-                        _replaced(data, inner, value))
+                    _at(mutated, path)[index]["data"] = _replaced(data, inner, value)
                     yield (f"{'.'.join(map(str, path))}[{index}].data:"
                            f"{'.'.join(map(str, inner))} := {kind}"), mutated
 
@@ -186,10 +185,10 @@ def test_the_sweep_reaches_every_part_of_both_documents(solid_document, ossie_do
         assert expected in solid_paths, expected
     for expected in [
         ("datasets", 0, "fields"),
-        ("datasets", 0, "custom_extensions"),
+        ("datasets", 0, "nonportable_extensions"),
         ("relationships", 0, "from_columns"),
         ("metrics", 0, "expression"),
-        ("custom_extensions", 0, "data"),
+        ("nonportable_extensions", 0, "data"),
     ]:
         assert expected in ossie_paths, expected
 
@@ -246,8 +245,8 @@ def test_non_finite_sample_values_are_stashed_as_strict_json():
         warnings.simplefilter("ignore")
         ossie = convert_solid_to_ossie(text)
         solid = convert_ossie_to_solid(ossie)
-    for ext in yaml.safe_load(ossie)["datasets"][0]["fields"][0]["custom_extensions"]:
-        json.loads(ext["data"], parse_constant=lambda name: pytest.fail(name))
+    for ext in yaml.safe_load(ossie)["datasets"][0]["fields"][0]["nonportable_extensions"]:
+        json.dumps(ext["data"], allow_nan=False)
     values = yaml.safe_load(solid)["semantic_model"]["tables"][0]["facts"][0][
         "sample_values"]
     assert math.isnan(values[0])

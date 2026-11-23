@@ -117,10 +117,10 @@ def field_of(model, dataset, field):
 
 
 def stash_of(obj):
-    """The SOLID custom_extensions payload on an object, or {} when absent."""
-    for ext in obj.get("custom_extensions") or []:
+    """The SOLID nonportable_extensions payload on an object, or {} when absent."""
+    for ext in obj.get("nonportable_extensions") or []:
         if ext["vendor_name"] == "SOLID":
-            data = json.loads(ext["data"])
+            data = dict(ext["data"])
             data.pop("_v", None)
             return data
     return {}

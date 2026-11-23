@@ -186,10 +186,10 @@ def test_a_generated_solid_export_round_trips_and_imports_valid(seed, assert_val
 
 
 def _without_stash(node):
-    """`node` with every SOLID custom_extensions entry removed, recursively."""
+    """`node` with every SOLID nonportable_extensions entry removed, recursively."""
     if isinstance(node, dict):
         return {k: _without_stash(v) for k, v in node.items()
-                if not (k == "custom_extensions" and all(
+                if not (k == "nonportable_extensions" and all(
                     e.get("vendor_name") == "SOLID" for e in v))}
     if isinstance(node, list):
         return [_without_stash(v) for v in node]

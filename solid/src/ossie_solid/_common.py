@@ -18,7 +18,7 @@
 """Shared helpers for the Apache Ossie <-> Solid semantic model converters.
 
 Both directions are pure offline YAML transforms. The cross-cutting concerns live
-here: version constants, the `custom_extensions` stash protocol, YAML I/O, the
+here: version constants, the `nonportable_extensions` stash protocol, YAML I/O, the
 Solid asset-link markup, and small identifier helpers.
 """
 
@@ -35,22 +35,22 @@ import yaml
 # NOTE: this spoke has no `apache-ossie` runtime dependency, so nothing updates the
 # constant automatically -- it MUST be bumped in lockstep with the `version` in
 # `core-spec/` whenever the spec version moves.
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
 # Spec versions this converter knows. A document declaring another is still read, as
 # OSSIE_VERSION, with a warning (see convert_ossie_to_solid). Output is always written as
 # OSSIE_VERSION.
 #
 # 0.1.1 is the only *released* spec version, so it is what models in the wild declare.
-# It differs from 0.2.0.dev0 in one structural way and a few additive ones. The
+# It differs from 0.3.0.dev0 in structural and additive ways. The
 # structural one is the document shape: 0.1.1 (and early 0.2.0.dev0 snapshots) wrap the
-# model in a `semantic_model` list, where 0.2.0.dev0 puts one model's properties at the
+# model in a `semantic_model` list, where 0.3.0.dev0 puts one model's properties at the
 # document root. convert_ossie_to_solid reads both shapes. The additive ones are
 # `datatype` on Field and Metric, `BIGQUERY` and `OSSIE_SQL_2026` in the dialect enum,
 # and a free-form `vendor_name`; of those only the absence of `datatype` is visible to
-# this converter, and it is handled the same way a 0.2.0.dev0 model that simply omits
+# this converter, and it is handled the same way a 0.3.0.dev0 model that simply omits
 # it is handled.
-READABLE_OSSIE_VERSIONS = ("0.2.0.dev0", "0.1.1")
+READABLE_OSSIE_VERSIONS = ("0.3.0.dev0", "0.2.0.dev0", "0.1.1")
 
 # Read-only spec versions whose omissions are worth naming when one is encountered.
 OSSIE_VERSION_NOTES = {
@@ -58,7 +58,7 @@ OSSIE_VERSION_NOTES = {
              "gets an empty Solid 'type'",
 }
 
-# Vendor id used for the `custom_extensions` stash.
+# Vendor id used for the `nonportable_extensions` stash.
 VENDOR = "SOLID"
 
 # Note import writes to a one-to-one relationship's `ai_context.instructions`, where
@@ -175,7 +175,7 @@ def carry_unknown_keys(obj, known, scope, label, format_name):
         one = len(carried) == 1
         warn(scope, f"{label}: {names} {'is' if one else 'are'} not part of {format_name} "
                     f"as this converter maps it; {'it was' if one else 'they were'} "
-                    f"carried unchanged in custom_extensions[SOLID], so a round trip "
+                    f"carried unchanged in nonportable_extensions[SOLID], so a round trip "
                     f"keeps {'it' if one else 'them'}, but an Apache Ossie consumer does "
                     f"not see {'it' if one else 'them'}")
     return carried
@@ -257,20 +257,22 @@ def dump_yaml(obj):
     )
 
 
-def custom_extensions(obj, what):
-    """The `custom_extensions` entries on an Apache Ossie object, checked for shape.
+def nonportable_extensions(obj, what):
+    """The `nonportable_extensions` entries on an Apache Ossie object, checked for shape.
 
-    Each entry must be a mapping whose `vendor_name` and `data` are strings, as the spec
-    requires; anything else raises rather than failing inside the stash reader.
+    Each entry must be a mapping whose `vendor_name` is a string and `data` is a
+    mapping (object), as the spec requires; anything else raises rather than failing
+    inside the stash reader.
     """
-    entries = as_list((obj or {}).get("custom_extensions"), f"{what}: custom_extensions")
+    entries = as_list(
+        (obj or {}).get("nonportable_extensions"), f"{what}: nonportable_extensions")
     for ext in entries:
         if not isinstance(ext, dict):
             raise ConversionError(
-                f"{what}: each custom_extensions entry must be a mapping, got "
+                f"{what}: each nonportable_extensions entry must be a mapping, got "
                 f"{type(ext).__name__}")
-        as_str(ext.get("vendor_name"), f"{what}: custom_extensions vendor_name")
-        as_str(ext.get("data"), f"{what}: custom_extensions data")
+        as_str(ext.get("vendor_name"), f"{what}: nonportable_extensions vendor_name")
+        as_mapping(ext.get("data"), f"{what}: nonportable_extensions data")
     return entries
 
 
@@ -288,7 +290,7 @@ def _json_default(value):
             return {_JSON_TAG: tag, "v": value.isoformat()}
     raise ConversionError(
         f"a value of type {type(value).__name__} cannot be carried in "
-        f"custom_extensions[SOLID]")
+        f"nonportable_extensions[SOLID]")
 
 
 def _tag_non_finite(value):
@@ -316,7 +318,7 @@ def _json_object_hook(data):
         return _JSON_TEMPORAL[tag].fromisoformat(data["v"])
     except (TypeError, ValueError) as e:
         raise ConversionError(
-            f"custom_extensions[SOLID] holds a malformed {tag}: {data['v']!r}") from e
+            f"nonportable_extensions[SOLID] holds a malformed {tag}: {data['v']!r}") from e
 
 
 def read_stash(obj, what="object"):
@@ -324,28 +326,27 @@ def read_stash(obj, what="object"):
 
     The `_v` version marker is stripped from the returned dict.
     """
-    for ext in custom_extensions(obj, what):
+    for ext in nonportable_extensions(obj, what):
         if ext.get("vendor_name") == VENDOR:
+            raw = ext.get("data") or {}
             try:
-                data = json.loads(ext.get("data") or "{}",
-                                  object_hook=_json_object_hook)
-            except ValueError as e:
+                blob = json.dumps(_tag_non_finite(raw), ensure_ascii=False,
+                                  allow_nan=False, default=_json_default)
+                data = json.loads(blob, object_hook=_json_object_hook)
+            except (TypeError, ValueError) as e:
                 raise ConversionError(
-                    f"{what}: SOLID custom_extensions data is not valid JSON: {e}") from e
+                    f"{what}: SOLID nonportable_extensions data is not valid JSON: {e}") from e
             except RecursionError as e:
                 raise ConversionError(
-                    f"{what}: SOLID custom_extensions data is nested too deeply to "
+                    f"{what}: SOLID nonportable_extensions data is nested too deeply to "
                     f"read") from e
-            if not isinstance(data, dict):
-                raise ConversionError(
-                    f"{what}: SOLID custom_extensions data must be a JSON object")
             data.pop("_v", None)
             return data
     return {}
 
 
 def write_stash(obj, data):
-    """Attach a SOLID `custom_extensions` entry holding `data` (a dict).
+    """Attach a SOLID `nonportable_extensions` entry holding `data` (a dict).
 
     No-op when `data` is empty, so an object with nothing Solid-specific to carry stays
     clean. An existing SOLID entry is replaced, not merged into.
@@ -357,29 +358,31 @@ def write_stash(obj, data):
     try:
         blob = json.dumps(_tag_non_finite(payload), ensure_ascii=False,
                           allow_nan=False, default=_json_default)
+        stashed = json.loads(blob)
     except (TypeError, ValueError) as e:
         # A mapping keyed by something JSON cannot key by, such as a YAML date.
         raise ConversionError(
-            f"a value cannot be carried in custom_extensions[SOLID]: {e}") from e
+            f"a value cannot be carried in nonportable_extensions[SOLID]: {e}") from e
     except RecursionError as e:
         raise ConversionError(
-            "a value is nested too deeply to carry in custom_extensions[SOLID]") from e
-    exts = obj.setdefault("custom_extensions", [])
+            "a value is nested too deeply to carry in nonportable_extensions[SOLID]") from e
+    exts = obj.setdefault("nonportable_extensions", [])
     for ext in exts:
         if ext.get("vendor_name") == VENDOR:
-            ext["data"] = blob
+            ext["data"] = stashed
             return
-    exts.append({"vendor_name": VENDOR, "data": blob})
+    exts.append({"vendor_name": VENDOR, "data": stashed})
 
 
 def foreign_vendor_extensions(obj, what="object"):
-    """Return the non-SOLID custom_extensions on an object.
+    """Return the non-SOLID nonportable_extensions on an object.
 
     Solid's YAML has no slot for vendor metadata, so these are dropped on export; the
     caller warns rather than discarding them silently.
     """
     return [
-        ext for ext in custom_extensions(obj, what) if ext.get("vendor_name") != VENDOR
+        ext for ext in nonportable_extensions(obj, what)
+        if ext.get("vendor_name") != VENDOR
     ]
 
 

@@ -191,7 +191,7 @@ def test_without_dimension_metadata_the_split_falls_back_to_solids_type_rule():
 def _split(fields, **dataset):
     """Export one dataset holding `fields`; return (dimension names, fact names)."""
     ossie = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [{"name": "orders", "source": "db.s.orders", "fields": [
             {"expression": {"dialects": [{"dialect": "ANSI_SQL",
@@ -314,7 +314,7 @@ def test_an_expression_added_to_a_plain_dimension_in_ossie_is_dropped_with_a_war
 
 def test_a_metric_whose_columns_share_a_name_keeps_its_qualifiers():
     ossie = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": name, "source": f"db.s.{name}", "fields": [
@@ -641,7 +641,7 @@ def _wrapped(document, extra_models=()):
 def test_a_legacy_wrapped_document_is_read_with_a_warning():
     flat = yaml.safe_load(fixture("tpcds_ossie.yaml"))
     solid, warnings_ = convert_quietly(
-        convert_ossie_to_solid, yaml.safe_dump(_wrapped(flat))
+        convert_ossie_to_solid, yaml.safe_dump(_wrapped(flat), sort_keys=False)
     )
     assert any("legacy wrapped 'semantic_model' format" in w for w in warnings_)
     expected, _ = convert_quietly(convert_ossie_to_solid, fixture("tpcds_ossie.yaml"))
@@ -662,13 +662,13 @@ def test_extra_models_in_a_legacy_wrapper_are_dropped_with_a_warning():
     "wrapper", [[], {"name": "m"}, "m"], ids=["empty", "mapping", "string"]
 )
 def test_a_legacy_wrapper_that_is_not_a_non_empty_list_is_rejected(wrapper):
-    ossie = {"version": "0.2.0.dev0", "semantic_model": wrapper}
+    ossie = {"version": "0.3.0.dev0", "semantic_model": wrapper}
     with pytest.raises(ConversionError, match="not a non-empty list"):
         convert_ossie_to_solid(yaml.safe_dump(ossie))
 
 
 def test_a_legacy_wrapper_entry_that_is_not_a_mapping_is_rejected():
-    ossie = {"version": "0.2.0.dev0", "semantic_model": ["m"]}
+    ossie = {"version": "0.3.0.dev0", "semantic_model": ["m"]}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(ConversionError, match="must be a mapping"):
@@ -733,7 +733,7 @@ def _one_field_model(dialects, metric_dialects=None):
     whose expression carries `dialects`, plus a metric `total` when `metric_dialects`
     is given."""
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [{
             "name": "a",
@@ -870,9 +870,9 @@ def test_a_field_or_metric_only_in_a_non_sql_language_is_dropped_with_what_names
 
 def test_a_hand_edited_stash_dialect_is_rejected():
     ossie = yaml.safe_load(fixture("tpcds_ossie.yaml"))
-    for ext in ossie["custom_extensions"]:
+    for ext in ossie["nonportable_extensions"]:
         if ext["vendor_name"] == "SOLID":
-            ext["data"] = ext["data"].replace("SNOWFLAKE", "MAQL")
+            ext["data"]["dialect"] = "MAQL"
     with pytest.raises(ConversionError, match="Unsupported dialect"):
         convert_ossie_to_solid(yaml.safe_dump(ossie))
 
@@ -884,7 +884,7 @@ def test_the_released_0_1_1_spec_is_read_with_a_warning():
     """0.1.1 is the only released spec version, so models in the wild declare it.
 
     A 0.1.1 document wraps its model in a `semantic_model` list and otherwise differs
-    from 0.2.0.dev0 only by additive fields, so it is read rather than rejected -- but
+    from 0.3.0.dev0 only by additive fields, so it is read rather than rejected -- but
     the version gap is reported, since the missing `datatype` is what leaves a
     column's Solid `type` empty.
     """
@@ -904,7 +904,7 @@ def test_reading_an_older_spec_still_writes_the_current_one():
     aged["version"] = "0.1.1"
     back, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(aged))
     again, _ = convert_quietly(convert_solid_to_ossie, back)
-    assert yaml.safe_load(again)["version"] == "0.2.0.dev0"
+    assert yaml.safe_load(again)["version"] == "0.3.0.dev0"
 
 
 # --- regressions from a review of the round-4 changes ---------------------------------
@@ -945,7 +945,7 @@ def test_a_computed_dimension_with_no_type_gets_none_back():
 
 
 def test_a_quoted_name_with_an_escaped_quote_is_not_a_computed_field():
-    ossie = {"version": "0.2.0.dev0", "name": "m", "datasets": [
+    ossie = {"version": "0.3.0.dev0", "name": "m", "datasets": [
         {"name": "t", "source": "db.s.t", "fields": [
             {"name": 'a"b', "datatype": "String", "expression": {"dialects": [
                 {"dialect": "SNOWFLAKE", "expression": '"a""b"'}]}}]}]}
@@ -966,8 +966,8 @@ def test_a_flipped_flag_that_is_not_true_does_not_flip():
     ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
     model = yaml.safe_load(ossie)
     relationship = model["relationships"][0]
-    relationship["custom_extensions"] = [
-        {"vendor_name": "SOLID", "data": '{"_v": 1, "flipped": "no"}'}]
+    relationship["nonportable_extensions"] = [
+        {"vendor_name": "SOLID", "data": {"_v": 1, "flipped": "no"}}]
     solid, _ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(model))
     first = solid_model_of(solid)["relationships"][0]
     source = {d["name"]: d["source"] for d in model["datasets"]}[relationship["from"]]
@@ -977,7 +977,7 @@ def test_a_flipped_flag_that_is_not_true_does_not_flip():
 @pytest.mark.parametrize("datatype", [["String"], {"name": "String"}])
 def test_a_datatype_of_the_wrong_kind_beside_an_empty_dimension_block_is_rejected(
         datatype):
-    ossie = {"version": "0.2.0.dev0", "name": "m", "datasets": [
+    ossie = {"version": "0.3.0.dev0", "name": "m", "datasets": [
         {"name": "t", "source": "db.s.t", "fields": [
             {"name": "a", "dimension": {}, "datatype": datatype,
              "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "a"}]}}]}]}
@@ -998,7 +998,7 @@ def _with_dataset_metrics(dataset_metrics, model_metrics=()):
                 "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
 
     ossie = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders",
@@ -1043,7 +1043,7 @@ def _struct_field_model(metric_sql):
                 "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
 
     ossie = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders",
@@ -1080,7 +1080,7 @@ def test_a_scoped_metric_keeps_a_qualifier_its_own_dataset_would_shadow():
                 "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
 
     ossie = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders", "fields": [field("amount")],
@@ -1137,7 +1137,7 @@ def _with_query_source(**extra):
                 "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": name}]}}
 
     ossie = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders",
@@ -1198,7 +1198,7 @@ def test_a_query_backed_datasets_own_metrics_are_dropped_with_it():
 ])
 def test_a_table_name_is_not_taken_for_a_query(source, table):
     ossie = {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [{"name": "t", "source": source, "fields": [
             {"name": "x", "expression": {"dialects": [
                 {"dialect": "ANSI_SQL", "expression": "x"}]}}]}],
@@ -1210,7 +1210,7 @@ def test_a_table_name_is_not_taken_for_a_query(source, table):
 
 def test_a_model_whose_every_source_is_a_query_is_rejected():
     ossie = {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [{"name": "u", "source": _QUERY, "fields": [
             {"name": "x", "expression": {"dialects": [
                 {"dialect": "ANSI_SQL", "expression": "x"}]}}]}],
@@ -1273,7 +1273,7 @@ def _alias_model():
     """`orders.cust` reads `customer_id`, and keys, a join and both kinds of metric
     name the field."""
     return {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders", "primary_key": ["oid"],
              "fields": [
@@ -1352,7 +1352,7 @@ def test_a_field_named_for_a_column_it_does_not_read_leaves_that_column_free():
 def test_a_quoted_column_matches_its_field_only_as_the_dialect_folds_it(
         expression, column):
     ossie = {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [{"name": "orders", "source": "DB.S.ORDERS", "fields": [
             {"name": "amount", "datatype": "Decimal", "expression": {"dialects": [
                 {"dialect": "SNOWFLAKE", "expression": expression}]}}]}],
@@ -1366,7 +1366,7 @@ def _marked_model(field):
     """A model that marks its dimensions (one field opts out of time with the spec's
     own `is_time: false`), so an unmarked, untyped field is read as a fact."""
     return {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [{"name": "orders", "source": "db.s.orders", "fields": [
             {"name": "created_at", "datatype": "DateTime", "dimension": {"is_time": False},
              "expression": _ansi("created_at")},
@@ -1405,7 +1405,7 @@ def _keyed_model(primary_key=("id",), from_columns=("manager_id",)):
         return {"name": name, "datatype": "Integer", "expression": _ansi(name)}
 
     return {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [{"name": "employees", "source": "db.s.employees",
                       "primary_key": list(primary_key),
                       "fields": [field("id"), field("manager_id")]}],
@@ -1441,7 +1441,7 @@ def test_declared_keys_match_ignoring_case_as_the_spec_validator_does():
 
 @pytest.mark.parametrize("source", ["orders", "public.orders"])
 def test_a_source_that_is_not_catalog_schema_table_is_reported(source):
-    ossie = {"version": "0.2.0.dev0", "name": "m", "datasets": [
+    ossie = {"version": "0.3.0.dev0", "name": "m", "datasets": [
         {"name": "orders", "source": source,
          "fields": [{"name": "x", "datatype": "Integer", "expression": _ansi("x")}]}]}
     solid, warnings_ = convert_quietly(convert_ossie_to_solid, yaml.safe_dump(ossie))
@@ -1456,7 +1456,7 @@ def test_two_datasets_over_one_table_become_one_solid_table():
         return {"name": name, "datatype": "Integer", "expression": _ansi(name)}
 
     ossie = {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders",
              "fields": [field("order_date_id"), field("ship_date_id")]},
@@ -1502,7 +1502,7 @@ def test_every_relationship_to_a_query_backed_dataset_is_dropped_not_just_the_fi
         return {"name": name, "datatype": "Integer", "expression": _ansi(name)}
 
     ossie = {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders", "fields": [field("id"), field("uid")]},
             {"name": "items", "source": "db.s.items", "fields": [field("oid")]},
@@ -1575,7 +1575,7 @@ def _computed_model(metrics=(), dataset_metrics=(), primary_key=("id",),
         return {"name": name, "expression": _ansi(sql)}
 
     return {
-        "version": "0.2.0.dev0", "name": "m",
+        "version": "0.3.0.dev0", "name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders", "primary_key": list(primary_key),
              "fields": [field("id"), field("cid"), field("label", "UPPER(status)")],

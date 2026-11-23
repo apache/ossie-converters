@@ -19,7 +19,7 @@
 
 Pure offline conversion. Solid features Apache Ossie has no native field for --
 `example_queries`, `benchmark_questions`, `quality_rank`, `indexes`, `sample_values`,
-and each column's raw warehouse type -- are preserved in `custom_extensions[SOLID]`, so
+and each column's raw warehouse type -- are preserved in `nonportable_extensions[SOLID]`, so
 converting back reproduces the original export.
 
 Usage (CLI):

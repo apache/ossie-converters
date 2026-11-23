@@ -308,7 +308,7 @@ def test_the_documented_interop_gaps_are_exactly_these(foreign):
         "unique_keys have no Solid equivalent": 1,
         "datatype 'Decimal' has no Solid equivalent": 1,
         "ai_context.instructions, ai_context.synonyms have no Solid equivalent": 1,
-        "custom_extensions for": 4,
+        "nonportable_extensions for": 4,
         # Solid resolves a metric's columns through `tables`, and a metric written
         # against bare column names carries nothing to resolve them from.
         "names no table": 2,
@@ -368,8 +368,8 @@ def test_the_dialect_recorded_on_a_reimported_foreign_model_is_explicit():
     solid, _ = convert_quietly(convert_ossie_to_solid, fixture("foreign_ossie.yaml"))
     ossie, _ = convert_quietly(convert_solid_to_ossie, solid, dialect="ANSI_SQL")
     stash = next(
-        json.loads(ext["data"])
-        for ext in model_of(ossie)["custom_extensions"]
+        ext["data"]
+        for ext in model_of(ossie)["nonportable_extensions"]
         if ext["vendor_name"] == "SOLID"
     )
     assert stash["dialect"] == "ANSI_SQL"

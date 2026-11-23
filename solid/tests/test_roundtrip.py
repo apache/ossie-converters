@@ -18,7 +18,7 @@
 """Round-trip fidelity in both directions.
 
 `Solid -> Apache Ossie -> Solid` is exact: everything Solid's format can express either
-maps onto an Apache Ossie core field or is preserved in `custom_extensions[SOLID]`.
+maps onto an Apache Ossie core field or is preserved in `nonportable_extensions[SOLID]`.
 
 `Apache Ossie -> Solid -> Apache Ossie` is lossy by construction, because Solid's format
 has no slot for several Apache Ossie constructs (unique keys, foreign-vendor extensions,
@@ -194,7 +194,7 @@ def test_the_documented_losses_of_an_ossie_export_are_exactly_these():
     assert {w.split("]")[0].lstrip("[") for w in going} == {
         "model", "dataset", "field", "metric", "relationship"
     }
-    assert sum("custom_extensions for" in w for w in going) == 1
+    assert sum("nonportable_extensions for" in w for w in going) == 1
     assert sum("unique_keys have no Solid equivalent" in w for w in going) == 1
     # customer_full_name, a concatenation: Solid has no computed columns.
     assert sum("computed field" in w and "so it was dropped" in w for w in going) == 1

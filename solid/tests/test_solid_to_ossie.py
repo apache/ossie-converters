@@ -57,7 +57,7 @@ def test_output_validates_against_the_ossie_schema(assert_valid_ossie):
 def test_document_declares_the_spec_version():
     ossie, _ = convert_quietly(convert_solid_to_ossie, fixture("tpcds_solid.yaml"))
     document = yaml.safe_load(ossie)
-    assert document["version"] == "0.2.0.dev0"
+    assert document["version"] == "0.3.0.dev0"
 
 
 def test_the_model_sits_at_the_document_root():
@@ -506,7 +506,7 @@ def test_a_mapping_keyed_by_a_yaml_date_is_rejected_cleanly():
     solid = yaml.safe_load(fixture("databricks_solid.yaml"))
     solid["semantic_model"]["example_queries"] = [
         {"name": "q", "sql": "SELECT 1", "by_day": {datetime.date(2024, 1, 1): 3}}]
-    with pytest.raises(ConversionError, match="cannot be carried in custom_extensions"):
+    with pytest.raises(ConversionError, match="cannot be carried in nonportable_extensions"):
         convert_solid_to_ossie(yaml.safe_dump(solid))
 
 

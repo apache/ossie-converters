@@ -18,7 +18,7 @@
 """Convert an Apache Ossie semantic model to a Solid semantic model YAML export.
 
 Pure offline conversion. A model that came from `convert_solid_to_ossie` restores its
-Solid-only fields from `custom_extensions[SOLID]`; a hand-authored Apache Ossie model is
+Solid-only fields from `nonportable_extensions[SOLID]`; a hand-authored Apache Ossie model is
 converted on its core fields alone, with anything Solid's format cannot hold reported as
 a warning rather than dropped silently.
 
@@ -80,21 +80,23 @@ from .expressions import (
 # version this converter does not know, and is reported rather than dropped silently.
 _MODEL_KEYS = frozenset({
     "name", "description", "ai_context", "datasets", "relationships", "metrics",
-    "custom_extensions",
+    "nonportable_extensions",
 })
 _DATASET_KEYS = frozenset({
     "name", "source", "primary_key", "unique_keys", "description", "ai_context",
-    "fields", "metrics", "custom_extensions",
+    "fields", "metrics", "nonportable_extensions",
 })
 _FIELD_KEYS = frozenset({
     "name", "expression", "dimension", "label", "description", "datatype", "ai_context",
-    "custom_extensions",
+    "nonportable_extensions",
 })
 _RELATIONSHIP_KEYS = frozenset({
-    "name", "from", "to", "from_columns", "to_columns", "ai_context", "custom_extensions",
+    "name", "from", "to", "from_columns", "to_columns", "ai_context",
+    "nonportable_extensions",
 })
 _METRIC_KEYS = frozenset({
-    "name", "expression", "description", "datatype", "ai_context", "custom_extensions",
+    "name", "expression", "description", "datatype", "ai_context",
+    "nonportable_extensions",
 })
 _OSSIE = f"Apache Ossie v{OSSIE_VERSION}"
 
@@ -436,14 +438,14 @@ def _all_expressions(ossie):
 
 
 def _warn_foreign_extensions(obj, scope, name):
-    """Warn about custom_extensions belonging to other vendors.
+    """Warn about nonportable_extensions belonging to other vendors.
 
     Solid's format has no slot for vendor metadata, so these cannot be carried across.
     """
     foreign = foreign_vendor_extensions(obj, f"{scope} '{name}'")
     if foreign:
         vendors = ", ".join(sorted({e.get("vendor_name") or "?" for e in foreign}))
-        warn(scope, f"'{name}': custom_extensions for {vendors} have no Solid "
+        warn(scope, f"'{name}': nonportable_extensions for {vendors} have no Solid "
                     f"equivalent and were dropped")
 
 
@@ -802,7 +804,7 @@ def _is_unedited_key_column(field, name, dialect):
     """True while a field import declared for a key or join column (see
     solid_to_ossie._declare_key_columns) is still exactly what import wrote: a name,
     an expression reading its own column, and the SOLID stash, nothing more."""
-    if set(field) - {"name", "expression", "custom_extensions"}:
+    if set(field) - {"name", "expression", "nonportable_extensions"}:
         return False
     if foreign_vendor_extensions(field, f"field '{name}'"):
         return False
