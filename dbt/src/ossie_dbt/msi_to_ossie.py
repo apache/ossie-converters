@@ -37,9 +37,9 @@ from ossie import (
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_dbt.ratio_helpers import unchanged_ratio_helpers
-from ossie_dbt.expression_utils import _is_constant_expr
+from ossie_dbt.expression_utils import _is_constant_expr, is_portable_sql
 from ossie_dbt.filter_utils import _collect_filter_sql, _merge_filter_sqls
+from ossie_dbt.ratio_helpers import unchanged_ratio_helpers
 
 from metricflow_semantic_interfaces.enum_extension import assert_values_exhausted
 from metricflow_semantic_interfaces.implementations.semantic_manifest import PydanticSemanticManifest
@@ -144,7 +144,7 @@ class MSIToOssieConverter:
     from multiple threads, across any number of ``convert()`` calls.
     """
 
-    def __init__(self, dialect: OssieDialect = OssieDialect.ANSI_SQL) -> None:
+    def __init__(self, dialect: Optional[str] = None) -> None:
         self._dialect = dialect
 
     def convert(
@@ -208,7 +208,7 @@ class MSIToOssieConverter:
             ossie_metrics.append(
                 OssieMetric(
                     name=metric.name,
-                    expression=self._make_expression(expr),
+                    expression=self._make_expression(expr, generated_ratio=metric.type is MetricType.RATIO),
                     description=metric.description,
                     datatype=self._resolve_datatype(metric.datatype, metric.config),
                     nonportable_extensions=self._custom_extensions_from_meta(metric.config),
@@ -697,5 +697,8 @@ class MSIToOssieConverter:
         else:
             assert_values_exhausted(agg)
 
-    def _make_expression(self, expr: str) -> OssieExpression:
-        return OssieExpression(dialects=[OssieDialectExpression(dialect=self._dialect, expression=expr)])
+    def _make_expression(self, expr: str, *, generated_ratio: bool = False) -> OssieExpression:
+        if self._dialect is None and is_portable_sql(expr, generated_ratio=generated_ratio):
+            return OssieExpression(sql=expr)
+        dialect = self._dialect if self._dialect is not None else OssieDialect.ANSI_SQL
+        return OssieExpression(dialects=[OssieDialectExpression(dialect=dialect, expression=expr)])

@@ -24,8 +24,9 @@ import pytest
 from syrupy.assertion import SnapshotAssertion
 
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType
+from ossie_dbt.expression_utils import is_portable_sql
 from ossie_dbt.filter_utils import _render_filter_template
-from ossie import OssieDataType, OssieDialect, OssieSemanticModel
+from ossie import OssieDataType, OssieDialect, OssieExpression, OssieSemanticModel
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
 from metricflow_semantic_interfaces.implementations.element_config import PydanticSemanticLayerElementConfig
@@ -74,9 +75,16 @@ def _fields(result: OssieSemanticModel, dataset_idx: int = 0) -> list:
     return fields
 
 
+def _expression_text(expression: OssieExpression) -> str:
+    if expression.sql is not None:
+        return expression.sql
+    assert expression.dialects
+    return expression.dialects[0].expression
+
+
 def _field_expr(result: OssieSemanticModel, field_idx: int = 0) -> str:
-    """Return the ANSI SQL expression for a field by index."""
-    return _fields(result)[field_idx].expression.dialects[0].expression
+    """Return the SQL expression for a field by index."""
+    return _expression_text(_fields(result)[field_idx].expression)
 
 
 def _ossie_metrics(result: OssieSemanticModel) -> list:
@@ -221,7 +229,7 @@ class TestMeasureConversion:
 
         field = _fields(result)[0]
         assert field.name == "revenue"
-        assert field.expression.dialects[0].expression == "amount"
+        assert _expression_text(field.expression) == "amount"
         assert field.dimension is None
 
     def test_measure_without_expr_falls_back_to_name(self) -> None:
@@ -255,7 +263,7 @@ class TestEntityConversion:
 
         field = _fields(result)[0]
         assert field.name == "order_id"
-        assert field.expression.dialects[0].expression == "order_id"
+        assert _expression_text(field.expression) == "order_id"
         assert field.dimension is None
 
     def test_entity_with_expr_uses_expr(self) -> None:
@@ -267,7 +275,7 @@ class TestEntityConversion:
 
         field = _fields(result)[0]
         assert field.name == "order_id"
-        assert field.expression.dialects[0].expression == "id"
+        assert _expression_text(field.expression) == "id"
 
     def test_foreign_entity_also_becomes_field(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -446,7 +454,7 @@ class TestFieldOrdering:
 
 
 class TestDialectConfiguration:
-    def test_default_dialect_is_ansi_sql(self) -> None:
+    def test_default_uses_portable_sql(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
             dimensions=[_dimension("status")],
@@ -454,7 +462,55 @@ class TestDialectConfiguration:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
         assert "dialects" not in json.loads(result.to_ossie_json())
-        assert _fields(result)[0].expression.dialects[0].dialect == OssieDialect.ANSI_SQL
+        assert _fields(result)[0].expression == OssieExpression(sql="status")
+
+    @pytest.mark.parametrize(
+        "sql,portable",
+        [
+            ("DATEDIFF(day, started_at, ended_at)", True),
+            ("COALESCE(amount, 0)", True),
+            ("TRY_TO_NUMBER(amount)", False),
+            ("NVL(amount, 0)", False),
+            ("amount::INT", False),
+            ("5 / 2", False),
+            ("ROUND(2.5, 0)", False),
+        ],
+    )
+    def test_portable_output_checks_the_whole_expression(self, sql: str, portable: bool) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders", dimensions=[_dimension("value", expr=sql)]
+        )
+        metric = _metric_with_agg("total", AggregationType.SUM, sql, "orders")
+        output = MSIToOssieConverter().convert(_manifest(semantic_models=[orders], metrics=[metric])).output
+        field = _fields(output)[0].expression
+        aggregate = _ossie_metrics(output)[0].expression
+        assert (field.sql, aggregate.sql) == ((sql, f"SUM({sql})") if portable else (None, None))
+        if not portable:
+            assert field.dialects[0].dialect == OssieDialect.ANSI_SQL
+
+    def test_portable_count_distinct_requires_one_expression(self) -> None:
+        assert is_portable_sql("COUNT(DISTINCT orders.amount)")
+        assert not is_portable_sql("COUNT(DISTINCT orders.amount, orders.quantity)")
+
+    def test_generated_ratio_uses_portable_true_division(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders", dimensions=[_dimension("amount"), _dimension("quantity")]
+        )
+        total_amount = _metric_with_agg("total_amount", AggregationType.SUM, "amount", "orders")
+        total_quantity = _metric_with_agg("total_quantity", AggregationType.SUM, "quantity", "orders")
+        ratio = PydanticMetric(
+            name="price_per_unit",
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(name="total_amount"),
+                denominator=PydanticMetricInput(name="total_quantity"),
+            ),
+            metadata=default_meta(),
+        )
+
+        output = MSIToOssieConverter().convert(_manifest([orders], [total_amount, total_quantity, ratio])).output
+
+        assert _ossie_metrics(output)[-1].expression.sql == "(SUM(orders.amount)) / NULLIF(SUM(orders.quantity), 0)"
 
     def test_configurable_dialect(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -699,7 +755,7 @@ class TestMetricConversion:
         metrics = _ossie_metrics(result)
         assert len(metrics) == 1
         assert metrics[0].name == "revenue"
-        assert metrics[0].expression.dialects[0].expression == "SUM(orders.amount)"
+        assert _expression_text(metrics[0].expression) == "SUM(orders.amount)"
 
     def test_simple_metric_description_carried_over(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -733,7 +789,7 @@ class TestMetricConversion:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
-        assert _ossie_metrics(result)[0].expression.dialects[0].expression == "AVG(orders.price)"
+        assert _expression_text(_ossie_metrics(result)[0].expression) == "AVG(orders.price)"
 
     @pytest.mark.parametrize("agg", [AggregationType.COUNT, AggregationType.SUM])
     def test_a_row_count_always_comes_back_as_portable_sum_1(self, agg: AggregationType) -> None:
@@ -752,7 +808,7 @@ class TestMetricConversion:
         metric = _metric_with_agg("order_count", agg, "1", "orders")
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[customers, orders], metrics=[metric])).output
 
-        assert _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(1)"
+        assert _expression_text(_ossie_metrics(result)[0].expression) == "SUM(1)"
 
     def test_constant_metric_records_the_lost_semantic_model_on_the_cli_path(self) -> None:
         """Routed through the real dbt loader, as the CLI does: the count is already SUM(1) by then."""
@@ -764,7 +820,7 @@ class TestMetricConversion:
         )
         result = MSIToOssieConverter().convert(parse_manifest_from_dbt_generated_manifest(manifest_json))
 
-        assert _ossie_metrics(result.output)[0].expression.dialects[0].expression == "SUM(1)"
+        assert _expression_text(_ossie_metrics(result.output)[0].expression) == "SUM(1)"
         assert result.issues == [
             ConverterIssue(ConverterIssueType.CONSTANT_METRIC_SEMANTIC_MODEL_LOSS, "order_count")
         ]
@@ -818,7 +874,7 @@ class TestMetricConversion:
         metric = _simple_metric("order_count", measure_name="order_count_measure")
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[orders], metrics=[metric])).output
 
-        assert _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(1)"
+        assert _expression_text(_ossie_metrics(result)[0].expression) == "SUM(1)"
 
     def test_filtered_count_of_all_rows_keeps_the_filter(self) -> None:
         orders = semantic_model_with_guaranteed_meta(name="orders")
@@ -826,7 +882,7 @@ class TestMetricConversion:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[orders], metrics=[metric])).output
 
         assert (
-            _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(CASE WHEN status = 'paid' THEN 1 END)"
+            _expression_text(_ossie_metrics(result)[0].expression) == "SUM(CASE WHEN status = 'paid' THEN 1 END)"
         )
 
     # --- RATIO ---
@@ -860,7 +916,7 @@ class TestMetricConversion:
         )
 
         arpu_ossie = next(m for m in _ossie_metrics(result) if m.name == "arpu")
-        assert arpu_ossie.expression.dialects[0].expression == (
+        assert _expression_text(arpu_ossie.expression) == (
             "(SUM(orders.amount)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END), 0)"
         )
         assert result.to_ossie_yaml() == snapshot
@@ -897,7 +953,7 @@ class TestMetricConversion:
         )
 
         profit_ossie = next(m for m in _ossie_metrics(result) if m.name == "profit")
-        assert profit_ossie.expression.dialects[0].expression == "SUM(orders.amount) - SUM(orders.cost_amount)"
+        assert _expression_text(profit_ossie.expression) == "SUM(orders.amount) - SUM(orders.cost_amount)"
 
     def test_derived_metric_uses_alias_for_substitution(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -929,7 +985,7 @@ class TestMetricConversion:
         )
 
         profit_ossie = next(m for m in _ossie_metrics(result) if m.name == "profit")
-        assert profit_ossie.expression.dialects[0].expression == "SUM(orders.amount) - SUM(orders.cost_amount)"
+        assert _expression_text(profit_ossie.expression) == "SUM(orders.amount) - SUM(orders.cost_amount)"
 
     def test_derived_metric_does_not_re_expand_an_inlined_reference(self) -> None:
         """A reference is substituted once, even when its name appears in already-inlined text.
@@ -967,7 +1023,7 @@ class TestMetricConversion:
         )
 
         margin_ossie = next(m for m in _ossie_metrics(result) if m.name == "margin")
-        assert margin_ossie.expression.dialects[0].expression == "SUM(orders.net) - SUM(orders.net_amount)"
+        assert _expression_text(margin_ossie.expression) == "SUM(orders.net) - SUM(orders.net_amount)"
 
     def test_derived_metric_preserves_backslashes_from_a_filter(self) -> None:
         """Backslashes in an inlined expression survive substitution verbatim.
@@ -998,10 +1054,10 @@ class TestMetricConversion:
 
         revenue_ossie = next(m for m in _ossie_metrics(result) if m.name == "revenue")
         scaled_ossie = next(m for m in _ossie_metrics(result) if m.name == "scaled")
-        assert revenue_ossie.expression.dialects[0].expression == (
+        assert _expression_text(revenue_ossie.expression) == (
             r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.amount END)"
         )
-        assert scaled_ossie.expression.dialects[0].expression == (
+        assert _expression_text(scaled_ossie.expression) == (
             r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.amount END) * 2"
         )
 
@@ -1064,9 +1120,8 @@ class TestMetricConversion:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue_m, constant]))
 
-        assert next(m for m in _ossie_metrics(result.output) if m.name == "constant").expression.dialects[
-            0
-        ].expression == "1 + 1"
+        exported = next(m for m in _ossie_metrics(result.output) if m.name == "constant")
+        assert _expression_text(exported.expression) == "1 + 1"
         assert result.issues == []
 
     def test_derived_metric_accepts_a_duplicate_that_restates_the_enclosing_filter(self) -> None:
@@ -1099,7 +1154,7 @@ class TestMetricConversion:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue_m, scaled]))
 
         scaled_ossie = next(m for m in _ossie_metrics(result.output) if m.name == "scaled")
-        assert scaled_ossie.expression.dialects[0].expression == (
+        assert _expression_text(scaled_ossie.expression) == (
             "SUM(CASE WHEN order__region = 'EU' THEN orders.amount END) * 2"
         )
         assert result.issues == []
@@ -1131,7 +1186,7 @@ class TestMetricConversion:
         )
 
         doubled_ossie = next(m for m in _ossie_metrics(result) if m.name == "doubled")
-        assert doubled_ossie.expression.dialects[0].expression == "SUM(orders.amount) + SUM(orders.amount)"
+        assert _expression_text(doubled_ossie.expression) == "SUM(orders.amount) + SUM(orders.amount)"
 
     def test_every_issue_type_has_a_cli_reason(self) -> None:
         """The CLI looks each issue type up by key, so an unmapped one would crash the run."""
@@ -1194,7 +1249,7 @@ class TestMetricConversion:
 
         net_ossie = next(m for m in _ossie_metrics(result) if m.name == "net_profit")
         assert (
-            net_ossie.expression.dialects[0].expression
+            _expression_text(net_ossie.expression)
             == "(SUM(orders.amount) - SUM(orders.cost_amount)) - SUM(orders.expense_amount)"
         )
         assert result.to_ossie_yaml() == snapshot
@@ -1232,7 +1287,7 @@ class TestMetricConversion:
         )
 
         derived_ossie = next(m for m in _ossie_metrics(result) if m.name == "revenue_delta")
-        assert derived_ossie.expression.dialects[0].expression == "SUM(orders.amount) - SUM(orders.adjusted_amount)"
+        assert _expression_text(derived_ossie.expression) == "SUM(orders.amount) - SUM(orders.adjusted_amount)"
 
     # --- CUMULATIVE ---
 
@@ -1260,7 +1315,7 @@ class TestMetricConversion:
         metrics = _ossie_metrics(result)
         assert len(metrics) == 1
         assert metrics[0].name == "cumulative_revenue"
-        assert metrics[0].expression.dialects[0].expression == "SUM(orders.amount)"
+        assert _expression_text(metrics[0].expression) == "SUM(orders.amount)"
 
     def test_cumulative_metric_via_sub_metric_reference(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -1292,7 +1347,7 @@ class TestMetricConversion:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[base, cumulative])).output
 
         cumulative_ossie = next(m for m in _ossie_metrics(result) if m.name == "cumulative_revenue")
-        assert cumulative_ossie.expression.dialects[0].expression == "SUM(orders.amount)"
+        assert _expression_text(cumulative_ossie.expression) == "SUM(orders.amount)"
 
     # --- Edge cases ---
 
@@ -1858,7 +1913,7 @@ class TestMetricFilterFlattening:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
         assert (
-            _ossie_metrics(result)[0].expression.dialects[0].expression
+            _expression_text(_ossie_metrics(result)[0].expression)
             == "SUM(CASE WHEN status = 'paid' THEN orders.amount END)"
         )
 
@@ -1881,7 +1936,7 @@ class TestMetricFilterFlattening:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
         assert (
-            _ossie_metrics(result)[0].expression.dialects[0].expression
+            _expression_text(_ossie_metrics(result)[0].expression)
             == "SUM(CASE WHEN status = 'paid' THEN orders.amount END)"
         )
 
@@ -1903,7 +1958,7 @@ class TestMetricFilterFlattening:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
-        assert _ossie_metrics(result)[0].expression.dialects[0].expression == (
+        assert _expression_text(_ossie_metrics(result)[0].expression) == (
             "SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.amount END)"
         )
         assert result.to_ossie_yaml() == snapshot
@@ -1925,7 +1980,7 @@ class TestMetricFilterFlattening:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
         assert (
-            _ossie_metrics(result)[0].expression.dialects[0].expression
+            _expression_text(_ossie_metrics(result)[0].expression)
             == "SUM(CASE WHEN order__country = 'US' THEN orders.amount END)"
         )
 
@@ -1958,7 +2013,7 @@ class TestMetricFilterFlattening:
         )
 
         paid_arpu = next(m for m in _ossie_metrics(result) if m.name == "paid_arpu")
-        assert paid_arpu.expression.dialects[0].expression == (
+        assert _expression_text(paid_arpu.expression) == (
             "(SUM(CASE WHEN status = 'paid' THEN orders.amount END))"
             " / "
             "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
@@ -1991,7 +2046,7 @@ class TestMetricFilterFlattening:
         )
 
         paid_profit = next(m for m in _ossie_metrics(result) if m.name == "paid_profit")
-        assert paid_profit.expression.dialects[0].expression == (
+        assert _expression_text(paid_profit.expression) == (
             "SUM(CASE WHEN status = 'paid' THEN orders.amount END)"
             " - "
             "SUM(CASE WHEN status = 'paid' THEN orders.cost_amount END)"
@@ -2008,7 +2063,7 @@ class TestMetricFilterFlattening:
             .output
         )
 
-        assert _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(orders.amount)"
+        assert _expression_text(_ossie_metrics(result)[0].expression) == "SUM(orders.amount)"
 
 
 class TestOssieJsonSerialization:
@@ -2158,7 +2213,7 @@ class TestDatatypeMetadata:
 
         assert _fields(result)[0].datatype is OssieDataType.INTEGER
         metric = _ossie_metrics(result)[0]
-        assert metric.expression.dialects[0].expression == "COUNT(DISTINCT orders.customer_name)"
+        assert _expression_text(metric.expression) == "COUNT(DISTINCT orders.customer_name)"
         assert metric.datatype is OssieDataType.INTEGER
         assert manifest.semantic_models[0].measures[0].config.meta["ossie"]["datatype"] == "Integer"
 

@@ -25,45 +25,29 @@
     fields:
     - name: revenue
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: amount
+        sql: amount
     - name: cost
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: cost_amount
+        sql: cost_amount
     - name: expenses
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: expense_amount
+        sql: expense_amount
   metrics:
   - name: revenue
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.amount)
+      sql: SUM(orders.amount)
   - name: cost
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.cost_amount)
+      sql: SUM(orders.cost_amount)
   - name: expenses
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.expense_amount)
+      sql: SUM(orders.expense_amount)
   - name: gross_profit
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.amount) - SUM(orders.cost_amount)
+      sql: SUM(orders.amount) - SUM(orders.cost_amount)
   - name: net_profit
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: (SUM(orders.amount) - SUM(orders.cost_amount)) - SUM(orders.expense_amount)
+      sql: (SUM(orders.amount) - SUM(orders.cost_amount)) - SUM(orders.expense_amount)
   
   '''
 # ---
@@ -77,9 +61,7 @@
     fields:
     - name: revenue
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: amount
+        sql: amount
     - name: order_count
       expression:
         dialects:
@@ -88,9 +70,7 @@
   metrics:
   - name: revenue
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(orders.amount)
+      sql: SUM(orders.amount)
   - name: order_count
     expression:
       dialects:
@@ -115,16 +95,12 @@
     fields:
     - name: revenue
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: amount
+        sql: amount
   metrics:
   - name: paid_intl_revenue
     expression:
-      dialects:
-      - dialect: ANSI_SQL
-        expression: SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.amount
-          END)
+      sql: SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.amount
+        END)
   
   '''
 # ---
@@ -140,9 +116,7 @@
     fields:
     - name: user
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: user_id
+        sql: user_id
   - name: users_b
     source: schema.table
     unique_keys:
@@ -150,17 +124,13 @@
     fields:
     - name: user
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: user_id
+        sql: user_id
   - name: orders
     source: schema.table
     fields:
     - name: user
       expression:
-        dialects:
-        - dialect: ANSI_SQL
-          expression: user_id
+        sql: user_id
   relationships:
   - name: users_a__users_b__user
     from: users_a

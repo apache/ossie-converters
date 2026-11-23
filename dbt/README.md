@@ -131,6 +131,8 @@ denominator is 0, and the Ossie expression does the same rather than leave divis
 | `AMBIGUOUS_REFERENCE_METRIC_DROPPED` | An input metric is listed more than once under one reference with differing filters, so the expression reference is ambiguous; give each occurrence a distinct alias |
 | `CONSTANT_METRIC_SEMANTIC_MODEL_LOSS` | A metric over a constant, such as a row count (`SUM(1)`), has no column to carry its semantic model; recorded when the manifest has more than one, since converting it back will refuse it |
 
+By default, the exporter writes supported Ossie SQL to `expression.sql` and uses `expression.dialects` for other expressions. Pass `dialect=...` to `MSIToOssieConverter` to write all expressions under that dialect.
+
 Ossie `datatype` attributes use native MetricFlow datatype annotations when present,
 falling back to `config.meta.ossie.datatype` annotations on dimensions, entities,
 measures, and metrics in source dbt models, carried into `semantic_manifest.json`
