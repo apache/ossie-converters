@@ -34,7 +34,6 @@ import ohi_linkml
 import pytest
 import yaml
 
-from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 from ossie_ontology.expr.formula.model import Formula as ParsedFormula
 from ossie_ontology.model import OssieOntology
 from ossie_ontology.spec import OssieSpec
@@ -92,14 +91,22 @@ def test_convert_spec_matches_convert(flights_model: OssieOntology, flights_path
     """Going straight from the spec DTO describes the same schema as going via
     the runtime model.
 
-    Compared as parsed YAML, not as text: building the runtime model sorts
-    concepts topologically, so the two agree on content but not on the order
-    classes and types are emitted in.
+    Compared as parsed YAML, not as text, and without the `rank` of classes
+    and types: building the runtime model sorts concepts topologically, so the
+    two agree on content but not on the order of classes and types.
     """
     spec = OssieSpec.load_yaml(flights_path.read_text(encoding="utf-8"))
-    assert yaml.safe_load(OssieToLinkmlConverter.convert_spec(spec)) == yaml.safe_load(
-        OssieToLinkmlConverter.convert(flights_model)
-    )
+    assert _without_class_and_type_ranks(
+        OssieToLinkmlConverter.convert_spec(spec)
+    ) == _without_class_and_type_ranks(OssieToLinkmlConverter.convert(flights_model))
+
+
+def _without_class_and_type_ranks(schema_yaml: str) -> dict:
+    schema = yaml.safe_load(schema_yaml)
+    for section in ("classes", "types", "enums"):
+        for element in schema.get(section, {}).values():
+            element.pop("rank", None)
+    return schema
 
 
 # ----- LinkML -> Ossie ---------------------------------------------------
@@ -287,6 +294,7 @@ default_range: string
 classes:
   Book:
     class_uri: ex:Book
+    rank: 2
     attributes:
       isbn:
         slot_uri: ex:isbn
@@ -313,6 +321,7 @@ classes:
   Author:
     class_uri: ex:Author
     description: A person who wrote a book.
+    rank: 1
     attributes:
       name:
         slot_uri: ex:name
@@ -326,18 +335,25 @@ types:
   NrPages:
     uri: xsd:integer
     typeof: integer
+    rank: 2
     minimum_value: 1
   Isbn:
     uri: xsd:string
     description: The identifier of a book.
     typeof: string
+    rank: 1
 """
 
 
 def test_full_example_ossie_to_linkml():
-    """The Ossie document above converts to exactly the LinkML schema above."""
-    model = SpecToOssieConverter().convert(OssieSpec.load_yaml(EXAMPLE_OSSIE))
-    assert yaml.safe_load(OssieToLinkmlConverter.convert(model)) == yaml.safe_load(EXAMPLE_LINKML)
+    """The Ossie document above converts to exactly the LinkML schema above.
+
+    Converted from the spec, not the runtime model, so the `rank` of each class
+    and type follows the order of the document. Building the model reorders
+    the concepts, and the ranks with them.
+    """
+    spec = OssieSpec.load_yaml(EXAMPLE_OSSIE)
+    assert yaml.safe_load(OssieToLinkmlConverter.convert_spec(spec)) == yaml.safe_load(EXAMPLE_LINKML)
 
 
 def test_full_example_linkml_to_ossie():

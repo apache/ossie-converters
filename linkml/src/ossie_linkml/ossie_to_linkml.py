@@ -80,12 +80,8 @@ class OssieToLinkmlConverter:
     def _convert_spec(spec: OssieSpec, schema_id: str | None, output_format: str) -> str:
         # Called straight from both public methods, so stacklevel=3 always points
         # the warnings at the caller's code rather than at this module.
-        result = ohi_linkml.from_ossie(
-            spec.dump_yaml(),
-            schema_id=schema_id,
-            format=output_format,
-        )
-        # One line per kind of thing LinkML has no place for, e.g. `derived_by`.
-        for warning in result["warnings"]:
-            warnings.warn(warning, UserWarning, stacklevel=3)
-        return result["schema"]
+        with ohi_linkml.load_ossie(spec.dump_yaml(), schema_id=schema_id) as schema:
+            # One line per kind of thing LinkML has no place for, e.g. `derived_by`.
+            for warning in schema.not_imported["warnings"]:
+                warnings.warn(warning, UserWarning, stacklevel=3)
+            return schema.serialize(format=output_format)
