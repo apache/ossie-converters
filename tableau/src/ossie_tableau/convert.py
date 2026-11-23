@@ -37,7 +37,6 @@ from .warehouse import DEFAULT, GENERIC, WAREHOUSES, Warehouse, by_tableau_class
 
 from ossie.models import (
     OssieAIContextObject,
-    OssieCustomExtension,
     OssieDataset,
     OssieDataType,
     OssieDialect,
@@ -47,6 +46,7 @@ from ossie.models import (
     OssieExpression,
     OssieField,
     OssieMetric,
+    OssieNonportableExtension,
     OssieRelationship,
 )
 
@@ -294,8 +294,8 @@ def _source_table(src: str) -> str | None:
     return parts[-1] if parts else None
 
 
-def _combine_exts(*parts) -> list[OssieCustomExtension] | None:
-    out: list[OssieCustomExtension] = []
+def _combine_exts(*parts) -> list[OssieNonportableExtension] | None:
+    out: list[OssieNonportableExtension] = []
     for p in parts:
         if p is None:
             continue
@@ -698,7 +698,7 @@ def _description(col: ET.Element) -> str | None:
     return text or None
 
 
-def _field_extension(col: ET.Element | None, folder: str | None, extra: dict | None = None) -> OssieCustomExtension | None:
+def _field_extension(col: ET.Element | None, folder: str | None, extra: dict | None = None) -> OssieNonportableExtension | None:
     d: dict = dict(extra or {})
     if col is not None:
         if _attr(col, "hidden") == "true":
@@ -711,11 +711,11 @@ def _field_extension(col: ET.Element | None, folder: str | None, extra: dict | N
         d["folder"] = folder
     if not d:
         return None
-    return OssieCustomExtension(vendor_name="TABLEAU", data=json.dumps(d, sort_keys=True))
+    return OssieNonportableExtension(vendor_name="TABLEAU", data={k: d[k] for k in sorted(d)})
 
 
-def _ext(vendor_data: dict) -> list[OssieCustomExtension]:
-    return [OssieCustomExtension(vendor_name="TABLEAU", data=json.dumps(vendor_data, sort_keys=True))]
+def _ext(vendor_data: dict) -> list[OssieNonportableExtension]:
+    return [OssieNonportableExtension(vendor_name="TABLEAU", data={k: vendor_data[k] for k in sorted(vendor_data)})]
 
 
 def _is_numrec(col: ET.Element) -> bool:
@@ -1034,7 +1034,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
     copts = calc_options or {}
     metric_name_set: set[str] = set()
     _sql_dialect, _sql_dialects = _make_sql_resolver(ds_fields, wh, addr, metric_name_set)
-    foreign_by_path: dict[str, list[OssieCustomExtension]] = {}
+    foreign_by_path: dict[str, list[OssieNonportableExtension]] = {}
     fe_el = _user_kid(ds, "ossie-foreign-extensions")
     if fe_el is not None and (fe_el.text or "").strip():
         try:
@@ -1044,13 +1044,21 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
         for entry in packed if isinstance(packed, list) else []:
             if not isinstance(entry, dict) or not entry.get("path") or not entry.get("vendor_name") or "data" not in entry:
                 continue
+            edata = entry["data"]
+            if isinstance(edata, str):
+                try:
+                    edata = json.loads(edata)
+                except ValueError:
+                    continue
+            if not isinstance(edata, dict):
+                continue
             foreign_by_path.setdefault(entry["path"], []).append(
-                OssieCustomExtension(vendor_name=entry["vendor_name"], data=entry["data"]))
+                OssieNonportableExtension(vendor_name=entry["vendor_name"], data=edata))
 
-    def take_foreign(path: str) -> list[OssieCustomExtension] | None:
+    def take_foreign(path: str) -> list[OssieNonportableExtension] | None:
         return foreign_by_path.pop(path, None)
     ds_unique: dict[str, list[list[str]]] = {}
-    ds_ext: dict[str, list[OssieCustomExtension] | None] = {}
+    ds_ext: dict[str, list[OssieNonportableExtension] | None] = {}
     field_count = 0
     for t in tables:
         fields: list[OssieField] = []
@@ -1093,7 +1101,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 description=_description(info) if info is not None else None,
                 datatype=TYPE_MAP.get(ttype, OssieDataType.OPAQUE if ttype in UNSUPPORTED_TYPES else None),
                 ai_context=_with_caption_synonym(_read_ai_context(info), fname, caption, remote),
-                custom_extensions=_combine_exts(ext, take_foreign(f"field:{t.name}.{fname}")),
+                nonportable_extensions=_combine_exts(ext, take_foreign(f"field:{t.name}.{fname}")),
             ))
         field_count += len(fields)
         conn_ext = None
@@ -1164,7 +1172,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 rname = _unique(f"{t1.name}_{t2.name}", used_r)
                 relationships.append(OssieRelationship(
                     name=rname, from_dataset=t1.name, to=t2.name, from_columns=fc, to_columns=tc,
-                    custom_extensions=_combine_exts(_ext(rext) if rext else None, take_foreign(f"relationship:{rname}"))))
+                    nonportable_extensions=_combine_exts(_ext(rext) if rext else None, take_foreign(f"relationship:{rname}"))))
             except (KeyError, ValueError, AttributeError) as ex:
                 losses.append(Loss("relationship", "", str(ex)))
         if unhinted:
@@ -1188,7 +1196,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 relationships.append(OssieRelationship(
                     name=rname,
                     from_dataset=by_cap[a_cap].name, to=by_cap[b_cap].name, from_columns=fc, to_columns=tc,
-                    custom_extensions=_combine_exts(_ext({"join_type": join_type}) if join_type else None, take_foreign(f"relationship:{rname}"))))
+                    nonportable_extensions=_combine_exts(_ext({"join_type": join_type}) if join_type else None, take_foreign(f"relationship:{rname}"))))
         except (KeyError, ValueError, AttributeError) as ex:
             losses.append(Loss("relationship", "", f"legacy join: {type(ex).__name__} {ex}"))
     if joins and relationships and og is None:
@@ -1275,7 +1283,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
             description=_description(c),
             datatype=TYPE_MAP.get(dt or ""),
             ai_context=_with_caption_synonym(_read_ai_context(c), fname, c.get("caption")),
-            custom_extensions=_combine_exts(_field_extension(c, folders.get(iname), {
+            nonportable_extensions=_combine_exts(_field_extension(c, folders.get(iname), {
                 "names": stash.pack("field_names", {"name": fname, "label": flabel}, {"local": iname, "caption": c.get("caption")}),
                 **({"tableau_calc": stash.pack("tableau_calc", dialects[0].expression, {"xml": ET.tostring(calc_xml, encoding="unicode")})} if calc_xml is not None else {})}),
                 take_foreign(f"field:{t.name}.{fname}")),
@@ -1524,7 +1532,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                         dialect=OssieDialect.TABLEAU, expression="COUNT(*)")] + extra),
                     datatype=TYPE_MAP.get(c.get("datatype") or ""),
                     ai_context=_with_caption_synonym(_read_ai_context(c), mname, c.get("caption")),
-                    custom_extensions=_combine_exts(_field_extension(c, folders.get(iname), {
+                    nonportable_extensions=_combine_exts(_field_extension(c, folders.get(iname), {
                         "names": stash.pack("field_names", {"name": mname, "label": None}, {"local": iname, "caption": c.get("caption")})}),
                         take_foreign(f"metric:{mname}")),
                 ))
@@ -1705,7 +1713,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
                 expression=OssieExpression(dialects=[OssieDialectExpression(dialect=OssieDialect.TABLEAU, expression=out)] + extra),
                 datatype=TYPE_MAP.get(c.get("datatype") or ""),
                 ai_context=_with_caption_synonym(_read_ai_context(c), mname, c.get("caption")),
-                custom_extensions=_combine_exts(mext, take_foreign(f"metric:{mname}")),
+                nonportable_extensions=_combine_exts(mext, take_foreign(f"metric:{mname}")),
             ))
             progress = True
         if not progress:
@@ -1804,7 +1812,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
         OssieDataset(name=t.name, source=t.source, fields=ds_fields[t.name] or None,
                      primary_key=_keys(t)[0], unique_keys=_keys(t)[1],
                      ai_context=_with_caption_synonym(t.ai_context, t.name, t.caption, _source_table(t.source)),
-                     custom_extensions=ds_ext[t.name])
+                     nonportable_extensions=ds_ext[t.name])
         for t in tables
     ]
     model_foreign = take_foreign("model")
@@ -1828,8 +1836,8 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
         datasets=datasets,
         relationships=relationships or None,
         metrics=metrics or None,
-        custom_extensions=_combine_exts(
-            OssieCustomExtension(vendor_name="TABLEAU", data=json.dumps(ext)),
+        nonportable_extensions=_combine_exts(
+            OssieNonportableExtension(vendor_name="TABLEAU", data=ext),
             model_foreign),
     )
     res.document = doc

@@ -75,12 +75,9 @@ def _strict_exit(losses: list[Loss], args) -> int:
 
 
 def _saved_connection(doc, warehouse) -> dict:
-    for x in doc.custom_extensions or []:
-        if x.vendor_name == "TABLEAU":
-            try:
-                c = json.loads(x.data).get("connection") or {}
-            except ValueError:
-                return {}
+    for x in doc.nonportable_extensions or []:
+        if x.vendor_name == "TABLEAU" and isinstance(x.data, dict):
+            c = x.data.get("connection") or {}
             return c if c.get("class") == warehouse.tableau_class else {}
     return {}
 

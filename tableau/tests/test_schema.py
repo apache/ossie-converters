@@ -53,7 +53,7 @@ def _blank(node):
     if isinstance(node, list):
         return [_blank(x) for x in node]
     if isinstance(node, dict):
-        return {k: _blank(v) for k, v in node.items()}
+        return {k: ("-" if k in ("source_file", "datasource") and isinstance(v, str) else _blank(v)) for k, v in node.items()}
     return node
 
 

@@ -111,7 +111,7 @@ def _collect_foreign(doc: OssieDocument) -> list[dict]:
     out: list[dict] = []
 
     def add(path: str, obj) -> None:
-        for x in getattr(obj, "custom_extensions", None) or []:
+        for x in getattr(obj, "nonportable_extensions", None) or []:
             if x.vendor_name != "TABLEAU":
                 out.append({"path": path, "vendor_name": x.vendor_name, "data": x.data})
 
@@ -128,12 +128,9 @@ def _collect_foreign(doc: OssieDocument) -> list[dict]:
 
 
 def _tableau_ext(obj) -> dict:
-    for x in getattr(obj, "custom_extensions", None) or []:
-        if x.vendor_name == "TABLEAU":
-            try:
-                return json.loads(x.data)
-            except ValueError:
-                return {}
+    for x in getattr(obj, "nonportable_extensions", None) or []:
+        if x.vendor_name == "TABLEAU" and isinstance(x.data, dict):
+            return x.data
     return {}
 
 
@@ -328,7 +325,7 @@ def write_tds(doc: OssieDocument, conn: Connection) -> TdsResult:
                 nf = OssieField.model_validate({
                     "name": col, "datatype": dt.value, "dimension": {},
                     "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": col_sql}]},
-                    "custom_extensions": [{"vendor_name": "TABLEAU", "data": json.dumps({"hidden": True})}]})
+                    "nonportable_extensions": [{"vendor_name": "TABLEAU", "data": {"hidden": True}}]})
                 extra.setdefault(dsn, []).append(nf)
                 declared[dsn][col.lower()] = nf
                 losses.append(Loss("relationship_key_synthesized", f"{dsn}.{col}",
@@ -469,7 +466,7 @@ def write_tds(doc: OssieDocument, conn: Connection) -> TdsResult:
             return None
 
     raw_items: list[dict] = []
-    doc_ext = next((json.loads(x.data) for x in doc.custom_extensions or [] if x.vendor_name == "TABLEAU" and x.data.startswith("{")), {})
+    doc_ext = next((x.data for x in doc.nonportable_extensions or [] if x.vendor_name == "TABLEAU" and isinstance(x.data, dict)), {})
     if "raw" in doc_ext:
         raw_items = restore(doc_ext, "raw", "raw_xml", sorted(d.name for d in doc.datasets), "document") or []
     sql_items = list(dict.fromkeys(i["sql"] for i in raw_items if i.get("tag") == "one-time-sql"))

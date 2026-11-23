@@ -59,7 +59,7 @@ def test_non_numeric_reference_in_any_argument_is_caught(formula):
     r = convert_datasource(ds(BASE, calc(formula)))
     assert r.stats["metrics"] == 0
     assert "non_numeric_aggregate" in {x.kind for x in r.losses} | {
-        u["reason"] for u in __import__("json").loads(r.document.custom_extensions[0].data)["unconverted_calculations"]}
+        u["reason"] for u in r.document.nonportable_extensions[0].data["unconverted_calculations"]}
 
 
 @pytest.mark.parametrize("agg", ["STDEV", "STDEVP", "VAR", "VARP", "MEDIAN", "SUM", "COUNTD"])

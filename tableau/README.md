@@ -63,8 +63,8 @@ Add `--strict` (exit 1 on any `error`-severity loss) or `--strict-kinds k1,k2` (
 - Relationships, from `object-graph` equality expressions (multi-column AND supported) and legacy `join` trees. Cardinality comes from `unique-key` hints. The first distinct key marked for a dataset becomes `primary_key`; later keys stay on `unique_keys`.
 - Union relations, as a single `UNION [ALL]` dataset.
 - Aggregate calculations over physical columns, as metrics (TABLEAU dialect plus warehouse SQL when the catalog can translate; `[dataset].[field]` references). A reference to another metric is a bare identifier when the name is legal (`metric_inlined` only when it is not). Mixed or cross-dataset aggregates are kept (`sql_untranslated` when warehouse SQL cannot be produced). Number of Records becomes `COUNT(*)`. Single-table row-level calculations become TABLEAU-dialect fields.
-- Field metadata (hidden, semantic role, default aggregation and format, folder), legacy join type and named connection, kept as `TABLEAU` `custom_extensions`.
-- Unconverted calculations, preserved verbatim in a document-level `TABLEAU` extension. Unknown `<datasource>` children are stashed as `unmodeled_xml` and replayed by `to-tds`. Non-`TABLEAU` `custom_extensions` round-trip through `<user:ossie-foreign-extensions>`.
+- Field metadata (hidden, semantic role, default aggregation and format, folder), legacy join type and named connection, kept as `TABLEAU` `nonportable_extensions`.
+- Unconverted calculations, preserved verbatim in a document-level `TABLEAU` extension. Unknown `<datasource>` children are stashed as `unmodeled_xml` and replayed by `to-tds`. Non-`TABLEAU` `nonportable_extensions` round-trip through `<user:ossie-foreign-extensions>`.
 
 ### Ossie to Tableau
 

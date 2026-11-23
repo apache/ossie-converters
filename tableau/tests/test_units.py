@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import json
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -106,7 +105,7 @@ def test_calc_classification(formula, datatype, expected):
     else:
         assert r.stats["metrics"] == 0
         assert expected in kinds(r)
-        ext = json.loads(r.document.custom_extensions[0].data)
+        ext = r.document.nonportable_extensions[0].data
         assert ext["unconverted_calculations"][0]["reason"] == expected
 
 
@@ -253,7 +252,7 @@ from ossie_tableau import formula as F  # noqa: E402
 
 
 def _reasons(r):
-    return [u["reason"] for u in json.loads(r.document.custom_extensions[0].data)["unconverted_calculations"]]
+    return [u["reason"] for u in r.document.nonportable_extensions[0].data["unconverted_calculations"]]
 
 
 def _fields(r, i=0):
@@ -391,7 +390,7 @@ def test_b2_legacy_join_type_is_recorded():
         + recs("a", [("id", "integer")]) + recs("b", [("id", "integer")]) + "</connection></datasource>")
     r = convert_datasource(x)
     (rl,) = r.document.relationships
-    assert json.loads(rl.custom_extensions[0].data) == {"join_type": "left"}
+    assert rl.nonportable_extensions[0].data == {"join_type": "left"}
 
 
 def test_b3_unique_key_orients_many_to_one():
@@ -417,10 +416,10 @@ def test_b3_unique_key_orients_many_to_one():
 def test_b4_field_extension_json_is_stable():
     col = "<column name='[amt]' datatype='real' role='measure' hidden='true' semantic-role='[Currency]' aggregation='Avg'/>"
     f = _fields(convert_datasource(ds(BASE, col)))["amt"]
-    d = json.loads(f.custom_extensions[0].data)
+    d = f.nonportable_extensions[0].data
     assert d == {"default_aggregation": "Avg", "hidden": True, "semantic_role": "[Currency]"}
     assert list(d) == sorted(d)
-    assert _fields(convert_datasource(ds(BASE)))["name"].custom_extensions is None
+    assert _fields(convert_datasource(ds(BASE)))["name"].nonportable_extensions is None
 
 
 def test_b5_row_level_calc_becomes_field_and_metric_can_use_it():
@@ -448,7 +447,7 @@ def test_b6_named_connection_recorded():
         "<relation connection='c' name='t' table='[s].[t]' type='table'/>" + recs("t", [("a", "string")]) +
         "</connection></datasource>")
     r = convert_datasource(x)
-    assert json.loads(r.document.datasets[0].custom_extensions[0].data) == {"connection": "Warehouse", "connection_class": "snowflake"}
+    assert r.document.datasets[0].nonportable_extensions[0].data == {"connection": "Warehouse", "connection_class": "snowflake"}
 
 
 def test_c1_unknown_connection_class_still_converts():
@@ -468,7 +467,7 @@ def test_c2_fcp_chain_prefix():
 def test_c4_unsupported_datatypes_map_to_opaque_with_stash(t):
     r = convert_datasource(ds(rel() + recs("orders", [("g", t)])))
     assert _fields(r)["g"].datatype.value == "Opaque"
-    ext = json.loads(_fields(r)["g"].custom_extensions[0].data)
+    ext = _fields(r)["g"].nonportable_extensions[0].data
     assert ext["datatype"]["data"] == t
     assert "unsupported_datatype" in kinds(r)
 

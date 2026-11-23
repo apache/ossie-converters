@@ -100,13 +100,23 @@ datasets:
     dimension:
       is_time: false
     datatype: String
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: TABLEAU
-      data: '{"names": {"_v": 1, "data": {"caption": "customer_label", "local": "Calculation_f4691c1783f9791a114f"},
-        "kind": "field_names", "witness": {"label": null, "name": "customer_label"}}}'
-  custom_extensions:
+      data:
+        names:
+          _v: 1
+          kind: field_names
+          witness:
+            name: customer_label
+            label: null
+          data:
+            local: Calculation_f4691c1783f9791a114f
+            caption: customer_label
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+    data:
+      connection: account.snowflakecomputing.com
+      connection_class: snowflake
 - name: LINEITEM
   source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.LINEITEM
   fields:
@@ -281,9 +291,11 @@ datasets:
     ai_context:
       synonyms:
       - L Comment
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+    data:
+      connection: account.snowflakecomputing.com
+      connection_class: snowflake
 - name: NATION
   source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION
   fields:
@@ -329,9 +341,11 @@ datasets:
     ai_context:
       synonyms:
       - N Comment
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+    data:
+      connection: account.snowflakecomputing.com
+      connection_class: snowflake
 - name: ORDERS
   source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.ORDERS
   fields:
@@ -431,9 +445,11 @@ datasets:
     ai_context:
       synonyms:
       - O Comment
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+    data:
+      connection: account.snowflakecomputing.com
+      connection_class: snowflake
 - name: PART
   source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.PART
   fields:
@@ -533,9 +549,11 @@ datasets:
     ai_context:
       synonyms:
       - P Comment
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+    data:
+      connection: account.snowflakecomputing.com
+      connection_class: snowflake
 - name: SUPPLIER
   source: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.SUPPLIER
   fields:
@@ -613,9 +631,11 @@ datasets:
     ai_context:
       synonyms:
       - S Comment
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"connection": "account.snowflakecomputing.com", "connection_class": "snowflake"}'
+    data:
+      connection: account.snowflakecomputing.com
+      connection_class: snowflake
 relationships:
 - name: ORDERS_CUSTOMER
   from: ORDERS
@@ -661,10 +681,18 @@ metrics:
     - dialect: SNOWFLAKE
       expression: SUM((LINEITEM.L_EXTENDEDPRICE) * (1 - (LINEITEM.L_DISCOUNT)))
   datatype: Float
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"names": {"_v": 1, "data": {"caption": "total_revenue", "local": "Calculation_60e60fcd98f1121df18c"},
-      "kind": "field_names", "witness": {"label": null, "name": "total_revenue"}}}'
+    data:
+      names:
+        _v: 1
+        kind: field_names
+        witness:
+          name: total_revenue
+          label: null
+        data:
+          local: Calculation_60e60fcd98f1121df18c
+          caption: total_revenue
 - name: revenue_per_customer
   expression:
     dialects:
@@ -675,24 +703,59 @@ metrics:
       expression: SUM((LINEITEM.L_EXTENDEDPRICE) * (1 - (LINEITEM.L_DISCOUNT))) /
         COUNT(DISTINCT (CUSTOMER.C_CUSTKEY))
   datatype: Float
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: TABLEAU
-    data: '{"names": {"_v": 1, "data": {"caption": "revenue_per_customer", "local":
-      "Calculation_6d78da77d529273f365e"}, "kind": "field_names", "witness": {"label":
-      null, "name": "revenue_per_customer"}}}'
-custom_extensions:
+    data:
+      names:
+        _v: 1
+        kind: field_names
+        witness:
+          name: revenue_per_customer
+          label: null
+        data:
+          local: Calculation_6d78da77d529273f365e
+          caption: revenue_per_customer
+nonportable_extensions:
 - vendor_name: TABLEAU
-  data: '{"source_file": "input.twb", "datasource": "part", "connection_classes":
-    ["federated", "snowflake"], "connection": {"class": "snowflake", "server": "account.snowflakecomputing.com",
-    "dbname": "SNOWFLAKE_SAMPLE_DATA", "schema": "TPCH_SF1"}, "unconverted_calculations":
-    [{"name": "customer_lifetime_revenue", "internal_name": "Calculation_1e55446f2bc06d6d5318",
-    "reason": "lod", "formula": "{FIXED [C_CUSTKEY] : SUM([L_EXTENDEDPRICE] * (1 -
-    [L_DISCOUNT]))}", "role": "measure", "datatype": "real"}], "root": {"name": "part",
-    "caption": "part", "formatted_name": "federated.1b4cgxc0es9g0e1da4yec04i4bu9",
-    "source_platform": "mac"}, "raw": {"_v": 1, "kind": "raw_xml", "witness": ["CUSTOMER",
-    "LINEITEM", "NATION", "ORDERS", "PART", "SUPPLIER"], "data": [{"tag": "calc",
-    "xml": "<column caption=\"customer_lifetime_revenue\" datatype=\"real\" name=\"[Calculation_1e55446f2bc06d6d5318]\"
-    role=\"measure\" type=\"quantitative\">\n    <calculation class=\"tableau\" formula=\"{FIXED
-    [C_CUSTKEY] : SUM([L_EXTENDEDPRICE] * (1 - [L_DISCOUNT]))}\" />\n  </column>\n  "},
-    {"tag": "semantic-values", "xml": "<semantic-values>\n    <semantic-value key=\"[Country].[Name]\"
-    value=\"&quot;USA&quot;\" />\n  </semantic-values>\n  "}]}}'
+  data:
+    source_file: input.twb
+    datasource: part
+    connection_classes:
+    - federated
+    - snowflake
+    connection:
+      class: snowflake
+      server: account.snowflakecomputing.com
+      dbname: SNOWFLAKE_SAMPLE_DATA
+      schema: TPCH_SF1
+    unconverted_calculations:
+    - name: customer_lifetime_revenue
+      internal_name: Calculation_1e55446f2bc06d6d5318
+      reason: lod
+      formula: '{FIXED [C_CUSTKEY] : SUM([L_EXTENDEDPRICE] * (1 - [L_DISCOUNT]))}'
+      role: measure
+      datatype: real
+    root:
+      name: part
+      caption: part
+      formatted_name: federated.1b4cgxc0es9g0e1da4yec04i4bu9
+      source_platform: mac
+    raw:
+      _v: 1
+      kind: raw_xml
+      witness:
+      - CUSTOMER
+      - LINEITEM
+      - NATION
+      - ORDERS
+      - PART
+      - SUPPLIER
+      data:
+      - tag: calc
+        xml: "<column caption=\"customer_lifetime_revenue\" datatype=\"real\" name=\"\
+          [Calculation_1e55446f2bc06d6d5318]\" role=\"measure\" type=\"quantitative\"\
+          >\n    <calculation class=\"tableau\" formula=\"{FIXED [C_CUSTKEY] : SUM([L_EXTENDEDPRICE]\
+          \ * (1 - [L_DISCOUNT]))}\" />\n  </column>\n  "
+      - tag: semantic-values
+        xml: "<semantic-values>\n    <semantic-value key=\"[Country].[Name]\" value=\"\
+          &quot;USA&quot;\" />\n  </semantic-values>\n  "

@@ -43,7 +43,7 @@ def _col(root, name):
 
 def test_plain_fields_carry_no_names_stash():
     r = convert_datasource(ds(BASE))
-    assert all(not f.custom_extensions for f in r.document.datasets[0].fields)
+    assert all(not f.nonportable_extensions for f in r.document.datasets[0].fields)
 
 
 def test_physical_caption_and_local_name_restored():
@@ -86,7 +86,7 @@ def test_opaque_datatype_restored(t):
 def test_stale_witness_falls_back_and_records_loss():
     cols = "<column name='[Calculation_123]' caption='Line Total' datatype='real' role='measure'><calculation class='tableau' formula='[amt] * 2'/></column>"
     r = convert_datasource(ds(BASE, cols))
-    f = next(f for f in r.document.datasets[0].fields if f.custom_extensions and "Calculation_123" in f.custom_extensions[0].data)
+    f = next(f for f in r.document.datasets[0].fields if f.nonportable_extensions and f.nonportable_extensions[0].data.get("names", {}).get("data", {}).get("local") == "Calculation_123")
     doc = r.document.model_copy(deep=True)
     g = next(g for g in doc.datasets[0].fields if g.name == f.name)
     object.__setattr__(g, "label", "Edited by hand")
@@ -122,9 +122,8 @@ def test_two_part_source_qualified_and_connection_stored():
     r = convert_datasource(_sf_ds())
     assert r.document.datasets[0].source == "MYDB.S.ORDERS"
     assert "source_qualified" in kinds(r)
-    ext = next(x for x in r.document.custom_extensions if x.vendor_name == "TABLEAU")
-    import json
-    c = json.loads(ext.data)["connection"]
+    ext = next(x for x in r.document.nonportable_extensions if x.vendor_name == "TABLEAU")
+    c = ext.data["connection"]
     assert c["dbname"] == "MYDB" and c["server"] == "a.snowflakecomputing.com" and c["warehouse"] == "WH"
 
 
@@ -651,11 +650,11 @@ def test_snowflake_field_extension_survives_to_tds():
         "datasets": [{"name": "ORDERS", "source": "DB.SCH.ORDERS", "fields": [
             {"name": "AMT", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "AMT"}]},
              "datatype": "Decimal",
-             "custom_extensions": [{"vendor_name": "SNOWFLAKE", "data": "{\"role\":\"measure\"}"}]},
+             "nonportable_extensions": [{"vendor_name": "SNOWFLAKE", "data": {"role": "measure"}}]},
         ]}],
     })
     xml = write_tds(doc, CONN).xml
     back = convert_datasource(ET.fromstring(xml)).document
     (f,) = back.datasets[0].fields
-    vendors = {x.vendor_name: x.data for x in (f.custom_extensions or [])}
-    assert vendors.get("SNOWFLAKE") == "{\"role\":\"measure\"}"
+    vendors = {x.vendor_name: x.data for x in (f.nonportable_extensions or [])}
+    assert vendors.get("SNOWFLAKE") == {"role": "measure"}

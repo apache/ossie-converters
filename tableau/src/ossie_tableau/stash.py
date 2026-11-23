@@ -17,7 +17,7 @@
 
 """Versioned, witness-guarded stash for constructs Ossie cannot model.
 
-A stash is a small JSON object kept inside a `TABLEAU` `custom_extensions` entry:
+A stash is a small JSON object kept inside a `TABLEAU` `nonportable_extensions` entry:
 
     {"_v": 1, "kind": "<what>", "witness": <live value when stashed>, "data": <payload>}
 
