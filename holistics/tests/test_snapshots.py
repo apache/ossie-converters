@@ -897,6 +897,42 @@ def test_a_portable_body_with_an_aql_form_is_kept_on_every_target(dialect):
     assert "windowed_rank" in _dropped(result)
 
 
+def _with_metric(name: str, dialect: str, body: str) -> dict:
+    """The AQL translation fixture with one more dataset-level metric."""
+    document = _yaml.load(snapshots.AQL_TRANSLATION.read_text(encoding="utf-8"))
+    document["metrics"].append(
+        {
+            "name": name,
+            "datatype": "Decimal",
+            "expression": {"dialects": [{"dialect": dialect, "expression": body}]},
+        }
+    )
+    return document
+
+
+@pytest.mark.parametrize("dialect", ["POSTGRES", "REDSHIFT"])
+def test_a_portable_body_that_needs_the_passthrough_is_not_written_for_another_warehouse(dialect):
+    """A call the passthrough would carry under its portable name stops the fallback.
+
+    PostgreSQL has no `MEDIAN`, so sqlglot renders it as `PERCENTILE_CONT`.
+    Translating the portable body would write `sql_number('MEDIAN', ...)`,
+    which the warehouse refuses at query time. The metric is dropped with an
+    ERROR when the files are written, as it was before the fallback.
+    """
+    document = _with_metric(
+        "median_per_customer", "OSSIE_SQL_2026", "MEDIAN(items.quantity) / COUNT(users.id)"
+    )
+    result = ossie_to_aml.convert(document, dialect, data_source_name="warehouse")
+
+    assert "median_per_customer" in _dropped(result)
+    assert "median_per_customer" not in _aql_definitions(result)
+    assert "sql_number('MEDIAN'" not in "".join(text for _, text in result.files)
+    # The plain division beside it still takes the fallback.
+    plain = _with_metric("plain_ratio", "OSSIE_SQL_2026", "SUM(items.quantity) / COUNT(users.id)")
+    kept = ossie_to_aml.convert(plain, dialect, data_source_name="warehouse")
+    assert _aql_definitions(kept)["plain_ratio"] == "sum(items.quantity) / count(users.id)"
+
+
 def test_a_passthrough_call_is_still_spelled_for_the_target_warehouse():
     """The rendering is tried first, since the passthrough hands the call to the warehouse.
 

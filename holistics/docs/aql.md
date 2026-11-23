@@ -50,6 +50,18 @@ POSTGRES:  CAST(SUM(items.quantity) AS DOUBLE PRECISION) / COUNT(users.id)
 converter translates the portable body, so both targets write `sum(items.quantity) / count(users.id)` like
 every other. The WARNING names the dialect the AQL was written from.
 
+A portable body that needs the [passthrough](#the-passthrough) is the exception. The passthrough would carry
+the call under its portable name, which the target may spell another way or lack:
+
+```
+OSSIE_SQL_2026: MEDIAN(orders.amount) / COUNT(users.id)
+POSTGRES:       CAST(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY orders.amount) AS DOUBLE PRECISION) / COUNT(users.id)
+```
+
+PostgreSQL has no `MEDIAN`, so `sql_number('MEDIAN', orders.amount)` would fail when the metric is queried.
+The converter drops the metric with `HOLISTICS_METRIC_SQL_NOT_TRANSLATED_TO_AQL` instead. A `HOLISTICS_AQL`
+body beside the portable one keeps it.
+
 ## What translation changes in the models
 
 AQL resolves a reference differently from Ossie SQL, so rendering a metric can need two changes to the models it

@@ -772,7 +772,9 @@ class _Reverse:
 
         The rendering is still tried first. The passthrough hands the warehouse
         a call under the name the body spells it, and the rendering spells it
-        the way the target does.
+        the way the target does. For the same reason a body whose AQL form
+        needs the passthrough is never returned: `MEDIAN(x)` would reach
+        PostgreSQL as `sql_number('MEDIAN', x)`, a function it lacks.
         """
         available = dialects_of(expression)
         if AQL_DIALECT in available or self.sql_dialect in available:
@@ -786,7 +788,7 @@ class _Reverse:
             return None
         if aql.translates(rendered, self.sql_dialect):
             return None
-        if not aql.translates(available[source], source):
+        if not aql.translates(available[source], source, passthrough=False):
             return None
         return source, available[source]
 

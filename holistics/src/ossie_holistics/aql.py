@@ -68,6 +68,8 @@ class _Context:
     functions: dict
     reference: object
     numeric: set
+    #: The name of every call handed to the passthrough.
+    passed: set
 
 
 class Untranslatable(Exception):
@@ -194,28 +196,35 @@ def translate(expression: str, dialect: str, reference) -> tuple[str, set[tuple[
     caller owns the mapping from Ossie dataset names to AML model names. Raises
     `Untranslatable` naming what stopped it.
     """
+    rendered, context = _translate(expression, dialect, reference)
+    return rendered, context.numeric
+
+
+def translates(expression: str, dialect: str, *, passthrough: bool = True) -> bool:
+    """Whether `translate` has an AQL form for `expression`, references aside.
+
+    Every column is taken as resolvable, so this answers for the constructs
+    alone and touches nothing the caller owns. With `passthrough=False` a form
+    that hands a call to the warehouse does not count.
+    """
+    try:
+        _, context = _translate(expression, dialect, lambda table, column: column)
+    except Untranslatable:
+        return False
+    return passthrough or not context.passed
+
+
+def _translate(expression: str, dialect: str, reference) -> tuple[str, _Context]:
     if not sqlrefs.AVAILABLE:
         raise Untranslatable("sqlglot is not installed")
     try:
         tree = sqlglot.parse_one(expression, read=sqlrefs.SQLGLOT_DIALECT.get(dialect))
     except Exception as exc:  # noqa: BLE001 - sqlglot raises several error types
         raise Untranslatable(f"sqlglot cannot read it as {dialect}. {exc}") from exc
-    numeric: set[tuple[str, str]] = set()
-    context = _Context(source=expression, functions=_functions(), reference=reference, numeric=numeric)
-    return _render(tree, context), numeric
-
-
-def translates(expression: str, dialect: str) -> bool:
-    """Whether `translate` has an AQL form for `expression`, references aside.
-
-    Every column is taken as resolvable, so this answers for the constructs
-    alone and touches nothing the caller owns.
-    """
-    try:
-        translate(expression, dialect, lambda table, column: column)
-    except Untranslatable:
-        return False
-    return True
+    context = _Context(
+        source=expression, functions=_functions(), reference=reference, numeric=set(), passed=set()
+    )
+    return _render(tree, context), context
 
 
 def _render(node, ctx) -> str:
@@ -284,6 +293,7 @@ def _render(node, ctx) -> str:
         # `sql_number('LOG', 10, x)` for `LOG10(x)`. Neither is a call any
         # warehouse answers.
         arguments = [_render(a, ctx) for a in node.expressions]
+        ctx.passed.add(node.name)
         return f"{SQL_PASSTHROUGH}('{node.name}'{''.join(', ' + a for a in arguments)})"
 
     if isinstance(node, exp.Func):
@@ -351,6 +361,7 @@ def _from_source(node, ctx) -> str | None:
 
     in_source_order = [a for _, a in sorted(zip(offsets, arguments), key=lambda pair: pair[0])]
     rendered = [_render(argument, ctx) for argument in in_source_order]
+    ctx.passed.add(name)
     return f"{SQL_PASSTHROUGH}('{name}'{''.join(', ' + r for r in rendered)})"
 
 
