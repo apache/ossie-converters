@@ -68,6 +68,7 @@ def test_public_module_exports_the_converters():
         "build_ossie_document",
         "convert_ossie_to_semantic_model",
         "convert_semantic_model_to_ossie",
+        "export_powerbi_project",
         "import_powerbi_project",
         "validate_bim",
         "validate_tmsl",
