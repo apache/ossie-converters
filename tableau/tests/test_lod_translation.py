@@ -219,8 +219,10 @@ def test_fixed_field_round_trips_byte_stable():
 
 
 def test_first_is_one_minus_row_number():
+    # Snowflake (the default warehouse) requires ORDER BY in a ROW_NUMBER
+    # window, so sqlglot fills an empty one with ORDER BY NULL.
     sql = re.sub(r"\s+", "", translate("FIRST()").sql)
-    assert sql == "1-ROW_NUMBER()OVER()"
+    assert sql == "1-ROW_NUMBER()OVER(ORDERBYNULL)"
 
 
 def test_rank_unwraps_sum_and_brace_has_no_order():
