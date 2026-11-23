@@ -94,8 +94,8 @@ def convert_ossie_dataset(
             if ossie_dataset.ai_context is not None:
                 ctx.warn("Not supported", code="ai-context")
 
-        with ctx.problem_scope("custom_extensions"):
-            if ossie_dataset.custom_extensions is not None:
+        with ctx.problem_scope("nonportable_extensions"):
+            if ossie_dataset.nonportable_extensions is not None:
                 ctx.warn("Not supported", code="custom-extensions")
 
         # Attributes not set:

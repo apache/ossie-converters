@@ -22,8 +22,7 @@
 
 Each case directory holds
     input.registry.json           the registry record, as the registry API returns it
-    expected.ossie.yaml           the Ossie document the converter must produce (strict 0.3.0 form:
-                                  extension data as JSON strings, so every converter can read it)
+    expected.ossie.yaml           the Ossie document the converter must produce
     expected.registry.json        each Ossie metric converted back to a registry definition
     expected.writeback.json       write_back() of the unedited Ossie file against the input: must be {}
     edit.json                     (some cases) an edit made in the Ossie file, and
@@ -90,7 +89,7 @@ def _apply_edit(doc: dict, edit: dict) -> dict:
         if k == "description":
             m["description"] = v
         elif k.startswith("agent_context."):
-            ext = next(x for x in m["custom_extensions"] if x["vendor_name"] == "ATLAN")
+            ext = next(x for x in m["nonportable_extensions"] if x["vendor_name"] == "ATLAN")
             ext["data"]["agent_context"][k.split(".", 1)[1]] = v
     return doc
 

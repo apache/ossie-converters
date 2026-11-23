@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
@@ -318,7 +318,7 @@ def test_one_to_many_note_restores_relationship_type_and_direction():
 
 
 def _wisdom_extension(data):
-    return OssieCustomExtension(vendor_name="WISDOM", data=data if isinstance(data, str) else json.dumps(data))
+    return OssieNonportableExtension(vendor_name="WISDOM", data=data)
 
 
 def _orders_customers_export(**relationship_fields):
@@ -355,7 +355,7 @@ def _join_sides(edge):
 @pytest.mark.parametrize("relationship_type", ["ONE_TO_ONE", "MANY_TO_MANY"])
 def test_wisdom_extension_restores_relationship_type(relationship_type):
     result, edge = _orders_customers_export(
-        custom_extensions=[
+        nonportable_extensions=[
             _wisdom_extension(
                 {"relationshipType": relationship_type, "normalizedEndpoints": ["orders", "customers"]}
             )
@@ -368,7 +368,7 @@ def test_wisdom_extension_restores_relationship_type(relationship_type):
 
 def test_wisdom_extension_restores_one_to_many_and_swaps_sides_back():
     result, edge = _orders_customers_export(
-        custom_extensions=[
+        nonportable_extensions=[
             _wisdom_extension({"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["orders", "customers"]})
         ],
     )
@@ -385,7 +385,7 @@ def test_reversed_symmetric_relationship_keeps_its_type(relationship_type):
     # Endpoints recorded the other way round, as if `from`/`to` were swapped after import.
     result, edge = _orders_customers_export(
         ai_context=RELATIONSHIP_TYPE_NOTES[relationship_type],
-        custom_extensions=[
+        nonportable_extensions=[
             _wisdom_extension(
                 {"relationshipType": relationship_type, "normalizedEndpoints": ["customers", "orders"]}
             )
@@ -400,7 +400,7 @@ def test_flipped_one_to_many_follows_the_flip():
     # Imported as customers -> orders, then deliberately flipped to orders -> customers, so orders is
     # now the many side. The export follows the flip as MANY_TO_ONE instead of swapping it back.
     result, edge = _orders_customers_export(
-        custom_extensions=[
+        nonportable_extensions=[
             _wisdom_extension({"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["customers", "orders"]})
         ],
     )
@@ -412,7 +412,7 @@ def test_flipped_one_to_many_follows_the_flip():
 def test_wisdom_extension_with_stale_endpoints_exports_many_to_one():
     # An endpoint now points at a different dataset, as if the relationship was edited after import.
     result, edge = _orders_customers_export(
-        custom_extensions=[
+        nonportable_extensions=[
             _wisdom_extension({"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["orders", "users"]})
         ],
     )
@@ -427,9 +427,6 @@ def test_wisdom_extension_with_stale_endpoints_exports_many_to_one():
 @pytest.mark.parametrize(
     "data",
     [
-        "not json",
-        pytest.param("[" * 200_000, id="deeply-nested"),
-        ["ONE_TO_MANY"],
         {"relationshipType": "SIDEWAYS", "normalizedEndpoints": ["orders", "customers"]},
         {"relationshipType": {"unexpected": "shape"}, "normalizedEndpoints": ["orders", "customers"]},
         {"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": "orders,customers"},
@@ -439,7 +436,7 @@ def test_wisdom_extension_with_stale_endpoints_exports_many_to_one():
     ],
 )
 def test_malformed_wisdom_extension_exports_many_to_one(data):
-    result, edge = _orders_customers_export(custom_extensions=[_wisdom_extension(data)])
+    result, edge = _orders_customers_export(nonportable_extensions=[_wisdom_extension(data)])
     assert edge["properties"]["relationshipType"] == "MANY_TO_ONE"
     assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
     assert [issue.element_name for issue in _issues_of(result, ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED)] == [
@@ -454,7 +451,7 @@ def test_consumed_wisdom_extension_is_not_reported_as_dropped():
             OssieDataset(
                 name="orders",
                 source="db.s.orders",
-                custom_extensions=[_wisdom_extension({"note": "not read by the converter"})],
+                nonportable_extensions=[_wisdom_extension({"note": "not read by the converter"})],
             ),
             OssieDataset(name="customers", source="db.s.customers"),
         ],
@@ -465,7 +462,7 @@ def test_consumed_wisdom_extension_is_not_reported_as_dropped():
                 to="customers",
                 from_columns=["customer_fk"],
                 to_columns=["id"],
-                custom_extensions=[
+                nonportable_extensions=[
                     _wisdom_extension(
                         {"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["orders", "customers"]}
                     )
@@ -477,11 +474,11 @@ def test_consumed_wisdom_extension_is_not_reported_as_dropped():
                 to="orders",
                 from_columns=["id"],
                 to_columns=["customer_fk"],
-                custom_extensions=[
+                nonportable_extensions=[
                     _wisdom_extension(
                         {"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["customers", "orders"]}
                     ),
-                    OssieCustomExtension(vendor_name="SIGMA", data="{}"),
+                    OssieNonportableExtension(vendor_name="SIGMA", data={}),
                 ],
             ),
         ],
@@ -507,7 +504,7 @@ def test_legacy_note_without_wisdom_extension_restores_relationship_type(relatio
 def test_wisdom_extension_wins_over_a_conflicting_note():
     result, edge = _orders_customers_export(
         ai_context="one-to-many relationship",
-        custom_extensions=[
+        nonportable_extensions=[
             _wisdom_extension({"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["orders", "customers"]})
         ],
     )
@@ -521,7 +518,7 @@ def test_wisdom_extension_wins_over_a_conflicting_note():
 def test_note_is_read_when_wisdom_extension_is_stale():
     result, edge = _orders_customers_export(
         ai_context="one-to-one relationship",
-        custom_extensions=[
+        nonportable_extensions=[
             _wisdom_extension({"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["orders", "users"]})
         ],
     )
@@ -546,7 +543,7 @@ def test_renamed_dataset_keeps_many_to_many_through_its_note():
                 from_columns=["order_id"],
                 to_columns=["order_id"],
                 ai_context=RELATIONSHIP_TYPE_NOTES["MANY_TO_MANY"],
-                custom_extensions=[
+                nonportable_extensions=[
                     _wisdom_extension({"relationshipType": "MANY_TO_MANY", "normalizedEndpoints": ["orders", "tags"]})
                 ],
             )
@@ -558,10 +555,10 @@ def test_renamed_dataset_keeps_many_to_many_through_its_note():
     assert result.issues == []
 
 
-@pytest.mark.parametrize("data", ["{}", {"_v": 2, "relationshipType": "ONE_TO_MANY"}])
+@pytest.mark.parametrize("data", [{}, {"_v": 2, "relationshipType": "ONE_TO_MANY"}])
 def test_unreadable_wisdom_extension_falls_back_to_the_note(data):
     result, edge = _orders_customers_export(
-        ai_context="one-to-one relationship", custom_extensions=[_wisdom_extension(data)]
+        ai_context="one-to-one relationship", nonportable_extensions=[_wisdom_extension(data)]
     )
     assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
     assert result.issues == []

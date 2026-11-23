@@ -816,11 +816,11 @@ class TestRelationships:
     def test_relationship_extensions_are_reported_as_dropped(self):
         rel = _rel("o2c", "orders", "customers", ["customer_id"], ["id"])
         rel["ai_context"] = {"instructions": "x"}
-        rel["custom_extensions"] = [{"vendor": "X", "attributes": {}}]
+        rel["nonportable_extensions"] = [{"vendor": "X", "attributes": {}}]
         with pytest.warns(UserWarning, match="relationship 'o2c'") as record:
             convert_ossie_to_lookml(_model([ORDERS, CUSTOMERS], [rel]))
         messages = [str(w.message) for w in record if "relationship 'o2c'" in str(w.message)]
-        assert any("ai_context" in m and "custom_extensions" in m for m in messages)
+        assert any("ai_context" in m and "nonportable_extensions" in m for m in messages)
 
 
 class TestExplores:

@@ -41,10 +41,18 @@ metrics:
   description: Timestamp of the most recent store sale
   ai_context:
     instructions: 'Grain: table-level. Counts: All store sales.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_last_store_sale_at", "definition_version": 1}, "agent_context":
-      {"grain": "table-level", "population": "All store sales", "sql_dialect": "snowflake"}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_last_store_sale_at
+        definition_version: 1
+      agent_context:
+        grain: table-level
+        population: All store sales
+        sql_dialect: snowflake
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

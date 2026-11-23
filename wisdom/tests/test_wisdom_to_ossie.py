@@ -126,13 +126,13 @@ def test_non_string_relationship_type_is_kept_as_many_to_one():
     relationship = model.relationships[0]
     assert (relationship.from_dataset, relationship.to) == ("orders", "customers")
     assert relationship.ai_context is None
-    assert relationship.custom_extensions is None
+    assert relationship.nonportable_extensions is None
 
 
 def _wisdom_extension_data(relationship):
-    extensions = [ext for ext in relationship.custom_extensions or [] if ext.vendor_name == "WISDOM"]
+    extensions = [ext for ext in relationship.nonportable_extensions or [] if ext.vendor_name == "WISDOM"]
     assert len(extensions) == 1
-    return json.loads(extensions[0].data)
+    return extensions[0].data
 
 
 def test_relationship_types_are_stored_in_a_wisdom_extension(model):
@@ -148,8 +148,8 @@ def test_relationship_types_are_stored_in_a_wisdom_extension(model):
         "normalizedEndpoints": ["orders", "tags"],
     }
     # MANY_TO_ONE is what Ossie direction already says, so nothing is stored.
-    assert relationships["orders_to_customers"].custom_extensions is None
-    assert relationships["orders_to_tags_2"].custom_extensions is None
+    assert relationships["orders_to_customers"].nonportable_extensions is None
+    assert relationships["orders_to_tags_2"].nonportable_extensions is None
 
 
 def test_one_to_many_gets_no_ai_context_note(model):

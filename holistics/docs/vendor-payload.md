@@ -12,15 +12,15 @@
 # The HOLISTICS payload
 
 AML carries properties that the Ossie core specification has no field for. The converter stashes each one under a single
-`custom_extensions` entry with `vendor_name: HOLISTICS`, attached to the Ossie object it came from.
+`nonportable_extensions` entry with `vendor_name: HOLISTICS`, attached to the Ossie object it came from.
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
 - vendor_name: HOLISTICS
-  data: '{"_v": 1, "aml_type": "TableModel", "data_source_name": "bigquery_demo"}'
+  data: {"_v": 1, "aml_type": "TableModel", "data_source_name": "bigquery_demo"}
 ```
 
-`data` is always a single JSON-encoded string, never a nested object, because the core specification requires that. It
+`data` is an object, as the core specification requires. It
 carries `_v`, a shape version, currently 1. The converter fails on an unrecognised version rather than misreading a
 shape it has never seen. Keys are sorted, so a change to the stash shows up as a diff on the keys that changed.
 
@@ -49,7 +49,7 @@ What goes into the stash:
 | `aml_name` | metric | The measure's own name, since the metric carries `<dataset>__<measure>` |
 | `scope` | field | `dataset` when the field came from a dataset-level AML `dimension`. Without the marker the reverse path would write it back inside a model, where a body spanning two models does not resolve |
 
-A foreign vendor's `custom_extensions` entry on the same object passes through untouched. The `HOLISTICS`
+A foreign vendor's `nonportable_extensions` entry on the same object passes through untouched. The `HOLISTICS`
 entry appears only on an object that has something to carry.
 
 `distinct_rows` is absent from the table above. It is deprecated in AML, so the converter neither reads it nor carries it.

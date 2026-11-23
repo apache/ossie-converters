@@ -204,8 +204,8 @@ class SalesforceToOssieConverterTest {
                 .orElseThrow();
         assertEquals("Decimal", orderYear.get("datatype"));
 
-        // customer_order_key should remain in custom_extensions (multiple dependencies)
-        List<Map<String, Object>> customExtensions = (List<Map<String, Object>>) model.get("custom_extensions");
+        // customer_order_key should remain in nonportable_extensions (multiple dependencies)
+        List<Map<String, Object>> customExtensions = (List<Map<String, Object>>) model.get("nonportable_extensions");
         assertNotNull(customExtensions);
         Map<String, Object> sfExtension = customExtensions.stream()
                 .filter(ext -> "SALESFORCE".equals(ext.get("vendor_name")))
@@ -213,7 +213,7 @@ class SalesforceToOssieConverterTest {
                 .orElse(null);
         assertNotNull(sfExtension);
         String data = (String) sfExtension.get("data");
-        assertTrue(data.contains("customer_order_key"), "customer_order_key should be in custom_extensions");
+        assertTrue(data.contains("customer_order_key"), "customer_order_key should be in nonportable_extensions");
     }
 
     @Test
@@ -248,8 +248,8 @@ class SalesforceToOssieConverterTest {
         Map<String, Object> ossieRoot = yamlMapper.readValue(results.get(0), Map.class);
         Map<String, Object> model = ossieRoot;
 
-        // Unsupported relationships (Formula/SemanticField) should be in custom_extensions
-        List<Map<String, Object>> customExtensions = (List<Map<String, Object>>) model.get("custom_extensions");
+        // Unsupported relationships (Formula/SemanticField) should be in nonportable_extensions
+        List<Map<String, Object>> customExtensions = (List<Map<String, Object>>) model.get("nonportable_extensions");
         assertNotNull(customExtensions);
 
         Map<String, Object> sfExtension = customExtensions.stream()
@@ -292,8 +292,8 @@ class SalesforceToOssieConverterTest {
         Map<String, Object> ossieRoot = yamlMapper.readValue(results.get(0), Map.class);
         Map<String, Object> model = ossieRoot;
 
-        // Check model-level custom_extensions
-        List<Map<String, Object>> customExtensions = (List<Map<String, Object>>) model.get("custom_extensions");
+        // Check model-level nonportable_extensions
+        List<Map<String, Object>> customExtensions = (List<Map<String, Object>>) model.get("nonportable_extensions");
         assertNotNull(customExtensions);
         assertTrue(customExtensions.size() > 0);
 
