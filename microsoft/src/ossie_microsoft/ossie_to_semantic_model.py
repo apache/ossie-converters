@@ -21,7 +21,8 @@ Datasets become tables, fields become columns, metrics become measures and relat
 become TMSL relationships. When the document was produced by
 :mod:`semantic_model_to_ossie`, the ``POWER_BI``
 ``nonportable_extensions`` object is replayed so the original Power BI model is restored rather
-than approximated.
+than approximated. Replayed references to a metric, field or dataset the document no longer
+has are removed and reported.
 
 Power BI evaluates DAX. An expression that cannot be translated is emitted as
 ``BLANK()`` so its calculated column or measure remains in the model, while its original
@@ -283,6 +284,7 @@ def convert_ossie_to_semantic_model(
     for key, value in stash.items():
         if key not in _STASH_CONTROL_KEYS:
             model.setdefault(key, value)
+    _drop_stale_references(model)
     model.setdefault("culture", "en-US")
     _apply_ai_context(model, semantic_model.get("ai_context"))
 
@@ -989,6 +991,272 @@ def _endpoints_exist(scope, table_columns, from_table, from_column, to_table, to
             )
             return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Stashed references
+# ---------------------------------------------------------------------------
+
+
+def _drop_stale_references(model):
+    """Remove replayed Power BI objects that name an object no longer in the model.
+
+    Perspectives, roles, hierarchies and the other objects Apache Ossie cannot represent
+    are replayed from the stash as the import saw them. After an edit to the Ossie
+    document that deletes or renames a metric, field or dataset, they can name an object
+    that is gone; TOM rejects such a model, and a TMDL folder written from it cannot be
+    read back. Each such reference is removed, as Power BI Desktop removes it when the
+    object is deleted there, and reported. DAX is not parsed, so a role filter or a
+    measure that mentions a deleted object is left as it is.
+
+    The stash payloads are detached copies (see ``read_stash``), so they are edited in
+    place. Power BI resolves names case-insensitively, and so does this check.
+    """
+    tables = [t for t in model["tables"] if isinstance(t, dict) and t.get("name")]
+    columns = {_key(t["name"]): _names(t.get("columns")) for t in tables}
+    measures = {_key(t["name"]): _names(t.get("measures")) for t in tables}
+
+    for table in tables:
+        _drop_stale_sort_by_columns(table, columns[_key(table["name"])])
+        _drop_stale_levels(table, columns[_key(table["name"])])
+    hierarchies = {
+        _key(t["name"]): {
+            _key(h.get("name")): _names(h.get("levels"))
+            for h in t.get("hierarchies") or []
+            if isinstance(h, dict)
+        }
+        for t in tables
+    }
+
+    relationships = [
+        r
+        for r in model.get("relationships") or []
+        if not isinstance(r, dict) or not _stale_relationship(r, columns)
+    ]
+    if relationships:
+        model["relationships"] = relationships
+    else:
+        model.pop("relationships", None)
+    relationship_names = _names(relationships)
+
+    for table in tables:
+        _drop_stale_variations(table, relationship_names, hierarchies)
+    for perspective in _dicts(model.get("perspectives")):
+        _drop_stale_perspective_members(perspective, columns, measures, hierarchies)
+    for role in _dicts(model.get("roles")):
+        _drop_stale_permissions(role, columns)
+    for culture in _dicts(model.get("cultures")):
+        _drop_stale_translations(culture, columns, measures, hierarchies)
+
+
+def _key(name):
+    return name.casefold() if isinstance(name, str) else name
+
+
+def _names(objects):
+    return {_key(o.get("name")) for o in _dicts(objects)}
+
+
+def _dicts(objects):
+    return [o for o in objects or [] if isinstance(o, dict)]
+
+
+def _kept(owner, key, is_current):
+    """Keep only the entries of ``owner[key]`` that ``is_current`` accepts."""
+    if isinstance(owner.get(key), list):
+        owner[key] = [o for o in owner[key] if not isinstance(o, dict) or is_current(o)]
+
+
+def _drop_stale_sort_by_columns(table, own_columns):
+    for column in _dicts(table.get("columns")):
+        sort_by = column.get("sortByColumn")
+        if sort_by is not None and _key(sort_by) not in own_columns:
+            warn(
+                f"table '{table['name']}' column '{column.get('name')}'",
+                f"sort-by column '{sort_by}' is not in the model; sortByColumn removed",
+            )
+            del column["sortByColumn"]
+
+
+def _drop_stale_levels(table, own_columns):
+    def level_is_current(level, scope):
+        column = level.get("column")
+        if column is None or _key(column) in own_columns:
+            return True
+        warn(
+            scope,
+            f"column '{column}' is not in the model; level '{level.get('name')}' removed",
+        )
+        return False
+
+    def hierarchy_is_current(hierarchy):
+        scope = f"table '{table['name']}' hierarchy '{hierarchy.get('name')}'"
+        if not hierarchy.get("levels"):
+            return True
+        _kept(hierarchy, "levels", lambda level: level_is_current(level, scope))
+        if hierarchy["levels"]:
+            return True
+        # Power BI Desktop removes a hierarchy with its last level.
+        warn(scope, "no level is left; hierarchy removed")
+        return False
+
+    _kept(table, "hierarchies", hierarchy_is_current)
+
+
+def _stale_relationship(relationship, columns):
+    """Report and return True when a relationship names a missing table or column."""
+    for side in ("from", "to"):
+        table = relationship.get(f"{side}Table")
+        column = relationship.get(f"{side}Column")
+        if table is None:
+            continue
+        if _key(table) not in columns:
+            missing = f"table '{table}'"
+        elif column is not None and _key(column) not in columns[_key(table)]:
+            missing = f"column '{table}'[{column}]"
+        else:
+            continue
+        warn(
+            f"relationship '{relationship.get('name', '<unnamed>')}'",
+            f"{missing} is not in the model; relationship removed",
+        )
+        return True
+    return False
+
+
+def _drop_stale_variations(table, relationship_names, hierarchies):
+    for column in _dicts(table.get("columns")):
+
+        def variation_is_current(variation, column=column):
+            scope = (
+                f"table '{table['name']}' column '{column.get('name')}' "
+                f"variation '{variation.get('name')}'"
+            )
+            relationship = variation.get("relationship")
+            if relationship is not None and _key(relationship) not in relationship_names:
+                warn(
+                    scope,
+                    f"relationship '{relationship}' is not in the model; variation removed",
+                )
+                return False
+            default = variation.get("defaultHierarchy")
+            if isinstance(default, dict) and _key(default.get("hierarchy")) not in (
+                hierarchies.get(_key(default.get("table"))) or {}
+            ):
+                # The default hierarchy is optional; the variation still works without it.
+                warn(
+                    scope,
+                    f"hierarchy '{default.get('table')}'[{default.get('hierarchy')}] is "
+                    "not in the model; default hierarchy removed",
+                )
+                del variation["defaultHierarchy"]
+            return True
+
+        had_variations = bool(column.get("variations"))
+        _kept(column, "variations", variation_is_current)
+        if had_variations and column["variations"] == []:
+            del column["variations"]
+
+
+def _drop_stale_perspective_members(perspective, columns, measures, hierarchies):
+    scope = f"perspective '{perspective.get('name')}'"
+    action = "removed from the perspective"
+    _kept(
+        perspective,
+        "tables",
+        lambda entry: _table_entry_is_current(
+            entry, scope, action, columns, measures, hierarchies
+        ),
+    )
+
+
+def _drop_stale_permissions(role, columns):
+    scope = f"role '{role.get('name')}'"
+
+    def permission_is_current(permission):
+        table = permission.get("name")
+        if _key(table) not in columns:
+            warn(scope, f"table '{table}' is not in the model; its permissions removed")
+            return False
+        existing = columns[_key(table)]
+        _kept(
+            permission,
+            "columnPermissions",
+            lambda column: _member_is_current(
+                column, "column", table, existing, scope, "column permission removed"
+            ),
+        )
+        return True
+
+    _kept(role, "tablePermissions", permission_is_current)
+
+
+def _drop_stale_translations(culture, columns, measures, hierarchies):
+    translations = culture.get("translations")
+    translated_model = translations.get("model") if isinstance(translations, dict) else None
+    if not isinstance(translated_model, dict):
+        return
+    scope = f"culture '{culture.get('name')}'"
+    action = "translation removed"
+    _kept(
+        translated_model,
+        "tables",
+        lambda entry: _table_entry_is_current(
+            entry, scope, action, columns, measures, hierarchies, levels=True
+        ),
+    )
+
+
+def _table_entry_is_current(
+    entry, scope, action, columns, measures, hierarchies, levels=False
+):
+    """Check a perspective or translation entry for a table, and prune its members."""
+    table = entry.get("name")
+    if _key(table) not in columns:
+        warn(scope, f"table '{table}' is not in the model; {action}")
+        return False
+    for key, kind, existing in (
+        ("columns", "column", columns[_key(table)]),
+        ("measures", "measure", measures[_key(table)]),
+        ("hierarchies", "hierarchy", hierarchies[_key(table)]),
+    ):
+        _kept(
+            entry,
+            key,
+            lambda member, kind=kind, existing=existing: _member_is_current(
+                member, kind, table, existing, scope, action
+            ),
+        )
+    if levels:
+        for hierarchy in _dicts(entry.get("hierarchies")):
+            existing = hierarchies[_key(table)][_key(hierarchy.get("name"))]
+            _kept(
+                hierarchy,
+                "levels",
+                lambda level, hierarchy=hierarchy, existing=existing: _level_is_current(
+                    level, table, hierarchy.get("name"), existing, scope, action
+                ),
+            )
+    return True
+
+
+def _member_is_current(member, kind, table, existing, scope, action):
+    name = member.get("name")
+    if _key(name) in existing:
+        return True
+    warn(scope, f"{kind} '{table}'[{name}] is not in the model; {action}")
+    return False
+
+
+def _level_is_current(level, table, hierarchy, existing, scope, action):
+    name = level.get("name")
+    if _key(name) in existing:
+        return True
+    warn(
+        scope,
+        f"level '{name}' of hierarchy '{table}'[{hierarchy}] is not in the model; {action}",
+    )
+    return False
 
 
 # ---------------------------------------------------------------------------

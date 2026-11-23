@@ -17,6 +17,7 @@
 
 """Tests for the Apache Ossie -> Power BI (TMSL ``model.bim``) converter."""
 
+import copy
 import json
 import warnings
 from pathlib import Path
@@ -1305,6 +1306,334 @@ def test_a_legacy_relationship_stash_keeps_non_cardinality_metadata():
     assert relationship["isActive"] is True
     assert relationship["crossFilteringBehavior"] == "bothDirections"
     assert relationship["relyOnReferentialIntegrity"] is True
+
+
+# --- stashed references to edited objects -----------------------------------
+#
+# Perspectives, roles, hierarchies and the other objects Apache Ossie cannot represent
+# are replayed from the stash. After an edit to the Ossie document, export removes and
+# reports whatever names an object that is no longer in the model.
+
+
+def _export_edited(model, *edits):
+    document = copy.deepcopy(model)
+    for edit in edits:
+        edit(document)
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        bim = _convert(document)
+    return bim, [str(warning.message) for warning in recorded]
+
+
+def _without_metric(name):
+    def edit(document):
+        document["metrics"] = [m for m in document["metrics"] if m["name"] != name]
+
+    return edit
+
+
+def _renamed_metric(old, new):
+    def edit(document):
+        next(m for m in document["metrics"] if m["name"] == old)["name"] = new
+
+    return edit
+
+
+def _without_field(dataset, field):
+    def edit(document):
+        owner = next(d for d in document["datasets"] if d["name"] == dataset)
+        owner["fields"] = [f for f in owner["fields"] if f["name"] != field]
+
+    return edit
+
+
+def _without_dataset(name):
+    """Delete a dataset with its relationships and the metrics that live on it."""
+
+    def edit(document):
+        document["datasets"] = [d for d in document["datasets"] if d["name"] != name]
+        document["relationships"] = [
+            r for r in document["relationships"] if name not in (r["from"], r["to"])
+        ]
+        document["metrics"] = [
+            m for m in document["metrics"] if read_stash(m).get("table") != name
+        ]
+
+    return edit
+
+
+def _with_model_stash(change):
+    def edit(document):
+        stash = read_stash(document)
+        change(stash)
+        write_stash(document, stash)
+
+    return edit
+
+
+def _excluded_table(stash, name):
+    return next(t for t in stash["excludedTables"] if t["name"] == name)
+
+
+def _relationship_names(bim):
+    return {r["name"] for r in bim["model"].get("relationships", [])}
+
+
+def test_an_unedited_round_trip_removes_no_stashed_reference(model):
+    _, reports = _export_edited(model)
+    assert not [r for r in reports if "is not in the model" in r]
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [_without_metric("Total Sales"), _renamed_metric("Total Sales", "Revenue")],
+    ids=["deleted", "renamed"],
+)
+def test_a_perspective_loses_a_metric_that_is_gone(model, edit):
+    bim, reports = _export_edited(model, edit)
+
+    (perspective,) = bim["model"]["perspectives"]
+    assert perspective["tables"] == [{"name": "Sales", "measures": []}]
+    assert (
+        "[perspective 'Executive'] measure 'Sales'[Total Sales] is not in the model; "
+        "removed from the perspective" in reports
+    )
+
+
+def test_a_deleted_sort_by_column_is_cleared(model):
+    bim, reports = _export_edited(model, _without_field("Calendar", "Date"))
+
+    assert "sortByColumn" not in _column(_table(bim, "Calendar"), "FiscalYear")
+    assert (
+        "[table 'Calendar' column 'FiscalYear'] sort-by column 'Date' is not in the "
+        "model; sortByColumn removed" in reports
+    )
+
+
+def test_a_hierarchy_loses_the_level_of_a_deleted_column(model):
+    bim, reports = _export_edited(model, _without_field("Calendar", "FiscalYear"))
+
+    (hierarchy,) = _table(bim, "Calendar")["hierarchies"]
+    assert hierarchy["levels"] == [{"name": "Date", "ordinal": 1, "column": "Date"}]
+    assert (
+        "[table 'Calendar' hierarchy 'Calendar Drilldown'] column 'FiscalYear' is not in "
+        "the model; level 'Year' removed" in reports
+    )
+
+
+def test_a_hierarchy_with_no_level_left_is_removed_everywhere(model):
+    def list_the_calendar_in_the_perspective(stash):
+        stash["perspectives"][0]["tables"].append(
+            {
+                "name": "Calendar",
+                "columns": [{"name": "Date"}],
+                "hierarchies": [{"name": "Calendar Drilldown"}],
+            }
+        )
+
+    bim, reports = _export_edited(
+        model,
+        _with_model_stash(list_the_calendar_in_the_perspective),
+        _without_field("Calendar", "FiscalYear"),
+        _without_field("Calendar", "Date"),
+    )
+
+    assert not _table(bim, "Calendar").get("hierarchies")
+    assert bim["model"]["perspectives"][0]["tables"][1] == {
+        "name": "Calendar",
+        "columns": [],
+        "hierarchies": [],
+    }
+    assert (
+        "[table 'Calendar' hierarchy 'Calendar Drilldown'] no level is left; "
+        "hierarchy removed" in reports
+    )
+    assert (
+        "[perspective 'Executive'] hierarchy 'Calendar'[Calendar Drilldown] is not in the "
+        "model; removed from the perspective" in reports
+    )
+
+
+@pytest.mark.parametrize(
+    ("dataset", "field", "relationship", "endpoint"),
+    [
+        ("Sales", "ShipDate", "inactive-one", "'Sales'[ShipDate]"),
+        ("Sales", "Amount", "many-to-many", "'Sales'[Amount]"),
+        ("Customer", "Country", "many-to-many", "'Customer'[Country]"),
+        ("Calendar", "Date", "calendar-to-localdate", "'Calendar'[Date]"),
+    ],
+)
+def test_a_relationship_kept_aside_is_removed_with_its_endpoint(
+    model, dataset, field, relationship, endpoint
+):
+    bim, reports = _export_edited(model, _without_field(dataset, field))
+
+    assert relationship not in _relationship_names(bim)
+    assert (
+        f"[relationship '{relationship}'] column {endpoint} is not in the model; "
+        "relationship removed" in reports
+    )
+
+
+def test_a_deleted_dataset_is_removed_from_perspectives_roles_and_relationships(model):
+    bim, reports = _export_edited(model, _without_dataset("Sales"))
+
+    assert bim["model"]["perspectives"] == [{"name": "Executive", "tables": []}]
+    (role,) = bim["model"]["roles"]
+    assert role["tablePermissions"] == []
+    assert _relationship_names(bim) == {"calendar-to-localdate"}
+    for report in (
+        "[perspective 'Executive'] table 'Sales' is not in the model; removed from the "
+        "perspective",
+        "[role 'Regional Manager'] table 'Sales' is not in the model; its permissions "
+        "removed",
+        "[relationship 'inactive-one'] table 'Sales' is not in the model; relationship "
+        "removed",
+    ):
+        assert report in reports
+
+
+def test_a_variation_is_removed_with_its_relationship(model):
+    def remove_the_local_date_table(stash):
+        stash["excludedTables"].remove(
+            _excluded_table(stash, "LocalDateTable_9f2a1b3c")
+        )
+
+    bim, reports = _export_edited(model, _with_model_stash(remove_the_local_date_table))
+
+    assert "variations" not in _column(_table(bim, "Calendar"), "Date")
+    assert (
+        "[table 'Calendar' column 'Date' variation 'Variation'] relationship "
+        "'calendar-to-localdate' is not in the model; variation removed" in reports
+    )
+
+
+def test_a_variation_keeps_its_relationship_when_only_its_hierarchy_is_gone(model):
+    def remove_the_date_hierarchy(stash):
+        del _excluded_table(stash, "LocalDateTable_9f2a1b3c")["hierarchies"]
+
+    bim, reports = _export_edited(model, _with_model_stash(remove_the_date_hierarchy))
+
+    (variation,) = _column(_table(bim, "Calendar"), "Date")["variations"]
+    assert variation == {
+        "name": "Variation",
+        "isDefault": True,
+        "relationship": "calendar-to-localdate",
+    }
+    assert (
+        "[table 'Calendar' column 'Date' variation 'Variation'] hierarchy "
+        "'LocalDateTable_9f2a1b3c'[Date Hierarchy] is not in the model; default "
+        "hierarchy removed" in reports
+    )
+
+
+def test_column_permissions_and_translations_lose_objects_that_are_gone(model):
+    def add_permissions_and_translations(stash):
+        stash["roles"][0]["tablePermissions"][0]["columnPermissions"] = [
+            {"name": "ShipDate", "metadataPermission": "none"},
+            {"name": "Amount", "metadataPermission": "none"},
+        ]
+        stash["cultures"][0]["translations"] = {
+            "model": {
+                "name": "Model",
+                "tables": [
+                    {
+                        "name": "Sales",
+                        "columns": [
+                            {"name": "ShipDate", "translatedCaption": "Versanddatum"},
+                            {"name": "Amount", "translatedCaption": "Betrag"},
+                        ],
+                        "measures": [{"name": "Total Sales", "translatedCaption": "Umsatz"}],
+                    },
+                    {
+                        "name": "Calendar",
+                        "hierarchies": [
+                            {
+                                "name": "Calendar Drilldown",
+                                "levels": [
+                                    {"name": "Year", "translatedCaption": "Jahr"},
+                                    {"name": "Date", "translatedCaption": "Datum"},
+                                ],
+                            }
+                        ],
+                    },
+                    {"name": "Customer", "translatedCaption": "Kunde"},
+                ],
+            }
+        }
+
+    bim, reports = _export_edited(
+        model,
+        _with_model_stash(add_permissions_and_translations),
+        _without_field("Sales", "ShipDate"),
+        _without_metric("Total Sales"),
+        _without_field("Calendar", "FiscalYear"),
+        _without_dataset("Customer"),
+    )
+
+    (permission,) = bim["model"]["roles"][0]["tablePermissions"]
+    assert permission["columnPermissions"] == [
+        {"name": "Amount", "metadataPermission": "none"}
+    ]
+    tables = bim["model"]["cultures"][0]["translations"]["model"]["tables"]
+    assert tables == [
+        {
+            "name": "Sales",
+            "columns": [{"name": "Amount", "translatedCaption": "Betrag"}],
+            "measures": [],
+        },
+        {
+            "name": "Calendar",
+            "hierarchies": [
+                {
+                    "name": "Calendar Drilldown",
+                    "levels": [{"name": "Date", "translatedCaption": "Datum"}],
+                }
+            ],
+        },
+    ]
+    for report in (
+        "[role 'Regional Manager'] column 'Sales'[ShipDate] is not in the model; "
+        "column permission removed",
+        "[culture 'en-US'] column 'Sales'[ShipDate] is not in the model; "
+        "translation removed",
+        "[culture 'en-US'] measure 'Sales'[Total Sales] is not in the model; "
+        "translation removed",
+        "[culture 'en-US'] level 'Year' of hierarchy 'Calendar'[Calendar Drilldown] is "
+        "not in the model; translation removed",
+        "[culture 'en-US'] table 'Customer' is not in the model; translation removed",
+    ):
+        assert report in reports
+
+
+def test_stashed_references_match_names_case_insensitively(model):
+    """Power BI resolves object names case-insensitively, so a differently cased
+    reference still names the object and is kept."""
+
+    def recase(stash):
+        stash["perspectives"][0]["tables"][0] = {
+            "name": "SALES",
+            "measures": [{"name": "total sales"}],
+        }
+        stash["roles"][0]["tablePermissions"][0]["name"] = "sales"
+
+    bim, reports = _export_edited(model, _with_model_stash(recase))
+
+    assert bim["model"]["perspectives"][0]["tables"][0]["measures"] == [
+        {"name": "total sales"}
+    ]
+    assert bim["model"]["roles"][0]["tablePermissions"][0]["name"] == "sales"
+    assert not [r for r in reports if "is not in the model" in r]
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [_without_metric("Order Count"), _without_field("Sales", "SalesKey")],
+    ids=["metric", "field"],
+)
+def test_deleting_an_object_nothing_references_reports_nothing_stale(model, edit):
+    _, reports = _export_edited(model, edit)
+    assert not [r for r in reports if "is not in the model" in r]
 
 
 # --- other vendors ---------------------------------------------------------

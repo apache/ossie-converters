@@ -309,3 +309,56 @@ def test_pbip_export_into_a_project_semantic_model_updates_what_the_report_uses(
     through_report = yaml.safe_load(import_powerbi_project(project / "mini.pbip"))
     assert through_report["name"] == "sales_model"
     assert {d["name"] for d in through_report["datasets"]} >= {"Sales", "Customer"}
+
+
+def _edit_sales_model(kind, dataset, name):
+    """The sales fixture as Apache Ossie, with one metric, field or dataset edited away."""
+    document = yaml.safe_load(
+        convert_semantic_model_to_ossie(json.loads(FIXTURE.read_text(encoding="utf-8-sig")))
+    )
+    if kind == "delete metric":
+        document["metrics"] = [m for m in document["metrics"] if m["name"] != name]
+    elif kind == "rename metric":
+        next(m for m in document["metrics"] if m["name"] == name)["name"] = f"{name} 2"
+    elif kind == "delete field":
+        owner = next(d for d in document["datasets"] if d["name"] == dataset)
+        owner["fields"] = [f for f in owner["fields"] if f["name"] != name]
+    else:
+        document["datasets"] = [d for d in document["datasets"] if d["name"] != dataset]
+        document["relationships"] = [
+            r for r in document["relationships"] if dataset not in (r["from"], r["to"])
+        ]
+        document["metrics"] = [
+            m for m in document["metrics"] if read_stash(m).get("table") != dataset
+        ]
+    return document
+
+
+@pytest.mark.parametrize(
+    ("kind", "dataset", "name"),
+    [
+        ("delete metric", "Sales", "Total Sales"),
+        ("rename metric", "Sales", "Total Sales"),
+        ("delete field", "Calendar", "Date"),
+        ("delete field", "Calendar", "FiscalYear"),
+        ("delete field", "Sales", "ShipDate"),
+        ("delete field", "Sales", "Amount"),
+        ("delete field", "Customer", "Country"),
+        ("delete dataset", "Sales", None),
+        ("delete dataset", "Customer", None),
+        ("delete dataset", "Calendar", None),
+    ],
+)
+def test_an_edited_model_exports_without_stale_stashed_references(
+    kind, dataset, name, tmp_path
+):
+    # #264: the stash replayed references to what the edit removed, unreported.
+    document = _edit_sales_model(kind, dataset, name)
+
+    with pytest.warns(UserWarning, match="is not in the model"):
+        exported = convert_ossie_to_semantic_model(document)
+    result = validate_tmsl(exported, assembly_dir=ASSEMBLIES)
+    assert result.is_valid, [error.message for error in result.errors]
+
+    folder = export_powerbi_project(document, tmp_path, assembly_dir=ASSEMBLIES)
+    assert yaml.safe_load(import_powerbi_project(folder))["name"] == "sales_model"

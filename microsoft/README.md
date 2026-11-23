@@ -448,6 +448,15 @@ invisible to any other consumer of the document — and each one is reported on 
 | Column | date table variations, sort-by-column |
 | Measure | KPIs, detail rows definitions |
 
+If the Apache Ossie document is edited before export, a preserved construct can name a
+metric, field or dataset that is no longer there. Export removes each such reference,
+as Power BI Desktop does when the object is deleted there, and reports it, so `--strict`
+fails instead of writing a model Power BI rejects. That covers perspective entries, role
+table and column permissions, translations, hierarchy levels (and a hierarchy with no
+level left), sort-by columns, date table variations and relationships kept aside on
+import. DAX is not parsed, so a role filter or measure that mentions a removed object is
+left as it is.
+
 Purely presentational properties (`isHidden`, `displayFolder`, `formatString`) are
 preserved just as faithfully but are not reported: a warning on every cosmetic property
 would bury the ones that matter.
