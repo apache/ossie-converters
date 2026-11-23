@@ -19,7 +19,8 @@
 
 Each dataset becomes the metric view `<catalog>.<schema>.<dataset>`, and the model is rewritten
 so that each dataset reads its metric view. Relationships and model-scoped metrics stay in the
-model unchanged.
+model unchanged, with a warning for each object not deployed. Model metrics must still
+resolve against the fields and measures exposed by the generated views.
 """
 
 import copy
@@ -57,6 +58,7 @@ def deploy_ossie_model_to_databricks(
     deployed = copy.deepcopy(model)
     _reject_source_target_collisions(deployed, catalog=catalog, schema=schema)
     files = {}
+    exposed_datasets = []
     for dataset in deployed["datasets"]:
         name = dataset["name"]
         if "/" in name or "\\" in name or name in (".", ".."):
@@ -69,6 +71,13 @@ def deploy_ossie_model_to_databricks(
         # An object without a dimension or measure keeps its expression as it is.
         dimensions = {item["name"] for item in view.get("dimensions") or []}
         measures = {item["name"] for item in view.get("measures") or []}
+        exposed_datasets.append(
+            {
+                "name": name,
+                "fields": [{"name": item["name"]} for item in view.get("dimensions") or []],
+                "metrics": [{"name": item["name"]} for item in view.get("measures") or []],
+            }
+        )
         for field in dataset.get("fields") or []:
             if field["name"] in dimensions:
                 field["expression"] = {"sql": identifier(field["name"], OSSIE)}
@@ -76,6 +85,36 @@ def deploy_ossie_model_to_databricks(
             if metric["name"] in measures:
                 path = f"datasets[{name}].metrics[{metric['name']}]"
                 metric["expression"] = _deployed_metric(metric, dataset, path, result)
+    # The core validator currently reports many unresolved model-metric references as
+    # warnings. Deployment must not ignore them: the rewritten sources expose only the
+    # generated dimensions and measures, never the original tables' other columns.
+    problems = _ossie.model_metric_reference_problems(
+        {
+            "name": deployed["name"],
+            "datasets": exposed_datasets,
+            "metrics": deployed.get("metrics") or [],
+        }
+    )
+    if problems:
+        raise ConversionError(
+            "model-scoped metrics cannot be evaluated over the metric views:\n  "
+            + "\n  ".join(problems)
+            + "\nExpose the referenced fields and dataset metrics in the metric views "
+            "before deploying."
+        )
+    for metric in deployed.get("metrics") or []:
+        result.warn(
+            WarningCode.NOT_DEPLOYED,
+            f"metrics[{metric['name']}]",
+            "model-scoped metric is retained in the Ossie model; "
+            "no metric-view measure is generated",
+        )
+    for relationship in deployed.get("relationships") or []:
+        result.warn(
+            WarningCode.NOT_DEPLOYED,
+            f"relationships[{relationship['name']}]",
+            "relationship is retained in the Ossie model; no metric-view join is generated",
+        )
     _ossie.check(deployed, "the deployed model")
     files[f"{model['name']}.ossie.yaml"] = _ossie.dump(deployed)
 

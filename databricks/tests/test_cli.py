@@ -67,3 +67,60 @@ def test_error_exit_code(tmp_path, capsys):
     bad.write_text("version: 0.3.0.dev0\nname: m\ndatasets: []\n")
     assert main(["to-databricks", str(bad), "-o", str(tmp_path / "out")]) == 1
     assert capsys.readouterr().err.startswith("error: the input is not a valid Ossie model")
+
+
+def test_deploy_reports_each_omission_on_stderr(tmp_path, capsys):
+    folder = tmp_path / "deployment"
+    assert (
+        main(
+            [
+                "deploy",
+                str(FIXTURES / "retail.ossie.yaml"),
+                "-o",
+                str(folder),
+                "--catalog",
+                "main",
+                "--schema",
+                "sales",
+            ]
+        )
+        == 0
+    )
+    stderr = capsys.readouterr().err
+    for path in (
+        "metrics[revenue_per_customer]",
+        "metrics[average_amount]",
+        "relationships[orders_to_customers]",
+    ):
+        assert f"[NOT_DEPLOYED] at {path}:" in stderr
+
+
+def test_deploy_rejects_invalid_rewritten_metric_before_writing_files(tmp_path, capsys):
+    source = tmp_path / "model.yaml"
+    model = yaml.safe_load((FIXTURES / "retail.ossie.yaml").read_text())
+    model["metrics"] = [{"name": "invalid", "expression": {"sql": "SUM(orders.o_totalprice)"}}]
+    source.write_text(yaml.safe_dump(model))
+    folder = tmp_path / "deployment"
+    folder.mkdir()
+    existing = folder / "retail.ossie.yaml"
+    existing.write_text("previous successful deployment")
+    assert (
+        main(
+            [
+                "deploy",
+                str(source),
+                "-o",
+                str(folder),
+                "--overwrite",
+                "--catalog",
+                "main",
+                "--schema",
+                "sales",
+            ]
+        )
+        == 1
+    )
+    assert existing.read_text() == "previous successful deployment"
+    assert sorted(p.name for p in folder.iterdir()) == ["retail.ossie.yaml"]
+    stderr = capsys.readouterr().err
+    assert "invalid" in stderr and "o_totalprice" in stderr
