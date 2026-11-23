@@ -22,7 +22,11 @@ import yaml
 from _util import by_name
 
 from ossie_cube import convert_cube_to_ossie, convert_ossie_to_cube
-from ossie_cube.expressions import unqualified_column_names
+from ossie_cube.expressions import (
+    date_unit_spans,
+    replace_bare_identifiers,
+    unqualified_column_names,
+)
 
 
 def _expression(text, dialect):
@@ -337,3 +341,91 @@ def test_composite_unit_marker_cannot_overwrite_a_real_member():
     sql = by_name(cube["measures"])["elapsed"]["sql"]
     assert sql.startswith("DATEADD(day, ")
     assert "{CUBE.__ossie_unit_8__}" in sql
+
+
+def test_replacement_value_that_looks_like_a_reference_marker_is_preserved():
+    assert (
+        replace_bare_identifiers(
+            "{other} + amount", {"amount": "__ossie_ref_0__.amount"}
+        )
+        == "{other} + __ossie_ref_0__.amount"
+    )
+    model = {
+        "version": "0.3.0.dev0",
+        "name": "support",
+        "datasets": [
+            {
+                "name": "__ossie_ref_0__",
+                "source": "support.public.ref",
+                "fields": [
+                    {
+                        "name": "amount",
+                        "datatype": "Decimal",
+                        "expression": {"sql": "amount"},
+                    }
+                ],
+            }
+        ],
+        "metrics": [
+            {
+                "name": "total",
+                "datatype": "Decimal",
+                "expression": {"sql": "SUM(amount)"},
+            }
+        ],
+    }
+    files, _ = convert_ossie_to_cube(yaml.safe_dump(model))
+    cube = yaml.safe_load(files["model/cubes/__ossie_ref_0__.yml"])["cubes"][0]
+    assert by_name(cube["measures"])["total"]["sql"] == "{CUBE}.amount"
+
+
+def test_composite_unit_marker_cannot_overwrite_attributed_cube_name():
+    model = _model(
+        "DATEADD(day, SUM(ticket.id), other_value) + MAX(calendar.day)",
+        "sql",
+        "model",
+    )
+    model["datasets"].extend(
+        [
+            {
+                "name": "__ossie_unit_8__",
+                "source": "support.public.unit",
+                "fields": [
+                    {
+                        "name": "other_value",
+                        "datatype": "DateTime",
+                        "expression": {"sql": "other_value"},
+                    }
+                ],
+            },
+            {
+                "name": "calendar",
+                "source": "support.public.calendar",
+                "fields": [
+                    {
+                        "name": "day",
+                        "datatype": "DateTime",
+                        "expression": {"sql": "day"},
+                    }
+                ],
+            },
+        ]
+    )
+    files, _ = convert_ossie_to_cube(yaml.safe_dump(model), base_cube="ticket")
+    cube = yaml.safe_load(files["model/cubes/ticket.yml"])["cubes"][0]
+    sql = by_name(cube["measures"])["elapsed"]["sql"]
+    assert sql.startswith("DATEADD(day, ")
+    assert "{__ossie_unit_8__.other_value}" in sql
+
+
+@pytest.mark.parametrize(
+    ("dialect", "literal"),
+    [
+        ("BIGQUERY", "r'day'"),
+        ("DATABRICKS", "r'day'"),
+        ("SNOWFLAKE", "$$day$$"),
+    ],
+)
+def test_date_unit_spans_ignore_raw_and_dollar_quoted_strings(dialect, literal):
+    expr = f"SUM(ticket.id) / COUNT(calendar.id) + CASE WHEN status = {literal} THEN 1 ELSE 0 END"
+    assert date_unit_spans(expr, dialect) == []

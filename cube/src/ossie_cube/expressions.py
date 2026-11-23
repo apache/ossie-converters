@@ -496,8 +496,10 @@ def replace_bare_identifiers(text, mapping, source_dialect=None):
     if not mapping:
         return text
     marker = _REF_SENTINEL
-    while marker.split("{}")[0] in text:
+    prefix = marker.split("{}")[0]
+    while prefix in text or any(prefix in v for v in mapping.values()):
         marker = marker.replace("{}", "alt_{}")
+        prefix = marker.split("{}")[0]
     masked, saved = _mask_references(text, marker)
     tree = parse(masked, source_dialect)
     if tree is not None and not isinstance(tree, (exp.Alias, exp.Aliases)):
@@ -547,6 +549,7 @@ def date_unit_spans(text, source_dialect=None):
     tokens = native_tokens(text, source_dialect)
     return [(token.start, token.end + 1) for i, token in enumerate(tokens)
             if token.start not in columns and token.text.upper() in parts
+            and not token.token_type.name.endswith("STRING")
             and not text[token.start:token.end + 1].startswith(("'", '"', "`"))
             # BigQuery can synthesize path identifiers with no positions. A dotted
             # path part is still a column, never a unit, even without that metadata.
