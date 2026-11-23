@@ -530,9 +530,10 @@ def test_tpcds_metrics_are_portable_exactly_when_their_shape_allows():
         ossie_result.issues, "TS-EXPR-THOUGHTSPOT-ONLY"
     )
 
-    # A physical column reference the model never surfaces as a field
-    # resolves to nothing at all, which is a different unportable reason
-    # (and a different code) from the two above.
+    # A MEASURE-only physical column (no ATTRIBUTE field) resolves to
+    # nothing: Name Resolution requires metrics to name fields, so this
+    # stays THOUGHTSPOT-only rather than emitting ANSI_SQL over a source
+    # column. Different unportable reason (and code) from the two above.
     total_return_quantity = _metric(model, "total_return_quantity")
     assert PORTABLE_DIALECT not in _dialects(total_return_quantity)
     assert "metric:total_return_quantity" in _issue_refs(ossie_result.issues, "TS-EXPR-UNRESOLVED")

@@ -22,9 +22,10 @@
 Converters between Ossie and Spec ontology formats.
 
 The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)), the
-Ossie → RelationalAI converter ([`relationalai/`](../relationalai/README.md))
-and the RDFS ↔ Ossie converters ([`rdfs/`](../rdfs/README.md)) are built on
-this package but live in their own directories.
+Ossie → RelationalAI converter ([`relationalai/`](../relationalai/README.md)),
+the LinkML ↔ Ossie converters ([`linkml/`](../linkml/README.md)) and the RDFS ↔
+Ossie converters ([`rdfs/`](../rdfs/README.md)) are built on this package but
+live in their own directories.
 
 | Converter               | Direction |
 |-------------------------|-----------|

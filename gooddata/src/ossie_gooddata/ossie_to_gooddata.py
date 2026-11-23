@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -148,7 +147,7 @@ def _convert_ossie_dataset(
     ds_name = ds["name"]
     source = ds.get("source", ds_name)
 
-    # Check if this is a date dimension via custom_extensions
+    # Check if this is a date dimension via nonportable_extensions
     gd_ext = _get_gooddata_extension(ds)
     if gd_ext and gd_ext.get("date_dimension"):
         return _placeholder_dataset(ds_name), _convert_to_date_instance(ds, gd_ext)
@@ -237,7 +236,7 @@ def _convert_to_attribute(field_def: dict[str, Any], dataset_id: str) -> GdAttri
     source_col = _get_source_column(field_def)
     attr_id = f"attr.{dataset_id}.{field_name}"
 
-    # Check for label info in custom_extensions
+    # Check for label info in nonportable_extensions
     gd_ext = _get_gooddata_extension(field_def)
     labels: list[GdLabel] = []
     if gd_ext and "labels" in gd_ext:
@@ -310,12 +309,9 @@ def _detect_type_from_maql(field_def: dict[str, Any]) -> str:
 
 def _get_gooddata_extension(obj: dict[str, Any]) -> dict[str, Any] | None:
     """Extract the GOODDATA custom extension data from an Ossie object."""
-    for ext in obj.get("custom_extensions", []):
+    for ext in obj.get("nonportable_extensions", []):
         if ext.get("vendor_name") == "GOODDATA":
-            data = ext.get("data", "{}")
-            if isinstance(data, str):
-                return json.loads(data)
-            return data
+            return ext.get("data", {})
     return None
 
 

@@ -17,7 +17,6 @@
 
 """Tests for OssieToMSIConverter."""
 
-import json
 from typing import Optional
 
 import pytest
@@ -26,7 +25,7 @@ from pydantic import ValidationError
 from syrupy.assertion import SnapshotAssertion
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataType,
     OssieDialect,
     OssieDialectExpression,
@@ -1360,13 +1359,13 @@ class TestOssieToMSIReviewRegressions:
             assert {column.name for column in tree.find_all(sqlglot.exp.Column)} <= {"start_date", "end_date"}
 
 
-def _dbt_meta(meta: dict) -> OssieCustomExtension:
+def _dbt_meta(meta: dict) -> OssieNonportableExtension:
     """The `DBT` entry dbt -> Ossie writes for a `config.meta` dict."""
-    return OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps({"meta": meta}))
+    return OssieNonportableExtension(vendor_name=OssieVendor.DBT.value, data={"meta": meta})
 
 
 class TestOssieToMSIConfigMetaRoundTrip:
-    """The DBT custom_extensions entry this converter's forward direction writes (#42)
+    """The DBT nonportable_extensions entry this converter's forward direction writes (#42)
     round-trips back to config.meta; extensions from another vendor do not."""
 
     def test_field_custom_extension_becomes_entity_config_meta(self) -> None:
@@ -1375,7 +1374,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
             datasets=[
                 _ossie_dataset(
                     "orders",
-                    fields=[_ossie_field("order_id", custom_extensions=ext)],
+                    fields=[_ossie_field("order_id", nonportable_extensions=ext)],
                     primary_key=["order_id"],
                 )
             ]
@@ -1388,7 +1387,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
     def test_field_custom_extension_becomes_dimension_config_meta(self) -> None:
         ext = [_dbt_meta({"value_format": "$#,##0"})]
         doc = _ossie_doc(
-            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount", custom_extensions=ext)])]
+            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount", nonportable_extensions=ext)])]
         )
         sm = OssieToMSIConverter().convert(doc).output.semantic_models[0]
 
@@ -1397,7 +1396,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
     def test_dataset_custom_extension_becomes_semantic_model_config_meta(self) -> None:
         ext = [_dbt_meta({"view_label": "Orders"})]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", custom_extensions=ext)])
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", nonportable_extensions=ext)])
         sm = OssieToMSIConverter().convert(doc).output.semantic_models[0]
 
         assert sm.config is not None
@@ -1407,7 +1406,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
         ext = [_dbt_meta({"group_label": "Revenue"})]
         doc = _ossie_doc(
             datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount")])],
-            metrics=[_ossie_metric("revenue", "SUM(amount)", custom_extensions=ext)],
+            metrics=[_ossie_metric("revenue", "SUM(amount)", nonportable_extensions=ext)],
         )
         result = OssieToMSIConverter().convert(doc).output
 
@@ -1418,7 +1417,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
         ext = [_dbt_meta({"group_label": "ARPU"})]
         doc = _ossie_doc(
             datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount"), _ossie_field("order_id")])],
-            metrics=[_ossie_metric("arpu", "(SUM(amount)) / (COUNT(order_id))", custom_extensions=ext)],
+            metrics=[_ossie_metric("arpu", "(SUM(amount)) / (COUNT(order_id))", nonportable_extensions=ext)],
         )
         result = OssieToMSIConverter().convert(doc).output
 
@@ -1435,8 +1434,8 @@ class TestOssieToMSIConfigMetaRoundTrip:
         assert all(m.config is None for m in sub_metrics)
 
     def test_non_dbt_vendor_extension_does_not_become_config_meta(self) -> None:
-        ext = [OssieCustomExtension(vendor_name=OssieVendor.SIGMA.value, data=json.dumps({"foo": "bar"}))]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
+        ext = [OssieNonportableExtension(vendor_name=OssieVendor.SIGMA.value, data={"foo": "bar"})]
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", nonportable_extensions=ext)])])
         sm = OssieToMSIConverter().convert(doc).output.semantic_models[0]
 
         assert sm.dimensions[0].config is None
@@ -1447,35 +1446,12 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
         assert sm.dimensions[0].config is None
 
-    def test_malformed_dbt_extension_json_is_skipped_with_issue(self) -> None:
-        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data="{not json")]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
-        result = OssieToMSIConverter().convert(doc)
-
-        assert result.output.semantic_models[0].dimensions[0].config is None
-        assert result.issues == [
-            ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, "status")
-        ]
-
-    def test_non_object_dbt_extension_json_is_skipped_with_issue(self) -> None:
-        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps(["not", "an", "object"]))]
-        doc = _ossie_doc(
-            datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount")])],
-            metrics=[_ossie_metric("revenue", "SUM(amount)", custom_extensions=ext)],
-        )
-        result = OssieToMSIConverter().convert(doc)
-
-        assert result.output.metrics[0].config is None
-        assert result.issues == [
-            ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, "revenue")
-        ]
-
     def test_extra_dbt_extension_records_duplicate_issue(self) -> None:
         ext = [
             _dbt_meta({"group_label": "First"}),
             _dbt_meta({"group_label": "Second"}),
         ]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", nonportable_extensions=ext)])])
         result = OssieToMSIConverter().convert(doc)
 
         assert result.output.semantic_models[0].dimensions[0].config is not None
@@ -1485,13 +1461,13 @@ class TestOssieToMSIConfigMetaRoundTrip:
         ]
 
     def test_malformed_extension_on_dropped_metric_is_not_reported(self) -> None:
-        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data="{not json")]
+        ext = [_dbt_meta("not an object")]
         doc = _ossie_doc(
             datasets=[
                 _ossie_dataset("customers", fields=[_ossie_field("customer_id")]),
                 _ossie_dataset("orders", fields=[_ossie_field("order_id")]),
             ],
-            metrics=[_ossie_metric("order_count", "COUNT(*)", custom_extensions=ext)],
+            metrics=[_ossie_metric("order_count", "COUNT(*)", nonportable_extensions=ext)],
         )
         result = OssieToMSIConverter().convert(doc)
 
@@ -1502,8 +1478,8 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
     def test_dbt_entry_without_meta_key_is_left_alone(self) -> None:
         # dbt config, as in the spec's dataset example, is not config.meta.
-        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps({"materialized": "table"}))]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", custom_extensions=ext)])
+        ext = [OssieNonportableExtension(vendor_name=OssieVendor.DBT.value, data={"materialized": "table"})]
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", nonportable_extensions=ext)])
         result = OssieToMSIConverter().convert(doc)
 
         assert result.output.semantic_models[0].config is None
@@ -1511,10 +1487,10 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
     def test_dbt_config_entry_does_not_take_the_meta_slot(self) -> None:
         ext = [
-            OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps({"materialized": "table"})),
+            OssieNonportableExtension(vendor_name=OssieVendor.DBT.value, data={"materialized": "table"}),
             _dbt_meta({"view_label": "Orders"}),
         ]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", custom_extensions=ext)])
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", nonportable_extensions=ext)])
         result = OssieToMSIConverter().convert(doc)
 
         assert result.output.semantic_models[0].config is not None
@@ -1523,8 +1499,8 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
     @pytest.mark.parametrize("meta", [None, "Orders", ["not", "an", "object"]])
     def test_non_object_meta_is_skipped_with_issue(self, meta: object) -> None:
-        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data=json.dumps({"meta": meta}))]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
+        ext = [OssieNonportableExtension(vendor_name=OssieVendor.DBT.value, data={"meta": meta})]
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", nonportable_extensions=ext)])])
         result = OssieToMSIConverter().convert(doc)
 
         assert result.output.semantic_models[0].dimensions[0].config is None
@@ -1534,27 +1510,16 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
     def test_empty_meta_does_not_take_the_meta_slot(self) -> None:
         ext = [_dbt_meta({}), _dbt_meta({"group_label": "IDs"})]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", nonportable_extensions=ext)])])
         result = OssieToMSIConverter().convert(doc)
 
         assert result.output.semantic_models[0].dimensions[0].config is not None
         assert result.output.semantic_models[0].dimensions[0].config.meta == {"group_label": "IDs"}
         assert result.issues == []
 
-    def test_deeply_nested_dbt_extension_is_skipped_with_issue(self) -> None:
-        depth = 100_000
-        ext = [OssieCustomExtension(vendor_name=OssieVendor.DBT.value, data="[" * depth + "]" * depth)]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("status", custom_extensions=ext)])])
-        result = OssieToMSIConverter().convert(doc)
-
-        assert result.output.semantic_models[0].dimensions[0].config is None
-        assert result.issues == [
-            ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, "status")
-        ]
-
     def test_field_datatype_replaces_meta_ossie_datatype(self) -> None:
         ext = [_dbt_meta({"ossie": {"datatype": "Integer", "note": "kept"}, "group_label": "Amounts"})]
-        field = _ossie_field("amount", custom_extensions=ext, datatype=OssieDataType.DECIMAL)
+        field = _ossie_field("amount", nonportable_extensions=ext, datatype=OssieDataType.DECIMAL)
         doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[field])])
         sm = OssieToMSIConverter().convert(doc).output.semantic_models[0]
 
@@ -1568,7 +1533,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
         ext = [_dbt_meta({"ossie": {"datatype": "Integer"}})]
         doc = _ossie_doc(
             datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount")])],
-            metrics=[_ossie_metric("revenue", "SUM(amount)", custom_extensions=ext, datatype=OssieDataType.DECIMAL)],
+            metrics=[_ossie_metric("revenue", "SUM(amount)", nonportable_extensions=ext, datatype=OssieDataType.DECIMAL)],
         )
         result = OssieToMSIConverter().convert(doc).output
 
@@ -1577,7 +1542,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
     def test_datatype_is_not_added_to_meta(self) -> None:
         ext = [_dbt_meta({"group_label": "Amounts"})]
-        field = _ossie_field("amount", custom_extensions=ext, datatype=OssieDataType.DECIMAL)
+        field = _ossie_field("amount", nonportable_extensions=ext, datatype=OssieDataType.DECIMAL)
         doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[field])])
         sm = OssieToMSIConverter().convert(doc).output.semantic_models[0]
 
@@ -1586,7 +1551,7 @@ class TestOssieToMSIConfigMetaRoundTrip:
 
     def test_meta_ossie_datatype_is_kept_without_ossie_datatype(self) -> None:
         ext = [_dbt_meta({"ossie": {"datatype": "Integer"}})]
-        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount", custom_extensions=ext)])])
+        doc = _ossie_doc(datasets=[_ossie_dataset("orders", fields=[_ossie_field("amount", nonportable_extensions=ext)])])
         sm = OssieToMSIConverter().convert(doc).output.semantic_models[0]
 
         assert sm.dimensions[0].config is not None
@@ -1626,10 +1591,10 @@ class TestOssieToMSIConfigMetaRoundTrip:
         doc = _ossie_doc(
             datasets=[
                 _ossie_dataset(
-                    "orders", fields=[_ossie_field("amount", custom_extensions=stale, datatype=OssieDataType.DECIMAL)]
+                    "orders", fields=[_ossie_field("amount", nonportable_extensions=stale, datatype=OssieDataType.DECIMAL)]
                 )
             ],
-            metrics=[_ossie_metric("revenue", "SUM(amount)", custom_extensions=stale, datatype=OssieDataType.DECIMAL)],
+            metrics=[_ossie_metric("revenue", "SUM(amount)", nonportable_extensions=stale, datatype=OssieDataType.DECIMAL)],
         )
 
         again = MSIToOssieConverter().convert(OssieToMSIConverter().convert(doc).output).output

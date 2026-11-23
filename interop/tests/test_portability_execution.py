@@ -50,6 +50,19 @@ def _fixture(relative_path):
     return grade._load(os.path.join(PORTABILITY_DIR, relative_path))
 
 
+def _bare(document):
+    """A copy of ``document`` whose metrics name fields without the dataset qualifier.
+
+    The submodule's bare fixtures carry the bare form as dataset-scoped metrics, so
+    they no longer pair with the model-scoped qualified fixtures by name.
+    """
+    returned = copy.deepcopy(document)
+    for metric in returned["metrics"]:
+        for entry in metric["expression"].get("dialects") or []:
+            entry["expression"] = entry["expression"].replace("sales.", "")
+    return returned
+
+
 def _with_metric(document, name, expression, dialect="ANSI_SQL"):
     """A copy of ``document`` with metric ``name`` set to one expression."""
     returned = copy.deepcopy(document)
@@ -140,20 +153,14 @@ def test_dbt_count_rewrite_differs_on_an_empty_table():
 @requires_engine
 def test_bare_and_qualified_variants_of_every_rung_are_same_on_test_data():
     pairs = [
-        ("m0/m0_sum_bare.ossie.yaml", "m0/m0_ansi_qualified.ossie.yaml", 1),
-        (
-            "m2/m2_aggregates_bare.ossie.yaml",
-            "m2/m2_aggregates_qualified.ossie.yaml",
-            6,
-        ),
-        (
-            "m3/m3_filtered_agg_bare.ossie.yaml",
-            "m3/m3_filtered_agg_qualified.ossie.yaml",
-            1,
-        ),
+        ("m0/m0_ansi_qualified.ossie.yaml", 1),
+        ("m2/m2_aggregates_qualified.ossie.yaml", 6),
+        ("m3/m3_filtered_agg_qualified.ossie.yaml", 1),
     ]
-    for bare, qualified, metric_count in pairs:
-        report = execute.check(_fixture(bare), _fixture(qualified), all_rewrites=True)
+    for qualified, metric_count in pairs:
+        report = execute.check(
+            _bare(_fixture(qualified)), _fixture(qualified), all_rewrites=True
+        )
         outcomes = [(f.name, f.outcome) for f in report.findings]
         assert len(outcomes) == metric_count, outcomes
         assert all(outcome == execute.SAME_ON_TEST_DATA for _, outcome in outcomes), (
@@ -163,8 +170,8 @@ def test_bare_and_qualified_variants_of_every_rung_are_same_on_test_data():
 
 @requires_engine
 def test_rewrite_proved_cosmetic_is_run_only_on_request():
-    src = _fixture("m0/m0_sum_bare.ossie.yaml")
     returned = _fixture("m0/m0_ansi_qualified.ossie.yaml")
+    src = _bare(returned)
     assert grade._equivalent_tree("SUM(amount)", "SUM(sales.amount)") is True
     assert execute.check(src, returned).findings == []
     assert len(execute.check(src, returned, all_rewrites=True).findings) == 1
@@ -175,8 +182,8 @@ def test_the_graders_verdict_decides_what_is_skipped():
     # "cosmetic" is read from the grader's finding, not compared again here, so a
     # grader that compares with more context (a dataset qualifier, a dialect) and
     # calls an equal-looking pair a review gets that pair executed.
-    src = _fixture("m0/m0_sum_bare.ossie.yaml")
     returned = _fixture("m0/m0_ansi_qualified.ossie.yaml")
+    src = _bare(returned)
     graded = grade.grade(src, returned)
     (rewritten,) = [
         f for f in graded.findings if f.kind == "metric" and f.outcome == grade.REWRITTEN
@@ -446,9 +453,9 @@ def test_numeric_field_name_and_reserved_column_name_do_not_break_the_check():
 
 @requires_engine
 def test_rejected_document_produces_a_note():
-    report = execute.check(
-        _sales(AMOUNT_STATUS, "SUM(amount)"), {"version": "0.2.0.dev0", "name": "t"}
-    )
+    # The grader rejects only a missing or empty return, which is what interop
+    # passes when an export fails.
+    report = execute.check(_sales(AMOUNT_STATUS, "SUM(amount)"), {})
     assert report.rejected is True
     assert "REJECTED" in execute._format(report)
 

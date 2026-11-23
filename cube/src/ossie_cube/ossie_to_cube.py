@@ -23,7 +23,7 @@ itself, plus -- when a prior import stashed them -- the original file paths and
 every Cube-only construct restored verbatim.
 
 Ossie features Cube has no field for (`unique_keys`, foreign-vendor
-`custom_extensions`, the structured form of `ai_context`) are parked under
+`nonportable_extensions`, the structured form of `ai_context`) are parked under
 `meta.ossie` rather than dropped, since Cube has a `meta` field at every level.
 That keeps `Ossie -> Cube -> Ossie` lossless as well.
 
@@ -334,7 +334,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
                    "unique_keys have no Cube field; parked under meta.ossie")
     foreign = foreign_vendor_extensions(ds)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
     if plan.key_from_unique_keys:
         # Recorded before the meta is assembled, so re-import does not hand back a
         # `primary_key` the Ossie model never declared: `unique_keys` is restored on its
@@ -345,7 +345,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
         parked["join_extensions"] = join_extensions
         issues.add(IssueType.PARKED_IN_META, scope,
                    f"a Cube join carries no metadata field, so relationship "
-                   f"custom_extensions for {', '.join(sorted(join_extensions))} are "
+                   f"nonportable_extensions for {', '.join(sorted(join_extensions))} are "
                    f"parked under meta.ossie.join_extensions")
     cube_extras = dict(stash.get("cube_extras") or {})
     stashed_meta = cube_extras.pop("meta", None)
@@ -834,7 +834,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
         parked = {}
         foreign = foreign_vendor_extensions(field)
         if foreign:
-            parked["custom_extensions"] = foreign
+            parked["nonportable_extensions"] = foreign
         # Cube's `type` is coarser than Ossie's `datatype` (Integer/Decimal/Float all
         # become `number`), so the precise one is parked whenever importing would not
         # recover it. `meta.ossie` is Cube-side, so this costs the Ossie document
@@ -2159,7 +2159,7 @@ def _apply_measure_metadata(metric, measure, stash, used_dialect=None,
     parked = {}
     foreign = foreign_vendor_extensions(metric)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
     # Cube has no field for a measure's result type. Import infers one only for the
     # count family, whose result type does not depend on the operand, so anything else
     # (a `Decimal` sum) would be lost without parking it.
@@ -2278,7 +2278,7 @@ def _build_views(model, model_stash, cube_names, relationships, datasets,
     parked = {}
     foreign = foreign_vendor_extensions(model)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
 
     # Cube keeps cubes and views in one global namespace, so a view may not share a
     # name with a cube. The model name and a dataset name being equal is not exotic --
@@ -2309,7 +2309,7 @@ def _build_views(model, model_stash, cube_names, relationships, datasets,
             vendors = ", ".join(
                 sorted({str(e.get("vendor_name")) for e in foreign}))
             raise ConversionError(
-                f"Model carries custom_extensions for {vendors}, which have no Cube "
+                f"Model carries nonportable_extensions for {vendors}, which have no Cube "
                 f"field and ride on the view representing the model -- but no view "
                 f"is mapped, so there is nowhere to put them without losing them. "
                 f"Re-import naming the view the model maps to (`--view <name>`), or "

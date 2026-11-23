@@ -19,9 +19,9 @@ import pytest
 from inline_snapshot import snapshot
 from ossie import (
     OssieAIContextObject,
-    OssieCustomExtension,
     OssieDataset,
     OssieMetric,
+    OssieNonportableExtension,
     OssieRelationship,
     OssieSemanticModel,
 )
@@ -134,9 +134,9 @@ def test_warns_about_ai_context(ctx: ExportContext, orders: OssieDataset) -> Non
 def test_warns_about_custom_extensions(
     ctx: ExportContext, orders: OssieDataset
 ) -> None:
-    custom_extension = OssieCustomExtension(vendor_name="foo", data="bar")
+    custom_extension = OssieNonportableExtension(vendor_name="foo", data={"foo": "bar"})
     semantic_model = OssieSemanticModel(
-        name="sales", datasets=[orders], custom_extensions=[custom_extension]
+        name="sales", datasets=[orders], nonportable_extensions=[custom_extension]
     )
 
     convert_ossie_semantic_model(semantic_model, ctx=ctx)

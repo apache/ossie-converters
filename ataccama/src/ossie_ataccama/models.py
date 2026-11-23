@@ -39,10 +39,10 @@ Ataccama Catalog API structure (public REST API, /catalog/v1):
     └── description (Slate rich-text JSON)
 
 Ossie semantic model structure (what we produce):
-  version, name, description, ai_context, custom_extensions[]
-  └── datasets[] {name, source, description, ai_context, fields[], custom_extensions[]}
+  version, name, description, ai_context, nonportable_extensions[]
+  └── datasets[] {name, source, description, ai_context, fields[], nonportable_extensions[]}
       └── fields[] {name, expression{dialects[]}, dimension{is_time}, description,
-                      ai_context, custom_extensions[]}
+                      ai_context, nonportable_extensions[]}
 """
 
 from __future__ import annotations

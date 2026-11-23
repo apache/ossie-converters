@@ -18,7 +18,7 @@
 """Tests for Ossie ↔ OBML roundtrip of data types, settings, owner, and column properties.
 
 Validates that recently added OBML properties survive the OBML → Ossie → OBML
-roundtrip via custom_extensions preservation.
+roundtrip via nonportable_extensions preservation.
 """
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ class TestMetricDataType:
 
 
 class TestRefreshPolicy:
-    """OBML refresh: block round-trips through Ossie custom_extensions."""
+    """OBML refresh: block round-trips through Ossie nonportable_extensions."""
 
     def test_static_refresh_roundtrip(self):
         obml = {
@@ -331,7 +331,7 @@ class TestPoPMetricDataType:
 
 
 class TestCountSynthesisKnobs:
-    """Count-synthesis knobs roundtrip via OBML-vendor custom_extensions.
+    """Count-synthesis knobs roundtrip via OBML-vendor nonportable_extensions.
 
     The synthesized ``<object>.count`` measures are derived (regenerated on
     load), so they are never emitted to Ossie; only the knobs must survive.

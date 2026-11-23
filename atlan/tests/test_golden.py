@@ -113,23 +113,23 @@ def test_an_edit_in_ossie_becomes_a_versioned_registry_patch():
 def test_display_name_is_not_carried_and_the_registry_block_is_id_and_version():
     """The registry holds display_name under the id we already carry (decision: no second copy)."""
     m = _ossie_yaml("count_rows")["metrics"][0]
-    ext = json.loads(m["custom_extensions"][0]["data"])
+    ext = m["nonportable_extensions"][0]["data"]
     assert ext["registry"] == {"id": "metric_synth_store_sales_count", "definition_version": 1}
     assert "display_name" not in json.dumps(ext)
 
 
 def test_split_query_carries_example_sql_on_its_first_part_only():
     first, second = _ossie_yaml("ratio_round_window")["metrics"]
-    c1 = json.loads(first["custom_extensions"][0]["data"])["agent_context"]
-    c2 = json.loads(second["custom_extensions"][0]["data"])["agent_context"]
+    c1 = first["nonportable_extensions"][0]["data"]["agent_context"]
+    c2 = second["nonportable_extensions"][0]["data"]["agent_context"]
     assert c1["examples"] and "examples" not in c2 and "verified_sql" not in c2
-    assert json.loads(first["custom_extensions"][0]["data"])["registry"]["id"] == \
-        json.loads(second["custom_extensions"][0]["data"])["registry"]["id"]
+    assert first["nonportable_extensions"][0]["data"]["registry"]["id"] == \
+        second["nonportable_extensions"][0]["data"]["registry"]["id"]
 
 
 def test_account_parameter_becomes_a_dimension():
     m = _ossie_yaml("account_param_as_dimension")["metrics"][0]
-    dims = json.loads(m["custom_extensions"][0]["data"])["agent_context"]["dimensions"]
+    dims = m["nonportable_extensions"][0]["data"]["agent_context"]["dimensions"]
     assert any(x.endswith(".store") for x in dims)
     assert ":store_sk" not in m["expression"]["dialects"][0]["expression"]
 
@@ -329,15 +329,13 @@ def test_agent_context_naming_a_removed_field_is_refused_not_a_crash(tmp_path, c
 def test_agent_context_time_field_must_name_a_declared_field():
     """A renamed time field is refused, where it was read as a raw column of the old name."""
     doc = _ossie_yaml("mandatory_filter_time_dim")
-    ext = doc["metrics"][0]["custom_extensions"][0]
-    data = json.loads(ext["data"])
+    ext = doc["metrics"][0]["nonportable_extensions"][0]
+    data = ext["data"]
     data["agent_context"].pop("dimensions", None)
-    ext["data"] = json.dumps(data)
     f = next(f for d in doc["datasets"] for f in d.get("fields", []) if f["name"] == "sr_returned_date")
     f["name"] = "renamed"
     _, issues = convert_ossie_to_records(doc)
     assert ["declares a field 'sr_returned_date'" in i.detail for i in issues] == [True]
     data["agent_context"]["timeframe_field"] = "sr_returned_date"
-    ext["data"] = json.dumps(data)
     _, issues = convert_ossie_to_records(doc)
     assert ["not a dataset.field reference" in i.detail for i in issues] == [True]

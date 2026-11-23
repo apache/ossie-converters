@@ -80,9 +80,9 @@ relationships:
   - o_custkey
   to_columns:
   - c_custkey
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DATABRICKS
-    data: '{"_v": 1, "rely": {"at_most_one_match": true}}'
+    data: {"_v": 1, "rely": {"at_most_one_match": true}}
 metrics:
 - name: total_revenue
   expression:

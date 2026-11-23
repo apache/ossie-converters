@@ -55,27 +55,7 @@ def _databricks_only(model):
     return model
 
 
-# `from-databricks` moves a portable expression into the primary `sql` slot. The pinned
-# `ossie` submodule's grader (Nov 2026) scores a qualified OSSIE_SQL reference in `sql` as
-# vendor-only, while apache/ossie `main` treats `sql` as the primary portable form. Remove
-# this xfail once the submodule bumps to the sql-primary portability spec (it will XPASS).
-_SQL_PRIMARY_DRIFT = "m0_ossiesql_qualified.ossie.yaml"
-_ROUND_TRIP_LADDER = [
-    pytest.param(
-        path,
-        id=path.name,
-        marks=pytest.mark.xfail(
-            reason="pinned ossie submodule grades a qualified OSSIE_SQL `sql` as vendor-only; "
-            "passes against apache/ossie main (sql-primary portability)",
-        ),
-    )
-    if path.name == _SQL_PRIMARY_DRIFT
-    else pytest.param(path, id=path.name)
-    for path in LADDER
-]
-
-
-@pytest.mark.parametrize("path", _ROUND_TRIP_LADDER)
+@pytest.mark.parametrize("path", LADDER, ids=lambda path: path.name)
 def test_round_trip_is_portable(path):
     model = yaml.safe_load(path.read_text())
     native = convert_ossie_model_to_databricks(model)
