@@ -213,6 +213,9 @@ converters:
     output: file
     fixtures: {}
     import_skip: No native-to-Ossie importer is implemented in this converter.
+  tableau:
+    cwd: tableau
+    skip: Pending interop adapter and native .tds inspector registration; tested in converter-tableau-ci.
   thoughtspot:
     cwd: thoughtspot
     toolchain: uv
