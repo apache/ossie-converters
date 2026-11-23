@@ -128,23 +128,23 @@ def expr_of(item, dialect="ANSI_SQL"):
 
 def stash_of(item, vendor="CUBE"):
     """The parsed vendor stash on an Ossie object, or {} when absent."""
-    for ext in item.get("custom_extensions") or []:
+    for ext in item.get("nonportable_extensions") or []:
         if ext["vendor_name"] == vendor:
-            data = json.loads(ext["data"])
+            data = dict(ext["data"])
             data.pop("_v", None)
             return data
     return {}
 
 
 def canon(obj):
-    """Deep-copy with every `custom_extensions[].data` JSON string parsed into a
+    """Deep-copy with every `nonportable_extensions[].data` JSON string parsed into a
     dict, so comparisons are insensitive to JSON key order and whitespace."""
     obj = copy.deepcopy(obj)
 
     def walk(node):
         if isinstance(node, dict):
             for key, value in node.items():
-                if key == "custom_extensions" and isinstance(value, list):
+                if key == "nonportable_extensions" and isinstance(value, list):
                     for ext in value:
                         if isinstance(ext, dict) and isinstance(ext.get("data"), str):
                             ext["data"] = json.loads(ext["data"])

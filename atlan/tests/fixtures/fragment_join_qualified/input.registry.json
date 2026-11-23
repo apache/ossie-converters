@@ -1,0 +1,100 @@
+{
+ "id": "metric_synth_store_sale_errors",
+ "kind": "metric",
+ "app": "metric",
+ "name": "Store Sale Errors",
+ "display_name": "Store Sale Errors",
+ "description": "Store sales that were voided: the reliability signal store managers act on",
+ "artifact_status": "active",
+ "workspace_id": "workspace_synthetic_tpcds",
+ "version_ordinal": 1,
+ "source_type": "external",
+ "source_id": "metric:builder:0001",
+ "metadata": {
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "aggregation": {
+    "type": "sum",
+    "reaggregation": "sum"
+   },
+   "output": {
+    "alias": "Store Sale Errors",
+    "datatype": "integer",
+    "unit": "sales"
+   },
+   "joins": [
+    {
+     "name": "item tags",
+     "to": "TPCDS.PUBLIC.ITEM",
+     "cardinality": "many_to_one",
+     "origin": "carries the Seasonal dimension; a LEFT JOIN, so it keeps every sale",
+     "sql": "TPCDS.PUBLIC.ITEM.I_ITEM_SK = TPCDS.PUBLIC.STORE_SALES.SS_ITEM_SK"
+    }
+   ],
+   "dimensions": [
+    {
+     "name": "Sale Date",
+     "kind": "time",
+     "sql": "TPCDS.PUBLIC.STORE_SALES.SS_SOLD_TIMESTAMP",
+     "datatype": "date",
+     "required_join": null,
+     "description": "When the sale happened."
+    },
+    {
+     "name": "Store",
+     "kind": "categorical",
+     "sql": "TPCDS.PUBLIC.STORE_SALES.SS_STORE_SK",
+     "datatype": "string",
+     "required_join": null,
+     "description": "The store the sale belongs to."
+    },
+    {
+     "name": "Channel",
+     "kind": "categorical",
+     "sql": "INITCAP(TPCDS.PUBLIC.STORE_SALES.SS_CHANNEL)",
+     "datatype": "string",
+     "required_join": null,
+     "description": "Sales channel."
+    },
+    {
+     "name": "Seasonal",
+     "kind": "categorical",
+     "sql": "CASE WHEN TPCDS.PUBLIC.ITEM.I_ITEM_TAGS LIKE '%Seasonal%' THEN 'Yes' ELSE 'No' END",
+     "datatype": "string",
+     "required_join": null,
+     "description": "Whether the item is tagged seasonal."
+    }
+   ],
+   "filters": [],
+   "mandatory_filters": [],
+   "examples": [
+    {
+     "question": "How are voided sales trending month by month per store, broken down by channel and whether the item is seasonal?",
+     "sql": "SELECT DATE_TRUNC('MONTH', SS_SOLD_TIMESTAMP) AS month, SS_STORE_SK, SUM(CASE WHEN SS_IS_VOID = TRUE THEN 1 ELSE 0 END) FROM TPCDS.PUBLIC.STORE_SALES GROUP BY 1, 2",
+     "source": "metric_builder"
+    }
+   ],
+   "exclusions": [],
+   "grain": "TPCDS.PUBLIC.STORE_SALES.SS_STORE_SK, TPCDS.PUBLIC.STORE_SALES.SS_CUSTOMER_SK, TPCDS.PUBLIC.STORE_SALES.SS_SOLD_TIMESTAMP",
+   "population": "Store sales, one row per sale, attributed to the store and carrying the channel and item tags",
+   "provenance": {
+    "source": "synthetic"
+   },
+   "extensions": {},
+   "formula": "SUM(CASE WHEN TPCDS.PUBLIC.STORE_SALES.SS_IS_VOID = TRUE THEN 1 ELSE 0 END)",
+   "source": {
+    "sql": "TPCDS.PUBLIC.STORE_SALES\nLEFT JOIN TPCDS.PUBLIC.ITEM\n       ON TPCDS.PUBLIC.ITEM.I_ITEM_SK = TPCDS.PUBLIC.STORE_SALES.SS_ITEM_SK",
+    "table": null,
+    "alias": "Store Sales",
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "parameters": []
+   },
+   "depends_on": [
+    "Store Sales"
+   ]
+  },
+  "validation_warnings": []
+ }
+}

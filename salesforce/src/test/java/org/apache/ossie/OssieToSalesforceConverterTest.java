@@ -796,20 +796,20 @@ class OssieToSalesforceConverterTest {
         // Normalize line endings first: the fixture file may check out with CRLF depending on
         // the platform's autocrlf setting, but the substitutions below are written with LF.
         // The Ossie schema puts no minLength on a field label, so an empty one is a valid
-        // model, and a label restored from custom_extensions can be null. Salesforce rejects
+        // model, and a label restored from nonportable_extensions can be null. Salesforce rejects
         // both exactly as it rejects a missing MasterLabel.
         String yamlWithBlankLabels = ossieYaml.replace("\r\n", "\n")
                 .replace("    label: Unit Price\n", "    label: \"\"\n")
                 .replace("    label: Order ID\n", "")
                 .replace("        expression: order_id__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n",
                         "        expression: order_id__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n"
                         + "          \"label\" : null,\n");
         assertFalse(yamlWithBlankLabels.contains("label: Unit Price"), "fixture text substitution did not match");
@@ -850,7 +850,7 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(orderId);
         assertEquals("order_id", orderId.get("label"),
-                "a null label restored from custom_extensions should be defaulted to apiName");
+                "a null label restored from nonportable_extensions should be defaulted to apiName");
     }
 
     @Test
@@ -858,7 +858,7 @@ class OssieToSalesforceConverterTest {
         // Normalize line endings first: the fixture file may check out with CRLF depending on
         // the platform's autocrlf setting, but the substitution below is written with LF.
         // Drop the Ossie label from product_name and stash a Salesforce one in its
-        // custom_extensions instead, so the only label available is the restored one.
+        // nonportable_extensions instead, so the only label available is the restored one.
         String yamlWithExtensionLabel = ossieYaml.replace("\r\n", "\n").replace(
                 "  - name: product_name\n"
                         + "    datatype: String\n"
@@ -870,9 +870,9 @@ class OssieToSalesforceConverterTest {
                         + "      dialects:\n"
                         + "      - dialect: ANSI_SQL\n"
                         + "        expression: product_name__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n"
                         + "          \"dataType\" : \"Text\",\n",
                 "  - name: product_name\n"
@@ -884,9 +884,9 @@ class OssieToSalesforceConverterTest {
                         + "      dialects:\n"
                         + "      - dialect: ANSI_SQL\n"
                         + "        expression: product_name__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n"
                         + "          \"label\" : \"Product Name (Custom Label)\",\n"
                         + "          \"dataType\" : \"Text\",\n");
@@ -913,7 +913,7 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(productName);
         assertEquals("Product Name (Custom Label)", productName.get("label"),
-                "a label restored from custom_extensions should win over the apiName default");
+                "a label restored from nonportable_extensions should win over the apiName default");
     }
 
     @Test
@@ -1028,9 +1028,9 @@ class OssieToSalesforceConverterTest {
                         + "    dialects:\n"
                         + "    - dialect: ANSI_SQL\n"
                         + "      expression: SUM([Orders].[amount])\n"
-                        + "  custom_extensions:\n"
+                        + "  nonportable_extensions:\n"
                         + "  - vendor_name: SALESFORCE\n"
-                        + "    data: |-\n"
+                        + "    data:\n"
                         + "      {\n"
                         + "        \"label\": \"Total Revenue (Custom Label)\",\n"
                         + "        \"dataType\": \"Currency\"\n"
@@ -1048,10 +1048,10 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(totalRevenue);
         assertEquals("Total Revenue (Custom Label)", totalRevenue.get("label"),
-                "custom_extensions on a metric should be restored onto its exported semanticCalculatedMeasurement");
+                "nonportable_extensions on a metric should be restored onto its exported semanticCalculatedMeasurement");
         assertEquals("Currency", totalRevenue.get("dataType"),
-                "exact Salesforce dataType restored from custom_extensions should win over the Tua compiler's derived type");
-        // The compiled Tua expression is still produced normally; restoring custom_extensions
+                "exact Salesforce dataType restored from nonportable_extensions should win over the Tua compiler's derived type");
+        // The compiled Tua expression is still produced normally; restoring nonportable_extensions
         // must not interfere with fields the expression compiler itself computes.
         assertEquals("SUM([Orders].[amount])", totalRevenue.get("expression"));
         assertEquals("Tua", totalRevenue.get("syntax"));
@@ -1062,9 +1062,9 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(avgOrderValue);
         assertEquals("avg_order_value", avgOrderValue.get("label"),
-                "a metric with no custom_extensions label should default its label to apiName");
+                "a metric with no nonportable_extensions label should default its label to apiName");
         assertEquals("Number", avgOrderValue.get("dataType"),
-                "a metric with no custom_extensions dataType should keep the Tua compiler's derived type");
+                "a metric with no nonportable_extensions dataType should keep the Tua compiler's derived type");
     }
 
     @Test
@@ -1208,7 +1208,7 @@ class OssieToSalesforceConverterTest {
 
     /**
      * Builds a model that never passed through Salesforce, so it carries no
-     * custom_extensions to restore the API's required properties from. Every other
+     * nonportable_extensions to restore the API's required properties from. Every other
      * converter in the hub hands the Salesforce side a document shaped like this.
      */
     private static String ossieModelWithoutSalesforceExtensions(String... sources) {
@@ -1240,7 +1240,7 @@ class OssieToSalesforceConverterTest {
         Map<String, Object> sfModel = jsonMapper.readValue(results.get(0), new TypeReference<Map<String, Object>>() {});
 
         assertEquals("default", sfModel.get("dataspace"),
-                "a model with no Salesforce custom_extensions should still carry a dataspace");
+                "a model with no Salesforce nonportable_extensions should still carry a dataspace");
     }
 
     /**
@@ -1482,7 +1482,7 @@ class OssieToSalesforceConverterTest {
         assertNotNull(customers);
         assertEquals("Customers__dll", customers.get("dataObjectName"));
         assertEquals("Dmo", customers.get("dataObjectType"),
-                "a dataObjectType restored from custom_extensions should win over the suffix default");
+                "a dataObjectType restored from nonportable_extensions should win over the suffix default");
     }
 
     @Test

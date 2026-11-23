@@ -17,8 +17,6 @@
 
 """Dataset-scoped metric export, namespace resolution and round-trip fidelity."""
 
-import json
-
 import pytest
 import yaml
 from _cube_gate import (
@@ -285,10 +283,10 @@ def test_field_sanitization_cannot_create_duplicate_local_metric_names():
 
 def test_explicit_native_overrides_survive_local_metric_import():
     local = metric()
-    local["custom_extensions"] = [
+    local["nonportable_extensions"] = [
         {
             "vendor_name": "CUBE",
-            "data": '{"_v": 1, "type": "number", "sql": "SUM({CUBE.amount})"}',
+            "data": {"_v": 1, "type": "number", "sql": "SUM({CUBE.amount})"},
         }
     ]
     files, _ = export(model(dataset(metrics=[local])))
@@ -400,12 +398,10 @@ def test_geo_coordinates_restore_the_fields_emitted_by_import(renamed_coordinate
                 "expression": expression(source),
                 "datatype": "Float",
                 "dimension": {},
-                "custom_extensions": [
+                "nonportable_extensions": [
                     {
                         "vendor_name": "CUBE",
-                        "data": json.dumps(
-                            {"_v": 1, "geo": {"of": "location", "part": part}}
-                        ),
+                        "data": {"_v": 1, "geo": {"of": "location", "part": part}},
                     }
                 ],
             }
@@ -430,8 +426,8 @@ def test_geo_coordinates_restore_the_fields_emitted_by_import(renamed_coordinate
 
 def test_authored_native_name_override_survives_with_view_references():
     local = metric()
-    local["custom_extensions"] = [
-        {"vendor_name": "CUBE", "data": '{"_v": 1, "name": "native_total"}'}
+    local["nonportable_extensions"] = [
+        {"vendor_name": "CUBE", "data": {"_v": 1, "name": "native_total"}}
     ]
     files, _ = export(model(dataset(metrics=[local])))
     assert "native_total" in measures(files)
@@ -587,8 +583,8 @@ def test_primary_key_count_and_multiple_dialects_survive_repeated_round_trips():
     local["expression"]["dialects"].append(
         {"dialect": "SNOWFLAKE", "expression": "COUNT(DISTINCT ID)"}
     )
-    local["custom_extensions"] = [
-        {"vendor_name": "COMMON", "data": '{"unit": "orders"}'}
+    local["nonportable_extensions"] = [
+        {"vendor_name": "COMMON", "data": {"unit": "orders"}}
     ]
     files, _ = export(model(dataset(metrics=[local])))
     assert measures(files)["order_count"]["type"] == "count"
@@ -598,7 +594,7 @@ def test_primary_key_count_and_multiple_dialects_survive_repeated_round_trips():
         back = yaml.safe_load(returned)
         restored = back["datasets"][0]["metrics"][0]
         assert restored["expression"] == local["expression"]
-        assert local["custom_extensions"][0] in restored["custom_extensions"]
+        assert local["nonportable_extensions"][0] in restored["nonportable_extensions"]
         next_files, _ = export(back)
         assert parse_files(next_files) == parse_files(files)
         files = next_files
@@ -645,8 +641,8 @@ def test_review_regressions_compile_in_cube_with_preserved_view_references():
             "datatype": "Date",
         }
     )
-    ds["metrics"][1]["custom_extensions"] = [
-        {"vendor_name": "CUBE", "data": '{"_v": 1, "name": "native_date"}'}
+    ds["metrics"][1]["nonportable_extensions"] = [
+        {"vendor_name": "CUBE", "data": {"_v": 1, "name": "native_date"}}
     ]
     files, _ = export(model(ds))
     files["model/views/curated.yml"] = yaml.safe_dump(
@@ -854,8 +850,8 @@ def test_bare_count_is_not_restored_after_native_key_changes():
 
 def test_field_signature_checks_the_native_member_chain():
     ds = dataset(metrics=[metric()])
-    ds["fields"][1]["custom_extensions"] = [
-        {"vendor_name": "CUBE", "data": '{"_v": 1, "sql": "{CUBE.base}"}'}
+    ds["fields"][1]["nonportable_extensions"] = [
+        {"vendor_name": "CUBE", "data": {"_v": 1, "sql": "{CUBE.base}"}}
     ]
     ds["fields"].append({"name": "base", "expression": expression("amount_base")})
     files, _ = export(model(ds))
@@ -965,7 +961,7 @@ def test_cross_cube_formula_round_trip_keeps_native_primary_key_count():
     ("DATEADD", "1, {CUBE}.shipped_at"),
 ])
 @pytest.mark.parametrize("dialect", [None, "ANSI_SQL"])
-def test_ambiguous_date_unit_stays_model_scoped_in_projection(function, arguments, dialect):
+def test_recognized_date_unit_is_safe_at_dataset_scope_in_projection(function, arguments, dialect):
     native = yaml.safe_load(_NATIVE_SALES)
     orders = native["cubes"][0]
     orders["measures"] = [{"name": "days", "type": "number",
@@ -974,10 +970,15 @@ def test_ambiguous_date_unit_stays_model_scoped_in_projection(function, argument
     returned = convert_cube_view_to_ossie(
         {"model.yml": yaml.safe_dump(native)}, "sales", source_dialect=dialect)[0]
     document = yaml.safe_load(returned)
-    assert not document["datasets"][0].get("metrics")
-    sql = document["metrics"][0]["expression"]["dialects"][0]["expression"]
+    assert not document.get("metrics")
+    sql = document["datasets"][0]["metrics"][0]["expression"]["dialects"][0]["expression"]
     assert f"{function}(day," in sql
+    assert "source.shipped_at" in sql
     assert "source.day" not in sql
+    exported, _ = convert_ossie_to_cube(returned)
+    native = parse_files(exported)
+    rendered = yaml.safe_dump(native)
+    assert f"{function}(day," in rendered
 
 
 @pytest.mark.parametrize("reference", ["{net}", "{CUBE.net}", "{orders.net}"])

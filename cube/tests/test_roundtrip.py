@@ -71,8 +71,8 @@ def test_joined_sum_grain_comes_from_the_cube_that_owns_the_aggregate():
     metrics = {metric["name"]: metric for metric in yaml.safe_load(ossie)["metrics"]}
 
     def grain(name):
-        return next((json.loads(ext["data"]).get("integer_sum_grain")
-                     for ext in metrics[name].get("custom_extensions", [])
+        return next((ext["data"].get("integer_sum_grain")
+                     for ext in metrics[name].get("nonportable_extensions", [])
                      if ext["vendor_name"] == "CUBE"), None)
 
     assert grain("store_productivity") == ["store"]
@@ -170,7 +170,7 @@ _INLINE_COMPOSITE = {
 
 
 def test_an_inline_composite_measure_travels_with_no_extension():
-    """Both composite shapes carry nothing in custom_extensions: the expression is
+    """Both composite shapes carry nothing in nonportable_extensions: the expression is
     the whole record. This is the review principle -- everything parseable from
     the expression stays out of the stash -- applied to the last measure shape
     that used to keep a rendered copy of its own SQL."""
@@ -178,8 +178,8 @@ def test_an_inline_composite_measure_travels_with_no_extension():
 
     ossie, _ = convert_cube_to_ossie(_INLINE_COMPOSITE)
     metrics = by_name(model_of(ossie)["metrics"])
-    assert "custom_extensions" not in metrics["spread"]
-    assert "custom_extensions" not in metrics["value_per_user"]
+    assert "nonportable_extensions" not in metrics["spread"]
+    assert "nonportable_extensions" not in metrics["value_per_user"]
 
 
 def test_a_single_cube_composite_round_trips_verbatim():
@@ -310,12 +310,12 @@ def test_ossie_only_constructs_are_parked_not_dropped():
     orders = parse(files["model/cubes/orders.yml"])["cubes"][0]
     parked = orders["meta"]["ossie"]
     assert parked["unique_keys"] == [["order_number"]]
-    assert parked["custom_extensions"][0]["vendor_name"] == "SNOWFLAKE"
+    assert parked["nonportable_extensions"][0]["vendor_name"] == "SNOWFLAKE"
 
     ossie2, _ = convert_cube_to_ossie(files)
     ds = {d["name"]: d for d in parse(ossie2)["datasets"]}
     assert ds["orders"]["unique_keys"] == [["order_number"]]
-    vendors = {e["vendor_name"] for e in ds["orders"]["custom_extensions"]}
+    vendors = {e["vendor_name"] for e in ds["orders"]["nonportable_extensions"]}
     assert "SNOWFLAKE" in vendors
 
 

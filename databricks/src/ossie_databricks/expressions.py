@@ -81,7 +81,7 @@ _PORTABLE: frozenset[type[exp.Expression]] = frozenset(
         exp.Radians, exp.Degrees, exp.Pi, exp.Trunc,
         # Dates and times.
         exp.Year, exp.Quarter, exp.Month, exp.Day, exp.DayOfYear, exp.Hour, exp.Minute,
-        exp.Second, exp.Extract, exp.DateTrunc, exp.TimestampTrunc, exp.TimestampAdd,
+        exp.Second, exp.Extract, exp.DateTrunc, exp.TimestampTrunc, exp.TimestampAdd, exp.DateDiff,
         exp.TsOrDsAdd, exp.TsOrDsToDate, exp.CurrentDate, exp.CurrentTimestamp, exp.ToChar,
         # Window functions.
         exp.RowNumber, exp.Rank, exp.DenseRank, exp.Ntile, exp.PercentRank, exp.CumeDist,
@@ -125,11 +125,35 @@ def _date_trunc(self: sqlglot.Generator, node: exp.Expression) -> str:
     return self.func("DATE_TRUNC", exp.Literal.string(node.text("unit").upper()), node.this)
 
 
+def _ossie_date_trunc(self: sqlglot.Generator, node: exp.Expression) -> str:
+    # The unit in the lower case the Ossie specification writes it in, so an authored
+    # DATE_TRUNC('month', d) comes back as written.
+    return self.func("DATE_TRUNC", exp.Literal.string(node.text("unit").lower()), node.this)
+
+
+def _date_diff(self: sqlglot.Generator, node: exp.Expression) -> str:
+    return self.func("DATEDIFF", exp.var(node.text("unit").upper()), node.expression, node.this)
+
+
+def _ossie_date_diff(self: sqlglot.Generator, node: exp.Expression) -> str:
+    return self.func("DATEDIFF", exp.var(node.text("unit").lower()), node.expression, node.this)
+
+
+def _ossie_datediff(args: list[exp.Expression]) -> exp.Expression:
+    # The default parser reads DATEDIFF(day, start, end) end-first, with the part as a
+    # column; Ossie writes the part first.
+    if len(args) != 3:
+        return exp.Anonymous(this="DATEDIFF", expressions=args)
+    unit, start, end = args
+    return exp.DateDiff(this=end, expression=start, unit=exp.var(unit.name.upper()))
+
+
 class _DatabricksSql(Databricks):
     class Generator(Databricks.Generator):
         TRANSFORMS = {
             **Databricks.Generator.TRANSFORMS,
             exp.DateTrunc: _date_trunc,
+            exp.DateDiff: _date_diff,
             exp.TimestampAdd: _date_add,
             exp.TsOrDsAdd: _date_add,
             # A bare CURRENT_DATE resolves to a column of that name when one exists.
@@ -147,6 +171,9 @@ class _OssieParse(sqlglot.Dialect):
 
     NULL_ORDERING = "nulls_are_large"
 
+    class Parser(sqlglot.Parser):
+        FUNCTIONS = {**sqlglot.Parser.FUNCTIONS, "DATEDIFF": _ossie_datediff}
+
 
 class _OssieSql(Databricks):
     """Databricks spelling, which Ossie shares for its functions, with ANSI quoting."""
@@ -163,8 +190,9 @@ class _OssieSql(Databricks):
     class Generator(Databricks.Generator):
         TRANSFORMS = {
             **Databricks.Generator.TRANSFORMS,
-            exp.DateTrunc: _date_trunc,
-            exp.TimestampTrunc: _date_trunc,
+            exp.DateTrunc: _ossie_date_trunc,
+            exp.TimestampTrunc: _ossie_date_trunc,
+            exp.DateDiff: _ossie_date_diff,
             exp.TimestampAdd: _date_add,
             exp.TsOrDsAdd: _date_add,
             exp.CurrentDate: lambda self, node: "CURRENT_DATE",
@@ -190,12 +218,23 @@ def parse(text: str, dialect: str) -> exp.Expression:
         raise Untranslatable(f"cannot parse {text!r} as {dialect}") from error
     tree = tree.transform(_normalize_dateadd)
     if dialect == DATABRICKS:
+        tree = tree.transform(_drop_implied_to_date)
         # Databricks identifiers are case-insensitive, so a backtick quote on a regular name
         # is unnecessary; drop it so the name stays case-insensitive after translation. ANSI
         # and OSSIE_SQL quotes are case-sensitive and intentional, so they are left alone.
         for identifier_node in tree.find_all(exp.Identifier):
             _drop_unneeded_quotes(identifier_node)
     return tree
+
+
+def _drop_implied_to_date(node: exp.Expression) -> exp.Expression:
+    # The Databricks parser wraps the argument of YEAR(x), MONTH(x), DAY(x) and DAYOFYEAR(x)
+    # in a TO_DATE that was not written; a written TO_DATE is a second one inside it.
+    if isinstance(node, (exp.Year, exp.Month, exp.Day, exp.DayOfYear)):
+        inner = node.this
+        if isinstance(inner, exp.TsOrDsToDate) and not inner.args.get("format"):
+            node.set("this", inner.this)
+    return node
 
 
 def _normalize_dateadd(node: exp.Expression) -> exp.Expression:
@@ -219,6 +258,13 @@ def _unsupported(tree: exp.Expression) -> list[str]:
         if not isinstance(node, exp.Connector)
         and type(node) not in _PORTABLE
         and _call_name(node) not in _PORTABLE_CALLS
+    }
+    # Ossie does not say whether DATEDIFF counts part boundaries crossed or whole parts
+    # elapsed (Databricks), so only the day count of two dates, where both agree, is kept.
+    functions |= {
+        f"DATEDIFF({node.text('unit').upper()})"
+        for node in tree.find_all(exp.DateDiff)
+        if node.text("unit").upper() != "DAY"
     }
     operators = {
         type(node).__name__

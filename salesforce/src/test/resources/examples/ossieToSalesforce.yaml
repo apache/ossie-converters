@@ -19,9 +19,9 @@ version: 0.3.0.dev0
 name: Customer_Orders_Model
 description: Example model demonstrating calculated dimensions with single and multiple
   data object dependencies
-custom_extensions:
+nonportable_extensions:
 - vendor_name: SALESFORCE
-  data: |-
+  data:
     {
       "dataspace" : "default"
     }
@@ -29,9 +29,9 @@ datasets:
 - description: Customer master data
   name: Customers
   source: Customers__dll
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SALESFORCE
-    data: |-
+    data:
       {
         "label" : "Customers",
         "dataObjectType" : "Dlo"
@@ -47,9 +47,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: customer_id__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Text",
           "displayCategory" : "Discrete"
@@ -64,9 +64,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: email__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Email"
         }
@@ -78,9 +78,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: total_purchases__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Number",
           "aggregationType" : "Sum",
@@ -94,9 +94,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: lifetime_value__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Currency",
           "aggregationType" : "Sum"
@@ -112,18 +112,18 @@ datasets:
       - dialect: ANSI_SQL
         expression: SUBSTRING([Customers].[email], POSITION('@' IN [Customers].[email])
           + 1, LENGTH([Customers].[email]))
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Text"
         }
 - description: Order transaction data
   name: Orders
   source: Orders__dll
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SALESFORCE
-    data: |-
+    data:
       {
         "label" : "Orders",
         "dataObjectType" : "Dlo"
@@ -139,9 +139,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: order_id__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Text"
         }
@@ -155,9 +155,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: customer_id__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Text",
           "displayCategory" : "Discrete",
@@ -174,9 +174,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: product_id__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Text",
           "displayCategory" : "Discrete",
@@ -193,9 +193,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: order_date__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Date",
           "displayCategory" : "Discrete",
@@ -210,9 +210,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: amount__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Currency",
           "aggregationType" : "Sum"
@@ -225,9 +225,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: quantity__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Number",
           "aggregationType" : "Sum"
@@ -242,9 +242,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: YEAR([Orders].[order_date])
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Number",
           "displayCategory" : "Discrete"
@@ -252,9 +252,9 @@ datasets:
 - description: Product catalog data
   name: Products
   source: Products__dll
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SALESFORCE
-    data: |-
+    data:
       {
         "label" : "Products",
         "dataObjectType" : "Dlo"
@@ -270,9 +270,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: product_id__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Text",
           "displayCategory" : "Discrete",
@@ -289,9 +289,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: product_name__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Text",
           "displayCategory" : "Discrete",
@@ -306,9 +306,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: unit_price__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Currency"
         }
@@ -320,9 +320,9 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: stock_level__c
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: SALESFORCE
-      data: |-
+      data:
         {
           "dataType" : "Number",
           "aggregationType" : "Sum",
@@ -340,9 +340,9 @@ relationships:
   - customer_id
   to_columns:
   - customer_id
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SALESFORCE
-    data: |-
+    data:
       {
         "label" : "Customers to Orders",
         "cardinality" : "OneToMany",
@@ -363,9 +363,9 @@ relationships:
   - customer_email_domain
   to_columns:
   - order_id
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SALESFORCE
-    data: |-
+    data:
       {
         "label" : "Invalid Relationship - Uses Calculated Field"
       }
@@ -376,9 +376,9 @@ relationships:
   - order_year
   to_columns:
   - product_id
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: SALESFORCE
-    data: |-
+    data:
       {
         "label" : "Invalid Relationship - Uses Calculated Field",
         "cardinality" : "ManyToMany",

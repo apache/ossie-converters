@@ -1,0 +1,3 @@
+{
+ "reason": "aggregate returns a list, not a number (ARRAY_AGG, LISTAGG, OBJECT_AGG)"
+}

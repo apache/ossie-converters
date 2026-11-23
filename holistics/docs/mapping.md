@@ -26,7 +26,7 @@
 | `relationship(a.x - b.y, true)` | `relationships[]` entry | `-` is one-to-one. Ossie has no one-to-one marker, so the kind goes to the stash |
 | dataset-level `dimension` | `dataset.fields[]` entry on the model it names | The AML dimension names its owning model in `model` |
 | dataset-level `metric` | `metrics[]` entry | Always AQL in practice, so always tagged `HOLISTICS_AQL` |
-| everything else | `custom_extensions[HOLISTICS]` | See [The HOLISTICS payload](vendor-payload.md) |
+| everything else | `nonportable_extensions[HOLISTICS]` | See [The HOLISTICS payload](vendor-payload.md) |
 
 ## Relationships
 

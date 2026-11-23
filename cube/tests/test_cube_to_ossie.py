@@ -319,10 +319,10 @@ def test_extensions_carry_only_what_the_expression_cannot(model_a):
     carries."""
     model, _ = model_a
     metrics = by_name(model["metrics"])
-    assert "custom_extensions" not in metrics["completed_amount"]
-    assert "custom_extensions" not in metrics["avg_order_value"]
+    assert "nonportable_extensions" not in metrics["completed_amount"]
+    assert "nonportable_extensions" not in metrics["avg_order_value"]
     assert stash_of(metrics["total_amount"]) == {"format": "currency"}
-    assert "custom_extensions" not in metrics["cities"]
+    assert "nonportable_extensions" not in metrics["cities"]
 
 
 def test_a_declared_type_the_expression_would_not_regenerate_is_recorded():

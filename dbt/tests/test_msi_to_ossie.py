@@ -294,11 +294,11 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
         assert len(extensions) == 1
         assert extensions[0].vendor_name == "DBT"
-        assert json.loads(extensions[0].data) == {"meta": {"looker_group_label": "Order Info"}}
+        assert extensions[0].data == {"meta": {"looker_group_label": "Order Info"}}
 
     def test_entity_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -313,9 +313,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"hidden": True}}
+        assert extensions[0].data == {"meta": {"hidden": True}}
 
     def test_measure_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -329,9 +329,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"value_format": "$#,##0.00"}}
+        assert extensions[0].data == {"meta": {"value_format": "$#,##0.00"}}
 
     def test_metric_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -345,9 +345,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue])).output
 
-        extensions = _ossie_metrics(result)[0].custom_extensions
+        extensions = _ossie_metrics(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"group_label": "Revenue"}}
+        assert extensions[0].data == {"meta": {"group_label": "Revenue"}}
 
     def test_semantic_model_config_meta_becomes_dataset_custom_extension(self) -> None:
         sm = PydanticSemanticModel(
@@ -361,9 +361,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = result.datasets[0].custom_extensions
+        extensions = result.datasets[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"view_label": "Orders"}}
+        assert extensions[0].data == {"meta": {"view_label": "Orders"}}
 
     def test_no_config_meta_omits_custom_extensions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -372,7 +372,7 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        assert _fields(result)[0].custom_extensions is None
+        assert _fields(result)[0].nonportable_extensions is None
 
     def test_empty_config_meta_omits_custom_extensions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -381,7 +381,7 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        assert _fields(result)[0].custom_extensions is None
+        assert _fields(result)[0].nonportable_extensions is None
 
     def test_non_json_meta_value_is_stringified(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -395,9 +395,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"launched": "2024-01-01"}}
+        assert extensions[0].data == {"meta": {"launched": "2024-01-01"}}
 
 
 class TestEntityKeyExtraction:
