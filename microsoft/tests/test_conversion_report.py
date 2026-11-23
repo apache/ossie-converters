@@ -486,3 +486,32 @@ def test_pbip_export_finalizes_report_without_writing_stdout(tmp_path, monkeypat
     assert recorded["entries"][0]["name"] == "Orders"
     assert recorded.get("error") == ("TOM unavailable" if fails else None)
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("translate", [False, True])
+def test_calculated_column_translation_keeps_report_paths_and_metric_outcomes(tmp_path, translate):
+    source, report, output = (tmp_path / name for name in ("source.bim", "report.json", "out.yaml"))
+    source.write_text(json.dumps({"name": "shop", "model": {"tables": [{
+        "name": "Orders", "columns": [
+            {"name": "Amount", "sourceColumn": "amount", "dataType": "double"},
+            {"name": "Gross", "type": "calculated", "dataType": "double",
+             "expression": "Orders[Amount] * 1.2"},
+        ], "measures": [{"name": "Revenue", "expression": "SUM(Orders[Amount])"}],
+    }]}}))
+    args = ["import", "-i", str(source), "-o", str(output), "--report", str(report)]
+    if translate:
+        args.append("--translate-dax")
+    assert main(args) == 0
+    entries = {e["source_path"]: e for e in json.loads(report.read_text())["entries"]}
+    assert entries["/model/tables/0/columns/1"]["name"] == "Gross"
+    assert entries["/model/tables/0/columns/1"]["table"] == "Orders"
+    assert entries["/model/tables/0/measures/0"]["status"] == (
+        "translated" if translate else "source_dialect"
+    )
+    column = yaml.safe_load(output.read_text())["datasets"][0]["fields"][1]
+    dialects = {d["dialect"]: d["expression"] for d in column["expression"]["dialects"]}
+    assert dialects["DAX"] == "Orders[Amount] * 1.2"
+    if translate:
+        assert dialects["OSSIE_SQL_2026"] == "amount * 1.2"
+    else:
+        assert set(dialects) == {"DAX"}
