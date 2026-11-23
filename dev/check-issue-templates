@@ -33,6 +33,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 for workflow in "$GITHUB_DIR"/workflows/converter-*-ci.yml; do
+  [ -e "$workflow" ] || continue
   name="$(basename "$workflow")"
   name="${name#converter-}"
   echo "${name%-ci.yml}"
@@ -55,16 +56,19 @@ compare "$TMP_DIR/workflows" "$TMP_DIR/labels" \
   "converter-<name>-ci.yml workflows (-) and converter/* labels in .github/labeler.yml (+) differ:"
 
 for form in $FORMS; do
-  # Options of the dropdown with "id: converter", up to the next form field.
+  # Options under "id: converter" -> "options:", up to the next key or field.
   awk -v skip="$NOT_APPLICABLE_OPTION" '
     /^[[:space:]]*id:[[:space:]]*converter[[:space:]]*$/ { in_field = 1; next }
     in_field && /^[[:space:]]*-[[:space:]]+type:/ { exit }
-    in_field && /^[[:space:]]*-[[:space:]]+/ {
+    in_field && /^[[:space:]]*options:[[:space:]]*$/ { in_options = 1; next }
+    in_options && /^[[:space:]]*-[[:space:]]+/ {
       option = $0
       sub(/^[[:space:]]*-[[:space:]]+/, "", option)
       sub(/[[:space:]]+$/, "", option)
       if (option != skip) print option
+      next
     }
+    in_options && /^[[:space:]]*[^[:space:]#]/ { in_options = 0 }
   ' "$GITHUB_DIR/ISSUE_TEMPLATE/$form" | sort > "$TMP_DIR/$form"
 
   compare "$TMP_DIR/labels" "$TMP_DIR/$form" \

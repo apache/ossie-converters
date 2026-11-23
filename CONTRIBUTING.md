@@ -37,8 +37,9 @@ filter for it. Requests for a converter that doesn't exist yet go in the
 When you add a converter, also:
 
 1. Add its `converter/<name>` path entry to `.github/labeler.yml`.
-2. Add a `converter-<name>-ci.yml` workflow under `.github/workflows/`.
-3. Add `<name>` to the **Converter** dropdown in both
+2. Add its directory to `.github/dependabot.yml`.
+3. Add a `converter-<name>-ci.yml` workflow under `.github/workflows/`.
+4. Add `<name>` to the **Converter** dropdown in both
    `.github/ISSUE_TEMPLATE/bug_report.yml` and
    `.github/ISSUE_TEMPLATE/feature_request.yml`.
 

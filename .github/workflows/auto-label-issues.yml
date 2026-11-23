@@ -105,7 +105,9 @@ jobs:
               }
             };
 
-            const names = converterNames(fs.readFileSync('.github/labeler.yml', 'utf8'));
+            const names = converterNames(
+              fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/.github/labeler.yml`, 'utf8')
+            );
             const found = labelsForIssue(context.payload.issue, names);
 
             // The New converter form applies this label itself, but GitHub drops form
