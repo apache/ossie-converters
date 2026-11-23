@@ -40,6 +40,7 @@ body:
         - holistics
         - honeydew
         - lightdash
+        - linkml
         - microsoft
         - nvidia
         - omni
@@ -51,6 +52,7 @@ body:
         - salesforce
         - sigma
         - snowflake
+        - tableau
         - thoughtspot
         - wisdom
         - wisdom-semantic-view
