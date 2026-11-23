@@ -43,27 +43,27 @@
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: SUM(orders.amount)
+        expression: SUM(orders.revenue)
   - name: cost
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: SUM(orders.cost_amount)
+        expression: SUM(orders.cost)
   - name: expenses
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: SUM(orders.expense_amount)
+        expression: SUM(orders.expenses)
   - name: gross_profit
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: SUM(orders.amount) - SUM(orders.cost_amount)
+        expression: SUM(orders.revenue) - SUM(orders.cost)
   - name: net_profit
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: (SUM(orders.amount) - SUM(orders.cost_amount)) - SUM(orders.expense_amount)
+        expression: (SUM(orders.revenue) - SUM(orders.cost)) - SUM(orders.expenses)
   
   '''
 # ---
@@ -90,7 +90,7 @@
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: SUM(orders.amount)
+        expression: SUM(orders.revenue)
   - name: order_count
     expression:
       dialects:
@@ -100,8 +100,8 @@
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: (SUM(orders.amount)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT
-          NULL THEN 1 ELSE 0 END), 0)
+        expression: (SUM(orders.revenue)) / NULLIF(SUM(CASE WHEN orders.order_id IS
+          NOT NULL THEN 1 ELSE 0 END), 0)
   
   '''
 # ---
@@ -123,7 +123,7 @@
     expression:
       dialects:
       - dialect: ANSI_SQL
-        expression: SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.amount
+        expression: SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.revenue
           END)
   
   '''

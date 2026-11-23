@@ -699,7 +699,18 @@ class TestMetricConversion:
         metrics = _ossie_metrics(result)
         assert len(metrics) == 1
         assert metrics[0].name == "revenue"
-        assert metrics[0].expression.dialects[0].expression == "SUM(orders.amount)"
+        assert metrics[0].expression.dialects[0].expression == "SUM(orders.revenue)"
+
+    def test_legacy_measure_field_is_used_when_dimension_has_same_source_column(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[_dimension("customer_name", expr="customer_full_name")],
+            measures=[_measure("distinct_names", AggregationType.COUNT_DISTINCT, expr="customer_full_name")],
+        )
+        metric = _simple_metric("unique_customer_names", "distinct_names")
+        output = MSIToOssieConverter().convert(_manifest([orders], [metric])).output
+
+        assert _ossie_metrics(output)[0].expression.dialects[0].expression == "COUNT(DISTINCT orders.distinct_names)"
 
     def test_simple_metric_description_carried_over(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -861,7 +872,7 @@ class TestMetricConversion:
 
         arpu_ossie = next(m for m in _ossie_metrics(result) if m.name == "arpu")
         assert arpu_ossie.expression.dialects[0].expression == (
-            "(SUM(orders.amount)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END), 0)"
+            "(SUM(orders.revenue)) / NULLIF(SUM(CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END), 0)"
         )
         assert result.to_ossie_yaml() == snapshot
 
@@ -897,7 +908,7 @@ class TestMetricConversion:
         )
 
         profit_ossie = next(m for m in _ossie_metrics(result) if m.name == "profit")
-        assert profit_ossie.expression.dialects[0].expression == "SUM(orders.amount) - SUM(orders.cost_amount)"
+        assert profit_ossie.expression.dialects[0].expression == "SUM(orders.revenue) - SUM(orders.cost)"
 
     def test_derived_metric_uses_alias_for_substitution(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -929,7 +940,7 @@ class TestMetricConversion:
         )
 
         profit_ossie = next(m for m in _ossie_metrics(result) if m.name == "profit")
-        assert profit_ossie.expression.dialects[0].expression == "SUM(orders.amount) - SUM(orders.cost_amount)"
+        assert profit_ossie.expression.dialects[0].expression == "SUM(orders.revenue) - SUM(orders.cost)"
 
     def test_derived_metric_does_not_re_expand_an_inlined_reference(self) -> None:
         """A reference is substituted once, even when its name appears in already-inlined text.
@@ -967,7 +978,7 @@ class TestMetricConversion:
         )
 
         margin_ossie = next(m for m in _ossie_metrics(result) if m.name == "margin")
-        assert margin_ossie.expression.dialects[0].expression == "SUM(orders.net) - SUM(orders.net_amount)"
+        assert margin_ossie.expression.dialects[0].expression == "SUM(orders.gross) - SUM(orders.net)"
 
     def test_derived_metric_preserves_backslashes_from_a_filter(self) -> None:
         """Backslashes in an inlined expression survive substitution verbatim.
@@ -999,10 +1010,10 @@ class TestMetricConversion:
         revenue_ossie = next(m for m in _ossie_metrics(result) if m.name == "revenue")
         scaled_ossie = next(m for m in _ossie_metrics(result) if m.name == "scaled")
         assert revenue_ossie.expression.dialects[0].expression == (
-            r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.amount END)"
+            r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.revenue END)"
         )
         assert scaled_ossie.expression.dialects[0].expression == (
-            r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.amount END) * 2"
+            r"SUM(CASE WHEN order__path LIKE 'a\b' THEN orders.revenue END) * 2"
         )
 
     def test_derived_metric_drops_a_used_reference_listed_twice_with_differing_filters(self) -> None:
@@ -1100,7 +1111,7 @@ class TestMetricConversion:
 
         scaled_ossie = next(m for m in _ossie_metrics(result.output) if m.name == "scaled")
         assert scaled_ossie.expression.dialects[0].expression == (
-            "SUM(CASE WHEN order__region = 'EU' THEN orders.amount END) * 2"
+            "SUM(CASE WHEN order__region = 'EU' THEN orders.revenue END) * 2"
         )
         assert result.issues == []
 
@@ -1131,7 +1142,7 @@ class TestMetricConversion:
         )
 
         doubled_ossie = next(m for m in _ossie_metrics(result) if m.name == "doubled")
-        assert doubled_ossie.expression.dialects[0].expression == "SUM(orders.amount) + SUM(orders.amount)"
+        assert doubled_ossie.expression.dialects[0].expression == "SUM(orders.revenue) + SUM(orders.revenue)"
 
     def test_every_issue_type_has_a_cli_reason(self) -> None:
         """The CLI looks each issue type up by key, so an unmapped one would crash the run."""
@@ -1195,7 +1206,7 @@ class TestMetricConversion:
         net_ossie = next(m for m in _ossie_metrics(result) if m.name == "net_profit")
         assert (
             net_ossie.expression.dialects[0].expression
-            == "(SUM(orders.amount) - SUM(orders.cost_amount)) - SUM(orders.expense_amount)"
+            == "(SUM(orders.revenue) - SUM(orders.cost)) - SUM(orders.expenses)"
         )
         assert result.to_ossie_yaml() == snapshot
 
@@ -1232,7 +1243,7 @@ class TestMetricConversion:
         )
 
         derived_ossie = next(m for m in _ossie_metrics(result) if m.name == "revenue_delta")
-        assert derived_ossie.expression.dialects[0].expression == "SUM(orders.amount) - SUM(orders.adjusted_amount)"
+        assert derived_ossie.expression.dialects[0].expression == "SUM(orders.revenue) - SUM(orders.revenue_adjusted)"
 
     # --- CUMULATIVE ---
 
@@ -1260,7 +1271,7 @@ class TestMetricConversion:
         metrics = _ossie_metrics(result)
         assert len(metrics) == 1
         assert metrics[0].name == "cumulative_revenue"
-        assert metrics[0].expression.dialects[0].expression == "SUM(orders.amount)"
+        assert metrics[0].expression.dialects[0].expression == "SUM(orders.revenue)"
 
     def test_cumulative_metric_via_sub_metric_reference(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -1292,7 +1303,7 @@ class TestMetricConversion:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[base, cumulative])).output
 
         cumulative_ossie = next(m for m in _ossie_metrics(result) if m.name == "cumulative_revenue")
-        assert cumulative_ossie.expression.dialects[0].expression == "SUM(orders.amount)"
+        assert cumulative_ossie.expression.dialects[0].expression == "SUM(orders.revenue)"
 
     # --- Edge cases ---
 
@@ -1859,7 +1870,7 @@ class TestMetricFilterFlattening:
 
         assert (
             _ossie_metrics(result)[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN status = 'paid' THEN orders.amount END)"
+            == "SUM(CASE WHEN status = 'paid' THEN orders.revenue END)"
         )
 
     def test_measure_level_filter_inlines_case_when(self) -> None:
@@ -1882,7 +1893,7 @@ class TestMetricFilterFlattening:
 
         assert (
             _ossie_metrics(result)[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN status = 'paid' THEN orders.amount END)"
+            == "SUM(CASE WHEN status = 'paid' THEN orders.revenue END)"
         )
 
     def test_metric_and_measure_filters_combined_with_and(self, snapshot: SnapshotAssertion) -> None:
@@ -1904,7 +1915,7 @@ class TestMetricFilterFlattening:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
         assert _ossie_metrics(result)[0].expression.dialects[0].expression == (
-            "SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.amount END)"
+            "SUM(CASE WHEN (status = 'paid') AND (region = 'intl') THEN orders.revenue END)"
         )
         assert result.to_ossie_yaml() == snapshot
 
@@ -1926,7 +1937,7 @@ class TestMetricFilterFlattening:
 
         assert (
             _ossie_metrics(result)[0].expression.dialects[0].expression
-            == "SUM(CASE WHEN order__country = 'US' THEN orders.amount END)"
+            == "SUM(CASE WHEN order__country = 'US' THEN orders.revenue END)"
         )
 
     def test_ratio_metric_filter_propagated_to_both_sides(self) -> None:
@@ -1959,7 +1970,7 @@ class TestMetricFilterFlattening:
 
         paid_arpu = next(m for m in _ossie_metrics(result) if m.name == "paid_arpu")
         assert paid_arpu.expression.dialects[0].expression == (
-            "(SUM(CASE WHEN status = 'paid' THEN orders.amount END))"
+            "(SUM(CASE WHEN status = 'paid' THEN orders.revenue END))"
             " / "
             "NULLIF(SUM(CASE WHEN status = 'paid' THEN CASE WHEN orders.order_id IS NOT NULL THEN 1 ELSE 0 END END), 0)"
         )
@@ -1992,9 +2003,9 @@ class TestMetricFilterFlattening:
 
         paid_profit = next(m for m in _ossie_metrics(result) if m.name == "paid_profit")
         assert paid_profit.expression.dialects[0].expression == (
-            "SUM(CASE WHEN status = 'paid' THEN orders.amount END)"
+            "SUM(CASE WHEN status = 'paid' THEN orders.revenue END)"
             " - "
-            "SUM(CASE WHEN status = 'paid' THEN orders.cost_amount END)"
+            "SUM(CASE WHEN status = 'paid' THEN orders.cost END)"
         )
 
     def test_no_filter_produces_plain_expression(self) -> None:
@@ -2008,7 +2019,7 @@ class TestMetricFilterFlattening:
             .output
         )
 
-        assert _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(orders.amount)"
+        assert _ossie_metrics(result)[0].expression.dialects[0].expression == "SUM(orders.revenue)"
 
 
 class TestOssieJsonSerialization:
@@ -2158,7 +2169,7 @@ class TestDatatypeMetadata:
 
         assert _fields(result)[0].datatype is OssieDataType.INTEGER
         metric = _ossie_metrics(result)[0]
-        assert metric.expression.dialects[0].expression == "COUNT(DISTINCT orders.customer_name)"
+        assert metric.expression.dialects[0].expression == "COUNT(DISTINCT orders.customer_count)"
         assert metric.datatype is OssieDataType.INTEGER
         assert manifest.semantic_models[0].measures[0].config.meta["ossie"]["datatype"] == "Integer"
 
