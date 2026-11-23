@@ -26,6 +26,7 @@ import yaml
 
 from interop.ci_summary import render
 from interop.manifest import Manifest, ManifestError, _portability, load_manifest
+from interop import portability_execution
 from interop.portability import (
     GRADER,
     PORTABLE_DIALECTS,
@@ -484,3 +485,74 @@ def test_the_columns():
 def test_the_portable_tags_are_the_grader_ones():
     grader = load_grader(ROOT / GRADER)
     assert PORTABLE_DIALECTS == grader.PORTABLE_DIALECTS
+
+
+def execution_findings(result):
+    return [(f["name"], f["outcome"]) for f in result["execution"]["findings"]]
+
+
+def test_the_execution_check_runs_on_the_same_graded_report(tmp_path):
+    pytest.importorskip("duckdb")
+    pytest.importorskip("sqlglot")
+    _, result = run_case(tmp_path, "review")
+    assert metric_outcome(result)[0] == "REWRITTEN"
+    assert result["execution"]["converter"] == "fake"
+    assert result["execution"]["rejected"] is False
+    (finding,) = result["execution"]["findings"]
+    assert (finding["name"], finding["outcome"]) == ("total_amount", "DIFFERENT")
+    assert finding["authored_result"] != finding["returned_result"]
+    assert finding["rows"]  # the counterexample is kept with the case
+
+
+@pytest.mark.parametrize("mode", ["copy", "cosmetic"])
+def test_nothing_is_executed_when_the_grader_needs_no_review(tmp_path, mode):
+    _, result = run_case(tmp_path, mode)
+    assert result["execution"]["findings"] == []
+    assert result["execution"]["summary"] == {}
+
+
+def test_a_vendor_only_return_is_a_visible_not_run(tmp_path):
+    _, result = run_case(tmp_path, "vendor")
+    assert execution_findings(result) == [("total_amount", "NOT_RUN")]
+    assert "vendor dialect" in result["execution"]["findings"][0]["detail"]
+
+
+@pytest.mark.parametrize("mode", ["refuse-export", "refuse-import", "garbage"])
+def test_a_rejected_return_has_nothing_to_execute(tmp_path, mode):
+    _, result = run_case(tmp_path, mode)
+    assert result["execution"]["rejected"] is True
+    assert result["execution"]["findings"] == []
+
+
+def test_a_skipped_case_is_not_executed(tmp_path):
+    _, result = run_case(tmp_path, "copy", prepared=False)
+    assert result["grading"] is None
+    assert result["execution"] is None
+
+
+def test_without_duckdb_the_execution_check_is_not_run(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "duckdb", None)  # import duckdb now fails
+    _, result = run_case(tmp_path, "review")
+    assert result["grade"] == "OK"
+    assert metric_outcome(result)[0] == "REWRITTEN"
+    assert execution_findings(result) == [("total_amount", "NOT_RUN")]
+    assert "duckdb is not installed" in result["execution"]["findings"][0]["detail"]
+
+
+def test_the_execution_findings_are_saved_with_the_case(tmp_path):
+    pytest.importorskip("duckdb")
+    pytest.importorskip("sqlglot")
+    runner, result = run_case(tmp_path, "review")
+    runner.report["portability"] = [result]
+    write_report(runner.report, runner.output)
+    saved = json.loads((runner.output / "results.json").read_text())["portability"][0]
+    assert saved["execution"]["summary"] == {"DIFFERENT": 1}
+    case = json.loads(
+        (runner.output / "portability" / result["id"] / "result.json").read_text()
+    )
+    assert case["execution"] == saved["execution"]
+    assert exit_code(runner.report, strict=True) == 0
+
+
+def test_the_runner_and_the_execution_check_share_one_grader():
+    assert portability_execution.grader() is load_grader(ROOT / GRADER)

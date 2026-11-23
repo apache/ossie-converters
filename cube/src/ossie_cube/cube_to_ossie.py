@@ -25,7 +25,7 @@ mapped view supplies the model's name, description, and AI context.
 
 Cube features Ossie has no native field for (segments, pre-aggregations,
 hierarchies, folders, view curation, formats, access policies, ...) are preserved
-in `custom_extensions[CUBE]` so that converting back reproduces the original
+in `nonportable_extensions[CUBE]` so that converting back reproduces the original
 files. See README.md.
 
 Usage (CLI):
@@ -62,6 +62,7 @@ from ._common import (
     sanitize_name,
     uncollided_view_name,
     normalize_identifier,
+    native_expression_signature,
     resolve_identifier,
     referenced_datasets,
     join_source,
@@ -302,20 +303,20 @@ def _collect(files, issues):
             # is Jinja-driven. Preserved verbatim so the round trip keeps the file,
             # but no cube inside it is converted.
             issues.add(IssueType.TEMPLATED_FILE_SKIPPED, fname,
-                       "not a YAML data model; preserved in custom_extensions only")
+                       "not a YAML data model; preserved in nonportable_extensions only")
             extra_files[fname] = text
             continue
         if JINJA_RE.search(text):
             issues.add(IssueType.TEMPLATED_FILE_SKIPPED, fname,
                        "uses Jinja templating, which has no static form; "
-                       "preserved in custom_extensions only")
+                       "preserved in nonportable_extensions only")
             extra_files[fname] = text
             continue
         parsed = load_yaml(text, fname)
         if not isinstance(parsed, dict) or not ("cubes" in parsed or "views" in parsed):
             issues.add(IssueType.PARKED_IN_META, fname,
                        "no top-level `cubes:` or `views:`; preserved in "
-                       "custom_extensions only")
+                       "nonportable_extensions only")
             extra_files[fname] = text
             continue
         for entry in _as_named_list(parsed.get("cubes"), f"'{fname}' cubes"):
@@ -481,7 +482,7 @@ def _pick_view(views, requested, issues):
     if len(views) > 1:
         issues.add(IssueType.PARKED_IN_META, "model",
                    f"{len(views)} views found and none chosen with --view; view "
-                   f"metadata is preserved in custom_extensions only")
+                   f"metadata is preserved in nonportable_extensions only")
     return None
 
 
@@ -648,16 +649,16 @@ def _fanned_out_datasets(relationships, extra_joins=None):
 
 def _restore_parked_extensions(obj, meta):
     """Reattach foreign-vendor extensions a previous export parked under
-    `meta.ossie.custom_extensions`.
+    `meta.ossie.nonportable_extensions`.
 
     Called after `write_stash`, so the CUBE entry stays first and the restored
     foreign entries follow -- the ordering datasets already used. Without this the
     parked entries are stripped by `_meta_without_ai_context` and never come back,
     which would make `Ossie -> Cube -> Ossie` lose them.
     """
-    parked = parked_of(meta).get("custom_extensions")
+    parked = parked_of(meta).get("nonportable_extensions")
     if parked:
-        obj.setdefault("custom_extensions", []).extend(parked)
+        obj.setdefault("nonportable_extensions", []).extend(parked)
 
 
 # --- cubes ----------------------------------------------------------------------
@@ -810,7 +811,7 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
             issues.add(IssueType.PARKED_IN_META, f"{cname}.{dname}",
                        "switch dimension enumerates values rather than reading a "
                        "column, and an Ossie field requires an expression; preserved "
-                       "in custom_extensions only")
+                       "in nonportable_extensions only")
             extra_dimensions.append({"index": index, "dimension": dim})
             continue
         if dim.get("sub_query"):
@@ -826,7 +827,7 @@ def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
             issues.add(IssueType.PARKED_IN_META, f"{cname}.{dname}",
                        "sub_query dimension reads a measure through a correlated "
                        "subquery, which an Ossie field expression has no form for; "
-                       "preserved in custom_extensions only")
+                       "preserved in nonportable_extensions only")
             extra_dimensions.append({"index": index, "dimension": dim})
             continue
         fields.extend(_convert_dimension(
@@ -949,7 +950,7 @@ def _finish_dimension_field(cname, dname, dim, field, stash, issues):
         # A dimension export added only to carry Cube's primary key; the Ossie model had
         # no field for that column, so it gets none back.
         return None
-    _restore_expression(field, parked)
+    _restore_expression(field, parked, dim, issues, f"{cname}.{dname}")
     # A field that carried no datatype keeps carrying none: Ossie says not to infer a
     # scalar type from `is_time` alone, so emitting DateTime for a `type: time`
     # dimension would assert something the model never said.
@@ -1061,7 +1062,7 @@ def _case_label(cname, dname, holder, translate, literal):
     return "'" + text.replace("'", "''") + "'"
 
 
-def _restore_expression(target, parked):
+def _restore_expression(target, parked, member, issues, scope):
     """Put back the dialect, or the whole expression, that export had to set aside.
 
     Cube holds one `sql` per member, so an Ossie expression carrying several dialects
@@ -1069,6 +1070,14 @@ def _restore_expression(target, parked):
     A single non-ANSI dialect needs only its label restored.
     """
     if parked.get("expression"):
+        saved = parked.get("expression_signature")
+        if saved is not None and saved != native_expression_signature(member):
+            issues.add(
+                IssueType.STALE_PARKED_EXPRESSION, scope,
+                "the native Cube SQL, type, filters or evaluation settings changed; "
+                "restored the saved Ossie expression from meta.ossie.expression, "
+                "verify that it includes the intended edit, or remove "
+                "meta.ossie.expression to import the current Cube definition")
         target["expression"] = parked["expression"]
     elif parked.get("dialect"):
         target["expression"]["dialects"][0]["dialect"] = parked["dialect"]
@@ -1232,7 +1241,7 @@ def _convert_joins(cubes, skipped_files, issues):
             parked_joins = parked_of(cube.get("meta")).get(
                 "join_extensions") or {}
             if parked_joins.get(target):
-                rel.setdefault("custom_extensions", []).extend(parked_joins[target])
+                rel.setdefault("nonportable_extensions", []).extend(parked_joins[target])
             relationships.append(rel)
     return relationships, extra_joins
 
@@ -1251,7 +1260,7 @@ def _decompose_join_sql(sql, own_cube, target, what, cubes, issues):
         if len(sides) != 2:
             issues.add(IssueType.PARKED_IN_META, what,
                        f"join clause '{clause.strip()}' is not a single equality; "
-                       f"preserved in custom_extensions only")
+                       f"preserved in nonportable_extensions only")
             return None
         left = _ref_target(sides[0], own_cube, target, cubes)
         right = _ref_target(sides[1], own_cube, target, cubes)
@@ -1260,7 +1269,7 @@ def _decompose_join_sql(sql, own_cube, target, what, cubes, issues):
                        f"join clause '{clause.strip()}' does not resolve to two "
                        f"physical columns -- Ossie relationship columns are columns, so "
                        f"a member reading an expression has none to name; preserved in "
-                       f"custom_extensions only")
+                       f"nonportable_extensions only")
             return None
         (lcube, lcol), (rcube, rcol) = left, right
         if lcube == own_cube and rcube == target:
@@ -1270,7 +1279,7 @@ def _decompose_join_sql(sql, own_cube, target, what, cubes, issues):
         else:
             issues.add(IssueType.PARKED_IN_META, what,
                        f"join clause '{clause.strip()}' references cubes other than "
-                       f"'{own_cube}'/'{target}'; preserved in custom_extensions only")
+                       f"'{own_cube}'/'{target}'; preserved in nonportable_extensions only")
             return None
     return pairs or None
 
@@ -1545,7 +1554,7 @@ class _MeasureResolver:
                     IssueType.MULTI_STAGE_MEASURE_PARKED, scope,
                     f"'{windowed}' measure (type '{mtype}') is computed over a grain "
                     f"other than the query's, which an Ossie expression has no form "
-                    f"for; preserved in custom_extensions only")
+                    f"for; preserved in nonportable_extensions only")
             return self._remember(cache, key, None)
         # Every path below resolves references, and any of them can turn out to have
         # no static form -- the measure's own sql, but equally a `filters` entry. The
@@ -1598,7 +1607,7 @@ class _MeasureResolver:
                 f"type '{mtype}' over a reference to measure '{referenced}': Cube "
                 f"wraps the sql in the aggregate, so this is a nested aggregate, "
                 f"which an Ossie expression has no form for; preserved in "
-                f"custom_extensions only",
+                f"nonportable_extensions only",
                 IssueType.PARKED_IN_META)
         if mtype == "count" and sql is None:
             return primary_key_count_expression(
@@ -1701,7 +1710,7 @@ class _MeasureResolver:
             if target in self._blocked:
                 raise _NoStaticForm(
                     f"references '{target_cube}.{target_name}', whose dataset field "
-                    "bindings changed; preserved in custom_extensions only",
+                    "bindings changed; preserved in nonportable_extensions only",
                     IssueType.PARKED_IN_META)
             # The referenced measure has no static Ossie form (it is windowed), so
             # neither does this one. Aborting the whole conversion over it was wrong: the
@@ -1710,7 +1719,7 @@ class _MeasureResolver:
             raise _NoStaticForm(
                 f"references '{target_cube}.{target_name}', which is computed over a "
                 f"grain other than the query's and has no Ossie form; this measure "
-                f"has none either and is preserved in custom_extensions only")
+                f"has none either and is preserved in nonportable_extensions only")
         metric_name = self._metric_names.get(target)
         if not inline_refs and metric_name is not None \
                 and is_referenceable_name(metric_name):
@@ -1990,12 +1999,16 @@ def _valid_dataset_metric_expression(expression):
     Non-SQL alternatives remain opaque, but every alternative must have the
     Ossie expression shape before it can replace the native definition.
     """
-    if not isinstance(expression, dict) or set(expression) != {"dialects"}:
+    if not isinstance(expression, dict) or not expression or expression.keys() - {"sql", "dialects"}:
         return False
+    if "sql" in expression and (not isinstance(expression["sql"], str) or not expression["sql"].strip()):
+        return False
+    if "dialects" not in expression:
+        return True
     entries = expression["dialects"]
     dialects = {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL, "MDX", "TABLEAU", "MAQL",
                 "SIGMA", "THOUGHTSPOT", "DAX", "HOLISTICS_AQL"}
-    return isinstance(entries, list) and bool(entries) and all(
+    return isinstance(entries, list) and (bool(entries) or "sql" in expression) and all(
         isinstance(entry, dict) and set(entry) == {"dialect", "expression"}
         and isinstance(entry["dialect"], str) and entry["dialect"] in dialects
         and isinstance(entry["expression"], str) and bool(entry["expression"].strip())
@@ -2023,13 +2036,13 @@ def _dataset_metric_origins(cubes, resolver, member_names):
             if ("bindings" not in origin
                     and _valid_dataset_metric_expression(origin.get("expression"))):
                 resolver.block(key, "dataset-metric origin has no field binding record; "
-                               "preserved the native definition in custom_extensions only")
+                               "preserved the native definition in nonportable_extensions only")
                 continue
             if isinstance(saved, dict) and any(bindings.get(f) != sig for f, sig in saved.items()):
                 # Even a model-level expression could bind a native raw column
                 # to the edited dimension. Keep the native measure and its name.
                 resolver.block(key, "dataset-metric field bindings changed or disappeared; "
-                               "preserved the native definition in custom_extensions only")
+                               "preserved the native definition in nonportable_extensions only")
                 continue
             if (not isinstance(origin.get("name"), str) or not origin["name"]
                     or not _valid_dataset_metric_expression(origin.get("expression"))
@@ -2041,13 +2054,13 @@ def _dataset_metric_origins(cubes, resolver, member_names):
                 used = expression_fields(origin["expression"], bindings, f"{cname}.{key[1]}")
             except ConversionError:
                 resolver.block(key, "dataset-metric expression no longer resolves in its "
-                               "dataset; preserved the native definition in custom_extensions only")
+                               "dataset; preserved the native definition in nonportable_extensions only")
                 continue
             if used != set(saved):
                 continue
             if origin.get("key_signature") != count_key_signature(measure, cube, dimensions):
                 resolver.block(key, "dataset-metric row-count key changed; preserved the native "
-                               "definition in custom_extensions only")
+                               "definition in nonportable_extensions only")
                 continue
             restored[key] = origin
     for measures in candidates.values():
@@ -2062,7 +2075,7 @@ def _dataset_metric_origins(cubes, resolver, member_names):
                 safe = False
             if not safe:
                 resolver.block(key, "the current native definition has no valid model-level "
-                               "field binding; preserved in custom_extensions only")
+                               "field binding; preserved in nonportable_extensions only")
     return restored
 
 
@@ -2253,7 +2266,7 @@ def _convert_measure(cname, mname, metric_name, measure, context, *, dataset_met
         # A rejected local origin must not restore another stale expression
         # from the same measure's parking metadata.
         parked = {k: v for k, v in parked.items() if k != "expression"}
-    _restore_expression(metric, parked)
+    _restore_expression(metric, parked, measure, issues, scope)
     # A datatype parked by a previous export wins: Cube has no field for a measure's
     # result type, and only the count family can be inferred from the aggregate.
     parked_dt = parked_of(measure.get("meta")).get("datatype")

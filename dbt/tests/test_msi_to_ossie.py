@@ -92,6 +92,7 @@ def _metric_with_agg(
     expr: str,
     semantic_model: str,
     filter_sql: Optional[str] = None,
+    is_private: bool = False,
 ) -> PydanticMetric:
     """A SIMPLE metric that carries its aggregation in metric_aggregation_params."""
     return PydanticMetric(
@@ -100,6 +101,7 @@ def _metric_with_agg(
         type=MetricType.SIMPLE,
         type_params=PydanticMetricTypeParams(
             expr=expr,
+            is_private=is_private,
             metric_aggregation_params=PydanticMetricAggregationParams(
                 semantic_model=semantic_model,
                 agg=agg,
@@ -292,11 +294,11 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
         assert len(extensions) == 1
         assert extensions[0].vendor_name == "DBT"
-        assert json.loads(extensions[0].data) == {"meta": {"looker_group_label": "Order Info"}}
+        assert extensions[0].data == {"meta": {"looker_group_label": "Order Info"}}
 
     def test_entity_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -311,9 +313,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"hidden": True}}
+        assert extensions[0].data == {"meta": {"hidden": True}}
 
     def test_measure_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -327,9 +329,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"value_format": "$#,##0.00"}}
+        assert extensions[0].data == {"meta": {"value_format": "$#,##0.00"}}
 
     def test_metric_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -343,9 +345,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue])).output
 
-        extensions = _ossie_metrics(result)[0].custom_extensions
+        extensions = _ossie_metrics(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"group_label": "Revenue"}}
+        assert extensions[0].data == {"meta": {"group_label": "Revenue"}}
 
     def test_semantic_model_config_meta_becomes_dataset_custom_extension(self) -> None:
         sm = PydanticSemanticModel(
@@ -359,9 +361,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = result.datasets[0].custom_extensions
+        extensions = result.datasets[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"view_label": "Orders"}}
+        assert extensions[0].data == {"meta": {"view_label": "Orders"}}
 
     def test_no_config_meta_omits_custom_extensions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -370,7 +372,7 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        assert _fields(result)[0].custom_extensions is None
+        assert _fields(result)[0].nonportable_extensions is None
 
     def test_empty_config_meta_omits_custom_extensions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -379,7 +381,7 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        assert _fields(result)[0].custom_extensions is None
+        assert _fields(result)[0].nonportable_extensions is None
 
     def test_non_json_meta_value_is_stringified(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -393,9 +395,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"launched": "2024-01-01"}}
+        assert extensions[0].data == {"meta": {"launched": "2024-01-01"}}
 
 
 class TestEntityKeyExtraction:
@@ -1406,6 +1408,101 @@ class TestConverterIssues:
         assert len(result.issues) == 1
         assert result.issues[0].issue_type == ConverterIssueType.PRIVATE_METRIC_DROPPED
         assert result.issues[0].element_name == "revenue_internal"
+
+    def test_private_metric_inlined_only_into_ratio_still_reports_visibility_loss(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(name="orders")
+        numerator = _metric_with_agg(
+            "revenue_internal", AggregationType.SUM, "amount", "orders", is_private=True
+        )
+        denominator = _metric_with_agg(
+            "count_internal", AggregationType.COUNT, "order_id", "orders", is_private=True
+        )
+        ratio = PydanticMetric(
+            name="average_revenue",
+            description=None,
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(name="revenue_internal"),
+                denominator=PydanticMetricInput(name="count_internal"),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(
+            _manifest(semantic_models=[sm], metrics=[numerator, denominator, ratio])
+        )
+
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.PRIVATE_METRIC_DROPPED, "revenue_internal"),
+            ConverterIssue(ConverterIssueType.PRIVATE_METRIC_DROPPED, "count_internal"),
+        ]
+        assert [m.name for m in _ossie_metrics(result.output)] == ["average_revenue"]
+        assert "SUM(orders.amount)" in _ossie_metrics(result.output)[0].expression.dialects[0].expression
+
+    def test_private_ratio_input_also_used_by_derived_metric_keeps_loss_warning(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(name="orders")
+        internal = _metric_with_agg("internal", AggregationType.SUM, "amount", "orders", is_private=True)
+        denominator = _metric_with_agg("total", AggregationType.COUNT, "order_id", "orders")
+        ratio = PydanticMetric(
+            name="average_revenue",
+            description=None,
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(name="internal"),
+                denominator=PydanticMetricInput(name="total"),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+        derived = PydanticMetric(
+            name="double_revenue",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="internal * 2",
+                metrics=[PydanticMetricInput(name="internal")],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(
+            _manifest(semantic_models=[sm], metrics=[internal, denominator, ratio, derived])
+        )
+
+        assert {m.name for m in _ossie_metrics(result.output)} == {"total", "average_revenue", "double_revenue"}
+        assert result.issues == [ConverterIssue(ConverterIssueType.PRIVATE_METRIC_DROPPED, "internal")]
+
+    def test_private_input_of_dropped_ratio_still_reports_loss(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(name="orders")
+        internal = _metric_with_agg("internal", AggregationType.SUM, "amount", "orders", is_private=True)
+        ratio = PydanticMetric(
+            name="nonportable_ratio",
+            description=None,
+            type=MetricType.RATIO,
+            type_params=PydanticMetricTypeParams(
+                numerator=PydanticMetricInput(
+                    name="internal",
+                    offset_window=PydanticMetricTimeWindow(count=1, granularity="month"),
+                ),
+                denominator=PydanticMetricInput(name="internal"),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[internal, ratio]))
+
+        assert result.output.metrics is None
+        assert result.issues == [
+            ConverterIssue(ConverterIssueType.PRIVATE_METRIC_DROPPED, "internal"),
+            ConverterIssue(ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS, "nonportable_ratio"),
+        ]
 
     def test_natural_entity_emits_issue(self) -> None:
         sm = semantic_model_with_guaranteed_meta(

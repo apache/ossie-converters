@@ -151,6 +151,45 @@ def test_legacy_wrappers_are_rejected(wrapper, include_root_model):
         convert_ossie_to_semantic_model(document)
 
 
+def test_0_1_1_wrapper_accepts_root_dialect_and_vendor_declarations():
+    model = _minimal()
+    document = {
+        "version": "0.1.1",
+        "dialects": ["ANSI_SQL"],
+        "vendors": ["SNOWFLAKE"],
+        "semantic_model": [model],
+    }
+
+    with pytest.warns(UserWarning, match="declaration is discarded") as recorded:
+        result = convert_ossie_to_semantic_model(document)
+    assert {str(w.message) for w in recorded if "declaration is discarded" in str(w.message)} == {
+        "[document] legacy root 'dialects' declaration is discarded during migration",
+        "[document] legacy root 'vendors' declaration is discarded during migration",
+    }
+    assert result == _convert(model)
+    assert "version" not in model
+
+
+@pytest.mark.parametrize("wrapper", [None, [], _minimal(), [None], [_minimal(), _minimal()]])
+def test_0_1_1_wrapper_requires_exactly_one_model_object(wrapper):
+    document = {"version": "0.1.1", "semantic_model": wrapper}
+    with pytest.raises(ValueError, match="exactly one model object"):
+        convert_ossie_to_semantic_model(document)
+
+
+def test_0_1_1_wrapper_rejects_model_properties_at_the_root():
+    document = {"version": "0.1.1", "semantic_model": [_minimal()], "name": "another"}
+    with pytest.raises(ValueError, match="model properties inside 'semantic_model'"):
+        convert_ossie_to_semantic_model(document)
+
+
+@pytest.mark.parametrize("property_name", ["version", "semantic_model", "dialects", "vendors"])
+def test_0_1_1_wrapper_rejects_document_properties_inside_the_model(property_name):
+    document = {"version": "0.1.1", "semantic_model": [_minimal(**{property_name: []})]}
+    with pytest.raises(ValueError, match="document properties outside its model"):
+        convert_ossie_to_semantic_model(document)
+
+
 @pytest.mark.parametrize("property_name", ["dialects", "vendors"])
 def test_removed_root_metadata_is_rejected(property_name):
     document = {"version": OSSIE_VERSION, **_minimal(), property_name: []}
@@ -508,6 +547,19 @@ def test_temporal_types_power_bi_lacks_are_reported(datatype, expected):
     with pytest.warns(UserWarning, match=expected):
         bim = _convert(semantic_model)
     assert _column(_table(bim, "T"), "C")["dataType"] == "dateTime"
+
+
+def test_decimal_precision_power_bi_cannot_guarantee_is_reported():
+    """Power BI keeps 4 decimal places; the Ossie `Decimal` leaves scale unspecified.
+
+    The converter cannot prove a column fits, so exporting one is a lossy step and
+    must report itself like every other branch that cannot be represented.
+    """
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["fields"][0]["datatype"] = "Decimal"
+    with pytest.warns(UserWarning, match="4 decimal places"):
+        bim = _convert(semantic_model)
+    assert _column(_table(bim, "T"), "C")["dataType"] == "decimal"
 
 
 def test_an_opaque_field_leaves_the_data_type_unspecified():
@@ -1267,6 +1319,59 @@ def test_another_vendors_extensions_are_reported_as_dropped():
         _convert(semantic_model)
 
 
+@pytest.mark.parametrize(("extension", "vendor"), [
+    ({"vendor_name": None, "vendor": "SNOWFLAKE"}, "SNOWFLAKE"),
+    ({"vendor_name": "", "vendor": "SNOWFLAKE"}, "SNOWFLAKE"),
+    ({}, "<unknown>"),
+])
+def test_legacy_extension_vendor_is_reported_in_warning(extension, vendor):
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["custom_extensions"] = [extension]
+    document = {"version": "0.1.1", "semantic_model": [semantic_model]}
+    with pytest.warns(UserWarning, match=f"vendor '{vendor}'"):
+        convert_ossie_to_semantic_model(document)
+    assert semantic_model["datasets"][0]["custom_extensions"] == [extension]
+
+
+def test_wrapped_native_extension_is_replayed():
+    model = _minimal(custom_extensions=[{
+        "vendor": "POWER_BI", "content": '{"culture":"fr-FR"}',
+    }])
+    result = convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+    assert result["model"]["culture"] == "fr-FR"
+
+
+def test_wrapped_field_extension_is_replayed_without_mutating_input():
+    model = _minimal()
+    field = model["datasets"][0]["fields"][0]
+    extension = {"vendor_name": "POWER_BI", "data": '{"formatString":"0.00"}'}
+    field["custom_extensions"] = [extension]
+    result = convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+    assert _column(_table(result, "T"), "C")["formatString"] == "0.00"
+    assert field["custom_extensions"] == [extension]
+    assert "nonportable_extensions" not in field
+
+
+@pytest.mark.parametrize("entry", [None, 42, "invalid"])
+def test_wrapped_non_mapping_extension_is_rejected(entry):
+    model = _minimal(custom_extensions=[entry])
+    with pytest.raises(ConversionError, match="entries must be mappings"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
+@pytest.mark.parametrize("payload_key", ["data", "content"])
+def test_wrapped_invalid_native_json_is_rejected(payload_key):
+    model = _minimal(custom_extensions=[{"vendor_name": "POWER_BI", payload_key: "{invalid"}])
+    with pytest.raises(ConversionError, match="invalid JSON"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
+def test_wrapped_mixed_extension_formats_are_rejected():
+    model = _minimal(custom_extensions=[], nonportable_extensions=[])
+    with pytest.raises(ConversionError, match="cannot mix legacy and current extensions"):
+        convert_ossie_to_semantic_model({"version": "0.1.1", "semantic_model": [model]})
+
+
 def write_stash_for_other_vendor(obj):
     obj.setdefault("nonportable_extensions", []).append(
         {"vendor_name": "DATABRICKS", "data": {}}
@@ -1314,6 +1419,27 @@ def test_cli_round_trip(tmp_path):
     written = json.loads(bim_path.read_text(encoding="utf-8"))
     assert written["name"] == "sales_model"
     assert bim_path.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_cli_exports_a_wrapped_snowflake_0_1_1_model(tmp_path, capsys):
+    from ossie_microsoft.cli import main
+
+    source = FIXTURES / "snowflake_semantic_view_0_1_1.yaml"
+    output = tmp_path / "model.bim"
+    assert main(["export", "-i", str(source), "-o", str(output)]) == 0
+
+    bim = json.loads(output.read_text(encoding="utf-8"))
+    assert bim["name"] == "retail_sales"
+    assert bim["model"]["description"] == "Retail orders and revenue"
+    orders = _table(bim, "orders")
+    assert orders["partitions"][0]["source"]["entityName"] == "sales_orders"
+    assert _column(orders, "order_id")["isKey"] is True
+    assert _column(orders, "net_amount")["sourceColumn"] == "net_amount"
+    assert orders["measures"][0]["name"] == "net_revenue"
+    assert orders["measures"][0]["expression"] == "SUM('orders'[net_amount])"
+    diagnostics = capsys.readouterr().err
+    assert "vendor 'SNOWFLAKE'" in diagnostics
+    assert "targets Apache Ossie spec" not in diagnostics
 
 
 def test_cli_export_reports_errors_without_traceback(tmp_path, capsys):

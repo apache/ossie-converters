@@ -23,6 +23,16 @@ converters:
   ataccama:
     cwd: ataccama
     skip: Requires a live Ataccama ONE REST catalog and is import-only; outside the file runner.
+  atlan:
+    cwd: atlan
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-atlan, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-atlan, export, -i, '{input}', -o, '{output}']
+    native_format: atlan
+    output: file
+    fixtures:
+      tpcds: interop/fixtures/atlan/records.json
   bigquery:
     cwd: bigquery
     toolchain: uv
@@ -120,6 +130,9 @@ converters:
     output: directory
     fixtures:
       orders: interop/fixtures/lightdash/orders
+  linkml:
+    cwd: linkml
+    skip: Converts between LinkML schemas and Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
   microsoft:
     cwd: microsoft
     toolchain: uv
@@ -203,6 +216,9 @@ converters:
     output: file
     fixtures: {}
     import_skip: No native-to-Ossie importer is implemented in this converter.
+  tableau:
+    cwd: tableau
+    skip: Pending interop adapter and native .tds inspector registration; tested in converter-tableau-ci.
   thoughtspot:
     cwd: thoughtspot
     toolchain: uv
@@ -235,18 +251,15 @@ converters:
       finance: wisdom-semantic-view/tests/fixtures/finance/snowflake/cfo_cockpit.before.yaml
 regressions: {}
 document_regressions:
-  # Databricks reads Ossie natively, so the pass-through convert keeps a model's existing
-  # DATABRICKS dialect but never translates a foreign dialect into it. Databricks is a
-  # target for the databricks-only dialect contract, not the snowflake/ossie-sql ones.
   dialect-databricks-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-databricks-only/input.yaml
-    targets: [cube, databricks, dbt, omni, sigma]
+    targets: &dialect_targets [cube, databricks, dbt, omni, sigma]
     expectations: interop/fixtures/contracts/dialect-databricks-only/expectations.yaml
   dialect-snowflake-only:
     category: dialect
     input: interop/fixtures/contracts/dialect-snowflake-only/input.yaml
-    targets: &dialect_targets [cube, dbt, omni, sigma]
+    targets: *dialect_targets
     expectations: interop/fixtures/contracts/dialect-snowflake-only/expectations.yaml
   dialect-ossie-sql-2026-only:
     category: dialect
@@ -288,6 +301,16 @@ document_regressions:
     input: interop/fixtures/contracts/source-quoted-parts/input.yaml
     targets: [cube, databricks, dbt]
     expectations: interop/fixtures/contracts/source-quoted-parts/expectations.yaml
+  portable-sql-only:
+    category: portable-sql
+    input: interop/fixtures/contracts/portable-sql-only/input.yaml
+    targets: [bigquery, cube, databricks, dbt, honeydew, omni, sigma]
+    expectations: interop/fixtures/contracts/portable-sql-only/expectations.yaml
+  portable-sql-precedence:
+    category: portable-sql
+    input: interop/fixtures/contracts/portable-sql-precedence/input.yaml
+    targets: [bigquery, cube, databricks, dbt, honeydew, omni, sigma]
+    expectations: interop/fixtures/contracts/portable-sql-precedence/expectations.yaml
 # Report-only portability scores (apache/ossie-converters#24): every fixture of the
 # core portability ladder, through every converter that can round-trip, graded by
 # the core grader. `modes` adds a second re-import for an opt-in converter flag.

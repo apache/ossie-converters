@@ -27,6 +27,7 @@ on:
       - '.gitmodules'
       - '.github/workflows/interop-ci.yml'
       - 'ataccama/**'
+      - 'atlan/**'
       - 'bigquery/**'
       - 'cube/**'
       - 'databricks/**'
@@ -43,9 +44,11 @@ on:
       - 'orionbelt/**'
       - 'sigma/**'
       - 'snowflake/**'
+      - 'tableau/**'
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
+      - 'linkml/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'polaris/**'
@@ -59,6 +62,7 @@ on:
       - '.gitmodules'
       - '.github/workflows/interop-ci.yml'
       - 'ataccama/**'
+      - 'atlan/**'
       - 'bigquery/**'
       - 'cube/**'
       - 'databricks/**'
@@ -75,9 +79,11 @@ on:
       - 'orionbelt/**'
       - 'sigma/**'
       - 'snowflake/**'
+      - 'tableau/**'
       - 'thoughtspot/**'
       - 'wisdom/**'
       - 'wisdom-semantic-view/**'
+      - 'linkml/**'
       - 'palantir/**'
       - 'relationalai/**'
       - 'polaris/**'
@@ -120,23 +126,23 @@ jobs:
             salesforce/pom.xml
 
       - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: '0.12.19'
           enable-cache: true
           cache-dependency-glob: '**/uv.lock'
 
       - name: Install harness dependencies
-        run: uv sync --project interop --locked
+        run: uv sync --project interop --locked --group execution
 
       - name: Test the harness
-        run: uv run --project interop --locked pytest interop/tests -q
+        run: uv run --project interop --locked --group execution pytest interop/tests -q
 
       - name: Run report-only matrix
         id: matrix
         # Default mode preserves converter FAIL/EMPTY/SKIP as findings. Harness
         # errors still fail this step; do not add --strict or continue-on-error.
-        run: uv run --project interop --locked python -m interop --native --output interop/.runs/ci
+        run: uv run --project interop --locked --group execution python -m interop --native --output interop/.runs/ci
 
       - name: Upload report and conversion evidence
         id: evidence

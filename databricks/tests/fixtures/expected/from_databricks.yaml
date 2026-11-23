@@ -42,7 +42,7 @@ model:
           expression: to_date(o_orderdate)
     - name: order_week
       expression:
-        sql: DATE_TRUNC('WEEK', "o_orderdate")
+        sql: DATE_TRUNC('week', o_orderdate)
         dialects:
         - dialect: DATABRICKS
           expression: date_trunc('week', `o_orderdate`)

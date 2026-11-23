@@ -459,3 +459,30 @@ def test_success_report_does_not_capture_an_outer_exception(tmp_path):
     recorded = json.loads(report.read_text())
     assert recorded["completed"] is True
     assert "error" not in recorded
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_pbip_export_finalizes_report_without_writing_stdout(tmp_path, monkeypatch, capsys, fails):
+    from ossie_microsoft import cli
+    from ossie_microsoft._report import record
+    from ossie_microsoft.tom import TomUnavailableError
+
+    source, report = tmp_path / "source.yaml", tmp_path / "report.json"
+    source.write_text("name: shop")
+    target = tmp_path / "project"
+
+    def export_project(text, destination, force=False):
+        assert destination == str(target)
+        record("dataset", "/datasets/0", {"name": "Orders"}, "translated")
+        if fails:
+            raise TomUnavailableError("TOM unavailable")
+        return target / "shop.SemanticModel"
+
+    monkeypatch.setattr(cli, "export_powerbi_project", export_project)
+    assert main(["export", "-i", str(source), "--pbip", str(target),
+                 "--report", str(report)]) == int(fails)
+    recorded = json.loads(report.read_text())
+    assert recorded["completed"] is (not fails)
+    assert recorded["entries"][0]["name"] == "Orders"
+    assert recorded.get("error") == ("TOM unavailable" if fails else None)
+    assert capsys.readouterr().out == ""

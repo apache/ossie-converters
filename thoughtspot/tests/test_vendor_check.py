@@ -22,6 +22,7 @@ import pytest
 
 from ossie_thoughtspot import stash, vendor_check
 from ossie_thoughtspot.constants import STASH_VERSION, VENDOR_KEY
+from ossie_thoughtspot.errors import ConversionError
 
 
 class _Site:
@@ -41,7 +42,7 @@ def test_a_payload_this_converter_wrote_has_nothing_to_report():
     # The whole-pipeline version of this is the fixture test below; this is
     # the unit form, so a failure says which half is wrong.
     obj = stash.write_stash({"name": "orders"}, {"alias": "O", "db_column_name": "amt"})
-    payload = json.loads(obj["custom_extensions"][0]["data"])
+    payload = obj["nonportable_extensions"][0]["data"]
     assert vendor_check.check(payload, _Site()) == []
 
 
@@ -61,23 +62,46 @@ class TestTheThreeThingsItReports:
         assert len(found) == 1
         assert "shape version" in found[0]
 
-    @pytest.mark.parametrize("spelling", [1.0, True])
+    @pytest.mark.parametrize("spelling", [1.0])
     def test_a_value_python_equates_to_the_current_version_is_accepted(self, spelling):
-        """`_v: 1.0` and `_v: true` pass, and the reason is the invariant.
+        """`_v: 1.0` passes, and the reason is the invariant.
 
-        Python reads both `1.0 == 1` and `True == 1` as true, so neither this
-        checker nor `read_stash` distinguishes them from `1`. That agreement
-        is the point: a checker that rejected a payload its own converter
-        reads happily would report documents we can ourselves process, which
-        is a worse failure than accepting an odd spelling of a version we do
-        recognise. Tightening `_v` to reject a bool is a change to the reader
-        first and the checker second, never the other way round.
+        Python reads `1.0 == 1` as true, so neither this checker nor
+        `read_stash` distinguishes it from `1`. That agreement is the point: a
+        checker that rejected a payload its own converter reads happily would
+        report documents we can ourselves process, which is a worse failure
+        than accepting an odd spelling of a version we do recognise.
         """
         assert vendor_check.check({"_v": spelling, "alias": "O"}, _Site()) == []
         obj = {"name": "orders", "custom_extensions": [
             {"vendor_name": VENDOR_KEY, "data": json.dumps({"_v": spelling, "alias": "O"})}
         ]}
         assert stash.read_stash(obj)["alias"] == "O"   # the reader agrees
+
+    def test_a_bool_spelling_of_the_current_version_is_refused_by_both(self):
+        """`_v: true` is refused, by the reader and by this checker.
+
+        `True == 1` in Python, so a bare `true` would otherwise pass as version
+        1. That is not theoretical once `data` is an object: the payload is
+        then YAML, where `true` is a boolean under both 1.1 and 1.2 rules.
+
+        This test replaces the half of its predecessor that pinned `true` as
+        ACCEPTED. That docstring set the order -- "a change to the reader first
+        and the checker second, never the other way round" -- and this is the
+        second step. The reader tightened in `1eb2445`; until the checker
+        followed, `vendor_check.check` cleared a payload `read_stash` aborts
+        on, which is the disagreement this pins shut.
+        """
+        payload = {"_v": True, "alias": "O"}
+        found = vendor_check.check(payload, _Site())
+        assert len(found) == 1
+        assert "shape version" in found[0]
+
+        obj = {"name": "orders", "custom_extensions": [
+            {"vendor_name": VENDOR_KEY, "data": json.dumps(payload)}
+        ]}
+        with pytest.raises(ConversionError, match="shape version"):
+            stash.read_stash(obj)       # one answer, from both
 
     @pytest.mark.parametrize(
         "payload",
@@ -165,14 +189,14 @@ def test_every_payload_in_the_shipped_fixtures_passes_its_own_checker():
     def walk(node, where):
         nonlocal seen
         if isinstance(node, dict):
-            for entry in node.get("custom_extensions") or []:
+            for entry in node.get("nonportable_extensions") or []:
                 if entry.get("vendor_name") != VENDOR_KEY:
                     continue
                 seen += 1
-                found = vendor_check.check(json.loads(entry["data"]))
+                found = vendor_check.check(entry["data"])
                 assert found == [], f"{where}: {found}"
             for key, value in node.items():
-                if key != "custom_extensions":
+                if key != "nonportable_extensions":
                     walk(value, where)
         elif isinstance(node, list):
             for item in node:

@@ -15,24 +15,26 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Bounded assertions for dialect-only expressions, key roles, and table identity."""
+"""Bounded assertions for expressions, dataset bindings, key roles, and table identity."""
 
 import json
+import re
 from pathlib import Path
 
+import lkml
 import sqlglot
+import yaml
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
-import yaml
 
 from .manifest import ManifestError, UniqueLoader
-
 
 _DIALECTS = {
     "ANSI_SQL": None,
     "OSSIE_SQL_2026": None,
     "DATABRICKS": "databricks",
     "SNOWFLAKE": "snowflake",
+    "BIGQUERY": "bigquery",
     "CLICKHOUSE": "clickhouse",
 }
 
@@ -79,7 +81,7 @@ def table_parts(source):
     ]
 
 
-def _expression(sql, dialect, dataset, metric):
+def _expression(sql, dialect, dataset, metric, *, require_qualifier=False):
     if dialect not in _DIALECTS:
         raise ValueError(f"unsupported expression dialect: {dialect}")
     statements = sqlglot.parse(sql, read=_DIALECTS[dialect])
@@ -88,8 +90,12 @@ def _expression(sql, dialect, dataset, metric):
     tree = statements[0]
     if any(isinstance(node, exp.Query) for node in tree.walk()):
         raise ValueError("queries are outside the expression assertion scope")
+    if dataset is None:
+        return tree.sql(dialect="databricks", normalize=True, identify=True)
     for column in tree.find_all(exp.Column):
         qualifier = column.args.get("table")
+        if require_qualifier and qualifier is None:
+            raise ValueError(f"unqualified metric reference: {column.sql()}")
         # Ownership follows the same identifier rules as expression comparison:
         # unquoted spellings are case-insensitive; quoted names must match exactly.
         owned = qualifier is None or (
@@ -104,6 +110,10 @@ def _expression(sql, dialect, dataset, metric):
 
 
 def check_document(data, category, oracle, *, input_stage=False, native_dialect=None):
+    if category == "portable-sql":
+        return _check_portable_sql(
+            data, oracle, input_stage=input_stage, native_dialect=native_dialect
+        )
     checks = []
     if category == "sources":
         try:
@@ -161,7 +171,12 @@ def check_document(data, category, oracle, *, input_stage=False, native_dialect=
         for name, sql in oracle["metrics"].items()
     ]
     for path, expected_sql, element, metric in elements:
-        dialects = (element or {}).get("expression", {}).get("dialects") or []
+        expression = (element or {}).get("expression", {})
+        dialects = list(expression.get("dialects") or [])
+        # The primary `sql` slot is the OSSIE_SQL_2026 form. A converter may fill it instead
+        # of leaving an OSSIE_SQL_2026 dialect entry, so treat it as one for the comparison.
+        if expression.get("sql"):
+            dialects.append({"dialect": "OSSIE_SQL_2026", "expression": expression["sql"]})
         if input_stage:
             _check(
                 checks,
@@ -187,6 +202,172 @@ def check_document(data, category, oracle, *, input_stage=False, native_dialect=
         except (ValueError, SqlglotError) as error:
             _check(checks, path + ".expression", expected_sql, None, str(error))
     return _result(checks)
+
+
+def _check_portable_sql(data, oracle, *, input_stage, native_dialect):
+    checks = []
+    datasets = {dataset["name"]: dataset for dataset in data["datasets"]}
+    _check(checks, "datasets.names", sorted(oracle["datasets"]), sorted(datasets))
+    input_form = oracle["input_form"] if input_stage else None
+    for name, expected in oracle["datasets"].items():
+        actual = datasets.get(name, {})
+        path = f"datasets.{name}"
+        try:
+            _check(
+                checks,
+                path + ".source",
+                table_parts(expected["source"]),
+                table_parts(actual.get("source")),
+            )
+        except (ValueError, SqlglotError) as error:
+            _check(
+                checks,
+                path + ".source",
+                expected["source"],
+                actual.get("source"),
+                str(error),
+            )
+        fields = {field["name"]: field for field in actual.get("fields") or []}
+        _check(checks, path + ".fields", sorted(expected["fields"]), sorted(fields))
+        for field, sql in expected["fields"].items():
+            _check_portable_expression(
+                checks,
+                f"{path}.fields.{field}",
+                fields.get(field),
+                sql,
+                name,
+                input_form=input_form,
+                native_dialect=native_dialect,
+            )
+
+    metrics = [(None, metric) for metric in data.get("metrics") or []]
+    for name, dataset in datasets.items():
+        metrics.extend((name, metric) for metric in dataset.get("metrics") or [])
+    _check(
+        checks,
+        "metrics.names",
+        sorted(oracle["metrics"]),
+        sorted(metric["name"] for _, metric in metrics),
+    )
+    by_name = {metric["name"]: (scope, metric) for scope, metric in metrics}
+    for name, expected in oracle["metrics"].items():
+        scope, metric = by_name.get(name, (None, None))
+        path = f"metrics.{name}"
+        if scope is not None:
+            _check(checks, path + ".dataset", expected["dataset"], scope)
+        _check_portable_expression(
+            checks,
+            path,
+            metric,
+            expected["sql"],
+            expected["dataset"],
+            input_form=input_form,
+            native_dialect=native_dialect,
+            metric=True,
+            require_qualifier=scope is None,
+        )
+    return _result(checks)
+
+
+def _check_portable_expression(
+    checks,
+    path,
+    element,
+    expected_sql,
+    dataset,
+    *,
+    input_form,
+    native_dialect,
+    metric=False,
+    require_qualifier=False,
+):
+    expression = (element or {}).get("expression") or {}
+    dialects = expression.get("dialects") or []
+    primary = expression.get("sql")
+    try:
+        expected = _expression(expected_sql, "OSSIE_SQL_2026", dataset, metric)
+        if input_form:
+            expected_tags = (
+                ["OSSIE_SQL_2026"] if input_form == "sql-with-conflicts" else []
+            )
+            tags = [item["dialect"] for item in dialects]
+            _check(checks, path + ".dialects", expected_tags, tags)
+            if tags and tags == expected_tags and primary is not None:
+                legacy = _expression(
+                    dialects[0]["expression"], "OSSIE_SQL_2026", None, metric
+                )
+                primary_sql = _expression(primary, "OSSIE_SQL_2026", None, metric)
+                _check(checks, path + ".conflict", True, legacy != primary_sql)
+
+        # The primary SQL is authoritative even when a legacy entry differs.
+        if primary is not None:
+            variants = [("sql", "OSSIE_SQL_2026", primary)]
+        elif input_form:
+            variants = []
+        else:
+            variants = [
+                (f"dialects[{index}]", item["dialect"], item["expression"])
+                for index, item in enumerate(dialects)
+                if item["dialect"] != native_dialect
+            ]
+        if not variants:
+            _check(
+                checks, path + ".expression", expected, None, "missing SQL expression"
+            )
+        for suffix, dialect, sql in variants:
+            actual = _expression(
+                sql, dialect, dataset, metric, require_qualifier=require_qualifier
+            )
+            _check(checks, f"{path}.expression.{suffix}", expected, actual)
+    except (ValueError, SqlglotError) as error:
+        _check(checks, path + ".expression", expected_sql, None, str(error))
+
+
+def check_lookml_portable_sql(path: Path, oracle):
+    """Check generated LookML directly for the portable SQL fixture's bounded shape."""
+    try:
+        native = lkml.load(path.read_text(encoding="utf-8"))
+        datasets = []
+        for view in native.get("views", []):
+            name = view["name"]
+
+            def expression(sql, dataset=name):
+                # These fixtures use physical dimensions and direct field references.
+                def reference(match):
+                    member = match.group(1)
+                    if member == "TABLE":
+                        return dataset
+                    return member if "." in member else f"{dataset}.{member}"
+
+                sql = re.sub(r"\$\{([^}]+)\}", reference, sql)
+                return {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+
+            table = sqlglot.parse_one(view["sql_table_name"], read="bigquery", into=exp.Table)
+            fields = [
+                {"name": field["name"], "expression": expression(field["sql"])}
+                for field in view.get("dimensions", [])
+            ]
+            metrics = []
+            for measure in view.get("measures", []):
+                sql = measure["sql"]
+                if measure.get("type") == "sum":
+                    sql = f"SUM({sql})"
+                elif measure.get("type") != "number":
+                    raise ValueError(f"unsupported fixture measure type: {measure.get('type')}")
+                metrics.append({"name": measure["name"], "expression": expression(sql)})
+            datasets.append({
+                "name": name,
+                "source": table.sql(dialect="databricks"),
+                "fields": fields,
+                "metrics": metrics,
+            })
+        if len({dataset["name"] for dataset in datasets}) != len(datasets):
+            raise ValueError("duplicate LookML view names")
+        return check_document({"datasets": datasets}, "portable-sql", oracle)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, SyntaxError, SqlglotError) as error:
+        checks = []
+        _check(checks, "native.lookml", "portable SQL fixture", None, str(error))
+        return _result(checks)
 
 
 def _native_documents(path, native_format):

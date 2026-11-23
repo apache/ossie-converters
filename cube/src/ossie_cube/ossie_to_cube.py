@@ -23,7 +23,7 @@ itself, plus -- when a prior import stashed them -- the original file paths and
 every Cube-only construct restored verbatim.
 
 Ossie features Cube has no field for (`unique_keys`, foreign-vendor
-`custom_extensions`, the structured form of `ai_context`) are parked under
+`nonportable_extensions`, the structured form of `ai_context`) are parked under
 `meta.ossie` rather than dropped, since Cube has a `meta` field at every level.
 That keeps `Ossie -> Cube -> Ossie` lossless as well.
 
@@ -71,6 +71,7 @@ from ._common import (
     lookup_map,
     match_keys,
     normalize_identifier,
+    native_expression_signature,
     resolve_identifier,
     quoted_runs,
     split_dotted_ref,
@@ -85,7 +86,7 @@ from ._common import (
 from ._dataset_metric import (count_key_signature, expression_fields, field_signatures,
                               local_columns, origin_signature)
 from .converter_issues import IssueLog, IssueType
-from .expressions import (UnattributableSQL, aggregate_spans, native_tokens,
+from .expressions import (UnattributableSQL, aggregate_spans, date_unit_spans, native_tokens,
                           parse as parse_expression, qualify_bare_columns,
                           replace_bare_identifiers, unqualified_column_names,
                           unsplittable_aggregate_datasets)
@@ -202,6 +203,16 @@ def _convert_model(model, dialect, base_cube, issues):
 
     if not _a_view_carries_the_model(model_stash):
         _carry_model_on_a_cube(model, cubes_by_name, issues)
+
+    # Snapshot the final native definition, after key flags and stash overrides.
+    # Import can then report a Cube edit before restoring an authoritative saved
+    # expression. Presentation-only edits do not invalidate this record.
+    for cube in cubes_by_name.values():
+        for key in ("dimensions", "measures"):
+            for member in _member_entries(cube.get(key)):
+                parked = (member.get("meta") or {}).get("ossie") or {}
+                if parked.get("expression"):
+                    parked["expression_signature"] = native_expression_signature(member)
 
     files = {path: dump_yaml(content) for path, content in files_content.items()}
 
@@ -323,7 +334,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
                    "unique_keys have no Cube field; parked under meta.ossie")
     foreign = foreign_vendor_extensions(ds)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
     if plan.key_from_unique_keys:
         # Recorded before the meta is assembled, so re-import does not hand back a
         # `primary_key` the Ossie model never declared: `unique_keys` is restored on its
@@ -334,7 +345,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
         parked["join_extensions"] = join_extensions
         issues.add(IssueType.PARKED_IN_META, scope,
                    f"a Cube join carries no metadata field, so relationship "
-                   f"custom_extensions for {', '.join(sorted(join_extensions))} are "
+                   f"nonportable_extensions for {', '.join(sorted(join_extensions))} are "
                    f"parked under meta.ossie.join_extensions")
     cube_extras = dict(stash.get("cube_extras") or {})
     stashed_meta = cube_extras.pop("meta", None)
@@ -617,7 +628,7 @@ def _park_expression(parked, expression, used):
       back, so a multi-dialect expression is parked entire.
     """
     dialects = (expression or {}).get("dialects") or []
-    if len(dialects) > 1:
+    if (expression or {}).get("sql") is not None or len(dialects) > 1:
         parked["expression"] = expression
         return
     if used is None and len(dialects) == 1:
@@ -665,7 +676,7 @@ def _geo_half_sql(field, geo, dialect, scope):
     the alias as it crosses)."""
     if geo.get("sql") is not None:
         return geo["sql"]
-    expr, _ = pick_expression(field.get("expression"), dialect)
+    expr, used = pick_expression(field.get("expression"), dialect)
     if expr is None:
         raise ConversionError(
             f"{scope}: geo half '{field.get('name')}' has no stashed sql and no "
@@ -673,7 +684,7 @@ def _geo_half_sql(field, geo, dialect, scope):
     expr = expr.strip()
     if is_simple_identifier(expr):
         return "{CUBE}." + expr
-    return qualify_bare_columns(expr)
+    return qualify_bare_columns(expr, used)
 
 
 def _resolve_dimension_names(ds, dialect, scope):
@@ -808,7 +819,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
             # recommends -- and, unlike a `{member}` reference, it means the same
             # thing whether or not a field shadows the column's name.
             dim["sql"] = qualify_bare_columns(
-                ossie_expr_to_cube_sql(expr, cname, tables))
+                ossie_expr_to_cube_sql(expr, cname, tables), used)
         if stash.get("case") is not None:
             # A `case` dimension carries its conditions instead of `sql`, and Cube
             # rejects a dimension declaring both ("dimensions.size does not match any
@@ -823,7 +834,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
         parked = {}
         foreign = foreign_vendor_extensions(field)
         if foreign:
-            parked["custom_extensions"] = foreign
+            parked["nonportable_extensions"] = foreign
         # Cube's `type` is coarser than Ossie's `datatype` (Integer/Decimal/Float all
         # become `number`), so the precise one is parked whenever importing would not
         # recover it. `meta.ossie` is Cube-side, so this costs the Ossie document
@@ -1106,6 +1117,7 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
     refs = _MetricReferences(model, dialect, tables, resolve_base, name,
                              field_owners, set(cube_names.values()), issues)
 
+    restored_fields = _restored_field_names(datasets, cube_names, plan)
     measures_by_cube = {}
     _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
                             dialect, issues, name, refs)
@@ -1126,7 +1138,8 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             measure = dict(stash["measure"])
             target = refs.cube_of_metric(mname_raw)
             measure["name"] = refs.native_name(mname_raw)
-            _apply_measure_metadata(metric, measure, stash)
+            _apply_measure_metadata(
+                _restored_model_metric(metric, restored_fields, tables, cube_names), measure, stash)
             _record_model_metric_name(measure, mname_raw, mname, stash, issues, target)
             _place(measures_by_cube, target, measure, name)
             continue
@@ -1203,8 +1216,8 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
             measure = _measure_from_expression(
                 expr, target, mname, stash, plan, refs,
                 expression_dialect=expression_dialect)
-        _apply_measure_metadata(metric, measure, stash, expression_dialect,
-                                decomposed=decomposed)
+        _apply_measure_metadata(_restored_model_metric(metric, restored_fields, tables, cube_names),
+                                measure, stash, expression_dialect, decomposed=decomposed)
         # Cube-only keys import found on the measure (`format`, `drill_members`,
         # `public`, ...) ride flat in the stash -- the same protocol dimensions
         # use -- and go back onto the rebuilt measure as written.
@@ -1289,13 +1302,7 @@ def _qualify_dataset_metric(expr, dialect, dataset, fields, scope, renamed_field
     return expr
 
 
-def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
-                            dialect, issues, model_name, model_refs):
-    # Local expressions contain no metric references, so model-level metric names
-    # must never shadow their fields. Ownership comes from the declaring dataset,
-    # including COUNT(*) and other expressions with no field reference.
-    # Import splits merged geo dimensions back into coordinate fields. Those
-    # names, rather than the merged member name, define the restored namespace.
+def _restored_field_names(datasets, cube_names, plan):
     restored_fields = {}
     for ds_name, ds in datasets.items():
         target = cube_names[ds_name]
@@ -1307,6 +1314,72 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
             member = plan[target].names[fname]
             geo = read_stash(field).get("geo")
             restored_fields[target][fname] = f"{member}_{geo['part']}" if geo else member
+    return restored_fields
+
+
+def _restored_model_metric(metric, restored_fields, tables, cube_names):
+    """Rebind saved SQL to the field and dataset names emitted on re-import."""
+    renamed_datasets = lookup_map({name: cube for name, cube in cube_names.items() if name != cube})
+
+    def rewrite(sql, dialect):
+        tree = parse_expression(sql, dialect)
+        if tree is None:
+            return sql
+        replacements = {}
+        leading = len(sql) - len(sql.lstrip())
+        for column in tree.find_all(sqlglot.exp.Column):
+            if len(column.parts) != 2:
+                continue
+            owner, field = column.parts
+            def written(identifier):
+                return ('"' + identifier.name.replace('"', '""') + '"'
+                        if identifier.args.get("quoted") else identifier.name)
+            cube = resolve_identifier(tables.datasets, written(owner))
+            names = restored_fields.get(cube)
+            if names is None:
+                continue
+            original = resolve_identifier(lookup_map(names.keys()), written(field))
+            if original is None:
+                continue
+            replacements_to_make = []
+            if names[original] != original:
+                replacements_to_make.append((field, names[original]))
+            renamed_owner = resolve_identifier(renamed_datasets, written(owner))
+            if renamed_owner is not None:
+                replacements_to_make.append((owner, renamed_owner))
+            for identifier, replacement in replacements_to_make:
+                start, end = identifier.meta.get("start"), identifier.meta.get("end")
+                if not isinstance(start, int) or not isinstance(end, int):
+                    continue
+                quote = "`" if dialect in BACKTICK_DIALECTS else '"'
+                if identifier.args.get("quoted") or not is_referenceable_name(replacement):
+                    replacement = quote + replacement.replace(quote, quote * 2) + quote
+                replacements[start + leading, end + leading + 1] = replacement
+        for (start, end), replacement in sorted(replacements.items(), reverse=True):
+            sql = sql[:start] + replacement + sql[end:]
+        return sql
+
+    expression = metric.get("expression") or {}
+    restored = dict(expression)
+    if expression.get("sql") is not None:
+        restored["sql"] = rewrite(expression["sql"], DIALECT_OSSIE_SQL)
+    if expression.get("dialects") is not None:
+        restored["dialects"] = [
+            {**entry, "expression": rewrite(entry["expression"], entry["dialect"])}
+            if entry["dialect"] in {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL} else dict(entry)
+            for entry in expression["dialects"]
+        ]
+    return {**metric, "expression": restored}
+
+
+def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube,
+                            dialect, issues, model_name, model_refs):
+    # Local expressions contain no metric references, so model-level metric names
+    # must never shadow their fields. Ownership comes from the declaring dataset,
+    # including COUNT(*) and other expressions with no field reference.
+    # Import splits merged geo dimensions back into coordinate fields. Those
+    # names, rather than the merged member name, define the restored namespace.
+    restored_fields = _restored_field_names(datasets, cube_names, plan)
     restored_names = {c: {normalize_identifier(n) for n in fields.values()}
                       for c, fields in restored_fields.items()}
     pinned_members = {}
@@ -1316,14 +1389,30 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
             pinned_members.setdefault(ds_name, set()).add(pinned.lower())
     for ds_name, metric, scope in _dataset_metrics(datasets):
         target = cube_names[ds_name]
-        expr, used = pick_expression(metric.get("expression"), dialect)
+        fields = [f["name"] for f in datasets[ds_name].get("fields") or []]
+        aliases = {field: member for field, member in restored_fields[target].items()
+                   if field != member}
+        expression = metric["expression"]
+        restored_expression = expression
+        if expression.get("sql") is not None:
+            try:
+                sql = _qualify_dataset_metric(expression["sql"], DIALECT_OSSIE_SQL,
+                                              None, fields, scope, aliases)
+            except ConversionError as exc:
+                expression = {key: value for key, value in expression.items() if key != "sql"}
+                restored_expression = expression
+                issues.add(IssueType.APPROXIMATED, scope,
+                           f"{exc}; ignored the primary SQL expression")
+            else:
+                if aliases:
+                    restored_expression = {**expression, "sql": sql}
+        expr, used = pick_expression(expression, dialect)
         if expr is None:
             issues.add(IssueType.NO_USABLE_DIALECT, scope,
                        "no ANSI_SQL expression and no warehouse dialect Cube could "
                        "pass through; metric dropped")
             continue
         _report_dialect_fallback(issues, scope, used, dialect)
-        fields = [f["name"] for f in datasets[ds_name].get("fields") or []]
         raw_columns = {}
         try:
             qualified = _qualify_dataset_metric(expr, used, ds_name, fields, scope,
@@ -1368,10 +1457,7 @@ def _build_dataset_measures(datasets, cube_names, plan, tables, measures_by_cube
         translated = {**metric, "expression": {"dialects": [
             {"dialect": used, "expression": qualified}]}}
         _apply_measure_metadata(translated, measure, stash, used)
-        restored_expression = metric["expression"]
-        aliases = {field: member for field, member in restored_fields[target].items()
-                   if field != member}
-        if aliases:
+        if aliases and restored_expression.get("dialects"):
             # Fields re-import under their sanitized Cube identifiers. A local
             # expression must name those fields too, rather than restore dangling
             # references such as "Net Amount" when its field is now net_amount.
@@ -1763,7 +1849,7 @@ class _MetricReferences:
             f"Model '{self._model_name}': metric reference cycle: {named}. Cube "
             f"refuses cyclic member references; break the cycle in the Ossie model.")
 
-    def to_cube_sql(self, text, target, context=None, source_dialect=None):
+    def to_cube_sql(self, text, target, context=None, source_dialect=None, context_offset=None):
         """`ossie_expr_to_cube_sql`, with metric references rendered as measures.
 
         Each referenced name is masked with a sentinel identifier first, so the
@@ -1789,6 +1875,10 @@ class _MetricReferences:
         is, while a genuine bare column in glue text still qualifies.
         """
         whole = context if context is not None else text
+        units = date_unit_spans(whole, source_dialect) if context_offset is not None else []
+        unit_marker = "__ossie_unit_"
+        while unit_marker in whole:
+            unit_marker += "alt_"
         attributed = {name: f"{cube}.{name}"
                       for name, cube in self._fields_in(whole, source_dialect).items()}
         masks, substitutions = {}, {}
@@ -1806,7 +1896,13 @@ class _MetricReferences:
                                                                   reverse=True))))
                           if native else None)
 
-        def convert(fragment):
+        def convert(fragment, offset=None):
+            if offset is not None:
+                for start, end in reversed(units):
+                    if offset <= start and end <= offset + len(fragment):
+                        sentinel = f"{unit_marker}{start}__"
+                        substitutions[sentinel] = whole[start:end]
+                        fragment = fragment[:start - offset] + sentinel + fragment[end - offset:]
             if native_pattern:
                 # Token starts exclude text inside native (including raw/triple)
                 # literals, even if it contains an otherwise identical reference.
@@ -1819,20 +1915,20 @@ class _MetricReferences:
                     return sentinel
                 fragment = native_pattern.sub(replace, fragment)
             fragment = _mask_native_literals(fragment, source_dialect, substitutions)
-            fragment = replace_bare_identifiers(fragment, attributed)
-            fragment = replace_bare_identifiers(fragment, masks)
+            fragment = replace_bare_identifiers(fragment, attributed, source_dialect)
+            fragment = replace_bare_identifiers(fragment, masks, source_dialect)
             return ossie_expr_to_cube_sql(fragment, target, self._tables)
 
-        out = convert(text)
+        out = convert(text, context_offset)
         # Whatever bare identifiers remain are raw columns (the metric references
         # are sentinels at this point), so they get the same `{CUBE}.column`
         # qualification every other generated member SQL does. The names are taken
         # from the converted whole and only *applied* to the fragment, which is the
         # part `qualify_bare_columns` cannot do for itself.
         names = unqualified_column_names(
-            out if context is None else convert(whole), source_dialect)
+            out if context is None else convert(whole, 0), source_dialect)
         out = replace_bare_identifiers(
-            out, {name: "{CUBE}." + name for name in names or ()})
+            out, {name: "{CUBE}." + name for name in names or ()}, source_dialect)
         for sentinel, raw in self._raw_columns.items():
             substitutions[f"{{CUBE}}.{sentinel}"] = raw
             substitutions[sentinel] = raw
@@ -1960,14 +2056,14 @@ def _decompose_measure(expr, spans, mname, fallback, measures_by_cube, plan,
         _place(measures_by_cube, part_target, part, model_name)
 
         out.append(refs.to_cube_sql(expr[cursor:start], fallback, context=expr,
-                                    source_dialect=expression_dialect))
+                                    source_dialect=expression_dialect, context_offset=cursor))
         # `{CUBE.x}` for a part on the same cube as the public measure: an explicit
         # name pins the reference to this cube and breaks if it is extended.
         qualifier = "CUBE" if part_target == fallback else part_target
         out.append("{" + f"{qualifier}.{part_name}" + "}")
         cursor = end
     out.append(refs.to_cube_sql(expr[cursor:], fallback, context=expr,
-                                source_dialect=expression_dialect))
+                                source_dialect=expression_dialect, context_offset=cursor))
     return "".join(out)
 
 
@@ -2063,7 +2159,7 @@ def _apply_measure_metadata(metric, measure, stash, used_dialect=None,
     parked = {}
     foreign = foreign_vendor_extensions(metric)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
     # Cube has no field for a measure's result type. Import infers one only for the
     # count family, whose result type does not depend on the operand, so anything else
     # (a `Decimal` sum) would be lost without parking it.
@@ -2182,7 +2278,7 @@ def _build_views(model, model_stash, cube_names, relationships, datasets,
     parked = {}
     foreign = foreign_vendor_extensions(model)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
 
     # Cube keeps cubes and views in one global namespace, so a view may not share a
     # name with a cube. The model name and a dataset name being equal is not exotic --
@@ -2213,7 +2309,7 @@ def _build_views(model, model_stash, cube_names, relationships, datasets,
             vendors = ", ".join(
                 sorted({str(e.get("vendor_name")) for e in foreign}))
             raise ConversionError(
-                f"Model carries custom_extensions for {vendors}, which have no Cube "
+                f"Model carries nonportable_extensions for {vendors}, which have no Cube "
                 f"field and ride on the view representing the model -- but no view "
                 f"is mapped, so there is nowhere to put them without losing them. "
                 f"Re-import naming the view the model maps to (`--view <name>`), or "

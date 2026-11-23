@@ -414,6 +414,14 @@ def test_unique_keys_restating_primary_key_do_not_warn():
     assert not any("unique_keys" in m for m in msgs)
 
 
+def test_unique_keys_restating_primary_key_in_another_order_do_not_warn():
+    msgs = _warnings_of(minimal(datasets=[
+        {"name": "lines", "source": "db.s.t", "primary_key": ["order_id", "line_no"],
+         "unique_keys": [["line_no", "order_id"]],
+         "fields": [_field("order_id"), _field("line_no")]}]))
+    assert not any("unique_keys" in m for m in msgs)
+
+
 def test_field_without_usable_dialect_warns_and_drops():
     ossie = minimal(datasets=[
         {"name": "orders", "source": "db.s.t",
@@ -433,7 +441,7 @@ def test_relationship_ai_context_warns():
 
 
 def test_foreign_vendor_extensions_warn():
-    msgs = _warnings_of(minimal(custom_extensions=[
+    msgs = _warnings_of(minimal(nonportable_extensions=[
         {"vendor_name": "DBT", "data": "{}"}]))
     assert any("foreign-vendor" in m for m in msgs)
 
@@ -472,7 +480,7 @@ def test_root_name_must_be_a_string(name_properties):
 
 def _stash_ext(data):
     import json
-    return [{"vendor_name": "OMNI", "data": json.dumps({"_v": 1, **data})}]
+    return [{"vendor_name": "OMNI", "data": {"_v": 1, **data}}]
 
 
 @pytest.mark.parametrize("bad", ["../../pwned.txt", "/etc/pwned", "a/../../b", "C:/x", "\\\\srv\\x", " ",
@@ -482,20 +490,20 @@ def _stash_ext(data):
 @pytest.mark.parametrize("where", ["extra_files", "topic_files", "dataset_file"])
 def test_stashed_paths_cannot_escape_output_dir(where, bad):
     if where == "extra_files":
-        text = minimal(custom_extensions=_stash_ext({"extra_files": {bad: "x"}}))
+        text = minimal(nonportable_extensions=_stash_ext({"extra_files": {bad: "x"}}))
     elif where == "topic_files":
-        text = minimal(custom_extensions=_stash_ext(
+        text = minimal(nonportable_extensions=_stash_ext(
             {"topics": {"t": {}}, "topic_files": {"t": bad}}))
     else:
         document = parse(minimal())
-        document["datasets"][0]["custom_extensions"] = _stash_ext({"file": bad})
+        document["datasets"][0]["nonportable_extensions"] = _stash_ext({"file": bad})
         text = dump_yaml(document)
     with pytest.raises(ConversionError, match="stashed file path"):
         export(text)
 
 
 def test_stashed_relative_path_is_normalized():
-    files = export(minimal(custom_extensions=_stash_ext(
+    files = export(minimal(nonportable_extensions=_stash_ext(
         {"extra_files": {"./sub//q.view": "x"}})))
     assert "sub/q.view" in files
 
@@ -505,11 +513,11 @@ def test_stashed_relative_path_is_normalized():
 def test_stashed_non_string_path_is_rejected(where, bad):
     # Falsy values too: only a missing/null entry falls back to the canonical path.
     if where == "topic_files":
-        text = minimal(custom_extensions=_stash_ext(
+        text = minimal(nonportable_extensions=_stash_ext(
             {"topics": {"t": {}}, "topic_files": {"t": bad}}))
     else:
         document = parse(minimal())
-        document["datasets"][0]["custom_extensions"] = _stash_ext({"file": bad})
+        document["datasets"][0]["nonportable_extensions"] = _stash_ext({"file": bad})
         text = dump_yaml(document)
     with pytest.raises(ConversionError, match="must be a string"):
         export(text)
@@ -518,12 +526,12 @@ def test_stashed_non_string_path_is_rejected(where, bad):
 @pytest.mark.parametrize("where", ["topic_files", "dataset_file"])
 def test_stashed_null_path_falls_back_to_canonical(where):
     if where == "topic_files":
-        text = minimal(custom_extensions=_stash_ext(
+        text = minimal(nonportable_extensions=_stash_ext(
             {"topics": {"t": {}}, "topic_files": {"t": None}}))
         expected = "topics/t.topic.yaml"
     else:
         document = parse(minimal())
-        document["datasets"][0]["custom_extensions"] = _stash_ext({"file": None})
+        document["datasets"][0]["nonportable_extensions"] = _stash_ext({"file": None})
         text = dump_yaml(document)
         expected = "views/orders.view.yaml"
     assert expected in export(text)

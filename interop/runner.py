@@ -17,18 +17,17 @@
 
 """Execute an ordered matrix without hiding failed setup or empty conversions."""
 
-from dataclasses import replace
-from datetime import datetime, timezone
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 
 import yaml
 
 from .bindings import check_bindings
-from .contracts import check_document, check_native_sources
 from .checks import (
     ContentError,
     Validator,
@@ -37,8 +36,10 @@ from .checks import (
     meaningful_ossie,
     native_content,
 )
+from .contracts import check_document, check_lookml_portable_sql, check_native_sources
 from .execution import diagnostics, has_degradation, run_command, succeeded
 from .manifest import Manifest, expand
+from . import portability_execution
 from .portability import GRADER, as_dict, diagnostics_text, load_grader
 
 
@@ -301,7 +302,7 @@ class Runner:
         suffix = (
             ".json"
             if converter.native_format
-            in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+            in ("atlan", "dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
             else ".lkml"
             if converter.native_format == "lookml"
             else ".yaml"
@@ -498,11 +499,14 @@ class Runner:
         """One portability fixture through one converter and back, then graded.
 
         The grade is the same as a Tier B return; `grading` holds the core grader's
-        findings. A converter that refuses the document (export or re-import fails,
-        or nothing comes back) is graded against an empty document, which the
-        grader reports as REJECTED. A skip is not graded. A mode re-imports the
-        export its converter's case recorded in `exports`. A case the grader cannot
-        grade keeps its round-trip grade and says why in `grading_error`."""
+        findings and `execution` the execution check of the metrics it marks
+        REWRITTEN, read from the same report. A converter that refuses the document
+        (export or re-import fails, or nothing comes back) is graded against an
+        empty document, which the grader reports as REJECTED. A skip is not graded.
+        A mode re-imports the export its converter's case recorded in `exports`. A
+        case the grader cannot grade keeps its round-trip grade and says why in
+        `grading_error`; an execution check that cannot finish says why in
+        `execution_error` and leaves the grading in place."""
         label = mode or converter.name
         case_id = f"{variant}--to--{label}"
         directory = self.output / "portability" / case_id
@@ -517,6 +521,7 @@ class Runner:
             "output": str(directory / "conversion" / "returned.yaml"),
             "native_gate": _result("SKIP", "export has not succeeded"),
             "grading": None,
+            "execution": None,
         }
         shutil.copyfile(path, result["input"])
         data = self.validate(result, Path(result["input"]))
@@ -586,12 +591,22 @@ class Runner:
             except (UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
                 # Nothing readable came back: graded as a refusal, and said so.
                 result["grading_note"] = f"returned document unreadable: {error}"
+        input_document = grader._load(result["input"])
         report = grader.grade(
-            grader._load(result["input"]),
+            input_document,
             document,
             diagnostics_text=diagnostics_text(result["diagnostics"]),
             converter=label,
         )
+        try:
+            result["execution"] = portability_execution.as_dict(
+                portability_execution.check(
+                    input_document, document, converter=label, graded=report
+                )
+            )
+        except Exception as error:
+            # Report-only, like the grading: a failure stays on this case.
+            result["execution_error"] = f"{type(error).__name__}: {error}"
         return as_dict(report)
 
     def document_regression(self, name, regression, target):
@@ -648,6 +663,16 @@ class Runner:
                 _skip(result, accepted["reason"], because=accepted)
             return result
         result["content"] = accepted["content"]
+        if regression.category == "portable-sql" and converter.native_format == "lookml":
+            result["native_assertions"] = check_lookml_portable_sql(
+                Path(accepted["output"]), regression.assertions
+            )
+            result["output"] = accepted["output"]
+            if result["native_assertions"]["grade"] != "OK":
+                result.update(grade="FAIL", reason="portable SQL assertions failed in native LookML")
+            else:
+                result.update(grade=accepted["grade"], reason=accepted["reason"])
+            return result
         if regression.category == "sources":
             result["native_assertions"] = check_native_sources(
                 Path(accepted["output"]), converter.native_format, regression.assertions

@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -23,7 +22,7 @@ import sqlglot
 from sqlglot import exp
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDataType,
     OssieDialect,
@@ -35,6 +34,7 @@ from ossie import (
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
+from ossie_dbt.ratio_helpers import mark_ratio_helpers
 from ossie_dbt.expression_utils import (
     ROW_COUNT_EXPR,
     _extract_agg_info,
@@ -197,7 +197,7 @@ class OssieToMSIConverter:
                 )
             )
 
-        config, config_issues = self._config_from_custom_extensions(dataset.custom_extensions, dataset.name)
+        config, config_issues = self._config_from_custom_extensions(dataset.nonportable_extensions, dataset.name)
         issues.extend(config_issues)
         return (
             PydanticSemanticModel(
@@ -214,7 +214,7 @@ class OssieToMSIConverter:
 
     @staticmethod
     def _config_from_custom_extensions(
-        custom_extensions: Optional[List[OssieCustomExtension]],
+        nonportable_extensions: Optional[List[OssieNonportableExtension]],
         element_name: str,
         datatype: Optional[OssieDataType] = None,
     ) -> Tuple[Optional[PydanticSemanticLayerElementConfig], List[ConverterIssue]]:
@@ -235,14 +235,10 @@ class OssieToMSIConverter:
         """
         issues: List[ConverterIssue] = []
         restored: Optional[Dict[str, Any]] = None
-        for ext in custom_extensions or []:
+        for ext in nonportable_extensions or []:
             if ext.vendor_name != OssieVendor.DBT.value:
                 continue
-            try:
-                payload = json.loads(ext.data)
-            except (ValueError, RecursionError):
-                # RecursionError: nesting too deep to decode.
-                payload = None
+            payload = ext.data
             if isinstance(payload, dict) and "meta" not in payload:
                 continue
             meta = payload.get("meta") if isinstance(payload, dict) else None
@@ -307,7 +303,7 @@ class OssieToMSIConverter:
         Aggregation info lives on metrics (`metric_aggregation_params`), not on
         semantic model measures, so there is no measure classification step.
         """
-        config, issues = self._config_from_custom_extensions(field.custom_extensions, field.name, field.datatype)
+        config, issues = self._config_from_custom_extensions(field.nonportable_extensions, field.name, field.datatype)
         if field.name in primary_key_cols:
             entities.append(
                 PydanticEntity(
@@ -392,22 +388,23 @@ class OssieToMSIConverter:
                 )
                 continue
             config, config_issues = self._config_from_custom_extensions(
-                metric.custom_extensions, metric.name, metric.datatype
+                metric.nonportable_extensions, metric.name, metric.datatype
             )
             # Reserve sub-metric names on a copy, so a dropped metric leaves no gap in the numbering.
             reserved_names = set(taken_names)
             try:
-                metrics.extend(
-                    self._convert_metric(
-                        metric.name,
-                        dialect_expr.expression,
-                        metric.description,
-                        ossie_sm.datasets,
-                        dialect,
-                        taken_names=reserved_names,
-                        config=config,
-                    )
+                converted = self._convert_metric(
+                    metric.name,
+                    dialect_expr.expression,
+                    metric.description,
+                    ossie_sm.datasets,
+                    dialect,
+                    taken_names=reserved_names,
+                    config=config,
                 )
+                # Sign after restoring user metadata; never replace that metadata.
+                mark_ratio_helpers(converted)
+                metrics.extend(converted)
                 taken_names = reserved_names
             except _UnresolvedRowCountDataset:
                 # Also drops a ratio and its sub-metrics as a whole, so nothing references a missing metric.
@@ -439,8 +436,9 @@ class OssieToMSIConverter:
         and column expression directly — no intermediate measure is created.
 
         Multiple metrics are returned when a RATIO metric requires auto-generated
-        sub-metrics for its numerator and denominator. Their names are added to
-        `taken_names`, which holds every metric name already in use.
+        sub-metrics for its numerator and denominator. Helpers remain public,
+        while the owning ratio carries provenance alongside its restored metadata.
+        Their names are added to `taken_names`, which holds every name already in use.
         """
         if taken_names is None:
             taken_names = {name}

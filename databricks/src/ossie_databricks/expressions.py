@@ -24,6 +24,8 @@ function is in `_PORTABLE`, a set that the table test in `tests/test_expressions
 by row. For any other tree it raises `Untranslatable`, and the caller keeps the original text.
 """
 
+import re
+
 import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.databricks import Databricks
@@ -33,6 +35,29 @@ from ossie_databricks import _ossie
 
 OSSIE = "OSSIE_SQL_2026"
 DATABRICKS = "DATABRICKS"
+
+# A name that may be written without quotes. A Databricks backtick name is case-insensitive,
+# so an unnecessary quote (a backtick name becomes a double-quoted one) forces case-sensitive
+# matching in Ossie and stops matching the column; printing a regular identifier bare keeps
+# the match. A reserved word still needs its quotes, so it is never dropped. The ANSI and
+# Databricks reserved sets are spelled out because sqlglot's keyword table stores multi-word
+# phrases ("ORDER BY") and omits many reserved words.
+_REGULAR_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_RESERVED = {
+    "ALL", "ALTER", "AND", "ANTI", "ANY", "ARRAY", "AS", "ASC", "AUTHORIZATION", "BETWEEN",
+    "BOTH", "BY", "CASE", "CAST", "CHECK", "COLLATE", "COLUMN", "CONSTRAINT", "CREATE", "CROSS",
+    "CUBE", "CURRENT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER",
+    "DELETE", "DESC", "DESCRIBE", "DISTINCT", "DROP", "ELSE", "END", "ESCAPE", "EXCEPT",
+    "EXISTS", "FALSE", "FETCH", "FILTER", "FOR", "FOREIGN", "FROM", "FULL", "FUNCTION", "GLOBAL",
+    "GRANT", "GROUP", "GROUPING", "HAVING", "IN", "INNER", "INSERT", "INTERSECT", "INTERVAL",
+    "INTO", "IS", "JOIN", "LATERAL", "LEADING", "LEFT", "LIKE", "LIMIT", "LOCAL", "NATURAL",
+    "NOT", "NULL", "OF", "ON", "ONLY", "OR", "ORDER", "OUTER", "OVERLAPS", "PARTITION",
+    "PERCENT", "PRIMARY", "RANGE", "REFERENCES", "RIGHT", "ROLLUP", "ROW", "ROWS", "SELECT",
+    "SEMI", "SESSION_USER", "SET", "SOME", "START", "TABLE", "THEN", "TIME", "TO", "TRAILING",
+    "TRUE", "TRUNCATE", "UNION", "UNIQUE", "UNKNOWN", "UPDATE", "USER", "USING", "VALUES",
+    "WHEN", "WHERE", "WINDOW", "WITH",
+}  # fmt: skip
+_RESERVED |= {keyword.upper() for keyword in Databricks.Tokenizer.KEYWORDS if " " not in keyword}
 
 
 class Untranslatable(Exception):
@@ -56,7 +81,7 @@ _PORTABLE: frozenset[type[exp.Expression]] = frozenset(
         exp.Radians, exp.Degrees, exp.Pi, exp.Trunc,
         # Dates and times.
         exp.Year, exp.Quarter, exp.Month, exp.Day, exp.DayOfYear, exp.Hour, exp.Minute,
-        exp.Second, exp.Extract, exp.DateTrunc, exp.TimestampTrunc, exp.TimestampAdd,
+        exp.Second, exp.Extract, exp.DateTrunc, exp.TimestampTrunc, exp.TimestampAdd, exp.DateDiff,
         exp.TsOrDsAdd, exp.TsOrDsToDate, exp.CurrentDate, exp.CurrentTimestamp, exp.ToChar,
         # Window functions.
         exp.RowNumber, exp.Rank, exp.DenseRank, exp.Ntile, exp.PercentRank, exp.CumeDist,
@@ -68,6 +93,18 @@ _PORTABLE: frozenset[type[exp.Expression]] = frozenset(
 _PORTABLE_CALLS = frozenset(
     {"MEASURE", "DATE_PART", "IFF", "ZEROIFNULL", "NULLIFZERO", "TO_DATE", "TO_TIMESTAMP"}
 )
+
+# Operators with the same meaning in both languages. An operator outside this set (a
+# Databricks bitwise `^`/`&`/`|`/`~`/`<<`/`>>`, which other engines read as exponentiation
+# or something else) has no verified Ossie form and is left untranslated with a warning.
+_PORTABLE_OPERATORS: frozenset[type[exp.Expression]] = frozenset(
+    {
+        exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.IntDiv, exp.Neg, exp.Paren,
+        exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ, exp.NullSafeNEQ,
+        exp.And, exp.Or, exp.Not, exp.Is, exp.In, exp.Between, exp.Like, exp.ILike, exp.Escape,
+        exp.DPipe,
+    }
+)  # fmt: skip
 
 # Ossie datetime format tokens and their Databricks patterns, longest token first.
 # EXPERIMENTAL in the Ossie specification; Databricks to Ossie is not translated.
@@ -88,11 +125,35 @@ def _date_trunc(self: sqlglot.Generator, node: exp.Expression) -> str:
     return self.func("DATE_TRUNC", exp.Literal.string(node.text("unit").upper()), node.this)
 
 
+def _ossie_date_trunc(self: sqlglot.Generator, node: exp.Expression) -> str:
+    # The unit in the lower case the Ossie specification writes it in, so an authored
+    # DATE_TRUNC('month', d) comes back as written.
+    return self.func("DATE_TRUNC", exp.Literal.string(node.text("unit").lower()), node.this)
+
+
+def _date_diff(self: sqlglot.Generator, node: exp.Expression) -> str:
+    return self.func("DATEDIFF", exp.var(node.text("unit").upper()), node.expression, node.this)
+
+
+def _ossie_date_diff(self: sqlglot.Generator, node: exp.Expression) -> str:
+    return self.func("DATEDIFF", exp.var(node.text("unit").lower()), node.expression, node.this)
+
+
+def _ossie_datediff(args: list[exp.Expression]) -> exp.Expression:
+    # The default parser reads DATEDIFF(day, start, end) end-first, with the part as a
+    # column; Ossie writes the part first.
+    if len(args) != 3:
+        return exp.Anonymous(this="DATEDIFF", expressions=args)
+    unit, start, end = args
+    return exp.DateDiff(this=end, expression=start, unit=exp.var(unit.name.upper()))
+
+
 class _DatabricksSql(Databricks):
     class Generator(Databricks.Generator):
         TRANSFORMS = {
             **Databricks.Generator.TRANSFORMS,
             exp.DateTrunc: _date_trunc,
+            exp.DateDiff: _date_diff,
             exp.TimestampAdd: _date_add,
             exp.TsOrDsAdd: _date_add,
             # A bare CURRENT_DATE resolves to a column of that name when one exists.
@@ -100,8 +161,26 @@ class _DatabricksSql(Databricks):
         }
 
 
+class _OssieParse(sqlglot.Dialect):
+    """Default spelling for reading OSSIE_SQL_2026 and ANSI_SQL, with Ossie's NULL ordering.
+
+    Ossie orders NULLs last for ASC and first for DESC (the ANSI default), the reverse of
+    the sqlglot default. Reading with it records a bare ORDER BY item's implied placement
+    with Ossie's meaning, so a translation keeps it instead of flipping it.
+    """
+
+    NULL_ORDERING = "nulls_are_large"
+
+    class Parser(sqlglot.Parser):
+        FUNCTIONS = {**sqlglot.Parser.FUNCTIONS, "DATEDIFF": _ossie_datediff}
+
+
 class _OssieSql(Databricks):
     """Databricks spelling, which Ossie shares for its functions, with ANSI quoting."""
+
+    # Match _OssieParse so the printer omits only the placements Ossie also defaults to,
+    # and spells out the rest (a Databricks ASC NULLS FIRST becomes an explicit clause).
+    NULL_ORDERING = "nulls_are_large"
 
     class Tokenizer(Databricks.Tokenizer):
         IDENTIFIERS = ['"']
@@ -111,13 +190,19 @@ class _OssieSql(Databricks):
     class Generator(Databricks.Generator):
         TRANSFORMS = {
             **Databricks.Generator.TRANSFORMS,
-            exp.DateTrunc: _date_trunc,
-            exp.TimestampTrunc: _date_trunc,
+            exp.DateTrunc: _ossie_date_trunc,
+            exp.TimestampTrunc: _ossie_date_trunc,
+            exp.DateDiff: _ossie_date_diff,
             exp.TimestampAdd: _date_add,
             exp.TsOrDsAdd: _date_add,
             exp.CurrentDate: lambda self, node: "CURRENT_DATE",
             exp.StrPosition: lambda self, node: (
                 f"POSITION({self.sql(node, 'substr')} IN {self.sql(node, 'this')})"
+            ),
+            # Databricks integer division; Ossie writes it as TRUNC(x / y, 0). A generator
+            # transform (not a tree transform) so the operands are still rendered.
+            exp.IntDiv: lambda self, node: (
+                f"TRUNC({self.sql(node, 'this')} / {self.sql(node, 'expression')}, 0)"
             ),
         }
 
@@ -125,10 +210,31 @@ class _OssieSql(Databricks):
 def parse(text: str, dialect: str) -> exp.Expression:
     """Parse `text` as the Ossie validator does for `dialect`."""
     try:
-        tree = sqlglot.parse_one(text, read=_ossie.sqlglot_dialect(dialect))
+        # OSSIE_SQL_2026 and ANSI_SQL map to the default dialect; read them with Ossie's
+        # NULL ordering so a bare window ORDER BY keeps its meaning across a translation.
+        read = _ossie.sqlglot_dialect(dialect) or _OssieParse
+        tree = sqlglot.parse_one(text, read=read)
     except (ParseError, TokenError, KeyError) as error:
         raise Untranslatable(f"cannot parse {text!r} as {dialect}") from error
-    return tree.transform(_normalize_dateadd)
+    tree = tree.transform(_normalize_dateadd)
+    if dialect == DATABRICKS:
+        tree = tree.transform(_drop_implied_to_date)
+        # Databricks identifiers are case-insensitive, so a backtick quote on a regular name
+        # is unnecessary; drop it so the name stays case-insensitive after translation. ANSI
+        # and OSSIE_SQL quotes are case-sensitive and intentional, so they are left alone.
+        for identifier_node in tree.find_all(exp.Identifier):
+            _drop_unneeded_quotes(identifier_node)
+    return tree
+
+
+def _drop_implied_to_date(node: exp.Expression) -> exp.Expression:
+    # The Databricks parser wraps the argument of YEAR(x), MONTH(x), DAY(x) and DAYOFYEAR(x)
+    # in a TO_DATE that was not written; a written TO_DATE is a second one inside it.
+    if isinstance(node, (exp.Year, exp.Month, exp.Day, exp.DayOfYear)):
+        inner = node.this
+        if isinstance(inner, exp.TsOrDsToDate) and not inner.args.get("format"):
+            node.set("this", inner.this)
+    return node
 
 
 def _normalize_dateadd(node: exp.Expression) -> exp.Expression:
@@ -143,27 +249,50 @@ def _call_name(node: exp.Expression) -> str | None:
     return node.name.upper() if isinstance(node, exp.Anonymous) else None
 
 
-def _unsupported_functions(tree: exp.Expression) -> list[str]:
-    return sorted(
-        {
-            _call_name(node) or node.sql_name()
-            for node in tree.find_all(exp.Func)
-            # sqlglot models AND and OR as functions.
-            if not isinstance(node, exp.Connector)
-            and type(node) not in _PORTABLE
-            and _call_name(node) not in _PORTABLE_CALLS
-        }
-    )
+def _unsupported(tree: exp.Expression) -> list[str]:
+    """Functions and operators with no verified translation."""
+    functions = {
+        _call_name(node) or node.sql_name()
+        for node in tree.find_all(exp.Func)
+        # sqlglot models AND and OR as functions.
+        if not isinstance(node, exp.Connector)
+        and type(node) not in _PORTABLE
+        and _call_name(node) not in _PORTABLE_CALLS
+    }
+    # Ossie does not say whether DATEDIFF counts part boundaries crossed or whole parts
+    # elapsed (Databricks), so only the day count of two dates, where both agree, is kept.
+    functions |= {
+        f"DATEDIFF({node.text('unit').upper()})"
+        for node in tree.find_all(exp.DateDiff)
+        if node.text("unit").upper() != "DAY"
+    }
+    operators = {
+        type(node).__name__
+        for node in tree.walk()
+        if isinstance(node, (exp.Binary, exp.Unary))
+        and not isinstance(node, exp.Func)
+        and type(node) not in _PORTABLE_OPERATORS
+    }
+    return sorted(functions | operators)
 
 
 def translate(tree: exp.Expression, target: str) -> str:
     """Print `tree` in `target`, OSSIE_SQL_2026 or DATABRICKS."""
-    unsupported = _unsupported_functions(tree)
+    unsupported = _unsupported(tree)
     if unsupported:
         raise Untranslatable(f"no verified translation for {', '.join(unsupported)}")
     if target == DATABRICKS:
         return tree.copy().transform(_to_databricks).sql(dialect=_DatabricksSql)
     return tree.copy().transform(_to_ossie).sql(dialect=_OssieSql)
+
+
+def _drop_unneeded_quotes(node: exp.Identifier) -> None:
+    if (
+        node.quoted
+        and _REGULAR_IDENTIFIER.fullmatch(node.this)
+        and node.this.upper() not in _RESERVED
+    ):
+        node.set("quoted", False)
 
 
 def _to_databricks(node: exp.Expression) -> exp.Expression:

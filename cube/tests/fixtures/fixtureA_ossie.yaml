@@ -103,9 +103,9 @@ datasets:
         expression: lat
     datatype: Float
     dimension: {}
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: CUBE
-      data: '{"_v": 1, "geo": {"of": "location", "part": "latitude"}}'
+      data: {"_v": 1, "geo": {"of": "location", "part": "latitude"}}
   - name: location_longitude
     expression:
       dialects:
@@ -113,15 +113,14 @@ datasets:
         expression: lon
     datatype: Float
     dimension: {}
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: CUBE
-      data: '{"_v": 1, "geo": {"of": "location", "part": "longitude"}}'
+      data: {"_v": 1, "geo": {"of": "location", "part": "longitude"}}
   primary_key:
   - id
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: CUBE
-    data: '{"_v": 1, "cube_extras": {"segments": [{"name": "active", "sql": "{CUBE}.status
-      = ''active''"}]}}'
+    data: {"_v": 1, "cube_extras": {"segments": [{"name": "active", "sql": "{CUBE}.status = 'active'"}]}}
 metrics:
 - name: orders__count
   expression:
@@ -129,9 +128,9 @@ metrics:
     - dialect: ANSI_SQL
       expression: COUNT(DISTINCT orders.id)
   datatype: Integer
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: CUBE
-    data: '{"_v": 1, "name": "count"}'
+    data: {"_v": 1, "name": "count"}
 - name: total_amount
   expression:
     dialects:
@@ -140,9 +139,9 @@ metrics:
   description: Total order amount
   ai_context:
     instructions: Use this for revenue questions.
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: CUBE
-    data: '{"_v": 1, "format": "currency"}'
+    data: {"_v": 1, "format": "currency"}
 - name: completed_amount
   expression:
     dialects:
@@ -160,17 +159,15 @@ metrics:
     - dialect: ANSI_SQL
       expression: COUNT(DISTINCT users.id)
   datatype: Integer
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: CUBE
-    data: '{"_v": 1, "name": "count"}'
+    data: {"_v": 1, "name": "count"}
 - name: cities
   expression:
     dialects:
     - dialect: ANSI_SQL
       expression: COUNT(DISTINCT users.city)
   datatype: Integer
-custom_extensions:
+nonportable_extensions:
 - vendor_name: CUBE
-  data: '{"_v": 1, "views": {"sales": {"name": "sales", "cubes": [{"join_path":
-    "orders", "includes": "*"}, {"join_path": "orders.users", "includes": ["city"]}]}},
-    "mapped_view": "sales"}'
+  data: {"_v": 1, "views": {"sales": {"name": "sales", "cubes": [{"join_path": "orders", "includes": "*"}, {"join_path": "orders.users", "includes": ["city"]}]}}, "mapped_view": "sales"}

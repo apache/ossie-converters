@@ -62,6 +62,8 @@ TO_DATABRICKS = [
     ("TRY_CAST(x AS DATE)", "TRY_CAST(x AS DATE)"),
     ("DATE '2024-01-15'", "CAST('2024-01-15' AS DATE)"),
     ('"Order Date"', "`Order Date`"),
+    # An intentional case-sensitive quote from OSSIE_SQL is kept, not folded to a bare name.
+    ('SUM("orderAmount")', "SUM(`orderAmount`)"),
     ("'it''s'", "'it\\'s'"),
     ("'a\\b'", "'a\\\\b'"),
     ("s LIKE 'a%' OR s ILIKE 'b%'", "s LIKE 'a%' OR s ILIKE 'b%'"),
@@ -80,6 +82,7 @@ TO_DATABRICKS = [
     ("DATE_PART('month', x)", "DATE_PART('month', x)"),
     ("DATE_TRUNC('month', x)", "DATE_TRUNC('MONTH', x)"),
     ("DATEADD(day, 3, x)", "DATEADD(DAY, 3, x)"),
+    ("DATEDIFF(day, a, b)", "DATEDIFF(DAY, a, b)"),
     ("TO_DATE(s)", "TO_DATE(s)"),
     ("CURRENT_DATE", "CURRENT_DATE()"),
     ("CURRENT_TIMESTAMP", "CURRENT_TIMESTAMP()"),
@@ -87,24 +90,52 @@ TO_DATABRICKS = [
     ("REGEXP_EXTRACT(s, 'a+')", "REGEXP_EXTRACT(s, 'a+', 0)"),
     ("TO_CHAR(d, 'YYYY-MM-DD HH24:MI')", "DATE_FORMAT(d, 'yyyy-MM-dd HH:mm')"),
     ("TO_DATE(s, 'DD/MM/YYYY')", "TO_DATE(s, 'dd/MM/yyyy')"),
-    ("ROW_NUMBER() OVER (PARTITION BY a ORDER BY b)", None),
-    ("LAG(x, 1, 0) OVER (ORDER BY a) + LEAD(x) OVER (ORDER BY a)", None),
-    ("SUM(x) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)", None),
+    # Ossie orders NULLs last on ASC and first on DESC; Databricks is the reverse, so a
+    # bare window ORDER BY gets an explicit placement to keep the meaning.
+    (
+        "ROW_NUMBER() OVER (PARTITION BY a ORDER BY b)",
+        "ROW_NUMBER() OVER (PARTITION BY a ORDER BY b NULLS LAST)",
+    ),
+    (
+        "LAG(x, 1, 0) OVER (ORDER BY a) + LEAD(x) OVER (ORDER BY a)",
+        "LAG(x, 1, 0) OVER (ORDER BY a NULLS LAST) + LEAD(x) OVER (ORDER BY a NULLS LAST)",
+    ),
+    (
+        "SUM(x) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+        "SUM(x) OVER (ORDER BY a NULLS LAST ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+    ),
+    ("RANK() OVER (ORDER BY amount DESC)", "RANK() OVER (ORDER BY amount DESC NULLS FIRST)"),
+    # An Ossie placement that matches the Databricks default is left off.
+    ("RANK() OVER (ORDER BY amount NULLS FIRST)", "RANK() OVER (ORDER BY amount)"),
     ("AGG(orders.revenue) / 2", "MEASURE(orders.revenue) / 2"),
 ]
 
 FROM_DATABRICKS = [
     ("SUM(x) / COUNT(DISTINCT y)", "SUM(x) / COUNT(DISTINCT y)"),
     ("`Order Date` || 'it\\'s'", "\"Order Date\" || 'it''s'"),
+    # A backtick name that is a regular identifier prints unquoted (case-insensitive match);
+    # a reserved name keeps its quotes.
+    ("date_trunc('week', `o_orderdate`)", "DATE_TRUNC('week', o_orderdate)"),
+    ("`order`", '"order"'),
+    # Databricks integer division becomes Ossie's TRUNC(x / y, 0), operands translated too.
+    ("qty DIV 2", "TRUNC(qty / 2, 0)"),
+    ("MEASURE(x) DIV 2", "TRUNC(AGG(x) / 2, 0)"),
+    # Databricks orders NULLs first on ASC and last on DESC; made explicit for Ossie.
+    ("RANK() OVER (ORDER BY amount)", "RANK() OVER (ORDER BY amount NULLS FIRST)"),
+    ("RANK() OVER (ORDER BY amount DESC)", "RANK() OVER (ORDER BY amount DESC NULLS LAST)"),
     ("'a\\\\b'", "'a\\b'"),
     ("locate('a', s)", "POSITION('a' IN s)"),
     ("dateadd(day, 3, x)", "DATEADD(DAY, 3, x)"),
     ("date_add(x, 3)", "DATEADD(DAY, 3, x)"),
-    ("date_trunc('month', x)", "DATE_TRUNC('MONTH', x)"),
+    ("date_trunc('month', x)", "DATE_TRUNC('month', x)"),
+    ("datediff(DAY, a, b)", "DATEDIFF(day, a, b)"),
+    ("datediff(b, a)", "DATEDIFF(day, a, b)"),
     ("extract(DOY FROM x)", "EXTRACT(DAYOFYEAR FROM x)"),
     ("regexp_extract(s, 'a', 0)", "REGEXP_EXTRACT(s, 'a')"),
     ("current_date()", "CURRENT_DATE"),
     ("to_date(s)", "TO_DATE(s)"),
+    ("year(x) + month(x) + day(x)", "YEAR(x) + MONTH(x) + DAY(x)"),
+    ("year(to_date(s))", "YEAR(TO_DATE(s))"),
     ("iff(c, 1, 2)", "IF(c, 1, 2)"),
     ("nvl(x, 0)", "COALESCE(x, 0)"),
     ("SUM(x) FILTER (WHERE c)", "SUM(x) FILTER(WHERE c)"),
@@ -116,12 +147,20 @@ UNTRANSLATABLE = [
     ("PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x)", OSSIE),
     ("MY_UDF(x)", OSSIE),
     ("TO_CHAR(d, 'Q')", OSSIE),
+    # Ossie does not say whether DATEDIFF counts month boundaries or whole months.
+    ("DATEDIFF(month, a, b)", OSSIE),
+    ("datediff(MONTH, a, b)", DATABRICKS),
     ("count_if(x > 1)", DATABRICKS),
     ("try_divide(a, b)", DATABRICKS),
     ("regexp_extract(s, 'a(b)')", DATABRICKS),
     ("to_date(s, 'yyyy-MM-dd')", DATABRICKS),
     ("date_format(d, 'yyyy')", DATABRICKS),
     ("percentile_cont(0.5) WITHIN GROUP (ORDER BY x)", DATABRICKS),
+    # Databricks `^` is bitwise XOR; other engines read it as exponentiation, so it has no
+    # verified Ossie form. Operators are checked like functions.
+    ("a ^ b", DATABRICKS),
+    ("a & b", DATABRICKS),
+    ("a << 2", DATABRICKS),
 ]
 
 

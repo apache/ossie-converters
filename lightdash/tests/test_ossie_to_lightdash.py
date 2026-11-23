@@ -15,13 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import json
-
 import pytest
 
 from ossie import (
     OssieAIContextObject,
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataType,
     OssieDataset,
     OssieDialect,
@@ -80,10 +78,10 @@ def _document() -> OssieDocument:
             name="total_amount",
             expression=_ansi("SUM(orders.amount)"),
             description="Sum of order amounts",
-            custom_extensions=[
-                OssieCustomExtension(
+            nonportable_extensions=[
+                OssieNonportableExtension(
                     vendor_name="LIGHTDASH",
-                    data=json.dumps({"label": "Total amount", "format": "usd"}),
+                    data={"label": "Total amount", "format": "usd"},
                 )
             ],
         ),
@@ -92,10 +90,10 @@ def _document() -> OssieDocument:
             expression=_ansi(
                 "SUM(orders.completed_count) / NULLIF(SUM(orders.total_count), 0)"
             ),
-            custom_extensions=[
-                OssieCustomExtension(
+            nonportable_extensions=[
+                OssieNonportableExtension(
                     vendor_name="LIGHTDASH",
-                    data=json.dumps({"format": "percent", "round": 1}),
+                    data={"format": "percent", "round": 1},
                 )
             ],
         ),
@@ -118,8 +116,8 @@ def _document() -> OssieDocument:
         OssieMetric(
             name="foreign_vendor_metric",
             expression=_ansi("SUM(orders.amount)"),
-            custom_extensions=[
-                OssieCustomExtension(vendor_name="somebi", data='{"x": 1}')
+            nonportable_extensions=[
+                OssieNonportableExtension(vendor_name="somebi", data={"x": 1})
             ],
         ),
     ]
@@ -188,9 +186,9 @@ def test_export_rejects_an_unsafe_fallback_name():
 def test_model_extension_cannot_override_validated_identity():
     document = _document()
     document.datasets[0] = document.datasets[0].model_copy(update={
-        "custom_extensions": [OssieCustomExtension(
+        "nonportable_extensions": [OssieNonportableExtension(
             vendor_name="LIGHTDASH",
-            data=json.dumps({"name": "../outside", "sql_from": "wrong", "type": "chart"}),
+            data={"name": "../outside", "sql_from": "wrong", "type": "chart"},
         )]
     })
     model = OssieToLightdashConverter().convert_models(document).output[0]
@@ -371,12 +369,12 @@ class TestOssieToLightdash:
             schema="s",
         )
         field = result.output.datasets[0].fields[0]
-        assert field.custom_extensions[0].vendor_name == "LIGHTDASH"
+        assert field.nonportable_extensions[0].vendor_name == "LIGHTDASH"
         # Documents written before the registration used the lowercase name.
         legacy_document = result.output.model_copy(deep=True)
         legacy_document.datasets[0].fields[0] = field.model_copy(
-            update={"custom_extensions": [
-                OssieCustomExtension(vendor_name="lightdash", data=field.custom_extensions[0].data)
+            update={"nonportable_extensions": [
+                OssieNonportableExtension(vendor_name="lightdash", data=field.nonportable_extensions[0].data)
             ]}
         )
         legacy = OssieToLightdashConverter().convert(legacy_document)
@@ -390,12 +388,10 @@ class TestOssieToLightdash:
         tampered = document.model_copy(deep=True)
         metric = tampered.metrics[0].model_copy(
             update={
-                "custom_extensions": [
-                    OssieCustomExtension(
+                "nonportable_extensions": [
+                    OssieNonportableExtension(
                         vendor_name="LIGHTDASH",
-                        data=json.dumps(
-                            {"label": "Total amount", "sql": "1 + 1", "description": "stale"}
-                        ),
+                        data={"label": "Total amount", "sql": "1 + 1", "description": "stale"},
                     )
                 ]
             }
@@ -426,24 +422,6 @@ class TestOssieToLightdash:
         assert any(
             issue.issue_type is ConverterIssueType.RELATIONSHIP_COLUMNS_MISMATCHED
             and issue.element_name == "broken"
-            for issue in result.issues
-        )
-
-    def test_invalid_extension_json_is_reported(self):
-        document = _document()
-        tampered = document.model_copy(deep=True)
-        metric = tampered.metrics[0].model_copy(
-            update={
-                "custom_extensions": [
-                    OssieCustomExtension(vendor_name="LIGHTDASH", data="{not json")
-                ]
-            }
-        )
-        tampered.metrics[0] = metric
-        result = OssieToLightdashConverter().convert(tampered)
-        assert any(
-            issue.issue_type is ConverterIssueType.EXTENSION_DATA_INVALID
-            and issue.element_name == "total_amount"
             for issue in result.issues
         )
 
@@ -535,12 +513,10 @@ class TestOssieToLightdash:
                 "to": "customers",
                 "from_columns": ["customer_id"],
                 "to_columns": ["customer_id"],
-                "custom_extensions": [
+                "nonportable_extensions": [
                     {
                         "vendor_name": "LIGHTDASH",
-                        "data": json.dumps(
-                            {"alias": "buyer", "relationship": "many-to-one", "sql_on": "1 = 1"}
-                        ),
+                        "data": {"alias": "buyer", "relationship": "many-to-one", "sql_on": "1 = 1"},
                     }
                 ],
             }
@@ -644,10 +620,10 @@ class TestOssieToLightdash:
                     OssieMetric(
                         name="orders_total_amount",
                         expression=_ansi("SUM(orders.amount)"),
-                        custom_extensions=[
-                            OssieCustomExtension(
+                        nonportable_extensions=[
+                            OssieNonportableExtension(
                                 vendor_name="LIGHTDASH",
-                                data=json.dumps({"name": "total_amount", "label": "Total"}),
+                                data={"name": "total_amount", "label": "Total"},
                             )
                         ],
                     ),
@@ -673,10 +649,10 @@ class TestOssieToLightdash:
                     OssieMetric(
                         name="customers_row_count",
                         expression=_ansi("COUNT(*)"),
-                        custom_extensions=[
-                            OssieCustomExtension(
+                        nonportable_extensions=[
+                            OssieNonportableExtension(
                                 vendor_name="LIGHTDASH",
-                                data=json.dumps({"name": "row_count", "model": "customers"}),
+                                data={"name": "row_count", "model": "customers"},
                             )
                         ],
                     ),
@@ -700,11 +676,10 @@ class TestOssieToLightdash:
         datasets = tampered.datasets
         datasets[0] = datasets[0].model_copy(
             update={
-                "custom_extensions": [
-                    OssieCustomExtension(
+                "nonportable_extensions": [
+                    OssieNonportableExtension(
                         vendor_name="LIGHTDASH",
-                        data=json.dumps(
-                            {
+                        data={
                                 "sql_filter": "${TABLE}.deleted = false",
                                 "joins": [
                                     {
@@ -713,8 +688,7 @@ class TestOssieToLightdash:
                                     },
                                     {"join": "regions", "sql_on": "${customers.region_id} = ${regions.id}"},
                                 ],
-                            }
-                        ),
+                            },
                     )
                 ]
             }
@@ -724,10 +698,10 @@ class TestOssieToLightdash:
                 "fields": [
                     datasets[1].fields[0].model_copy(
                         update={
-                            "custom_extensions": [
-                                OssieCustomExtension(
+                            "nonportable_extensions": [
+                                OssieNonportableExtension(
                                     vendor_name="LIGHTDASH",
-                                    data=json.dumps({"column_meta": {"additional_dimensions": {"id_prefix": {"type": "string", "sql": "LEFT(${TABLE}.customer_id, 2)"}}}}),
+                                    data={"column_meta": {"additional_dimensions": {"id_prefix": {"type": "string", "sql": "LEFT(${TABLE}.customer_id, 2)"}}}},
                                 )
                             ]
                         }
@@ -780,10 +754,10 @@ class TestOssieToLightdash:
         datasets[0] = datasets[0].model_copy(
             update={
                 "primary_key": ["order_id"],
-                "custom_extensions": [
-                    OssieCustomExtension(
+                "nonportable_extensions": [
+                    OssieNonportableExtension(
                         vendor_name="LIGHTDASH",
-                        data=json.dumps({"sql_filter": "${TABLE}.deleted = false", "label": "Orders"}),
+                        data={"sql_filter": "${TABLE}.deleted = false", "label": "Orders"},
                     )
                 ],
             }
@@ -833,19 +807,17 @@ class TestReviewFindings:
                 OssieField(name="customer_sk", expression=_ansi("customer_sk")),
                 OssieField(name="amount", expression=_ansi("amount")),
             ],
-            custom_extensions=[
-                OssieCustomExtension(
+            nonportable_extensions=[
+                OssieNonportableExtension(
                     vendor_name="LIGHTDASH",
-                    data=json.dumps(
-                        {
+                    data={
                             "joins": [
                                 {
                                     "join": "customer",
                                     "sql_on": "${store_sales.customer_sk} = ${customer.customer_sk} AND ${customer.active}",
                                 }
                             ]
-                        }
-                    ),
+                        },
                 )
             ],
         )
@@ -913,8 +885,8 @@ class TestReviewFindings:
                         "to": "employees",
                         "from_columns": ["manager_id"],
                         "to_columns": ["id"],
-                        "custom_extensions": [
-                            {"vendor_name": "LIGHTDASH", "data": json.dumps({"alias": "manager"})}
+                        "nonportable_extensions": [
+                            {"vendor_name": "LIGHTDASH", "data": {"alias": "manager"}}
                         ],
                     }
                 )
@@ -950,10 +922,10 @@ class TestSecondReviewFindings:
                     OssieMetric(
                         name="orders_customer_count",
                         expression=_ansi("COUNT(DISTINCT customers.customer_id)"),
-                        custom_extensions=[
-                            OssieCustomExtension(
+                        nonportable_extensions=[
+                            OssieNonportableExtension(
                                 vendor_name="LIGHTDASH",
-                                data=json.dumps({"name": "customer_count", "model": "orders"}),
+                                data={"name": "customer_count", "model": "orders"},
                             )
                         ],
                     )
@@ -977,10 +949,10 @@ class TestSecondReviewFindings:
                     OssieMetric(
                         name="customers_order_total",
                         expression=_ansi("SUM(orders.amount)"),
-                        custom_extensions=[
-                            OssieCustomExtension(
+                        nonportable_extensions=[
+                            OssieNonportableExtension(
                                 vendor_name="LIGHTDASH",
-                                data=json.dumps({"name": "order_total", "model": "customers"}),
+                                data={"name": "order_total", "model": "customers"},
                             )
                         ],
                     )
@@ -1104,7 +1076,7 @@ class TestSecondReviewFindings:
         name can collide too, so the metric gets a suffix."""
         document = _document()
         named = lambda name: [  # noqa: E731
-            OssieCustomExtension(vendor_name="LIGHTDASH", data=json.dumps({"name": name}))
+            OssieNonportableExtension(vendor_name="LIGHTDASH", data={"name": name})
         ]
         tampered = document.model_copy(deep=True).model_copy(
             update={
@@ -1113,12 +1085,12 @@ class TestSecondReviewFindings:
                     OssieMetric(
                         name="revenue_2",
                         expression=_ansi("MAX(orders.amount)"),
-                        custom_extensions=named("revenue"),
+                        nonportable_extensions=named("revenue"),
                     ),
                     OssieMetric(
                         name="revenue_3",
                         expression=_ansi("MIN(orders.amount)"),
-                        custom_extensions=named("revenue_2"),
+                        nonportable_extensions=named("revenue_2"),
                     ),
                 ]
             }

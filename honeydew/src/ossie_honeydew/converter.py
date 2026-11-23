@@ -94,7 +94,7 @@ def convert_ossie_to_honeydew(ossie_yaml_str: str) -> dict[str, str]:
     ``ai_context`` is mapped to Honeydew's native fields (``description``,
     ``labels``, and the AI metadata section); the structured form is also
     stored in ``metadata`` for lossless round-tripping. ``unique_keys`` and
-    non-Honeydew ``custom_extensions`` have no direct Honeydew equivalent and
+    non-Honeydew ``nonportable_extensions`` have no direct Honeydew equivalent and
     are stored in the Honeydew ``metadata`` section under a section named
     ``"ossie"`` so they can be recovered on the return trip.
 
@@ -139,9 +139,9 @@ def _model_to_files(sm: dict[str, Any]) -> dict[str, str]:
     if sm.get("description"):
         workspace["description"] = sm["description"]
 
-    # Preserve model-level ai_context and non-HONEYDEW custom_extensions.
+    # Preserve model-level ai_context and non-HONEYDEW nonportable_extensions.
     model_ai_ctx = sm.get("ai_context")
-    model_ext = [e for e in (sm.get("custom_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
+    model_ext = [e for e in (sm.get("nonportable_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
     ws_meta = _build_ossie_metadata(
         ai_context=model_ai_ctx,
         custom_extensions=model_ext or None,
@@ -203,7 +203,7 @@ def _fields_to_honeydew(
         field_desc = field.get("description")
         field_label = field.get("label")
         field_ai_ctx = field.get("ai_context")
-        field_ext = [e for e in (field.get("custom_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
+        field_ext = [e for e in (field.get("nonportable_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
 
         # Merge ai_context instructions into description; keep full object in metadata
         effective_desc = field_desc
@@ -276,16 +276,16 @@ def _dataset_to_files(
 
     primary_key = ds.get("primary_key") or []
     unique_keys = ds.get("unique_keys")
-    # A unique key identical to the primary key is re-derived from the entity's
-    # keys on the Honeydew → Ossie path, so don't persist it as metadata — that
+    # A unique key over the primary key's columns (in any order) is re-derived from
+    # the entity's keys on the Honeydew → Ossie path, so don't persist it as metadata — that
     # would inject a redundant metadata block on a Honeydew → Ossie → Honeydew round-trip.
     if unique_keys:
-        pk_tuple = tuple(primary_key)
-        unique_keys = [uk for uk in unique_keys if tuple(uk) != pk_tuple] or None
+        pk_cols = set(primary_key)
+        unique_keys = [uk for uk in unique_keys if set(uk) != pk_cols] or None
     description = ds.get("description")
     ai_context = ds.get("ai_context")
     fields = ds.get("fields") or []
-    ds_ext = [e for e in (ds.get("custom_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
+    ds_ext = [e for e in (ds.get("nonportable_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
 
     # ── entity YAML ────────────────────────────────────────────────────────────
     entity_dict: dict[str, Any] = {"type": "entity", "name": entity_name}
@@ -361,7 +361,7 @@ def _dataset_to_files(
             existing = metric_dict.get("description", "")
             metric_dict["description"] = f"{existing}\n{metric_ai_ctx}".strip() if existing else metric_ai_ctx
 
-        metric_ext = [e for e in (metric.get("custom_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
+        metric_ext = [e for e in (metric.get("nonportable_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
         metric_meta = _build_ossie_metadata(
             ai_context=metric_ai_ctx,
             custom_extensions=metric_ext or None,
@@ -620,7 +620,7 @@ def convert_honeydew_to_ossie(workspace_dir: str) -> str:
 
     restored_ws_ext = ws_ossie_meta.get("custom_extensions") or []
     if restored_ws_ext:
-        sm["custom_extensions"] = restored_ws_ext
+        sm["nonportable_extensions"] = restored_ws_ext
 
     if ossie_relationships:
         sm["relationships"] = ossie_relationships
@@ -720,9 +720,9 @@ def _entity_to_ossie_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
     # A Honeydew entity's keys uniquely identify its rows — Honeydew enforces this
     # and validates that relationships join to those keys — so surface them as a
     # unique key as well as the primary key. Union with any unique keys preserved
-    # from an Ossie source, de-duplicated.
+    # from an Ossie source, de-duplicated as column sets.
     unique_keys = [list(uk) for uk in (ossie_meta.get("unique_keys") or [])]
-    if keys and tuple(keys) not in {tuple(uk) for uk in unique_keys}:
+    if keys and frozenset(keys) not in {frozenset(uk) for uk in unique_keys}:
         unique_keys.append(list(keys))
     if unique_keys:
         ds["unique_keys"] = unique_keys
@@ -730,9 +730,9 @@ def _entity_to_ossie_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
     restored_ext = list(ossie_meta.get("custom_extensions") or [])
     honeydew_extra = entity_data.get("honeydew_extra") or {}
     if honeydew_extra:
-        restored_ext.append({"vendor_name": HONEYDEW_VENDOR, "data": json.dumps(honeydew_extra)})
+        restored_ext.append({"vendor_name": HONEYDEW_VENDOR, "data": honeydew_extra})
     if restored_ext:
-        ds["custom_extensions"] = restored_ext
+        ds["nonportable_extensions"] = restored_ext
 
     # Build fields
     fields: list[dict[str, Any]] = []
@@ -787,9 +787,9 @@ def _entity_to_ossie_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
 
             all_ext = list(attr_ossie_meta.get("custom_extensions") or [])
             if attr_honeydew_extra:
-                all_ext.append({"vendor_name": HONEYDEW_VENDOR, "data": json.dumps(attr_honeydew_extra)})
+                all_ext.append({"vendor_name": HONEYDEW_VENDOR, "data": attr_honeydew_extra})
             if all_ext:
-                field["custom_extensions"] = all_ext
+                field["nonportable_extensions"] = all_ext
 
             fields.append(field)
 
@@ -838,9 +838,9 @@ def _entity_to_ossie_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
         # Always mark as calculated_attribute so Ossie → Honeydew routes it correctly
         all_calc_ext.append({
             "vendor_name": HONEYDEW_VENDOR,
-            "data": json.dumps(dict({"type": "calculated_attribute", "entity": entity_name}, **calc_honeydew_extra)),
+            "data": dict({"type": "calculated_attribute", "entity": entity_name}, **calc_honeydew_extra),
         })
-        field["custom_extensions"] = all_calc_ext
+        field["nonportable_extensions"] = all_calc_ext
 
         fields.append(field)
 
@@ -900,8 +900,8 @@ def _honeydew_relation_to_ossie(
 
     if connection_expr and not connection:
         sql_expr = (connection_expr.get("sql") or "") if isinstance(connection_expr, dict) else str(connection_expr)
-        ossie_rel["custom_extensions"] = [
-            {"vendor_name": HONEYDEW_VENDOR, "data": json.dumps({"connection_expr": sql_expr})}
+        ossie_rel["nonportable_extensions"] = [
+            {"vendor_name": HONEYDEW_VENDOR, "data": {"connection_expr": sql_expr}}
         ]
 
     return ossie_rel
@@ -920,8 +920,8 @@ def _honeydew_metric_to_ossie(metric: dict[str, Any], entity_name: str) -> dict[
     ossie_m: dict[str, Any] = {
         "name": mname,
         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]},
-        "custom_extensions": [
-            {"vendor_name": HONEYDEW_VENDOR, "data": json.dumps({"entity": entity_name})}
+        "nonportable_extensions": [
+            {"vendor_name": HONEYDEW_VENDOR, "data": {"entity": entity_name}}
         ],
     }
 
@@ -936,7 +936,7 @@ def _honeydew_metric_to_ossie(metric: dict[str, Any], entity_name: str) -> dict[
 
     restored_ext = metric_ossie_meta.get("custom_extensions") or []
     if restored_ext:
-        ossie_m["custom_extensions"] = ossie_m["custom_extensions"] + list(restored_ext)
+        ossie_m["nonportable_extensions"] = ossie_m["nonportable_extensions"] + list(restored_ext)
 
     return ossie_m
 
@@ -1000,13 +1000,11 @@ def _read_ossie_metadata(obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def _get_honeydew_extension(obj: dict[str, Any]) -> dict[str, Any]:
-    """Extract the HONEYDEW custom_extension data from an Ossie object."""
-    for ext in (obj.get("custom_extensions") or []):
+    """Extract the HONEYDEW nonportable_extensions entry data from an Ossie object."""
+    for ext in (obj.get("nonportable_extensions") or []):
         if ext.get("vendor_name") == HONEYDEW_VENDOR:
-            try:
-                return json.loads(ext.get("data") or "{}")
-            except (json.JSONDecodeError, TypeError):
-                return {}
+            data = ext.get("data") or {}
+            return data if isinstance(data, dict) else {}
     return {}
 
 

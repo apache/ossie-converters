@@ -29,6 +29,16 @@ from enum import Enum
 #: `custom_extensions[].vendor_name` value for ThoughtSpot-owned entries.
 VENDOR_KEY = "THOUGHTSPOT"
 
+#: The document field holding vendor extension entries, under the name the spec
+#: carried before apache/ossie#522.
+EXTENSIONS_FIELD = "custom_extensions"
+
+#: The same field under the name apache/ossie#522 renames it to. That change does
+#: NOT accept the old name. `read_stash` takes either name, while `write_stash`
+#: keeps a document on whichever name it already carries, and writes this one
+#: when it carries neither.
+EXTENSIONS_FIELD_RENAMED = "nonportable_extensions"
+
 #: Expression-language dialect label. A registered member of the Ossie Dialect enum.
 DIALECT = "THOUGHTSPOT"
 

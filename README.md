@@ -38,8 +38,15 @@ git submodule update --init
 ```
 
 Repository-level cross-converter acceptance and pairwise checks live in
-[`interop/`](interop/README.md). The matrix registers all 24 converter projects,
+[`interop/`](interop/README.md). The matrix registers all 25 converter projects,
 with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
+
+The Microsoft converter also has an optional
+[vendor-specific live validation helper](microsoft/README.md#optional-live-engine-validation).
+`ossie_microsoft.engine` deploys exported Power BI models to Microsoft Fabric and asks
+Microsoft's engine to compile and evaluate their DAX against generated sample data.
+It does not implement Ossie's Layer 2/3 query semantics or establish cross-vendor
+query-result equivalence.
 
 Contributions follow the Apache Ossie
 [contribution guide](https://github.com/apache/ossie/blob/main/CONTRIBUTING.md).
@@ -48,8 +55,10 @@ Contributions follow the Apache Ossie
 
 Converters use the [flat core format](https://github.com/apache/ossie/tree/main/core-spec): one model per JSON/YAML document,
 with `name`, `datasets`, `relationships`, and `metrics` at the root alongside
-`version`. Legacy `semantic_model` arrays or object wrappers must be migrated
-before conversion; see the [migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
+`version`. Migrate legacy `semantic_model` wrappers before conversion unless the
+target converter explicitly supports them. The [Microsoft converter](microsoft/README.md)
+accepts the single-model `0.1.1` array returned by Snowflake Semantic Views. See the
+[migration guidance](https://github.com/apache/ossie/blob/main/core-spec/spec.md#migrating-earlier-document-shapes).
 For catalog exports, write separate documents rather than wrapping multiple
 models in one file. Ontology documents retain their embedded `semantic_model`
 property as defined by the ontology schema.
@@ -97,7 +106,7 @@ Read an Ossie semantic model and produce the equivalent vendor-specific represen
 
 ### Import (Vendor → Apache Ossie)
 
-Read a vendor-specific semantic model and produce a valid Ossie model, including mapping vendor-specific metadata into `custom_extensions`.
+Read a vendor-specific semantic model and produce a valid Ossie model, including mapping vendor-specific metadata into `nonportable_extensions`.
 
 ## Supported Vendors
 
@@ -114,16 +123,18 @@ The Ossie specification currently defines extensions for the following vendors:
 | `WISDOM` | WisdomAI domain |
 | `NVIDIA_AUTO_ONTOLOGY` | NVIDIA Auto Ontology model document YAML (formerly `NVIDIA_GSF`) |
 | `SIGMA` | Sigma Computing data model |
+| `TABLEAU` | Tableau classic data source / workbook |
 | `THOUGHTSPOT` | ThoughtSpot TML (Model + Table/SQL View) |
 | `CUBE` | Cube data model |
 | `HEX` | Hex semantic project |
 | `HOLISTICS` | Holistics AML dataset |
+| `ATLAN` | Atlan metric registry records |
 | `LIGHTDASH` | Lightdash semantic layer (model files, or dbt `meta`) |
 | `ATACCAMA` | Ataccama ONE catalog metadata |
 
 [`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped spoke. It reads one Snowflake semantic view, writes one Ossie document, writes a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. It does not call `snowflake` (Cortex Analyst export only) or `wisdom` (that spoke drops synonyms and field or metric `ai_context`).
 
-Each vendor may define custom extensions (via the `custom_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification.
+Each vendor may define non-portable extensions (via the `nonportable_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification.
 
 ## Mapping Core Constructs
 
@@ -140,8 +151,8 @@ The top-level container. Maps to the root object in each vendor's format.
 | `ai_context` | Instructions, synonyms for AI tools | Map if vendor supports AI/LLM annotations |
 | `datasets` | Logical datasets (fact/dimension tables) | See dataset mapping below |
 | `relationships` | Foreign key connections | See relationship mapping below |
-| `metrics` | Aggregate measures | See metric mapping below |
-| `custom_extensions` | Vendor-specific metadata | Extract extensions matching the target vendor |
+| `metrics` | Model-scoped aggregate measures | See metric mapping below |
+| `nonportable_extensions` | Vendor-specific metadata | Extract extensions matching the target vendor |
 
 ### Datasets
 
@@ -154,8 +165,9 @@ Datasets represent logical tables (fact or dimension tables). They contain field
 | `primary_key` | Single or composite primary key | Map to vendor's PK syntax; note composite keys use arrays like `[order_id, line_number]` |
 | `unique_keys` | Alternative unique identifiers | Map if vendor supports unique constraints |
 | `fields` | Row-level attributes (columns) | See field mapping below |
+| `metrics` | Dataset-scoped aggregate measures | See metric mapping below |
 | `ai_context` | Synonyms and context for AI | Map if vendor supports semantic annotations |
-| `custom_extensions` | Vendor-specific metadata | Extract extensions matching the target vendor |
+| `nonportable_extensions` | Vendor-specific metadata | Extract extensions matching the target vendor |
 
 ### Fields
 
@@ -170,7 +182,7 @@ Fields represent row-level attributes. They can be simple column references or c
 |-----------|-------------|------------------------|
 | `name` | Field identifier | Map to column/attribute name |
 | `expression.dialects` | Multi-dialect SQL expressions | Select the dialect matching the target vendor; fall back to `ANSI_SQL` |
-| `datatype` | Logical data type of the field (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` for the field's logical data type. `Decimal` is exact base-10 with unspecified precision and scale; `Float` is approximate. Prefer the temporal members (`Date`, `Time`, `DateTime`, `DateTimeTz`) to classify time dimensions. Omit `datatype` when unknown; use `Opaque` + `custom_extensions` for a known type outside the portable vocabulary. |
+| `datatype` | Logical data type of the field (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` for the field's logical data type. `Decimal` is exact base-10 with unspecified precision and scale; `Float` is approximate. Prefer the temporal members (`Date`, `Time`, `DateTime`, `DateTimeTz`) to classify time dimensions. Omit `datatype` when unknown; use `Opaque` + `nonportable_extensions` for a known type outside the portable vocabulary. |
 | `dimension.is_time` | Temporal-role marker. When `true`, the field should be treated as a time dimension regardless of its `datatype` (e.g. an `Integer` year grain, a `String` month name, or a `Date` column). When unset, defaults to `true` for temporal `datatype`s (`Date`, `Time`, `DateTime`, `DateTimeTz`) and `false` otherwise. | Map to vendor-specific time dimension markers. Converters SHOULD classify as a time dimension when `is_time` resolves to `true` (either explicit or defaulted from a temporal `datatype`). An explicit `is_time: false` suppresses the time-dimension classification even on temporal-typed columns. |
 | `label` | Categorization label | Map if vendor supports field labels/tags |
 | `description` | Human-readable description | Most vendors support field descriptions |
@@ -212,13 +224,20 @@ means `from.product_id = to.id AND from.variant_id = to.variant_id`. The convert
 
 ### Metrics
 
-Metrics are aggregate measures defined at the semantic model level. They can span multiple datasets via relationships.
+Metrics are aggregate measures. There are two flavors:
+
+- **Dataset-scoped** (`datasets[].metrics`): aggregations that belong to a single dataset. The expression references that dataset's declared fields by single-part (unqualified) name (e.g. `SUM(amount)`) and resolves entirely within it, at the dataset's row level. The dataset then carries its own metrics and stays queryable on its own. A source column that is not a declared field is written `source.column` (e.g. `SUM(source.quantity)`).
+- **Model-scoped** (`metrics` at the model root): aggregations that span datasets across the model. The expression references fields by multi-part name (`dataset.field`) and may combine fields from more than one dataset.
+
+When producing Ossie, generally bias toward declaring a metric that is scoped to a single dataset as a dataset-scoped metric rather than at the model root; reserve the model root for aggregations that genuinely span datasets.
+
+See [Metric Scoping](https://github.com/apache/ossie/blob/main/core-spec/spec.md#metric-scoping) for the full rules.
 
 | Ossie Field | Description | Converter Consideration |
 |-----------|-------------|------------------------|
 | `name` | Metric identifier | Map to vendor's measure/KPI name |
 | `expression.dialects` | Multi-dialect aggregate expressions | Select the appropriate dialect; fall back to `ANSI_SQL` |
-| `datatype` | Logical data type of the metric result (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` to declare the result type of the aggregation. Numeric measures should distinguish exact `Decimal` or `Integer` results from approximate `Float` results. Omit `datatype` when unknown; use `Opaque` + `custom_extensions` for a known type outside the portable vocabulary. |
+| `datatype` | Logical data type of the metric result (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` to declare the result type of the aggregation. Numeric measures should distinguish exact `Decimal` or `Integer` results from approximate `Float` results. Omit `datatype` when unknown; use `Opaque` + `nonportable_extensions` for a known type outside the portable vocabulary. |
 | `description` | What the metric measures | Most vendors support descriptions |
 | `ai_context` | Synonyms and business context | Map if vendor supports semantic annotations |
 
@@ -234,19 +253,22 @@ Metrics are aggregate measures defined at the semantic model level. They can spa
 
 The converter must ensure that the dataset references (`store_sales`, `customer`) are resolved correctly in the target vendor's format and that any required joins are established.
 
-### Custom Extensions
+### Non-portable Extensions
 
-Custom extensions carry vendor-specific metadata as a JSON string. A converter should:
+Non-portable extensions carry vendor-specific metadata as a `data` object. A converter should:
 
-1. **On export (Ossie → Vendor)**: Extract extensions where `vendor_name` matches the target vendor, parse the `data` JSON, and apply the vendor-specific settings.
-2. **On import (Vendor → Ossie)**: Capture vendor-specific settings that have no Ossie core equivalent and store them as a `custom_extension` entry.
+1. **On export (Ossie → Vendor)**: Extract extensions where `vendor_name` matches the target vendor, read the `data` object, and apply the vendor-specific settings.
+2. **On import (Vendor → Ossie)**: Capture vendor-specific settings that have no Ossie core equivalent and store them as a `nonportable_extensions` entry.
 
 **Example**: A Snowflake export converter would extract:
 
 ```yaml
-custom_extensions:
+nonportable_extensions:
   - vendor_name: SNOWFLAKE
-    data: '{"warehouse": "ANALYTICS_WH", "database": "PROD", "schema": "PUBLIC"}'
+    data:
+      warehouse: ANALYTICS_WH
+      database: PROD
+      schema: PUBLIC
 ```
 
 and apply `warehouse`, `database`, and `schema` to the appropriate places in the Snowflake model definition.
@@ -269,7 +291,7 @@ ai_context:
     - "Show total sales last month"
 ```
 
-A converter should map `ai_context` when the target vendor supports equivalent constructs (e.g., LLM instructions, column descriptions with business terms). When the target vendor does not support AI annotations natively, the converter may encode them in `custom_extensions` on import to avoid data loss.
+A converter should map `ai_context` when the target vendor supports equivalent constructs (e.g., LLM instructions, column descriptions with business terms). When the target vendor does not support AI annotations natively, the converter may encode them in `nonportable_extensions` on import to avoid data loss.
 
 ## Writing a Converter
 
@@ -290,7 +312,7 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 
 6. **Map metrics**: Translate metric expressions using the same dialect selection logic as fields. Resolve dataset references (e.g., `store_sales.ss_ext_sales_price`) into the vendor's qualified column format.
 
-7. **Apply custom extensions**: Extract `custom_extensions` entries matching the target `vendor_name` and apply vendor-specific settings to the output.
+7. **Apply non-portable extensions**: Extract `nonportable_extensions` entries matching the target `vendor_name` and apply vendor-specific settings to the output.
 
 8. **Preserve AI context**: Map `ai_context` to vendor-equivalent annotations where supported.
 
@@ -304,8 +326,8 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 | Computed fields with vendor-specific SQL syntax | Require the vendor dialect in the source Ossie model; error if neither vendor nor ANSI dialect is available |
 | Composite primary keys | Ensure the vendor format supports composite keys; if not, flatten or document the limitation |
 | Cross-dataset metrics referencing multiple tables | Ensure all referenced datasets exist and relationships are defined; resolve qualified column names |
-| Custom extensions with unknown vendor | Ignore (do not discard) — preserve for round-tripping |
-| `ai_context` on a vendor that doesn't support it | Store in a `custom_extension` under the converter's own vendor name (see [`extensions/vendors.md`](https://github.com/apache/ossie/blob/main/extensions/vendors.md)) to preserve for round-tripping; there is no shared cross-vendor token |
+| Non-portable extensions with unknown vendor | Ignore (do not discard) — preserve for round-tripping |
+| `ai_context` on a vendor that doesn't support it | Store in a `nonportable_extensions` entry under the converter's own vendor name (see [`extensions/vendors.md`](https://github.com/apache/ossie/blob/main/extensions/vendors.md)) to preserve for round-tripping; there is no shared cross-vendor token |
 
 ### Round-Trip Fidelity
 
@@ -317,9 +339,9 @@ Vendor A model → [Import] → Ossie model → [Export] → Vendor A model
 
 To achieve this:
 
-- **Never discard information silently**. If a vendor-specific attribute has no Ossie core equivalent, store it in `custom_extensions`.
+- **Never discard information silently**. If a vendor-specific attribute has no Ossie core equivalent, store it in `nonportable_extensions`.
 - **Preserve field ordering** where possible, as some vendors are sensitive to declaration order.
-- **Preserve `custom_extensions`** for all vendors, not just the target vendor. This allows a model to carry metadata for multiple vendors simultaneously (e.g., a single Ossie model with both Snowflake and dbt extensions).
+- **Preserve `nonportable_extensions`** for all vendors, not just the target vendor. This allows a model to carry metadata for multiple vendors simultaneously (e.g., a single Ossie model with both Snowflake and dbt extensions).
 
 ## Example: Conceptual Conversion Flow
 
@@ -331,7 +353,7 @@ Given the [TPC-DS example](https://github.com/apache/ossie/blob/main/examples/tp
 4. For each field, select the `ANSI_SQL` dialect expression (since no `SNOWFLAKE` dialect is provided in this example).
 5. Translate relationships into Snowflake join definitions, mapping `from_columns` and `to_columns` pairs.
 6. Translate metrics like `total_sales` (`SUM(store_sales.ss_ext_sales_price)`) into Snowflake metric definitions.
-7. Extract the `SALESFORCE` and `DBT` custom extensions — these would not be applied to the Snowflake output but should be preserved if the model is later imported back to Ossie.
+7. Extract the `SALESFORCE` and `DBT` non-portable extensions — these would not be applied to the Snowflake output but should be preserved if the model is later imported back to Ossie.
 
 ## Contributing a New Converter
 
@@ -339,8 +361,8 @@ The main Ossie repository does not accept new converters. Develop new semantic m
 
 To add support for a new vendor, in your own repository or in `ossie-converters`:
 
-1. Use a stable `vendor_name` string in each custom extension emitted by the converter.
-2. Define the custom extension schema for the vendor (what vendor-specific metadata fields are supported in the `data` JSON).
+1. Use a stable `vendor_name` string in each non-portable extension emitted by the converter.
+2. Define the non-portable extension schema for the vendor (what vendor-specific metadata fields are supported in the `data` object).
 3. Implement the export converter (Ossie → Vendor).
 4. Implement the import converter (Vendor → Ossie).
 5. Add tests using the [TPC-DS example model](https://github.com/apache/ossie/blob/main/examples/tpcds_semantic_model.yaml) as a baseline.
