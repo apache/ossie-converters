@@ -174,8 +174,10 @@ view when it is created.
   deployed measures. The converter uses the core validator's reference checks and refuses a
   deployment with unresolved SQL references, including source columns not exposed as fields
   and fields or metrics omitted because they have no SQL form. Declare those source columns
-  as fields and use the declared field names. Non-SQL model metrics stay in the model and are
-  reported as not deployed; the SQL reference check cannot verify them.
+  as fields and use the declared field names. Native Databricks measures are evaluated with
+  `MEASURE(dataset.metric)`; a measure name is not a dimension column. Non-SQL model metrics
+  stay in the model and are reported as not deployed; the SQL reference check cannot verify
+  them.
 - A field or metric whose expressions are all in a non-SQL dialect has no dimension or measure.
   `deploy` reports it and keeps it unchanged in the model.
 - The package reads and writes metric view YAML version `1.1` only.

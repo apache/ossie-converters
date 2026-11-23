@@ -215,8 +215,22 @@ def test_non_sql_model_metric_is_retained_and_reported():
     assert yaml.safe_load(result.value["retail.ossie.yaml"])["metrics"] == model["metrics"]
 
 
-def test_native_model_metric_can_evaluate_generated_measures():
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "MEASURE(orders.revenue) / COUNT(DISTINCT customers.customer_id)",
+        "MEASURE(ORDERS.REVENUE) + MEASURE(orders.big_orders)",
+        "MEASURE(orders.revenue)",
+        "MEASURE(orders.`revenue`) + COUNT_IF(orders.status = 'X')",
+        "MEASURE(orders.revenue) OVER (PARTITION BY orders.status)",
+        "MEASURE(orders.revenue) FILTER (WHERE orders.status = 'X')",
+        "my_udfs.MEASURE(orders.amount)",
+        "catalog.my_udfs.MEASURE(orders.amount)",
+    ],
+)
+def test_native_model_metric_can_evaluate_generated_measures(expression):
     model = yaml.safe_load(fixture("databricks_first.ossie.yaml"))
+    model["metrics"][0]["expression"]["dialects"][0]["expression"] = expression
     result = _deploy(model)
     rewritten = yaml.safe_load(result.value["databricks_first.ossie.yaml"])
     assert rewritten["metrics"] == model["metrics"]
@@ -233,3 +247,48 @@ def test_model_metric_reference_check_honors_portable_expression_precedence():
     ]
     result = _deploy(model)
     assert yaml.safe_load(result.value["retail.ossie.yaml"])["metrics"] == model["metrics"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "SUM(orders.revenue)",
+        "MEASURE(orders.revenue) + SUM(orders.revenue)",
+        "MEASURE(orders.amount)",
+        "MEASURE(orders.revenue, orders.discount)",
+        "MEASURE()",
+        "my_udfs.MEASURE(orders.revenue)",
+        "catalog.my_udfs.MEASURE(orders.absent)",
+        "MEASURE(orders.revenue) OVER (PARTITION BY orders.absent) + orders.also_absent",
+        "MEASURE(orders.revenue) FILTER (WHERE orders.absent > 0) + SUM(orders.revenue)",
+    ],
+)
+def test_native_measure_calls_do_not_make_measures_readable_as_columns(expression):
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"] = [
+        {
+            "name": "native",
+            "expression": {"dialects": [{"dialect": "DATABRICKS", "expression": expression}]},
+        }
+    ]
+    with pytest.raises(ConversionError, match="cannot be evaluated over the metric views"):
+        _deploy(model)
+
+
+def test_native_measure_call_does_not_hide_other_missing_columns():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"] = [
+        {
+            "name": "native",
+            "expression": {
+                "dialects": [
+                    {
+                        "dialect": "DATABRICKS",
+                        "expression": "MEASURE(orders.revenue) + orders.absent",
+                    }
+                ]
+            },
+        }
+    ]
+    with pytest.raises(ConversionError, match="absent"):
+        _deploy(model)
