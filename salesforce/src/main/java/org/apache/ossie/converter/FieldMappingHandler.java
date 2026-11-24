@@ -211,7 +211,7 @@ public class FieldMappingHandler implements PipelineStep {
             ossieField.put(EXPRESSION, wrapExpression(dataObjectFieldName));
         }
 
-        // Store unmapped properties in custom_extensions
+        // Store unmapped properties in nonportable_extensions
         customExtensionHandler.storeUnmappedItemProperties(ossieField, sfDimension, SF_FIELD_HANDLED_PROPS);
 
         return ossieField;
@@ -230,7 +230,7 @@ public class FieldMappingHandler implements PipelineStep {
             ossieField.put(EXPRESSION, wrapExpression(dataObjectFieldName));
         }
 
-        // Store unmapped properties in custom_extensions
+        // Store unmapped properties in nonportable_extensions
         customExtensionHandler.storeUnmappedItemProperties(ossieField, sfMeasurement, SF_FIELD_HANDLED_PROPS);
 
         return ossieField;
@@ -350,6 +350,14 @@ public class FieldMappingHandler implements PipelineStep {
             // Determine field type based on Ossie structure
             boolean hasDimension = ossieField.containsKey(DIMENSION);
             ExpressionInfo expressionInfo = unwrapExpression(ossieField);
+            if (expressionInfo == null) {
+                logger.warn(
+                        "Field '{}' in dataset '{}' has neither sql nor a dialect expression, so "
+                                + "export cannot translate it; omitting the field",
+                        getString(ossieField, NAME),
+                        getString(ossieDataset, NAME));
+                continue;
+            }
 
             String expression = expressionInfo.expression();
             String dialect = expressionInfo.dialect();
@@ -520,7 +528,8 @@ public class FieldMappingHandler implements PipelineStep {
     private record ExpressionInfo(String expression, String dialect) {}
 
     /**
-     * Extracts the expression value and dialect from Ossie field's expression.dialects[0].expression.
+     * Extracts the expression value and dialect from Ossie field's expression: a TABLEAU entry,
+     * then the top-level sql, then expression.dialects[0].expression.
      * This unwraps the nested structure to get the simple column reference and its dialect.
      *
      * @param ossieField The Ossie field containing expression structure
@@ -532,7 +541,8 @@ public class FieldMappingHandler implements PipelineStep {
         Map<String, Object> expression = asMap(expressionObj);
         Object dialectsObj = expression.get(DIALECTS);
 
-        List<Object> dialects = asList(dialectsObj);
+        // An expression that carries only `sql` has no dialect entries.
+        List<Object> dialects = dialectsObj == null ? List.of() : asList(dialectsObj);
 
         Object selectedDialectObj = null;
         for (Object dialectObj : dialects) {
@@ -544,7 +554,16 @@ public class FieldMappingHandler implements PipelineStep {
             }
         }
 
+        // The top-level `sql` is written in OSSIE_SQL_2026 and wins over every entry but TABLEAU.
+        String sql = getString(expression, SQL);
+        if (selectedDialectObj == null && sql != null) {
+            return new ExpressionInfo(sql, DIALECT_OSSIE_SQL_2026);
+        }
+
         if (selectedDialectObj == null) {
+            if (dialects.isEmpty()) {
+                return null;
+            }
             selectedDialectObj = dialects.get(0);
         }
 
@@ -626,7 +645,7 @@ public class FieldMappingHandler implements PipelineStep {
      * Defaults are applied AFTER custom extensions and mappings.
      *
      * <p>An Ossie field's label is optional, so an exported dimension or measurement carries
-     * one only when the field sets it or custom_extensions restored it. Salesforce requires a
+     * one only when the field sets it or nonportable_extensions restored it. Salesforce requires a
      * label, so it falls back to the apiName, matching
      * DatasetMappingHandler/MetricMappingHandler. An empty or blank label is treated as
      * missing, because Salesforce rejects it with the same RequiredFieldException.
@@ -659,7 +678,7 @@ public class FieldMappingHandler implements PipelineStep {
 
     /**
      * Applies the portable Ossie datatype when no exact Salesforce dataType was
-     * restored from custom_extensions. Exact extension data wins to preserve
+     * restored from nonportable_extensions. Exact extension data wins to preserve
      * Salesforce-specific distinctions such as Email and Currency.
      */
     private void applyOssieDatatype(
@@ -739,7 +758,7 @@ public class FieldMappingHandler implements PipelineStep {
             Map<String, Object> calcDim = asMap(calcDimObj);
 
             // Salesforce returns formulas HTML-escaped; decode before the dimension is
-            // either converted to a field or preserved in custom_extensions.
+            // either converted to a field or preserved in nonportable_extensions.
             String expressionValue = getString(calcDim, EXPRESSION);
             if (expressionValue != null) {
                 calcDim.put(EXPRESSION, SalesforceFormulaEscaping.unescape(expressionValue));

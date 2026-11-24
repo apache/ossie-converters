@@ -29,6 +29,16 @@ from enum import Enum
 #: `custom_extensions[].vendor_name` value for ThoughtSpot-owned entries.
 VENDOR_KEY = "THOUGHTSPOT"
 
+#: The document field holding vendor extension entries, under the name the spec
+#: carried before apache/ossie#522.
+EXTENSIONS_FIELD = "custom_extensions"
+
+#: The same field under the name apache/ossie#522 renames it to. That change does
+#: NOT accept the old name. `read_stash` takes either name, while `write_stash`
+#: keeps a document on whichever name it already carries, and writes this one
+#: when it carries neither.
+EXTENSIONS_FIELD_RENAMED = "nonportable_extensions"
+
 #: Expression-language dialect label. A registered member of the Ossie Dialect enum.
 DIALECT = "THOUGHTSPOT"
 
@@ -39,7 +49,44 @@ DIALECT_IS_REGISTERED = True
 
 #: Dialect emitted alongside DIALECT (not instead of it) for portable expressions, so a
 #: consumer that does not implement our dialect still gets something it can execute.
+#:
+#: ANSI_SQL rather than OSSIE_SQL_2026 on the EMIT side, deliberately and still:
+#: a survey of every ossie -> vendor direction in this repository found omni and
+#: sigma drop a metric carrying only OSSIE_SQL_2026 (apache/ossie-converters#22),
+#: so emitting it would lose metrics that ANSI_SQL delivers. Per apache/ossie#450
+#: the two parse identically, so this stays a relabel if that changes.
 PORTABLE_DIALECT = "ANSI_SQL"
+
+#: Dialects ACCEPTED as the portable sibling on the way back in. Wider than what
+#: is emitted, and the asymmetry is the point: be strict in what you send, liberal
+#: in what you accept.
+#:
+#: `OSSIE_SQL_2026` is the specification's own portable dialect (apache/ossie#439),
+#: and apache/ossie#450 established it parses identically to ANSI_SQL -- sqlglot's
+#: DIALECT_MAP returns the same default reader for both. Reading only ANSI_SQL
+#: therefore rejected documents this converter could translate perfectly well:
+#: `to_thoughtspot_expression` raised TS-EXPR-NO-USABLE-DIALECT and the field or
+#: metric was dropped. apache/ossie-converters#32 and #22 track the same defect
+#: in sibling converters and are both still open; ThoughtSpot was on neither
+#: list.
+#:
+#: Scope, and it is narrower than "this converter now reads OSSIE_SQL_2026":
+#: what is accepted reaches `_translate_ansi_sql`, which resolves a qualified
+#: `dataset.field` and nothing else. That is the model-scoped metric namespace
+#: (apache/ossie#486). The other two namespaces the specification defines --
+#: a dataset-scoped metric's unqualified field names, and a field expression's
+#: source columns -- are NOT resolved correctly here, for ANSI_SQL just as much
+#: as for OSSIE_SQL_2026. Widening the accepted list does not change that
+#: either way; see apache/ossie-converters#101.
+PORTABLE_DIALECTS_ACCEPTED = (PORTABLE_DIALECT, "OSSIE_SQL_2026")
+
+#: The dialect a top-level `expression.sql` is, by definition. apache/ossie#617
+#: moved the portable expression there and the specification names it
+#: `OSSIE_SQL_2026`, so a `sql` string needs no dialect tag to be read -- see
+#: `ossie_to_thoughtspot.portable_expression_entries`, which folds it in as one
+#: entry so every reader downstream sees a single shape.
+PORTABLE_SQL_DIALECT = "OSSIE_SQL_2026"
+
 
 #: Ossie spec series this converter targets, matched on major.minor. Not an exact
 #: version: upstream's first release is proposed as 0.3.0, not 0.2.0.
@@ -53,7 +100,7 @@ SPEC_SERIES = "0.2"
 #: fails schema validation outright. Bump in lockstep with core-spec/'s own
 #: `version` if it ever moves -- the same discipline databricks'
 #: `OSSIE_VERSION` constant documents.
-DOCUMENT_VERSION = "0.2.0.dev0"
+DOCUMENT_VERSION = "0.3.0.dev0"
 
 #: ThoughtSpot's grouped-aggregation calls, mapped to the plain aggregate each
 #: is shorthand for. `group_aggregate` is the general form and has no single
@@ -354,6 +401,58 @@ RELATIONSHIP_STASH_TYPE = "type"
 #: whether the endpoint swap it triggered is still trustworthy is a separate,
 #: witnessed question.
 RELATIONSHIP_STASH_CARDINALITY = "cardinality"
+
+#: The join type written when nothing in the document declares one.
+#:
+#: An Ossie `Relationship` carries no join type at all, so a document this
+#: converter did not write has none to recover -- only `RELATIONSHIP_STASH_TYPE`
+#: ever supplies one, and that exists solely on a document that came from
+#: ThoughtSpot in the first place. ThoughtSpot, for its part, REQUIRES `type` on
+#: an inline join; there is no "omit it and let the platform decide". So a value
+#: has to be invented, and every value in the vocabulary imports -- which makes a
+#: bad choice a wrong number rather than a failed conversion.
+#:
+#: `LEFT_OUTER`, not `INNER`. Per core-spec/spec.yaml `from` is the many side and
+#: `to` is the one side, so an inner join drops every `from` row whose key matches
+#: nothing on the `to` side -- in a star schema, every fact row with an unmatched
+#: or NULL foreign key -- and a dropped fact row lowers every measure computed over
+#: it with nothing on screen to say so. A left outer join keeps them.
+#:
+#: It is also what the one vendor that fixes the semantics outright means. Databricks offers no `type:` field on a metric-view join because it
+#: joins the fact `source` to every dimension with a LEFT OUTER JOIN; a converter
+#: reading that into a format which DOES carry a type must emit the left-outer
+#: equivalent, because anything narrower silently drops rows.
+#: Keyed by the join's cardinality, because `from` is not always the many
+#: side. Ossie has no cardinality field -- direction IS cardinality -- but a
+#: document that came from ThoughtSpot carries the original in its stash, and
+#: the type and cardinality stash keys are written independently, so a
+#: relationship can arrive with a cardinality and no type. `ONE_TO_MANY`
+#: inverts the sides: `from` is then the ONE side, and LEFT_OUTER would keep
+#: unmatched DIMENSION rows and NULL-extend every measure grouped by them --
+#: the same wrong-number failure, pointing the other way.
+#: The cardinalities ThoughtSpot will accept on a join. Live-probed
+#: 2026-11-17 with `--policy VALIDATE_ONLY`: a Model whose inline join
+#: declares `MANY_TO_MANY` is refused with
+#:
+#:   Invalid value MANY_TO_MANY of field
+#:   worksheet->model_tables(1st)->joins(1st)->cardinality.
+#:   Allowed values are MANY_TO_ONE, ONE_TO_MANY, ONE_TO_ONE.
+#:
+#: So many-to-many is not a join whose type we have to choose; it is not a
+#: join this platform can hold at all. (This repository's own Table TML
+#: reference listed a four-value enum including MANY_TO_MANY; the probe says
+#: otherwise.)
+WRITABLE_CARDINALITIES = frozenset({"MANY_TO_ONE", "ONE_TO_MANY", "ONE_TO_ONE"})
+
+ASSUMED_JOIN_TYPE_BY_CARDINALITY = {
+    "MANY_TO_ONE": "LEFT_OUTER",
+    "ONE_TO_ONE": "LEFT_OUTER",
+    "ONE_TO_MANY": "RIGHT_OUTER",
+}
+
+#: The assumption for the ordinary case, and the fallback for a cardinality
+#: outside the vocabulary above.
+ASSUMED_JOIN_TYPE = ASSUMED_JOIN_TYPE_BY_CARDINALITY["MANY_TO_ONE"]
 
 #: Whether this relationship's `from`/`to`/`from_columns`/`to_columns` were
 #: swapped relative to TML's own declared join direction. core-spec/spec.yaml

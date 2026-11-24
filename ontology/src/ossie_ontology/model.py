@@ -73,7 +73,7 @@ AiContext = OssieAIContext
 @dataclass
 class CustomExtension:
     vendor_name: str
-    data: str
+    data: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +546,7 @@ class DatasetField:
     label: str | None = None
     description: str | None = None
     ai_context: AiContext | None = None
-    custom_extensions: list[CustomExtension] = field(default_factory=list)
+    nonportable_extensions: list[CustomExtension] = field(default_factory=list)
     # Back-reference to the owning Dataset, wired by Dataset.__init__. Used by
     # mapping-expression rendering to reconstruct `<dataset>.<field>` strings
     # for round-trip output. Not in the spec — purely runtime metadata.
@@ -568,7 +568,7 @@ class Dataset:
     _description: str | None
     _ai_context: AiContext | None
     _fields: list[DatasetField]
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
     _field_name_map: dict[str, DatasetField]
 
     def __init__(
@@ -580,7 +580,7 @@ class Dataset:
         unique_keys: list[list[str]] | None = None,
         description: str | None = None,
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
+        nonportable_extensions: list[CustomExtension] | None = None,
     ):
         self._name = name
         self._source = source
@@ -589,7 +589,7 @@ class Dataset:
         self._unique_keys = unique_keys
         self._description = description
         self._ai_context = ai_context
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
         self._field_name_map = {fl.name: fl for fl in fields}
         # Wire the back-reference so each field knows its owning Dataset —
         # the mapping-expression renderer needs it to reconstruct
@@ -629,8 +629,8 @@ class Dataset:
         return list(self._fields)
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
     @property
     def schema(self) -> dict[str, DataType | None]:
@@ -649,7 +649,7 @@ class JoinPath:
     _from_columns: list[DatasetField]
     _to_columns: list[DatasetField]
     _ai_context: AiContext | None
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
 
     def __init__(
         self,
@@ -659,7 +659,7 @@ class JoinPath:
         from_columns: list[DatasetField],
         to_columns: list[DatasetField],
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
+        nonportable_extensions: list[CustomExtension] | None = None,
     ):
         if len(from_columns) != len(to_columns):
             raise ValueError(
@@ -672,7 +672,7 @@ class JoinPath:
         self._from_columns = from_columns
         self._to_columns = to_columns
         self._ai_context = ai_context
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
 
     @property
     def name(self) -> str:
@@ -699,8 +699,8 @@ class JoinPath:
         return self._ai_context
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
     def __str__(self) -> str:
         return self._name
@@ -712,7 +712,7 @@ class Metric:
     _expression: DialectExpressionSet
     _description: str | None
     _ai_context: AiContext | None
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
     _datatype: DataType | None
 
     def __init__(
@@ -721,14 +721,14 @@ class Metric:
         expression: DialectExpressionSet,
         description: str | None = None,
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
+        nonportable_extensions: list[CustomExtension] | None = None,
         datatype: DataType | None = None,
     ):
         self._name = name
         self._expression = expression
         self._description = description
         self._ai_context = ai_context
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
         self._datatype = datatype
 
     @property
@@ -752,8 +752,8 @@ class Metric:
         return self._ai_context
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
 
 class SemanticModel:
@@ -765,7 +765,7 @@ class SemanticModel:
     _datasets: list[Dataset]
     _join_paths: list[JoinPath]
     _metrics: list[Metric]
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
     _dataset_name_map: dict[str, Dataset]
     _join_path_name_map: dict[str, JoinPath]
     _metric_name_map: dict[str, Metric]
@@ -775,8 +775,8 @@ class SemanticModel:
         name: str,
         description: str | None = None,
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
-        version: OssieVersion = "0.2.0.dev0",
+        nonportable_extensions: list[CustomExtension] | None = None,
+        version: OssieVersion = "0.3.0.dev0",
     ):
         # Checked at runtime too: callers outside a type checker pass any string.
         (supported,) = get_args(OssieVersion)
@@ -791,7 +791,7 @@ class SemanticModel:
         self._datasets = []
         self._join_paths = []
         self._metrics = []
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
         self._dataset_name_map = {}
         self._join_path_name_map = {}
         self._metric_name_map = {}
@@ -825,8 +825,8 @@ class SemanticModel:
         return list(self._metrics)
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
     def add_dataset(self, dataset: Dataset) -> None:
         if dataset.name in self._dataset_name_map:

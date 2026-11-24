@@ -34,7 +34,7 @@
 | **Measures** | N/A (merged into metrics) | `measures{}` (explicit aggregation definitions) |
 | **Metrics** | `metrics[]` with full SQL expressions | `metrics{}` with `{[Measure]}` references |
 | **AI Context** | `ai_context` on every entity | `customExtensions` with `vendor: "Ossie"` |
-| **Extensibility** | `custom_extensions[]` per entity | `customExtensions[]` per entity |
+| **Extensibility** | `nonportable_extensions[]` per entity | `customExtensions[]` per entity |
 | **Keys** | `primary_key`, `unique_keys` on datasets | N/A |
 | **Secondary joins** | N/A | `secondary: true`, `pathName` |
 | **Fan-out protection** | N/A | `allowFanOut`, `reduceToRelationDimensionality` |
@@ -129,22 +129,22 @@ During OBML → Ossie conversion, the `customExtensions` with `vendor: "Ossie"` 
 
 ### 2.5 OBML-Specific Features (Not Representable in Ossie)
 
-These OBML features have no direct Ossie equivalent. Where possible, metadata is preserved in Ossie `ai_context` or `custom_extensions` (with `vendor_name: "COMMON"` and `obml_`-prefixed keys) for lossless roundtrip:
+These OBML features have no direct Ossie equivalent. Where possible, metadata is preserved in Ossie `ai_context` or `nonportable_extensions` (with `vendor_name: "ORIONBELT"` and `obml_`-prefixed keys; documents written earlier under `COMMON` are still read) for lossless roundtrip:
 
 - Secondary joins with `pathName` (preserved in relationship `ai_context`)
-- `allowFanOut` — preserved in metric `custom_extensions` (`obml_allow_fan_out`)
+- `allowFanOut` — preserved in metric `nonportable_extensions` (`obml_allow_fan_out`)
 - Dynamic date filters (`dynamicDate`, `dynamicDateRange`) — not yet preserved
-- `timeGrain` on dimensions — preserved in field `custom_extensions` (`obml_time_grain`)
-- Dimension `format` — preserved in field `custom_extensions` (`obml_dimension_format`)
-- Measure filters — written into the expression as `AGG(CASE WHEN <condition> THEN <arg> END)`, and preserved in metric `custom_extensions` (`obml_filters`)
-- Measure `total` — written into the expression as the grand-total window OrionBelt computes (`SUM(SUM(x)) OVER ()`; exact `SUM/COUNT` ratio for `AVG`), and preserved in metric `custom_extensions` (`obml_total`)
-- Measure `grain`, `filterContext` and `anchor`, period-over-period metrics, and cumulative or window metrics over a window (a `total` measure or another cumulative or window metric; window calls cannot nest): these depend on the query, so they have no faithful single expression. They are left out of the Ossie metrics with a warning and kept whole in the model-level `custom_extensions` (`obml_unexported`); the reverse trip restores them
-- Measure `format` — preserved in metric `custom_extensions` (`obml_format`)
-- Measure `delimiter` — preserved in metric `custom_extensions` (`obml_delimiter`)
-- Measure `withinGroup` — preserved in metric `custom_extensions` (`obml_within_group`)
-- Metric `format` — preserved in metric `custom_extensions` (`obml_format`)
+- `timeGrain` on dimensions — preserved in field `nonportable_extensions` (`obml_time_grain`)
+- Dimension `format` — preserved in field `nonportable_extensions` (`obml_dimension_format`)
+- Measure filters — written into the expression as `AGG(CASE WHEN <condition> THEN <arg> END)`, and preserved in metric `nonportable_extensions` (`obml_filters`)
+- Measure `total` — written into the expression as the grand-total window OrionBelt computes (`SUM(SUM(x)) OVER ()`; exact `SUM/COUNT` ratio for `AVG`), and preserved in metric `nonportable_extensions` (`obml_total`)
+- Measure `grain`, `filterContext` and `anchor`, period-over-period metrics, and cumulative or window metrics over a window (a `total` measure or another cumulative or window metric; window calls cannot nest): these depend on the query, so they have no faithful single expression. They are left out of the Ossie metrics with a warning and kept whole in the model-level `nonportable_extensions` (`obml_unexported`); the reverse trip restores them
+- Measure `format` — preserved in metric `nonportable_extensions` (`obml_format`)
+- Measure `delimiter` — preserved in metric `nonportable_extensions` (`obml_delimiter`)
+- Measure `withinGroup` — preserved in metric `nonportable_extensions` (`obml_within_group`)
+- Metric `format` — preserved in metric `nonportable_extensions` (`obml_format`)
 - Locale settings — not yet preserved
-- `abstractType` (OBML type system): emitted as the spec field `datatype` (`json` → `Opaque`, `time_tz` → `Time`) and preserved exactly in field `custom_extensions` (`obml_abstract_type`)
+- `abstractType` (OBML type system): emitted as the spec field `datatype` (`json` → `Opaque`, `time_tz` → `Time`) and preserved exactly in field `nonportable_extensions` (`obml_abstract_type`)
 - Measure/metric `dataType`: emitted as metric `datatype` when declared (`decimal(p, s)` → `Decimal`), exact value preserved via `obml_data_type`
 
 ### 2.6 Ossie-Specific Features and How They Map to OBML
@@ -153,7 +153,7 @@ These OBML features have no direct Ossie equivalent. Where possible, metadata is
 - **`unique_keys`** — no native OBML equivalent; round-trips via an `Ossie`-vendor `customExtension` (`obml_unique_keys`).
 - **Multi-dialect expressions** — on import the converter reads the first available SQL dialect in the order `ANSI_SQL`, `OSSIE_SQL_2026`, `SNOWFLAKE`, `DATABRICKS`; non-SQL dialects (`MDX`, `TABLEAU`, `MAQL`, `SIGMA`, `THOUGHTSPOT`, `DAX`) are not parsed. A metric with no SQL-parseable dialect, or an expression OBML cannot decompose, is preserved verbatim (`obml_unconverted_metrics`) with a `LOSSY:` warning rather than dropped, as is an expression containing a query (a subquery or a `UNION`), whose own tables and aliases are not datasets. On export, OBML measures/metrics emit `ANSI_SQL`, except `aggregation: measure`, whose `MEASURE("<name>")` call is tagged `DATABRICKS`. Each `ANSI_SQL` expression is also written in `OSSIE_SQL_2026` where it has a form in that language (`CONTAINS`, `STARTSWITH` and `ENDSWITH` instead of `LIKE ... ESCAPE`, a `CAST` for a timestamp literal), checked against `core-spec/expression_language.md` as written (every function, `CAST` type and typed literal is one the spec lists, no foreign operator such as `::`) and as parsed (no construct the spec does not list); a measure using `MODE`, a pattern that needs `ESCAPE`, or an authored expression outside the language keeps `ANSI_SQL` only.
 - **`ai_context`** — preserved losslessly via `customExtensions` (see Section 2.4).
-- **`custom_extensions`** — mapped to OBML `customExtensions`.
+- **`nonportable_extensions`** — mapped to OBML `customExtensions`.
 
 ## 3. Conversion Strategies
 
@@ -176,7 +176,7 @@ These OBML features have no direct Ossie equivalent. Where possible, metadata is
 6. Leave out what has no faithful expression, with a warning; each exported measure or metric also carries its full OBML definition (`obml_definition`), which the reverse trip restores instead of re-parsing the SQL
 7. Map OBML dimension metadata into `field.dimension.is_time` flags
 8. Preserve secondary join info in relationship `ai_context`
-9. Store OBML-specific type info in `custom_extensions` with `vendor_name: "COMMON"`
+9. Store OBML-specific type info in `nonportable_extensions` with `vendor_name: "ORIONBELT"`
 
 ## 4. Validation
 
@@ -272,7 +272,7 @@ Converting the OBML output back to Ossie produces a valid Ossie model where:
 - All `ai_context` synonyms are restored from `customExtensions`
 - Measures are re-expanded into SQL metric expressions
 - Inline joins are extracted back into global relationships
-- OBML type information is preserved in `custom_extensions`
+- OBML type information is preserved in `nonportable_extensions`
 
 ### Files
 

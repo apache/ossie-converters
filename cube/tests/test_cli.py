@@ -73,6 +73,21 @@ def test_a_model_directory_converts(tmp_path, capsys):
     assert doc["name"] == "sales"
 
 
+@pytest.mark.parametrize("project", [False, True])
+def test_import_applies_source_defaults_in_both_modes(tmp_path, capsys, project):
+    model = _write(tmp_path / "model", **{
+        "cubes|orders.yml": _ORDERS.replace("public.orders", "orders"),
+        "views|sales.yml": _VIEW})
+    args = ["import", "-i", str(model), "--default-catalog", "main",
+            "--default-schema", "sales"]
+    if project:
+        args.extend(["--view", "sales", "--project"])
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    assert parse(captured.out)["datasets"][0]["source"] == "main.sales.orders"
+    assert "SOURCE_NOT_FULLY_QUALIFIED" not in captured.err
+
+
 def test_a_single_file_converts(tmp_path, capsys):
     """Pointing at one `.yml` is a natural thing to try and there is nothing
     ambiguous about it, so it is accepted rather than refused on a technicality."""
@@ -256,7 +271,7 @@ def test_fanout_warns_by_default_and_the_flag_exits_nonzero(tmp_path, capsys):
     assert main(["import", "-i", str(model)]) == 0
     captured = capsys.readouterr()
     assert "FANOUT_UNSAFE_METRIC" in captured.err
-    assert parse(captured.out)["metrics"]
+    assert parse(captured.out)["datasets"][1]["metrics"]
 
     assert main(["import", "-i", str(model), "--strict-fanout"]) == 1
     assert "FANOUT_UNSAFE_METRIC" in capsys.readouterr().err
@@ -303,7 +318,7 @@ def test_a_cli_round_trip_reproduces_the_fixture(tmp_path, capsys):
                                       for k, v in fixture.items()})
     ossie = tmp_path / "model.yaml"
     back = tmp_path / "back"
-    assert main(["import", "-i", str(src), "-o", str(ossie)]) == 0
+    assert main(["import", "-i", str(src), "-o", str(ossie), "--model-scoped-metrics"]) == 0
     assert main(["export", "-i", str(ossie), "-o", str(back)]) == 0
     capsys.readouterr()
     for rel in fixture:

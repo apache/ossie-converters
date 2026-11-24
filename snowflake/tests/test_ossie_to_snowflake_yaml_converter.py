@@ -20,6 +20,7 @@
 import warnings
 
 import pytest
+import sqlglot
 import yaml
 
 from ossie_snowflake.ossie_to_snowflake import (
@@ -45,7 +46,7 @@ from ossie_snowflake.ossie_to_snowflake import (
 def _wrap_ossie(model_dict):
     """Wrap a model dict in the standard Ossie envelope."""
     return yaml.dump(
-        {"version": "0.2.0.dev0", **model_dict},
+        {"version": "0.3.0.dev0", **model_dict},
         default_flow_style=False,
     )
 
@@ -74,6 +75,15 @@ def _minimal_model(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def _metric(name, expr, dialect="ANSI_SQL"):
+    return {
+        "name": name,
+        "expression": {
+            "dialects": [{"dialect": dialect, "expression": expr}]
+        },
+    }
 
 
 def _typed_field(name, datatype, dimension=None):
@@ -435,13 +445,46 @@ class TestExtractExpression:
         }
         assert _extract_expression(expr, "f") == "ansi_expr"
 
+    @pytest.mark.parametrize("dialect", ["SNOWFLAKE", "ANSI_SQL", "OSSIE_SQL_2026"])
+    def test_bigquery_fallback_preserves_existing_preference(self, dialect):
+        expression = {"dialects": [
+            {"dialect": "BIGQUERY", "expression": "CAST(amount AS FLOAT64)"},
+            {"dialect": dialect, "expression": "preferred"},
+        ]}
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert _extract_expression(expression, "amount") == "preferred"
+        assert not caught
+
+    @pytest.mark.parametrize("sql", [
+        "SAFE_CAST(zip_code AS INT64)", "COUNTIF(is_paid IS NOT TRUE)",
+    ])
+    def test_successful_bigquery_translation_warns_about_changed_semantics(self, sql):
+        expression = {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+        with pytest.warns(UserWarning, match="'checked'.*BIGQUERY to SNOWFLAKE.*change results"):
+            assert _extract_expression(expression, "checked")
+
+    @pytest.mark.parametrize("sql", ["SELECT amount", "amount; SELECT 1", "my_udf(amount)", "CAST("])
+    def test_untranslatable_bigquery_expression_warns_and_is_omitted(self, sql):
+        expression = {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+        with pytest.warns(UserWarning, match="'amount'.*could not translate BIGQUERY"):
+            assert _extract_expression(expression, "amount") is None
+
     def test_unsupported_dialect_returns_none_with_warning(self):
         expr = {
-            "dialects": [{"dialect": "BIGQUERY", "expression": "bq_expr"}]
+            "dialects": [{"dialect": "DAX", "expression": "dax_expr"}]
         }
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             result = _extract_expression(expr, "my_field")
+        assert result is None
+        assert len(w) == 1
+        assert "my_field" in str(w[0].message)
+
+    def test_sql_only_returns_none_with_warning(self):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = _extract_expression({"sql": "orders.amount"}, "my_field")
         assert result is None
         assert len(w) == 1
         assert "my_field" in str(w[0].message)
@@ -500,7 +543,7 @@ class TestConvertNamedExpr:
         entry = {
             "name": "col1",
             "expression": {
-                "dialects": [{"dialect": "BIGQUERY", "expression": "x"}]
+                "dialects": [{"dialect": "DAX", "expression": "x"}]
             },
         }
         with warnings.catch_warnings(record=True):
@@ -651,6 +694,15 @@ class TestConvertDataset:
         }
         assert "unique_keys" not in result
 
+    def test_unique_key_with_primary_key_columns_reordered_is_dropped(self):
+        ds = {
+            "name": "store_sales",
+            "primary_key": ["ss_item_sk", "ss_ticket_number"],
+            "unique_keys": [["ss_ticket_number", "ss_item_sk"], ["ss_sold_date_sk"]],
+        }
+        result = _convert_dataset(ds)
+        assert result["unique_keys"] == [{"columns": ["ss_sold_date_sk"]}]
+
     def test_unique_keys_kept_without_primary_key(self):
         ds = {"name": "t", "unique_keys": [["id"], ["code"]]}
         result = _convert_dataset(ds)
@@ -758,12 +810,7 @@ class TestConvertOssieToSnowflake:
         model = _minimal_model(
             metrics=[
                 {
-                    "name": "total",
-                    "expression": {
-                        "dialects": [
-                            {"dialect": "ANSI_SQL", "expression": "SUM(x)"}
-                        ]
-                    },
+                    **_metric("total", "SUM(x)"),
                     "description": "Total x",
                     "datatype": "Decimal",
                 }
@@ -773,6 +820,51 @@ class TestConvertOssieToSnowflake:
         assert len(result["metrics"]) == 1
         assert result["metrics"][0]["expr"] == "SUM(x)"
         assert "data_type" not in result["metrics"][0]
+
+    def test_dataset_scoped_metric_is_exported(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("total_net_amount", "SUM(net_amount)")]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert "metrics" not in result
+        assert result["tables"][0]["metrics"] == [
+            {"name": "total_net_amount", "expr": "SUM(net_amount)"}
+        ]
+
+    def test_dataset_scoped_and_root_metrics_are_both_exported(self):
+        model = _minimal_model(metrics=[_metric("root_count", "COUNT(my_table.col1)")])
+        model["datasets"][0]["metrics"] = [_metric("total_net_amount", "SUM(net_amount)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [
+            {"name": "total_net_amount", "expr": "SUM(net_amount)"}
+        ]
+        assert result["metrics"] == [{"name": "root_count", "expr": "COUNT(my_table.col1)"}]
+
+    def test_dataset_and_root_metrics_with_the_same_name_are_both_exported(self):
+        model = _minimal_model(metrics=[_metric("total", "SUM(my_table.col1)")])
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(net_amount)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [
+            {"name": "total", "expr": "SUM(net_amount)"}
+        ]
+        assert result["metrics"] == [{"name": "total", "expr": "SUM(my_table.col1)"}]
+
+    def test_dataset_metric_local_qualifier_is_stripped(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(my_table.col1)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [{"name": "total", "expr": "SUM(col1)"}]
+
+    def test_dataset_metric_foreign_qualifier_is_skipped(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(source.quantity)")]
+        with pytest.warns(
+            UserWarning,
+            match=r"dataset-scoped metric 'my_table\.total': expression names source\.quantity",
+        ):
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert "metrics" not in result["tables"][0]
 
     def test_invalid_yaml_root_raises(self):
         with pytest.raises(OssieConversionError, match="expected a mapping"):
@@ -784,7 +876,7 @@ class TestConvertOssieToSnowflake:
             convert_ossie_to_snowflake(bad)
 
     def test_missing_model_name_raises(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "description": "x"})
+        bad = yaml.dump({"version": "0.3.0.dev0", "description": "x"})
         with pytest.raises(OssieConversionError, match="Missing required 'name'"):
             convert_ossie_to_snowflake(bad)
 
@@ -793,7 +885,7 @@ class TestConvertOssieToSnowflake:
         [[], [{"name": "first"}], [{"name": "first"}, {"name": "second"}], {"name": "first"}, None],
     )
     def test_legacy_model_wrappers_are_rejected(self, wrapper):
-        bad = yaml.dump({"version": "0.2.0.dev0", "semantic_model": wrapper})
+        bad = yaml.dump({"version": "0.3.0.dev0", "semantic_model": wrapper})
         with pytest.raises(OssieConversionError, match="Legacy 'semantic_model'"):
             convert_ossie_to_snowflake(bad)
 
@@ -851,7 +943,7 @@ class TestConvertOssieToSnowflake:
                             "name": "bad",
                             "expression": {
                                 "dialects": [
-                                    {"dialect": "BIGQUERY", "expression": "bad"}
+                                    {"dialect": "DAX", "expression": "bad"}
                                 ]
                             },
                             "dimension": {"is_time": False},
@@ -890,6 +982,45 @@ class TestConvertOssieToSnowflake:
         }
         result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
         assert "definition" in result["tables"][0]["base_table"]
+
+    def test_holistics_bigquery_fields_and_metrics_survive_export(self):
+        def expression(sql):
+            return {"dialects": [{"dialect": "BIGQUERY", "expression": sql}]}
+
+        model = _minimal_model(
+            name="interop_orders",
+            datasets=[
+                {
+                    "name": "orders",
+                    "source": "analytics.sales.orders",
+                    "primary_key": ["order_id"],
+                    "fields": [
+                        {"name": "order_id", "expression": expression("order_id")},
+                        {"name": "amount", "expression": expression("amount")},
+                        {
+                            "name": "float_amount",
+                            "expression": expression("CAST(amount AS FLOAT64)"),
+                        },
+                    ],
+                }
+            ],
+            metrics=[{"name": "orders__total_amount", "expression": expression("SUM(amount)")}],
+        )
+
+        with pytest.warns(UserWarning, match="BIGQUERY to SNOWFLAKE") as caught:
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert len(caught) == 4
+        for name in ("order_id", "amount", "float_amount", "orders__total_amount"):
+            assert any(f"'{name}'" in str(warning.message) for warning in caught)
+        table = result["tables"][0]
+        assert table["base_table"] == {"database": "ANALYTICS", "schema": "SALES", "table": "ORDERS"}
+        facts = {field["name"]: field["expr"] for field in table["facts"]}
+        cast = sqlglot.parse_one(facts.pop("float_amount"), read="snowflake")
+        assert isinstance(cast, sqlglot.exp.Cast)
+        assert cast.this.name == "amount"
+        assert cast.to.this == sqlglot.exp.DataType.Type.DOUBLE
+        assert facts == {"order_id": "order_id", "amount": "amount"}
+        assert result["metrics"] == [{"name": "orders__total_amount", "expr": "SUM(amount)"}]
 
     def test_field_in_ossie_sql_2026_only_is_exported(self):
         """A dimension expressed only in OSSIE_SQL_2026 is exported, not dropped (#442)."""
@@ -977,12 +1108,12 @@ class TestConvertOssieToSnowflake:
 
 class TestWarnDroppedFields:
     def test_custom_extensions_warned(self):
-        source = {"custom_extensions": [{"vendor_name": "X", "data": "{}"}]}
+        source = {"nonportable_extensions": [{"vendor_name": "X", "data": {}}]}
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             _warn_dropped_fields(source, "model")
         assert len(w) == 1
-        assert "custom_extensions" in str(w[0].message)
+        assert "nonportable_extensions" in str(w[0].message)
 
     def test_label_warned(self):
         source = {"label": "My Label"}
@@ -1027,13 +1158,13 @@ class TestWarnDroppedFields:
         assert len(w) == 0
 
     def test_multiple_dropped_fields_single_warning(self):
-        source = {"label": "L", "custom_extensions": [{}], "version": "1"}
+        source = {"label": "L", "nonportable_extensions": [{}], "version": "1"}
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             _warn_dropped_fields(source, "model")
         assert len(w) == 1
         msg = str(w[0].message)
-        assert "custom_extensions" in msg
+        assert "nonportable_extensions" in msg
         assert "label" in msg
         assert "version" in msg
 
@@ -1045,13 +1176,13 @@ class TestWarnDroppedFields:
 class TestDroppedFieldsEndToEnd:
     def test_custom_extensions_dropped_with_warning(self):
         model = _minimal_model(
-            custom_extensions=[{"vendor_name": "X", "data": "{}"}]
+            nonportable_extensions=[{"vendor_name": "X", "data": {}}]
         )
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
-        assert "custom_extensions" not in result
-        assert any("custom_extensions" in str(x.message) for x in w)
+        assert "nonportable_extensions" not in result
+        assert any("nonportable_extensions" in str(x.message) for x in w)
 
     def test_model_level_ai_context_dropped_with_warning(self):
         model = _minimal_model(

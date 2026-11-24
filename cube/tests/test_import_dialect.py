@@ -21,10 +21,10 @@ import pytest
 
 from _cube_gate import assert_cube_compiles, assert_ossie_is_valid, cube_gate
 from _util import parse
+from _util import import_model_scoped as convert_cube_to_ossie
+from _util import project_model_scoped as convert_cube_view_to_ossie
 from ossie_cube import (
     ConversionError,
-    convert_cube_to_ossie,
-    convert_cube_view_to_ossie,
     convert_ossie_to_cube,
 )
 from ossie_cube._common import dump_yaml
@@ -168,7 +168,7 @@ def test_omitting_dialect_retains_legacy_behavior_but_explicit_ansi_validates():
 
 def test_restored_ossie_expression_keeps_its_original_dialects():
     model = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [
             {
@@ -212,6 +212,7 @@ def test_cli_writes_valid_output(tmp_path, project):
         "--source-dialect",
         "BIGQUERY",
     ]
+    args.append("--model-scoped-metrics")
     if project:
         args += ["--project", "--view", "sales"]
     assert main(args) == 0
@@ -500,7 +501,7 @@ def _cross_dataset_composite_count(dialect):
         "CAST(users.id AS STRING), CAST(users.tenant AS STRING)))"
     )
     return {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sales",
         "datasets": [
             {
@@ -598,6 +599,7 @@ def test_cli_native_date_units_are_not_qualified(
     args = [
         "import", "-i", str(source), "-o", str(dest), "--source-dialect", dialect
     ]
+    args.append("--model-scoped-metrics")
     if project:
         args += ["--project", "--view", "sales"]
     assert main(args) == 0
@@ -650,6 +652,7 @@ def test_explicit_ansi_cli_preserves_literals_and_strips_comments(tmp_path, proj
     args = [
         "import", "-i", str(source), "-o", str(dest), "--source-dialect", "ANSI_SQL"
     ]
+    args.append("--model-scoped-metrics")
     if project:
         args += ["--project", "--view", "sales"]
     assert main(args) == 0

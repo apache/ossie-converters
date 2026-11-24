@@ -382,7 +382,7 @@ def generate_datatype_map_doc() -> str:
 
 
 # ---------------------------------------------------------------------------
-# 4. Vendor payload — constants.py's custom_extensions[THOUGHTSPOT] vocabulary.
+# 4. Vendor payload — constants.py's nonportable_extensions[THOUGHTSPOT] vocabulary.
 # ---------------------------------------------------------------------------
 
 _SCOPE_RE = re.compile(r"^(MODEL|DATASET|RELATIONSHIP|FIELD|METRIC)_STASH_")
@@ -394,7 +394,7 @@ def _scope_for_constant(name: str) -> str:
 
 
 def _stash_key_constant_names() -> list[str]:
-    """Every top-level `custom_extensions[THOUGHTSPOT]` key constant — excludes the
+    """Every top-level `nonportable_extensions[THOUGHTSPOT]` key constant — excludes the
     `_WITNESS` companion constants (a witness is not itself a key this converter
     classifies; it is the currency check FOR one) and the nested
     `source_parts.{db,schema,db_table}` sub-keys, which are never read as standalone
@@ -444,22 +444,33 @@ def generate_vendor_payload_doc() -> str:
     sources = ["src/ossie_thoughtspot/constants.py"]
     intro = (
         "TML carries properties Ossie's core specification has no field for. "
-        "`TML -> Ossie` stashes each one under a single `custom_extensions` entry "
+        "`TML -> Ossie` stashes each one under a single `nonportable_extensions` entry "
         "attached to the Ossie object it came from; `Ossie -> TML` reads the same "
         "entry back. This page is generated from `constants.py`'s own key vocabulary "
         "and `STASH_KEY_CLASSIFICATION` — the table `test_stash_key_classification.py` "
         "enforces every key read on the `Ossie -> TML` direction must appear in."
     )
-    out = [_header("The `custom_extensions[THOUGHTSPOT]` Payload", intro, sources)]
+    out = [_header("The `nonportable_extensions[THOUGHTSPOT]` Payload", intro, sources)]
 
     out.append("## Envelope\n")
     out.append(
-        f"Every `custom_extensions` entry this converter writes uses "
-        f"`vendor_name` {_code_cell(constants.VENDOR_KEY)}. `data` is a single "
-        f"JSON-encoded string (never a nested object) whose own top-level `_v` field "
+        f"Every `nonportable_extensions` entry this converter writes uses "
+        f"`vendor_name` {_code_cell(constants.VENDOR_KEY)}. `data` is an object "
+        f"whose own top-level `_v` field "
         f"is the shape version ({_code_cell(str(constants.STASH_VERSION))} today) — "
         "bumped only when the payload's shape changes, never for a value change; an "
         "unrecognised version is a hard failure rather than a silent misread.\n"
+    )
+    out.append(
+        f"The reader is wider than the writer, deliberately. It takes the entry list "
+        f"from either {_code_cell(constants.EXTENSIONS_FIELD_RENAMED)} or "
+        f"{_code_cell(constants.EXTENSIONS_FIELD)} — the name before apache/ossie#522 "
+        f"renamed the field — and takes `data` as either the object above or a JSON "
+        f"string (the shape before the same change). A document may use either name "
+        f"with either shape. What this converter *writes* is the name and shape "
+        f"described above, except that a document still using the old name is kept "
+        f"on it, with JSON-string `data`, rather than moved; a document carrying both "
+        f"names is refused.\n"
     )
 
     all_names = _stash_key_constant_names()

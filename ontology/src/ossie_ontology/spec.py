@@ -53,7 +53,7 @@ _RENAMED = {
     "JoinPath": "OssieRelationship",
     "Expression": "OssieExpression",
     "DialectExpression": "OssieDialectExpression",
-    "CustomExtension": "OssieCustomExtension",
+    "CustomExtension": "OssieNonportableExtension",
     "AiContext": "OssieAIContext",
     "DataType": "OssieDataType",
     "CoreVersion": "OssieVersion",

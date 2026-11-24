@@ -21,8 +21,9 @@ The output mirrors the JSON produced by wisdom's ``exportDomain`` RPC so it
 can be fed to ``importDomain``. Inverse of :mod:`ossie_wisdom.wisdom_to_ossie`:
 model ``ai_context`` splits back into system instructions and knowledge items,
 fields split back into columns and formulas, relationship direction is read as
-many-to-one (with the ai_context notes restoring the other cardinalities), and
-metrics attach to the table their expression references.
+many-to-one (with a WISDOM custom extension, or the ai_context notes of older
+documents, restoring the other cardinalities), and metrics attach to the table
+their expression references.
 
 IDs are derived deterministically from element names, and connections are
 per-dialect placeholders expected to be remapped when the domain is imported.
@@ -35,15 +36,20 @@ from typing import Dict, List, Optional, Tuple
 
 from ossie import (
     OssieAIContextObject,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
     OssieExpression,
+    OssieRelationship,
     OssieSemanticModel,
+    OssieVendor,
 )
 from ossie_wisdom.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
-from ossie_wisdom.wisdom_to_ossie import RELATIONSHIP_TYPE_NOTES
+from ossie_wisdom.wisdom_to_ossie import RELATIONSHIP_TYPE_NOTES, decode_extension_data
 
 _NOTE_RELATIONSHIP_TYPES = {note: relationship_type for relationship_type, note in RELATIONSHIP_TYPE_NOTES.items()}
+
+_RELATIONSHIP_TYPES = {"MANY_TO_ONE", *RELATIONSHIP_TYPE_NOTES}
 
 _WISDOM_DIALECT = {
     OssieDialect.SNOWFLAKE: "snowflake",
@@ -65,13 +71,15 @@ class OssieToWisdomConverter:
         issues: List[ConverterIssue] = []
 
         model = document
-        self._report_custom_extensions(model, issues)
-
         domain_uuid = _stable_id("ET_DOMAIN", model.name)
         zsheet_refs = {
             dataset.name: {"uuid": _stable_id("ET_ZSHEET", dataset.name), "name": dataset.name, "version": "1"}
             for dataset in model.datasets
         }
+        consumed_extensions: set[int] = set()
+        relationships = self._convert_relationships(model, zsheet_refs, consumed_extensions, issues)
+        self._report_custom_extensions(model, consumed_extensions, issues)
+
         dataset_dialects = {dataset.name: self._infer_dataset_dialect(dataset) for dataset in model.datasets}
         measures_by_dataset = self._assign_metrics(model, dataset_dialects, issues)
 
@@ -99,7 +107,7 @@ class OssieToWisdomConverter:
             "zsheetType": "DOMAIN",
             "relationshipGraph": {
                 "zsheets": list(zsheet_refs.values()),
-                "relationships": self._convert_relationships(model, zsheet_refs, issues),
+                "relationships": relationships,
             },
         }
         if model.description:
@@ -131,25 +139,28 @@ class OssieToWisdomConverter:
         }
         return ConverterResult(output=export, issues=issues)
 
-    def _report_custom_extensions(self, model: OssieSemanticModel, issues: List[ConverterIssue]) -> None:
-        elements = [(model.name, model.custom_extensions)]
+    def _report_custom_extensions(
+        self, model: OssieSemanticModel, consumed: set[int], issues: List[ConverterIssue]
+    ) -> None:
+        elements = [(model.name, model.nonportable_extensions)]
         for dataset in model.datasets:
-            elements.append((dataset.name, dataset.custom_extensions))
+            elements.append((dataset.name, dataset.nonportable_extensions))
             for field in dataset.fields or []:
-                elements.append((f"{dataset.name}.{field.name}", field.custom_extensions))
+                elements.append((f"{dataset.name}.{field.name}", field.nonportable_extensions))
         for relationship in model.relationships or []:
-            elements.append((relationship.name, relationship.custom_extensions))
+            elements.append((relationship.name, relationship.nonportable_extensions))
         for metric in model.metrics or []:
-            elements.append((metric.name, metric.custom_extensions))
+            elements.append((metric.name, metric.nonportable_extensions))
         for name, extensions in elements:
-            if extensions:
+            # Entries _convert_relationships used or already reported (keyed by id) are skipped.
+            if any(id(extension) not in consumed for extension in extensions or []):
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.CUSTOM_EXTENSION_DROPPED, element_name=name)
                 )
 
     def _infer_dataset_dialect(self, dataset: OssieDataset) -> OssieDialect:
         for field in dataset.fields or []:
-            for entry in field.expression.dialects:
+            for entry in field.expression.dialects or []:
                 if entry.dialect in (OssieDialect.SNOWFLAKE, OssieDialect.DATABRICKS, OssieDialect.BIGQUERY):
                     return entry.dialect
         return OssieDialect.ANSI_SQL
@@ -202,6 +213,8 @@ class OssieToWisdomConverter:
         columns: List[dict] = []
         formulas: List[dict] = []
         for field in dataset.fields or []:
+            if not self._has_dialects(field.expression, f"{dataset.name}.{field.name}", issues):
+                continue
             expression = self._pick_expression(field.expression, dialect, f"{dataset.name}.{field.name}", issues)
             if field.ai_context is not None:
                 issues.append(
@@ -278,6 +291,15 @@ class OssieToWisdomConverter:
             return "", parts[0], parts[1]
         return "", "", source
 
+    def _has_dialects(self, expression: OssieExpression, element_name: str, issues: List[ConverterIssue]) -> bool:
+        # An expression that carries only `sql` has no dialect entry to pick from.
+        if expression.dialects:
+            return True
+        issues.append(
+            ConverterIssue(issue_type=ConverterIssueType.MISSING_DIALECT_EXPRESSION, element_name=element_name)
+        )
+        return False
+
     def _pick_expression(
         self, expression: OssieExpression, dialect: OssieDialect, element_name: str, issues: List[ConverterIssue]
     ) -> str:
@@ -307,6 +329,8 @@ class OssieToWisdomConverter:
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.AI_CONTEXT_DROPPED, element_name=metric.name)
                 )
+            if not self._has_dialects(metric.expression, metric.name, issues):
+                continue
             # Attach to a dataset first so the expression can be picked in that dataset's dialect.
             reference_text = " ".join(entry.expression for entry in metric.expression.dialects)
             dataset_name = self._find_referenced_dataset(reference_text, dataset_names)
@@ -339,7 +363,11 @@ class OssieToWisdomConverter:
         return best
 
     def _convert_relationships(
-        self, model: OssieSemanticModel, zsheet_refs: Dict[str, dict], issues: List[ConverterIssue]
+        self,
+        model: OssieSemanticModel,
+        zsheet_refs: Dict[str, dict],
+        consumed: set[int],
+        issues: List[ConverterIssue],
     ) -> List[dict]:
         edges = []
         for relationship in model.relationships or []:
@@ -352,27 +380,43 @@ class OssieToWisdomConverter:
                     )
                 )
                 continue
-            relationship_type = "MANY_TO_ONE"
-            left_columns, right_columns = relationship.from_columns, relationship.to_columns
-            if isinstance(relationship.ai_context, str):
-                marked_type = _NOTE_RELATIONSHIP_TYPES.get(relationship.ai_context.strip())
-                if marked_type is not None:
-                    relationship_type = marked_type
-                    if relationship_type == "ONE_TO_MANY":
-                        # The forward path swapped sides to put the many side in `from`; swap back.
-                        # left_ref, right_ref and the join conditions below must be built after this.
-                        left, right = right, left
-                        left_columns, right_columns = right_columns, left_columns
-                else:
+            relationship_type = None
+            extension = self._wisdom_extension(relationship)
+            if extension is not None:
+                relationship_type = self._stored_relationship_type(extension, relationship)
+                if relationship_type is not None:
+                    consumed.add(id(extension))
+            if relationship_type is None and isinstance(relationship.ai_context, str):
+                # Fall back to the note for documents written before the WISDOM extension,
+                # and for entries that are stale or unreadable. An entry the note replaces
+                # stays unconsumed, so it is reported as dropped.
+                relationship_type = _NOTE_RELATIONSHIP_TYPES.get(relationship.ai_context.strip())
+            if relationship_type is None:
+                if extension is not None:
+                    # Reported once, as unresolved, rather than also as dropped.
+                    consumed.add(id(extension))
                     issues.append(
                         ConverterIssue(
-                            issue_type=ConverterIssueType.AI_CONTEXT_DROPPED, element_name=relationship.name
+                            issue_type=ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED,
+                            element_name=relationship.name,
                         )
                     )
-            elif relationship.ai_context is not None:
+                relationship_type = "MANY_TO_ONE"
+            # A note that states the exported type is carried by relationshipType; anything else is lost.
+            if relationship.ai_context is not None and (
+                not isinstance(relationship.ai_context, str)
+                or _NOTE_RELATIONSHIP_TYPES.get(relationship.ai_context.strip()) != relationship_type
+            ):
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.AI_CONTEXT_DROPPED, element_name=relationship.name)
                 )
+
+            left_columns, right_columns = relationship.from_columns, relationship.to_columns
+            if relationship_type == "ONE_TO_MANY":
+                # The forward path swapped sides to put the many side in `from`; swap back.
+                # left_ref, right_ref and the join conditions below must be built after this.
+                left, right = right, left
+                left_columns, right_columns = right_columns, left_columns
 
             left_ref = {"uuid": zsheet_refs[left]["uuid"], "name": left}
             right_ref = {"uuid": zsheet_refs[right]["uuid"], "name": right}
@@ -401,3 +445,31 @@ class OssieToWisdomConverter:
                 }
             )
         return edges
+
+    def _wisdom_extension(self, relationship: OssieRelationship) -> OssieNonportableExtension | None:
+        for extension in relationship.nonportable_extensions or []:
+            if extension.vendor_name == OssieVendor.WISDOM.value:
+                return extension
+        return None
+
+    def _stored_relationship_type(
+        self, extension: OssieNonportableExtension, relationship: OssieRelationship
+    ) -> str | None:
+        """Returns the type to export for the relationship as it stands, or None when the entry is
+        malformed or stale."""
+        data = decode_extension_data(extension.data)
+        if data is None:
+            return None
+        relationship_type = data.get("relationshipType")
+        if not isinstance(relationship_type, str) or relationship_type not in _RELATIONSHIP_TYPES:
+            return None
+        endpoints = [relationship.from_dataset, relationship.to]
+        if data.get("normalizedEndpoints") == endpoints:
+            return relationship_type
+        if data.get("normalizedEndpoints") == endpoints[::-1]:
+            # from/to were reversed after import. ONE_TO_ONE and MANY_TO_MANY are symmetric. A reversed
+            # ONE_TO_MANY now has its many side in `from`, so it is exported as MANY_TO_ONE in the new
+            # direction rather than swapped back.
+            return "MANY_TO_ONE" if relationship_type == "ONE_TO_MANY" else relationship_type
+        # An endpoint moved to another dataset, so the stored type may no longer apply.
+        return None

@@ -55,7 +55,7 @@ def test_every_function_translates_or_is_refused_by_name(name):
     and nothing falls through to a generic error."""
 
     def resolve(table, column):
-        return (table, column) if (table, column) == ("Sales", "Amount") else None
+        return (table, column, "Decimal") if (table, column) == ("Sales", "Amount") else None
 
     sql, reason = translate_measure(f"{name}('Sales'[Amount])", resolve)
     if name in TRANSLATED_FUNCTIONS and sql is not None:
@@ -69,3 +69,24 @@ def test_every_function_translates_or_is_refused_by_name(name):
 
 def test_unknown_function_reason():
     assert "not a DAX function known" in refusal_reason("FOO")
+
+
+@pytest.mark.parametrize("name", ["ALL", "REMOVEFILTERS", "HASONEVALUE", "ISFILTERED", "ISINSCOPE"])
+def test_filter_context_reason_fits_functions_that_only_inspect_it(name):
+    # HASONEVALUE, ISFILTERED and ISINSCOPE read the filter context without changing it.
+    reason = refusal_reason(name)
+    assert "depends on the filter context" in reason
+    assert "changes" not in reason
+
+
+@pytest.mark.parametrize(
+    ("name", "context"),
+    [("EARLIER", "an outer row context"), ("EARLIEST", "the outermost row context")],
+)
+def test_row_context_functions_say_they_need_an_outer_row_context(name, context):
+    # EARLIER and EARLIEST read a row context outside the current one; a measure has none.
+    reason = refusal_reason(name)
+    assert context in reason
+    assert "measure does not have" in reason
+    assert "filter context" not in reason
+    assert "operates on tables" not in reason

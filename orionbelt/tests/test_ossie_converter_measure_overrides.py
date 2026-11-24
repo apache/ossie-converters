@@ -18,7 +18,7 @@
 """Tests for Ossie ↔ OBML roundtrip of measure grain and filterContext properties.
 
 Validates that grain override and filterContext configurations survive the
-OBML → Ossie → OBML roundtrip via custom_extensions preservation.
+OBML → Ossie → OBML roundtrip via nonportable_extensions preservation.
 """
 
 from __future__ import annotations
@@ -235,7 +235,7 @@ class TestMeasureAggregationRoundtrip:
     (Databricks Metric View). Ossie has no first-class concept for
     engine-delegated aggregation, so the OBML → Ossie direction emits a
     ``MEASURE("<label>")`` placeholder expression and stashes
-    ``obml_aggregation: measure`` under custom_extensions for the
+    ``obml_aggregation: measure`` under nonportable_extensions for the
     reverse direction. See issue #92.
     """
 
@@ -288,13 +288,11 @@ class TestMeasureAggregationRoundtrip:
         obml = self._delegated_obml()
         ossie = conv.OBMLtoOssie(obml).convert()
         metric = next(m for m in self._ossie_metrics(ossie) if m["name"] == "Total Revenue")
-        exts = metric.get("custom_extensions", [])
-        assert exts, "expected custom_extensions to carry the obml_aggregation marker"
-        import json as _json
-
-        common = [_json.loads(e["data"]) for e in exts if e.get("vendor_name") == "ORIONBELT"]
-        assert any(e.get("obml_aggregation") == "measure" for e in common), (
-            "obml_aggregation marker missing from COMMON extras"
+        exts = metric.get("nonportable_extensions", [])
+        assert exts, "expected nonportable_extensions to carry the obml_aggregation marker"
+        orionbelt = [e["data"] for e in exts if e.get("vendor_name") == "ORIONBELT"]
+        assert any(e.get("obml_aggregation") == "measure" for e in orionbelt), (
+            "obml_aggregation marker missing from ORIONBELT extras"
         )
 
     def test_roundtrip_preserves_measure_aggregation(self):

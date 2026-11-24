@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Vendor-identity rules for Ossie custom_extensions.
+"""Vendor-identity rules for Ossie nonportable_extensions.
 
 - OBML -> Ossie tags OrionBelt-proprietary payloads as ``ORIONBELT``.
 - Ossie -> OBML stashes Ossie-native fields OBML can't hold under ``Ossie``.
@@ -57,12 +57,12 @@ class TestOwnVendorTags:
             },
         }
         ossie = conv.OBMLtoOssie(obml).convert()
-        ce = ossie["custom_extensions"]
+        ce = ossie["nonportable_extensions"]
         assert all(e["vendor_name"] == "ORIONBELT" for e in ce)
 
     def test_ossie_to_obml_native_stash_uses_ossie_vendor(self) -> None:
         ossie = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "m",
             "datasets": [
                 {
@@ -83,28 +83,28 @@ class TestOwnVendorTags:
 class TestForeignVendorRoundtrip:
     def _ossie_with_foreign(self) -> dict[str, Any]:
         return {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "demo",
-            "custom_extensions": [
-                {"vendor_name": "DBT", "data": json.dumps({"model": "mart_x"})}
+            "nonportable_extensions": [
+                {"vendor_name": "DBT", "data": {"model": "mart_x"}}
             ],
             "datasets": [
                 {
                     "name": "Customers",
                     "source": "WH.PUB.customers",
-                    "custom_extensions": [
+                    "nonportable_extensions": [
                         {
                             "vendor_name": "SALESFORCE",
-                            "data": json.dumps({"object": "Account"}),
+                            "data": {"object": "Account"},
                         }
                     ],
                     "fields": [
                         _ossie_field(
                             "customer_id",
-                            custom_extensions=[
+                            nonportable_extensions=[
                                 {
                                     "vendor_name": "GOODDATA",
-                                    "data": json.dumps({"ldm": "a"}),
+                                    "data": {"ldm": "a"},
                                 }
                             ],
                         )
@@ -129,10 +129,10 @@ class TestForeignVendorRoundtrip:
         obml = conv.OssietoOBML(self._ossie_with_foreign()).convert()
         ossie = conv.OBMLtoOssie(obml, "demo").convert()
         sm = ossie
-        model_vendors = {e["vendor_name"] for e in sm["custom_extensions"]}
-        ds_vendors = {e["vendor_name"] for e in sm["datasets"][0]["custom_extensions"]}
+        model_vendors = {e["vendor_name"] for e in sm["nonportable_extensions"]}
+        ds_vendors = {e["vendor_name"] for e in sm["datasets"][0]["nonportable_extensions"]}
         field_vendors = {
-            e["vendor_name"] for e in sm["datasets"][0]["fields"][0]["custom_extensions"]
+            e["vendor_name"] for e in sm["datasets"][0]["fields"][0]["nonportable_extensions"]
         }
         assert "DBT" in model_vendors
         assert "SALESFORCE" in ds_vendors
@@ -140,7 +140,7 @@ class TestForeignVendorRoundtrip:
 
     def test_foreign_metric_roundtrip(self) -> None:
         ossie_in = {
-            "version": "0.2.0.dev0",
+            "version": "0.3.0.dev0",
             "name": "demo",
             "datasets": [
                 {
@@ -154,8 +154,8 @@ class TestForeignVendorRoundtrip:
                     "name": "Total",
                     "data_type": "number",
                     "description": "d",
-                    "custom_extensions": [
-                        {"vendor_name": "LOOKER", "data": json.dumps({"view": "sales"})}
+                    "nonportable_extensions": [
+                        {"vendor_name": "LOOKER", "data": {"view": "sales"}}
                     ],
                     "expression": {
                         "dialects": [
@@ -174,7 +174,7 @@ class TestForeignVendorRoundtrip:
         ]
         ossie_out = conv.OBMLtoOssie(obml, "demo").convert()
         metric = ossie_out["metrics"][0]
-        assert any(e["vendor_name"] == "LOOKER" for e in metric["custom_extensions"])
+        assert any(e["vendor_name"] == "LOOKER" for e in metric["nonportable_extensions"])
 
     def test_foreign_dimension_emitted_to_field(self) -> None:
         # Ossie has no separate dimension entity, so an OBML dimension's foreign
@@ -203,7 +203,7 @@ class TestForeignVendorRoundtrip:
         field = next(
             f for f in ossie["datasets"][0]["fields"] if f["name"] == "Status"
         )
-        assert any(e["vendor_name"] == "TABLEAU" for e in field["custom_extensions"])
+        assert any(e["vendor_name"] == "TABLEAU" for e in field["nonportable_extensions"])
 
 
 class TestLegacyBackCompat:
@@ -242,3 +242,59 @@ class TestLegacyBackCompat:
         assert ds.get("unique_keys") == [["Order ID"]]
         order_id = next(f for f in ds["fields"] if f["name"] == "Order ID")
         assert order_id.get("label") == "filter"
+
+
+class TestCommonIsNotOurs:
+    """COMMON is no longer a vendor name; only our own legacy payloads under it are ours."""
+
+    @staticmethod
+    def _ossie(model_exts: list[dict], dataset_exts: list[dict]) -> dict[str, Any]:
+        return {
+            "version": "0.3.0.dev0",
+            "name": "demo",
+            "nonportable_extensions": model_exts,
+            "datasets": [
+                {
+                    "name": "Orders",
+                    "source": "WH.PUB.orders",
+                    "nonportable_extensions": dataset_exts,
+                    "fields": [_ossie_field("order_id")],
+                }
+            ],
+        }
+
+    def test_another_vendors_common_state_is_carried_through(self) -> None:
+        # e.g. table properties an older Polaris import wrote under COMMON
+        foreign = {"vendor_name": "COMMON", "data": {"owner": "test_user"}}
+        obml = conv.OssietoOBML(self._ossie([], [foreign])).convert()
+        do = obml["dataObjects"]["Orders"]
+        assert {"vendor": "COMMON", "data": json.dumps(foreign["data"])} in do["customExtensions"]
+
+        ossie = conv.OBMLtoOssie(obml, "demo").convert()
+        assert foreign in ossie["datasets"][0]["nonportable_extensions"]
+
+    def test_our_legacy_common_payload_is_still_read(self) -> None:
+        legacy = {"vendor_name": "COMMON", "data": {"obml_owner": "data-team"}}
+        obml = conv.OssietoOBML(self._ossie([legacy], [])).convert()
+        assert obml.get("owner") == "data-team"
+        assert all(e.get("vendor") != "COMMON" for e in obml.get("customExtensions", []))
+
+    def test_our_legacy_common_provenance_stamp_is_still_read(self) -> None:
+        # the model-level payload of a plain model has no obml_ key, only the stamp
+        # (tests/fixtures/obml_as_ossie.yaml carries it under COMMON)
+        stamp = {
+            "vendor_name": "COMMON",
+            "data": {"source_format": "OBML", "source_version": "1.0", "converter": "ossie-orionbelt"},
+        }
+        obml = conv.OssietoOBML(self._ossie([stamp], [])).convert()
+        assert all(e.get("vendor") != "COMMON" for e in obml.get("customExtensions", []))
+
+        ossie = conv.OBMLtoOssie(obml, "demo").convert()
+        assert [e["vendor_name"] for e in ossie["nonportable_extensions"]] == ["ORIONBELT"]
+
+    def test_a_foreign_common_does_not_hide_our_payload(self) -> None:
+        foreign = {"vendor_name": "COMMON", "data": {"owner": "test_user"}}
+        ours = {"vendor_name": "ORIONBELT", "data": {"obml_owner": "data-team"}}
+        obml = conv.OssietoOBML(self._ossie([foreign, ours], [])).convert()
+        assert obml.get("owner") == "data-team"
+        assert {"vendor": "COMMON", "data": json.dumps(foreign["data"])} in obml["customExtensions"]

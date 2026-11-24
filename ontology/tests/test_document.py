@@ -31,7 +31,7 @@ from ossie_ontology.model import OssieOntology
 # The embedded mapping is unnamed and its field carries only the portable
 # `sql` form, both of which the schema allows.
 _DOCUMENT = """
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: Sales
 ontology:
 - concept: Order
@@ -45,7 +45,7 @@ ontology:
     multiplicity: OneToOne
 ontology_mappings:
 - semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: sales
     datasets:
     - name: ORDERS
@@ -87,7 +87,7 @@ def test_converters_round_trip_the_document():
 
 def test_export_omits_empty_optional_lists_but_keeps_required_ones():
     document = OssieOntologyModel.from_ossie_yaml("""
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: Empty
 ontology:
 - concept: Thing
@@ -100,7 +100,7 @@ ontology:
     exported = _export(SpecToOssieConverter().convert(document))
 
     assert exported == {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "Empty",
         "ontology": [{
             "concept": "Thing",

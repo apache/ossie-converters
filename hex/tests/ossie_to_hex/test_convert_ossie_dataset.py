@@ -17,7 +17,7 @@
 
 import pytest
 from inline_snapshot import snapshot
-from ossie import OssieAIContextObject, OssieCustomExtension
+from ossie import OssieAIContextObject, OssieNonportableExtension
 
 from ossie_hex.ossie_to_hex.context import ExportContext
 from ossie_hex.ossie_to_hex.convert_ossie_dataset import convert_ossie_dataset
@@ -28,7 +28,7 @@ from tests.utils import problems_snapshot
 @pytest.fixture
 def ctx() -> ExportContext:
     ctx = ExportContext()
-    ctx._set_dialects("ANSI_SQL", "duckdb")
+    ctx._set_dialects(None, "duckdb")
     ctx.hex_ids.set_for_dataset("foo", "foo")
     ctx.hex_ids.set_for_field("foo", "id", "id")
     return ctx
@@ -39,7 +39,7 @@ def test_preserve_name(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         name,
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -52,7 +52,7 @@ def test_preserve_description(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         description=description,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -66,7 +66,7 @@ def test_detects_table_source(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         source,
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -80,7 +80,7 @@ def test_detects_query_source(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         source,
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -94,7 +94,7 @@ def test_warns_about_empty_source(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         source,
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None
@@ -125,7 +125,7 @@ def test_single_primary_key_marks_field_unique(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         primary_key=primary_key,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -141,7 +141,7 @@ def test_warns_about_composite_primary_key(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         primary_key=primary_key,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -157,7 +157,7 @@ def test_single_unique_key_marks_field_unique(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         unique_keys=unique_keys,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -173,7 +173,7 @@ def test_warns_about_composite_unique_key(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         unique_keys=unique_keys,
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
@@ -189,7 +189,7 @@ def test_warns_about_ai_context(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
         ai_context=ai_context,
     )
     convert_ossie_dataset(foo, ctx=ctx)
@@ -197,12 +197,12 @@ def test_warns_about_ai_context(ctx: ExportContext) -> None:
 
 
 def test_warns_about_custom_extensions(ctx: ExportContext) -> None:
-    custom_extension = OssieCustomExtension(vendor_name="foo", data="bar")
+    custom_extension = OssieNonportableExtension(vendor_name="foo", data={"foo": "bar"})
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
-        custom_extensions=[custom_extension],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
+        nonportable_extensions=[custom_extension],
     )
     convert_ossie_dataset(foo, ctx=ctx)
     assert problems_snapshot(ctx.problems) == snapshot("[WARNING] Not supported")
@@ -212,7 +212,7 @@ def test_empty_measures_relations(ctx: ExportContext) -> None:
     foo = Quick.dataset(
         "foo",
         "public.foo",
-        [("id", "String", [("ANSI_SQL", "id")])],
+        [("id", "String", [("OSSIE_SQL_2026", "id")])],
     )
     result = convert_ossie_dataset(foo, ctx=ctx)
     assert result is not None

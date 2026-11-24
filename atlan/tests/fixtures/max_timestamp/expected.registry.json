@@ -1,0 +1,31 @@
+{
+ "last_store_sale_at": {
+  "name": "last_store_sale_at",
+  "description": "Timestamp of the most recent store sale",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "MAX(m.SS_SOLD_TIMESTAMP)",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "last_store_sale_at",
+    "datatype": "timestamp"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [],
+   "dimensions": [],
+   "examples": [],
+   "grain": "table-level",
+   "population": "All store sales"
+  }
+ }
+}

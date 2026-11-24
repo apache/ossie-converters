@@ -29,12 +29,13 @@ from functools import partial
 from typing import Any
 
 from ossie_orionbelt._common import (
-    _INTERNAL_VENDORS,
+    _CONVERTER_STAMP,
     _OSSIE_VENDOR_READ,
     _OSSIE_VERSION,
     _VENDOR_OBML,
     OBML_ABSTRACT_TO_OSSIE_DATATYPE,
     OBML_TO_OSSIE_TYPE,
+    _is_internal_vendor,
     obml_datatype_to_ossie,
 )
 from ossie_orionbelt._field_names import (
@@ -127,7 +128,7 @@ class OBMLtoOssie:
         roundtrip_data: dict[str, Any] = {
             "source_format": "OBML",
             "source_version": str(self.obml.get("version", "1.0")),
-            "converter": "ossie-orionbelt",
+            "converter": _CONVERTER_STAMP,
         }
         # Preserve model-level static filters for roundtrip
         obml_filters = self.obml.get("filters", [])
@@ -154,36 +155,47 @@ class OBMLtoOssie:
             roundtrip_data["obml_count_label_pattern"] = count_label_pattern
         if self.unexported:
             roundtrip_data["obml_unexported"] = self.unexported
-        sem_model["custom_extensions"] = [
+        sem_model["nonportable_extensions"] = [
             {
                 "vendor_name": _VENDOR_OBML,
-                "data": json.dumps(roundtrip_data),
+                "data": roundtrip_data,
             }
         ]
         # Re-emit third-party model-level vendor extensions verbatim
         self._emit_foreign_extensions(
-            self.obml.get("customExtensions"), sem_model["custom_extensions"]
+            self.obml.get("customExtensions"), sem_model["nonportable_extensions"]
         )
 
         # One model per document, its properties at the root (apache/ossie#383).
         # The root is additionalProperties:false, so there are no root-level
         # ``dialects`` / ``vendors`` arrays: dialects live per expression in
         # ``expression.dialects[]`` and vendors per entity in
-        # ``custom_extensions[].vendor_name``.
+        # ``nonportable_extensions[].vendor_name``.
         ossie.update(sem_model)
         return ossie
 
     def _emit_foreign_extensions(self, obml_exts: list[dict] | None, ossie_exts: list[dict]) -> None:
-        """Re-emit third-party OBML customExtensions as Ossie custom_extensions.
+        """Re-emit third-party OBML customExtensions as Ossie nonportable_extensions.
 
         Mirrors ``OssietoOBML._carry_foreign_extensions``: extensions from a
         vendor we do not handle internally are passed back to Ossie under their
-        original vendor name, completing the roundtrip.
+        original vendor name, completing the roundtrip. Ossie extension data is an
+        object, so a payload that is not a JSON object is dropped with a warning.
         """
         for ext in obml_exts or []:
             vendor = ext.get("vendor")
-            if vendor and vendor not in _INTERNAL_VENDORS:
-                ossie_exts.append({"vendor_name": vendor, "data": ext.get("data", "")})
+            if vendor and not _is_internal_vendor(vendor, ext.get("data")):
+                try:
+                    data = json.loads(ext.get("data") or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    data = None
+                if not isinstance(data, dict):
+                    self.warnings.append(
+                        f"customExtensions data for vendor '{vendor}' is not a JSON object; "
+                        "Ossie cannot carry it, so it is dropped"
+                    )
+                    continue
+                ossie_exts.append({"vendor_name": vendor, "data": data})
 
     def _convert_data_object(
         self, do_name: str, do_obj: dict, obml_dimensions: dict
@@ -285,14 +297,14 @@ class OBMLtoOssie:
             if rel:
                 relationships.append(rel)
 
-        # ── Preserve DataObject owner/comment + refresh in custom_extensions ──
+        # ── Preserve DataObject owner/comment + refresh in nonportable_extensions ──
         do_extras: dict[str, Any] = {}
         if do_obj.get("owner"):
             do_extras["obml_owner"] = do_obj["owner"]
         if do_obj.get("comment"):
             do_extras["obml_comment"] = do_obj["comment"]
         # OBML-only freshness contract — round-tripped through Ossie
-        # custom_extensions since Ossie has no native equivalent. See
+        # nonportable_extensions since Ossie has no native equivalent. See
         # design/PLAN_freshness_driven_cache.md §5.
         if do_obj.get("refresh"):
             do_extras["obml_refresh"] = do_obj["refresh"]
@@ -302,20 +314,20 @@ class OBMLtoOssie:
         if do_obj.get("countLabel") is not None:
             do_extras["obml_count_label"] = do_obj["countLabel"]
         if do_extras:
-            ds_exts = dataset.setdefault("custom_extensions", [])
+            ds_exts = dataset.setdefault("nonportable_extensions", [])
             ds_exts.append(
                 {
                     "vendor_name": _VENDOR_OBML,
-                    "data": json.dumps(do_extras),
+                    "data": do_extras,
                 }
             )
 
         # Re-emit third-party vendor extensions verbatim
         self._emit_foreign_extensions(
-            do_obj.get("customExtensions"), dataset.setdefault("custom_extensions", [])
+            do_obj.get("customExtensions"), dataset.setdefault("nonportable_extensions", [])
         )
-        if not dataset["custom_extensions"]:
-            del dataset["custom_extensions"]
+        if not dataset["nonportable_extensions"]:
+            del dataset["nonportable_extensions"]
 
         return dataset, relationships
 
@@ -413,7 +425,7 @@ class OBMLtoOssie:
         # carry a portable logical type...
         abstract_type = col_obj.get("abstractType", "string")
         field["datatype"] = OBML_ABSTRACT_TO_OSSIE_DATATYPE.get(abstract_type, "String")
-        # ...and stash the exact abstractType in custom_extensions so the return
+        # ...and stash the exact abstractType in nonportable_extensions so the return
         # trip restores it verbatim, lossless through the narrowing map.
         ossie_type = OBML_TO_OSSIE_TYPE.get(abstract_type, "string")
         ext_data: dict[str, Any] = {
@@ -451,20 +463,20 @@ class OBMLtoOssie:
                 if dim_obj.get("via"):
                     ext_data["obml_dimension_via"] = dim_obj["via"]
                 break
-        field["custom_extensions"] = [
+        field["nonportable_extensions"] = [
             {
                 "vendor_name": _VENDOR_OBML,
-                "data": json.dumps(ext_data),
+                "data": ext_data,
             }
         ]
 
         # Re-emit third-party vendor extensions verbatim. Ossie has no separate
         # dimension entity, so a matched dimension's foreign extensions surface
         # on the field too (they re-import onto the column).
-        self._emit_foreign_extensions(col_obj.get("customExtensions"), field["custom_extensions"])
+        self._emit_foreign_extensions(col_obj.get("customExtensions"), field["nonportable_extensions"])
         if matched_dim is not None:
             self._emit_foreign_extensions(
-                matched_dim.get("customExtensions"), field["custom_extensions"]
+                matched_dim.get("customExtensions"), field["nonportable_extensions"]
             )
 
         return field
@@ -570,7 +582,7 @@ class OBMLtoOssie:
         a stale preserved metric also uses, skip the preserved copy (the real
         metric wins) so the Ossie output has no duplicate metric names and passes
         semantic validation. Each appended metric carries its own dialects
-        (``expression.dialects[]``) and vendors (``custom_extensions``)
+        (``expression.dialects[]``) and vendors (``nonportable_extensions``)
         verbatim, which are the schema-valid homes for that metadata.
         """
         existing = {m.get("name") for m in ossie_metrics if isinstance(m, dict)}
@@ -673,23 +685,23 @@ class OBMLtoOssie:
         The reverse direction reads only the first OBML-vendor extension it
         finds, so every value goes into that one payload.
         """
-        exts = ossie_metric.setdefault("custom_extensions", [])
+        exts = ossie_metric.setdefault("nonportable_extensions", [])
         for ext in exts:
             if ext.get("vendor_name") == _VENDOR_OBML:
-                data = json.loads(ext.get("data") or "{}")
+                data = dict(ext.get("data") or {})
                 data[key] = value
-                ext["data"] = json.dumps(data)
+                ext["data"] = data
                 return
-        exts.append({"vendor_name": _VENDOR_OBML, "data": json.dumps({key: value})})
+        exts.append({"vendor_name": _VENDOR_OBML, "data": {key: value}})
 
     def _carry_foreign_to_ossie_metric(self, obml_obj: dict, ossie_metric: dict) -> None:
         """Re-emit third-party vendor extensions on an OBML measure/metric to
         the Ossie metric, dropping the key again if nothing foreign was added."""
         self._emit_foreign_extensions(
-            obml_obj.get("customExtensions"), ossie_metric.setdefault("custom_extensions", [])
+            obml_obj.get("customExtensions"), ossie_metric.setdefault("nonportable_extensions", [])
         )
-        if not ossie_metric["custom_extensions"]:
-            del ossie_metric["custom_extensions"]
+        if not ossie_metric["nonportable_extensions"]:
+            del ossie_metric["nonportable_extensions"]
 
     def _emit_ossie_metric_datatype(self, obml_obj: dict, ossie_metric: dict) -> None:
         """Emit the spec `datatype` from an explicit OBML measure/metric `dataType`.
@@ -697,7 +709,7 @@ class OBMLtoOssie:
         Only fires when the OBML object declares an exact `dataType`, so plain
         measures (whose type is only the defaulted `resultType`) stay untouched
         and round trips stay idempotent. The exact `dataType` also round-trips via
-        `obml_data_type` in `custom_extensions`; this adds the portable field.
+        `obml_data_type` in `nonportable_extensions`; this adds the portable field.
         """
         ossie_dt = obml_datatype_to_ossie(obml_obj.get("dataType"))
         if ossie_dt:
@@ -735,7 +747,7 @@ class OBMLtoOssie:
 
     @staticmethod
     def _add_obml_measure_extras(result: dict, measure: dict) -> None:
-        """Preserve OBML-only measure properties in custom_extensions for roundtrip."""
+        """Preserve OBML-only measure properties in nonportable_extensions for roundtrip."""
         extras: dict[str, Any] = {}
         if measure.get("filters"):
             extras["obml_filters"] = measure["filters"]
@@ -763,11 +775,11 @@ class OBMLtoOssie:
         if measure.get("_extra_obml_aggregation"):
             extras["obml_aggregation"] = measure["_extra_obml_aggregation"]
         if extras:
-            exts = result.setdefault("custom_extensions", [])
+            exts = result.setdefault("nonportable_extensions", [])
             exts.append(
                 {
                     "vendor_name": _VENDOR_OBML,
-                    "data": json.dumps(extras),
+                    "data": extras,
                 }
             )
 
@@ -821,7 +833,7 @@ class OBMLtoOssie:
             if metric.get(obml_key):
                 ext_data[ext_key] = metric[obml_key]
         if ext_data:
-            result["custom_extensions"] = [
-                {"vendor_name": _VENDOR_OBML, "data": json.dumps(ext_data)}
+            result["nonportable_extensions"] = [
+                {"vendor_name": _VENDOR_OBML, "data": ext_data}
             ]
         return result

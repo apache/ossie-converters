@@ -16,6 +16,18 @@
 # under the License.
 
 # One label per converter
+converter/ataccama:
+  - changed-files:
+      - any-glob-to-any-file: 'ataccama/**'
+
+converter/atlan:
+  - changed-files:
+      - any-glob-to-any-file: 'atlan/**'
+
+converter/bigquery:
+  - changed-files:
+      - any-glob-to-any-file: 'bigquery/**'
+
 converter/cube:
   - changed-files:
       - any-glob-to-any-file: 'cube/**'
@@ -43,6 +55,14 @@ converter/holistics:
 converter/honeydew:
   - changed-files:
       - any-glob-to-any-file: 'honeydew/**'
+
+converter/lightdash:
+  - changed-files:
+      - any-glob-to-any-file: 'lightdash/**'
+
+converter/linkml:
+  - changed-files:
+      - any-glob-to-any-file: 'linkml/**'
 
 converter/microsoft:
   - changed-files:
@@ -87,6 +107,14 @@ converter/sigma:
 converter/snowflake:
   - changed-files:
       - any-glob-to-any-file: 'snowflake/**'
+
+converter/solid:
+  - changed-files:
+      - any-glob-to-any-file: 'solid/**'
+
+converter/tableau:
+  - changed-files:
+      - any-glob-to-any-file: 'tableau/**'
 
 converter/thoughtspot:
   - changed-files:

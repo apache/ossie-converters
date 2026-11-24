@@ -20,6 +20,7 @@
 from copy import deepcopy
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -29,14 +30,20 @@ import yaml
 from interop.checks import ContentError, Validator, compare_inventory, native_content
 from interop.execution import diagnostics, run_command
 from interop.manifest import Converter, Manifest, ManifestError, expand, load_manifest
-from interop.report import write_report
-from interop.runner import Runner, exit_code
+from interop.report import _link, write_report
+from interop.runner import Runner, _satisfies, exit_code
 from interop.__main__ import main
+
+
+def test_evidence_link_escapes_table_cell_and_markdown_delimiters(tmp_path):
+    assert _link(tmp_path / "case evidence.json", tmp_path, "[a|b]\nnext") == (
+        r"[\[a\|b\] next](case%20evidence.json)"
+    )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "orders",
     "datasets": [
         {
@@ -58,15 +65,15 @@ MODEL = {
 
 def test_committed_manifest_registers_all_converter_projects():
     manifest = load_manifest(ROOT / "interop/manifest.yaml", ROOT)
+    # polaris and salesforce are Maven projects with no pyproject.toml.
     assert set(manifest.converters) == {
         p.parent.name
         for p in ROOT.glob("*/pyproject.toml")
         if p.parent.name != "interop"
-    } | {"databricks", "polaris", "salesforce"}
+    } | {"polaris", "salesforce"}
     assert sum(a != b for a in manifest.converters for b in manifest.converters) == len(
         manifest.converters
     ) * (len(manifest.converters) - 1)
-    assert manifest.converters["databricks"].toolchain == "maven"
     assert manifest.converters["dbt"].fixtures["orders"].is_file()
 
 
@@ -181,7 +188,7 @@ def test_validator_checks_schema_and_semantic_constraints(tmp_path):
     assert result[
         "errors"
     ]  # Duplicate fields are schema-shaped but semantically invalid.
-    path.write_text("version: '0.2.0.dev0'\nsemantic_model: []\n")
+    path.write_text("version: '0.3.0.dev0'\nsemantic_model: []\n")
     _, result = validator.validate(path)
     assert any("Schema" in error for error in result["errors"])
 
@@ -212,14 +219,14 @@ def test_extension_moves_between_owners_are_structural_changes(tmp_path, target)
     before = yaml.safe_load(
         (ROOT / "interop/fixtures/contracts/keys-joined/input.yaml").read_text()
     )
-    extension = {"vendor_name": "CUBE", "data": '{"type":"time"}'}
-    before["datasets"][0]["fields"][0]["custom_extensions"] = [extension]
+    extension = {"vendor_name": "CUBE", "data": {"type": "time"}}
+    before["datasets"][0]["fields"][0]["nonportable_extensions"] = [extension]
     after = deepcopy(before)
-    moved = after["datasets"][0]["fields"][0].pop("custom_extensions")
+    moved = after["datasets"][0]["fields"][0].pop("nonportable_extensions")
     owner = after
     for part in target:
         owner = owner[part]
-    owner["custom_extensions"] = moved
+    owner["nonportable_extensions"] = moved
     validator = Validator(ROOT)
     for name, data in (("before", before), ("after", after)):
         path = tmp_path / f"{name}.yaml"
@@ -227,10 +234,10 @@ def test_extension_moves_between_owners_are_structural_changes(tmp_path, target)
         assert validator.validate(path)[1] == {"errors": [], "warnings": []}
     changes = compare_inventory(before, after)
     assert changes["removed"] == [
-        ["extension", "field", "orders", "order_id", "CUBE", extension["data"]]
+        ["extension", "field", "orders", "order_id", "CUBE", json.dumps(extension["data"])]
     ]
     assert len(changes["added"]) == 1
-    assert changes["added"][0][-2:] == ["CUBE", extension["data"]]
+    assert changes["added"][0][-2:] == ["CUBE", json.dumps(extension["data"])]
     # Ownership changes must also be detected in the opposite direction.
     reverse = compare_inventory(after, before)
     assert reverse["removed"] == changes["added"]
@@ -243,16 +250,16 @@ def test_extension_ownership_is_stable_when_named_objects_are_reordered():
     )
     for ds in before["datasets"]:
         for field in ds["fields"]:
-            field["custom_extensions"] = [
-                {"vendor_name": "CUBE", "data": json.dumps({"field": field["name"]})},
-                {"vendor_name": "DBT", "data": "{}"},
+            field["nonportable_extensions"] = [
+                {"vendor_name": "CUBE", "data": {"field": field["name"]}},
+                {"vendor_name": "DBT", "data": {}},
             ]
     after = deepcopy(before)
     after["datasets"].reverse()
     for ds in after["datasets"]:
         ds["fields"].reverse()
         for field in ds["fields"]:
-            field["custom_extensions"].reverse()
+            field["nonportable_extensions"].reverse()
     changes = compare_inventory(before, after)
     assert not changes["removed"]
     assert not changes["added"]
@@ -355,7 +362,18 @@ def test_all_six_ordered_pairs_prepare_and_import_sources_once(matrix):
     assert saved["cases"][0]["commands"][0]["stdout"].startswith("cases/")
     assert saved["cases"][0]["commands"][0]["argv"][-1].startswith(str(runner.output))
     assert (runner.output / "cases" / pairs[0]["acceptance"] / "tier-B.json").is_file()
-    assert "Tier B ordered matrix" in (runner.output / "report.md").read_text()
+    report_text = (runner.output / "report.md").read_text()
+    _, heading, remainder = report_text.partition("## Tier B ordered matrix")
+    assert heading, "Missing Tier B ordered matrix heading"
+    matrix, heading, _ = remainder.partition("## Case details")
+    assert heading, "Missing Case details heading after Tier B ordered matrix"
+    assert "| alpha--orders | — | [OK]" in matrix
+    for pair in pairs:
+        path = Path(pair["output"]).with_name("tier-B.json")
+        assert (
+            f"[{pair['grade']}]({path.relative_to(runner.output).as_posix()})" in matrix
+        )
+        assert path.is_file()
 
 
 def test_source_failure_is_attributed_without_aborting_other_sources(matrix):
@@ -413,6 +431,87 @@ def test_missing_toolchain_is_explicit_and_never_satisfies_strict(matrix, monkey
     assert exit_code(report, strict=True) == 1
 
 
+def _uv_stub(tmp_path, version_text, *, exit_code=0):
+    """A stand-in `uv` that reports `version_text` for --version."""
+    path = tmp_path / "uv"
+    path.write_text(
+        "#!/bin/sh\n"
+        f'echo "{version_text}"\n'
+        f"exit {exit_code}\n"
+    )
+    path.chmod(0o755)
+    return path
+
+
+def test_uv_newer_than_required_version_passes_the_preflight(matrix, tmp_path, monkeypatch):
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "uv 0.12.9 (9f9286029 2026-09-01)")
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\nrequired-version = ">=0.9.0"\n')
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    assert report["preparations"]["alpha"]["grade"] == "OK"
+    assert "uv at" not in report["preparations"]["alpha"]["reason"]
+
+
+def test_uv_older_than_required_version_is_an_environment_skip(matrix, tmp_path, monkeypatch):
+    """A stale uv must name the path, the version and the requirement it missed.
+
+    Without this the matrix reports every uv converter as one indistinguishable
+    failure, which reads as a broken harness rather than the wrong interpreter.
+    """
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "uv 0.6.3")
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\nrequired-version = ">=0.9.0"\n')
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    preparation = report["preparations"]["alpha"]
+    assert preparation["grade"] == "SKIP"
+    assert str(stub) in preparation["reason"]
+    assert "0.6.3" in preparation["reason"]
+    assert ">=0.9.0" in preparation["reason"]
+    assert all(case["grade"] == "SKIP" for case in report["cases"])
+    assert exit_code(report) == 0
+    assert exit_code(report, strict=True) == 1
+
+
+def test_uv_preflight_does_not_claim_a_version_it_could_not_read(matrix, tmp_path, monkeypatch):
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "unparseable output")
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\nrequired-version = ">=0.9.0"\n')
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    preparation = report["preparations"]["alpha"]
+    assert preparation["grade"] == "SKIP"
+    assert "unusable" in preparation["reason"]
+    assert str(stub) in preparation["reason"]
+
+
+@pytest.mark.parametrize(
+    ("version", "requirement", "expected"),
+    [
+        ("0.12.9", ">=0.9.0", True),
+        ("0.6.3", ">=0.9.0", False),
+        ("0.9.0", ">=0.9.0", True),
+        ("0.8.99", ">=0.9.0", False),
+        ("1.0", ">=0.9.0", True),
+        ("0.9.0", "==0.9.0", True),
+        ("0.9.1", "==0.9.0", False),
+        ("0.9.0", "<0.10.0", True),
+        ("0.9.0", "not-a-constraint", None),
+    ],
+)
+def test_required_version_comparison(version, requirement, expected):
+    assert _satisfies(version, requirement) is expected
+
+
+def test_uv_preflight_is_skipped_without_a_declared_requirement(matrix, tmp_path, monkeypatch):
+    converter, run, _ = matrix
+    stub = _uv_stub(tmp_path, "uv 0.6.3")
+    monkeypatch.setenv("PATH", f"{stub.parent}:{os.environ['PATH']}")
+    _, report = run([converter("alpha")])
+    assert report["preparations"]["alpha"]["grade"] == "OK"
+
+
 def test_export_failure_does_not_abort_other_targets(matrix):
     converter, run, _ = matrix
     _, report = run([converter("alpha", export_mode="fail"), converter("beta")])
@@ -459,12 +558,12 @@ def test_silent_key_loss_is_lossy_even_without_warnings(matrix):
 def test_silent_extension_move_is_lossy_even_without_warnings(matrix):
     converter, _, path = matrix
     before = deepcopy(MODEL)
-    before["datasets"][0]["fields"][0]["custom_extensions"] = [
-        {"vendor_name": "CUBE", "data": "{}"}
+    before["datasets"][0]["fields"][0]["nonportable_extensions"] = [
+        {"vendor_name": "CUBE", "data": {}}
     ]
     after = deepcopy(before)
-    after["datasets"][0]["custom_extensions"] = after["datasets"][0]["fields"][0].pop(
-        "custom_extensions"
+    after["datasets"][0]["nonportable_extensions"] = after["datasets"][0]["fields"][0].pop(
+        "nonportable_extensions"
     )
     payload = path / "returned.json"
     payload.write_text(json.dumps(after))

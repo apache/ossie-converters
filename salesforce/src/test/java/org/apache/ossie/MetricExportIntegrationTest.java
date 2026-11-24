@@ -378,7 +378,7 @@ class MetricExportIntegrationTest {
 
     private static String document(Map<String, Object> model) throws IOException {
         Map<String, Object> root = new LinkedHashMap<>();
-        root.put("version", "0.2.0.dev0");
+        root.put("version", "0.3.0.dev0");
         root.putAll(model);
         return YAML.writeValueAsString(root);
     }
@@ -390,13 +390,13 @@ class MetricExportIntegrationTest {
     private static Map<String, Object> model(String name, List<Map<String, Object>> metrics) {
         Map<String, Object> model = new LinkedHashMap<>();
         model.put("name", name);
-        model.put("custom_extensions", List.of(Map.of("vendor_name", "SALESFORCE",
-                "data", "{\"dataspace\":\"default\"}")));
+        model.put("nonportable_extensions", List.of(Map.of("vendor_name", "SALESFORCE",
+                "data", Map.of("dataspace", "default"))));
         Map<String, Object> dataset = new LinkedHashMap<>();
         dataset.put("name", "orders");
         dataset.put("source", "orders__dll");
-        dataset.put("custom_extensions", List.of(Map.of("vendor_name", "SALESFORCE",
-                "data", "{\"dataObjectType\":\"Dlo\"}")));
+        dataset.put("nonportable_extensions", List.of(Map.of("vendor_name", "SALESFORCE",
+                "data", Map.of("dataObjectType", "Dlo"))));
         dataset.put("fields", List.of(field("profit", "Decimal"), field("revenue", "Decimal"),
                 field("quantity", "Integer"), field("customer_id", "String")));
         model.put("datasets", List.of(dataset));

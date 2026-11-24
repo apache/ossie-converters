@@ -25,15 +25,16 @@ Usage:
 """
 
 import re
+import reprlib
 import warnings
 
 import yaml
-from sqlglot import tokenize
-from sqlglot.errors import TokenError
+from sqlglot import exp, parse, parse_one, tokenize
+from sqlglot.errors import ErrorLevel, ParseError, SqlglotError, TokenError
 from sqlglot.tokens import TokenType
 
 
-SUPPORTED_VERSION = "0.2.0.dev0"
+SUPPORTED_VERSION = "0.3.0.dev0"
 
 _TIME_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
 
@@ -85,7 +86,7 @@ def convert_ossie_to_snowflake(ossie_yaml_str):
 
     Expects the standard Ossie document format::
 
-        version: "0.2.0.dev0"
+        version: "0.3.0.dev0"
         name: ...
         datasets: [...]
 
@@ -163,16 +164,9 @@ def _convert_model(ossie):
         if converted_rels:
             result["relationships"] = converted_rels
 
-    # metrics
-    metrics = ossie.get("metrics")
-    if metrics:
-        converted_metrics = []
-        for m in metrics:
-            converted = _convert_named_expr(m, "metric")
-            if converted is not None:
-                converted_metrics.append(converted)
-        if converted_metrics:
-            result["metrics"] = converted_metrics
+    converted_metrics = _convert_metrics(ossie)
+    if converted_metrics:
+        result["metrics"] = converted_metrics
 
     dropped_ai = ["ai_context"] if isinstance(ai_context, dict) and ai_context else []
     _warn_dropped_fields(ossie, "model", extra_dropped=dropped_ai)
@@ -201,10 +195,11 @@ def _convert_dataset(dataset):
 
     # unique_keys: [[...], ...] -> unique_keys: [{columns: [...]}, ...]
     # Snowflake semantic views do not take UNIQUE on the primary key columns,
-    # so a unique key that restates the primary key is not emitted.
+    # so a unique key that restates the primary key is not emitted. Keys are
+    # column sets: a unique key over the same columns in another order restates it too.
     uks = dataset.get("unique_keys")
     if uks and pk:
-        uks = [uk for uk in uks if list(uk) != list(pk)]
+        uks = [uk for uk in uks if set(uk) != set(pk)]
     if uks:
         result["unique_keys"] = [{"columns": uk} for uk in uks]
 
@@ -251,6 +246,10 @@ def _convert_dataset(dataset):
         if facts:
             result["facts"] = facts
 
+    table_metrics = _convert_dataset_metrics(dataset)
+    if table_metrics:
+        result["metrics"] = table_metrics
+
     dropped_ai = []
     if isinstance(ai_context, dict):
         non_synonym_keys = [k for k in ai_context if k != "synonyms"]
@@ -259,6 +258,86 @@ def _convert_dataset(dataset):
     _warn_dropped_fields(dataset, f"dataset '{name}'", extra_dropped=dropped_ai)
 
     return result
+
+
+def _convert_metrics(ossie):
+    """Model-root Ossie metrics become view-level Snowflake metrics."""
+    converted = []
+    seen = {}
+    for metric in ossie.get("metrics") or []:
+        _append_metric(converted, seen, metric)
+    return converted
+
+
+def _convert_dataset_metrics(dataset):
+    """Dataset-scoped Ossie metrics become Snowflake ``tables[].metrics``.
+
+    That list is scoped to the logical table, matching the Snowflake semantic
+    view YAML spec. A later metric on the same table that reuses a name is
+    skipped with a warning.
+    """
+    converted = []
+    seen = {}
+    dataset_name = dataset.get("name") or "<unnamed>"
+    source = dataset.get("source")
+    for metric in dataset.get("metrics") or []:
+        item = _convert_named_expr(metric, "metric")
+        if item is None:
+            continue
+        expr = _table_metric_expr(item["expr"], dataset_name, source, item["name"])
+        if expr is None:
+            continue
+        item["expr"] = expr
+        _append_metric(converted, seen, item, already_converted=True)
+    return converted
+
+
+def _append_metric(converted, seen, metric, already_converted=False):
+    item = metric if already_converted else _convert_named_expr(metric, "metric")
+    if item is None:
+        return
+    name = item["name"]
+    source = f"metric '{name}'"
+    if name in seen:
+        warnings.warn(f"{source} collides with {seen[name]}; skipped")
+        return
+    seen[name] = source
+    converted.append(item)
+
+
+def _local_table_aliases(dataset_name, source):
+    aliases = set()
+    if dataset_name:
+        aliases.add(str(dataset_name))
+    parsed = _parse_source(source) if source else None
+    if isinstance(parsed, dict) and parsed.get("table"):
+        aliases.add(str(parsed["table"]).strip('"'))
+    return {alias.lower() for alias in aliases}
+
+
+def _table_metric_expr(expr, dataset_name, source, metric_name):
+    """Unqualify columns of this table; skip if the expr names another table."""
+    aliases = _local_table_aliases(dataset_name, source)
+    try:
+        tree = parse_one(expr, dialect="snowflake")
+    except (ParseError, TokenError, ValueError):
+        return expr
+    changed = False
+    for column in tree.find_all(exp.Column):
+        table = column.table
+        if not table:
+            continue
+        if table.lower() in aliases:
+            column.set("table", None)
+            changed = True
+            continue
+        warnings.warn(
+            f"Skipping dataset-scoped metric '{dataset_name}.{metric_name}': "
+            f"expression names {table}.{column.name}, which is not a column of "
+            f"table '{dataset_name}'"
+        )
+        return None
+    return tree.sql(dialect="snowflake") if changed else expr
 
 
 def _classify_field(field):
@@ -378,10 +457,8 @@ def _convert_relationship(rel):
 def _extract_expression(expression, field_name):
     """Selects the best dialect expression for Snowflake.
 
-    Preference order: SNOWFLAKE, then ANSI_SQL, then OSSIE_SQL_2026 (the last two
-    are ANSI-SQL-compatible fallbacks). Returns the expression string, or None if
-    only unsupported dialects are present (the field should be skipped). Raises
-    OssieConversionError if the expression or dialects list is missing entirely.
+    Prefer SNOWFLAKE, ANSI_SQL, and tagged OSSIE_SQL_2026 in that order, then
+    translate a BIGQUERY alternative. Return None when no usable dialect exists.
     """
     if expression is None or not isinstance(expression, dict):
         raise OssieConversionError(
@@ -390,6 +467,12 @@ def _extract_expression(expression, field_name):
 
     dialects = expression.get("dialects")
     if not dialects:
+        if expression.get("sql") is not None:
+            warnings.warn(
+                f"Skipping field/metric '{field_name}': it has only a portable sql "
+                f"expression and no dialect entries"
+            )
+            return None
         raise OssieConversionError(
             f"Missing expression for field/metric '{field_name}'"
         )
@@ -398,6 +481,7 @@ def _extract_expression(expression, field_name):
     ansi_expr = None
     # OSSIE_SQL_2026 is ANSI-SQL-compatible; treated as an ANSI_SQL-equivalent fallback.
     ossie_sql_expr = None
+    bigquery_expr = None
 
     for d in dialects:
         dialect_name = (d.get("dialect") or "").upper()
@@ -407,6 +491,8 @@ def _extract_expression(expression, field_name):
             ansi_expr = d.get("expression")
         elif dialect_name == "OSSIE_SQL_2026":
             ossie_sql_expr = d.get("expression")
+        elif dialect_name == "BIGQUERY":
+            bigquery_expr = d.get("expression")
 
     if snowflake_expr is not None:
         return snowflake_expr
@@ -414,14 +500,49 @@ def _extract_expression(expression, field_name):
         return ansi_expr
     if ossie_sql_expr is not None:
         return ossie_sql_expr
+    if bigquery_expr is not None:
+        try:
+            translated = _translate_bigquery_expression(bigquery_expr)
+        except (SqlglotError, ValueError) as error:
+            warnings.warn(
+                f"Skipping field/metric '{field_name}': "
+                f"could not translate BIGQUERY SQL to Snowflake "
+                f"({reprlib.repr(bigquery_expr)}): {error}",
+                stacklevel=2,
+            )
+            return None
+        warnings.warn(
+            f"Translated field/metric '{field_name}' from BIGQUERY to SNOWFLAKE; "
+            "SQL translation can change results, including cast failures and NULL "
+            "handling. Review the generated expression.",
+            stacklevel=2,
+        )
+        return translated
 
     dialect_names = [d.get("dialect", "") for d in dialects]
     warnings.warn(
         f"Skipping field/metric '{field_name}': no Snowflake-compatible expression "
         f"(has dialects: {', '.join(dialect_names)}; requires SNOWFLAKE, ANSI_SQL, "
-        f"or OSSIE_SQL_2026)"
+        f"OSSIE_SQL_2026, or translatable BIGQUERY SQL)",
+        stacklevel=2,
     )
     return None
+
+
+def _translate_bigquery_expression(sql):
+    if not isinstance(sql, str):
+        raise ValueError("expected SQL text")
+    statements = parse(sql, read="bigquery")
+    if len(statements) != 1 or statements[0] is None:
+        raise ValueError("expected a single SQL expression")
+    tree = statements[0]
+    if tree.find(exp.Query, exp.Command, exp.DDL, exp.DML):
+        raise ValueError("expected a scalar or aggregate expression")
+    # SQLGlot can render unrecognized functions verbatim across dialects.
+    unknown = tree.find(exp.Anonymous)
+    if unknown is not None:
+        raise ValueError(f"unsupported function '{unknown.name}'")
+    return tree.sql(dialect="snowflake", unsupported_level=ErrorLevel.RAISE)
 
 
 def _normalize_identifier(identifier):
@@ -529,7 +650,7 @@ def _extract_synonyms(ai_context):
 def _warn_dropped_fields(source, context, extra_dropped=None):
     """Warns about Ossie fields that have no Snowflake counterpart and are dropped.
 
-    Checks for universally-dropped fields (custom_extensions, label, version).
+    Checks for universally-dropped fields (nonportable_extensions, label, version).
     Callers handle ai_context warnings themselves since consumption logic varies.
 
     Args:
@@ -540,8 +661,8 @@ def _warn_dropped_fields(source, context, extra_dropped=None):
     """
     dropped = list(extra_dropped) if extra_dropped else []
 
-    if source.get("custom_extensions"):
-        dropped.append("custom_extensions")
+    if source.get("nonportable_extensions"):
+        dropped.append("nonportable_extensions")
 
     if source.get("version"):
         dropped.append("version")

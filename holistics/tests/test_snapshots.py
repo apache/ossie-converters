@@ -47,6 +47,7 @@ import pytest
 
 import snapshots
 from ossie_holistics import _yaml, aml_to_ossie, aql, ossie_to_aml
+from ossie_holistics.cli import main
 from ossie_holistics.errors import ConversionError
 from ossie_holistics.issues import Severity
 
@@ -114,6 +115,30 @@ def test_the_forward_direction_reports_the_losses_it_declares():
         aml_to_ossie.ISSUE_RELATIONSHIP_FILTER,
         aml_to_ossie.ISSUE_UNSUPPORTED_RELATIONSHIP,
     }
+
+
+def test_cli_reports_unresolved_ecommerce_query_as_an_error(tmp_path):
+    issues_path = tmp_path / "issues.yaml"
+    status = main(
+        [
+            "to-ossie",
+            str(snapshots.ECOMMERCE_COMPILED),
+            "-o",
+            str(tmp_path / "model.yaml"),
+            "--sql-dialect",
+            snapshots.SQL_DIALECT,
+            "--issues",
+            str(issues_path),
+        ]
+    )
+    assert status == 1
+    issues = _yaml.load(issues_path.read_text(encoding="utf-8"))
+    assert isinstance(issues, list) and all(isinstance(issue, dict) for issue in issues)
+    assert any(
+        issue["code"] == aml_to_ossie.ISSUE_UNRESOLVED_QUERY
+        and issue["severity"] == "ERROR"
+        for issue in issues
+    )
 
 
 def test_every_qualified_reference_resolves():
@@ -362,8 +387,8 @@ def _metric(name: str, sql: str, **stashed) -> dict:
         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]},
     }
     if stashed:
-        payload["custom_extensions"] = [
-            {"vendor_name": "HOLISTICS", "data": json.dumps({"_v": 1, **stashed})}
+        payload["nonportable_extensions"] = [
+            {"vendor_name": "HOLISTICS", "data": {"_v": 1, **stashed}}
         ]
     return payload
 
@@ -551,12 +576,10 @@ STASH_VALUES = {
 
 def _with_persistence(value):
     document = _two_dataset_document([])
-    document["datasets"][0]["custom_extensions"] = [
+    document["datasets"][0]["nonportable_extensions"] = [
         {
             "vendor_name": "HOLISTICS",
-            "data": json.dumps(
-                {"_v": 1, "persistence": {"__type__": "FullPersistence", "opt": value}}
-            ),
+            "data": {"_v": 1, "persistence": {"__type__": "FullPersistence", "opt": value}},
         }
     ]
     return document
@@ -609,10 +632,10 @@ def _dataset_text(document):
 
 def _with_relationship_stash(**stashed):
     document = _two_dataset_document([])
-    document["relationships"][0]["custom_extensions"] = [
+    document["relationships"][0]["nonportable_extensions"] = [
         {
             "vendor_name": "HOLISTICS",
-            "data": json.dumps({"_v": 1, "type": "many_to_one", "active": True, **stashed}),
+            "data": {"_v": 1, "type": "many_to_one", "active": True, **stashed},
         }
     ]
     return document
@@ -711,3 +734,23 @@ def test_a_match_relationship_is_stashed_and_written_back(kind, aml_type):
     assert f"type: '{kind}'" in text
     assert "match: @aql order_items.id >= products.id;;" in text
     assert "rel: items_near_products" in text
+
+def test_clickhouse_dialect_parses_and_rewrites_column_references():
+    from ossie_holistics import sqlrefs
+
+    assert sqlrefs.SQLGLOT_DIALECT["CLICKHOUSE"] == "clickhouse"
+    cols = sqlrefs.columns(
+        "toStartOfMonth(created_at) + nullIf(revenue, 0)",
+        dialect="CLICKHOUSE",
+    )
+    assert [c.name for c in cols] == ["created_at", "revenue"]
+
+
+def test_trino_dialect_parses_and_rewrites_column_references():
+    from ossie_holistics import sqlrefs
+    assert sqlrefs.SQLGLOT_DIALECT["TRINO"] == "trino"
+    cols = sqlrefs.columns(
+        "DATE_TRUNC('month', created_at) + APPROX_DISTINCT(user_id)",
+        dialect="TRINO",
+    )
+    assert [c.name for c in cols] == ["created_at", "user_id"]

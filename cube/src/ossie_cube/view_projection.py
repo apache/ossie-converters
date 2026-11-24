@@ -18,7 +18,7 @@
 """Project one Cube view's public surface onto an Apache Ossie semantic model.
 
 `convert_cube_to_ossie` is a lossless round-trip import: every cube member becomes an
-Ossie field or metric, and the view's curation rides in `custom_extensions`. Publishing
+Ossie field or metric, and the view's curation rides in `nonportable_extensions`. Publishing
 a view to another tool needs the opposite boundary -- exactly the members the view
 exposes, under the names it exposes them by, and nothing the view keeps private.
 
@@ -57,6 +57,7 @@ from ._common import (
     unescape_braces_from_cube,
     write_stash,
 )
+from ._dataset_metric import native_local_expression
 from .converter_issues import IssueLog, IssueType
 from .cube_to_ossie import (
     _CUBE_NATIVE_KEYS,
@@ -69,6 +70,7 @@ from .cube_to_ossie import (
     _case_expression,
     _collect,
     _column_of,
+    _declare_key_fields,
     _decomposed_measure_names,
     _fanned_out_datasets,
     _fanout_unsafe_datasets,
@@ -146,7 +148,8 @@ class _JoinTree:
 
 
 def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
-                              *, source_dialect=None):
+                              *, source_dialect=None, default_catalog=None, default_schema=None,
+                              scope_native_metrics=True):
     """Convert one Cube view's public surface to Ossie YAML.
 
     `files` is a Cube model as {relative filename: YAML str}, the same input
@@ -164,6 +167,9 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
 
     `source_dialect` selects the warehouse SQL grammar and generated expression
     labels, and validates emitted SQL; None retains the legacy ANSI_SQL behavior.
+    `default_catalog` and `default_schema` qualify short table names as in
+    `convert_cube_to_ossie`. Set `scope_native_metrics=False` to publish every
+    measure at model scope.
     """
     if not isinstance(files, dict) or not files:
         raise ConversionError("expected a non-empty mapping of {filename: YAML}")
@@ -175,7 +181,7 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     validate_source_dialect(source_dialect)
 
     # The collection's own issues are about the lossless import -- a file preserved in
-    # custom_extensions only -- which a projection does not do.
+    # nonportable_extensions only -- which a projection does not do.
     cubes, _, views, _, _ = _collect(files, IssueLog())
     if view not in views:
         raise ConversionError(
@@ -221,7 +227,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     # and checks each join alone rather than the whole tree.
     imported = IssueLog()
     model = _build_model(reduced, {}, {view: reduced_view}, {}, {}, None, view, imported,
-                         source_dialect)
+                         source_dialect, restore_dataset_metrics=False,
+                         default_catalog=default_catalog, default_schema=default_schema)
     _refuse_unjoined(view, model, imported)
     for issue in imported:
         if issue.issue_type is not IssueType.FANOUT_UNSAFE_METRIC:
@@ -232,7 +239,8 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     resolver = _MeasureResolver(reduced, {}, IssueLog(), qualify=False,
                                 source_dialect=source_dialect)
     _report_fanout_of(resolver, tree, reduced, model, measures, issues)
-    _publish_surface(model, resolver, reduced, cubes, members, issues)
+    _publish_surface(model, resolver, reduced, cubes, members, issues, source_dialect,
+                     scope_native_metrics=scope_native_metrics)
     if source_dialect is not None:
         validate_imported_expressions(model)
     return dump_yaml({"version": OSSIE_VERSION, **model}), resolved_source, issues
@@ -925,12 +933,17 @@ def _refuse_mixed_data_sources(vname, tree, cubes):
 
 # --- the published surface --------------------------------------------------------
 
-def _publish_surface(model, resolver, reduced, cubes, members, issues):
+def _publish_surface(model, resolver, reduced, cubes, members, issues,
+                     source_dialect=None, *, scope_native_metrics=True):
     """Trim the imported model to the view's surface, in place.
 
     Fields and metrics are rebuilt from the view's members: renamed, with the view's
     overrides, and with measure references inlined, since the metrics they name are
     not published. The CUBE stash keeps only what describes the published model.
+
+    Ossie's `primary_key` and relationship columns name dataset *fields*, so a key or
+    join column the view does not expose is declared as a key-only field rather than
+    left pointing at nothing.
     """
     metric_names = _metric_names_of(resolver, _decomposed_measure_names(reduced))
     metrics = {m["name"]: m for m in model.get("metrics") or []}
@@ -959,33 +972,47 @@ def _publish_surface(model, resolver, reduced, cubes, members, issues):
             item["expression"] = {"dialects": [{
                 "dialect": item["expression"]["dialects"][0]["dialect"],
                 "expression": resolver.inlined(*key)}]}
-            published_metrics.append(item)
+            published_metrics.append((key, item))
         item["name"] = member.output
         _apply_override(item, member)
         _report_dropped(issues, f"{member.cube}.{member.name}",
                         _dropped_member_keys(member))
 
+    keys = {name: _primary_key_columns(cubes, name, issues) for name in datasets}
+    _declare_key_fields(cubes, published_fields, keys, model.get("relationships"),
+                        source_dialect)
     for ds in model["datasets"]:
         name = ds["name"]
         # In the import's key order: fields, then the key, then the stash.
-        extensions = ds.pop("custom_extensions", None)
+        extensions = ds.pop("nonportable_extensions", None)
         ds.pop("fields", None)
         ds.pop("primary_key", None)
         if published_fields[name]:
             ds["fields"] = published_fields[name]
-        key = _primary_key_columns(cubes, name, issues)
-        if key:
-            ds["primary_key"] = key
+        if keys[name]:
+            ds["primary_key"] = keys[name]
         if extensions:
-            ds["custom_extensions"] = extensions
+            ds["nonportable_extensions"] = extensions
         # The data source is a fact about the published dataset -- which warehouse its
         # table lives in -- so it stays, where the import puts it.
         data_source = cubes[name].get("data_source")
         _set_stash(ds, {} if data_source is None
                    else {"cube_extras": {"data_source": data_source}})
     model.pop("metrics", None)
-    if published_metrics:
-        model["metrics"] = published_metrics
+    for (cube, measure), metric in published_metrics:
+        dataset = datasets[cube]
+        fields = lookup_map([field["name"] for field in dataset.get("fields", [])])
+        entry = metric["expression"]["dialects"][0]
+        local = (native_local_expression(entry["expression"], entry["dialect"], cube,
+                                         bare_source=True)
+                 if scope_native_metrics and not resolver.has_foreign_measure_input(cube, measure)
+                 else None)
+        if local and not any(resolve_identifier(fields, name)
+                             for name in (metric["name"], "source")):
+            metric["expression"] = local
+            dataset.setdefault("metrics", []).append(metric)
+        else:
+            model.setdefault("metrics", []).append(metric)
     for rel in model.get("relationships") or []:
         stash = read_stash(rel)
         _set_stash(rel, {k: stash[k] for k in _PUBLISHED_JOIN_KEYS if k in stash})
@@ -1063,9 +1090,9 @@ def _report_dropped(issues, element, keys, detail=None):
 def _set_stash(obj, data):
     """Replace the CUBE stash on `obj` with `data`, keeping it ahead of any other
     vendor's entry the way the import orders them, and dropping it when empty."""
-    others = [e for e in obj.get("custom_extensions") or []
+    others = [e for e in obj.get("nonportable_extensions") or []
               if e.get("vendor_name") != VENDOR]
-    obj.pop("custom_extensions", None)
+    obj.pop("nonportable_extensions", None)
     write_stash(obj, data)
     if others:
-        obj.setdefault("custom_extensions", []).extend(others)
+        obj.setdefault("nonportable_extensions", []).extend(others)

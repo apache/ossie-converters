@@ -53,7 +53,7 @@ def test_sigma_osi_sigma_roundtrip_through_yaml_serialization(fixture_name):
 @pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_osi_sigma_osi_roundtrip_preserves_portable_fields(fixture_name):
     """Sigma -> Ossie -> Sigma -> Ossie: the second Ossie document's portable
-    (non-custom_extensions) content must match the first, even though the Sigma
+    (non-nonportable_extensions) content must match the first, even though the Sigma
     spec in between round-trips through JSON."""
     spec = load_fixture(fixture_name)
 

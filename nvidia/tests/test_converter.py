@@ -44,7 +44,7 @@ from ossie_nvidia_auto_ontology.native_converter import (
     _simple_source_column,
 )
 
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 FIXTURES = Path(__file__).parent / "fixtures"
 VALIDATOR = Path(__file__).resolve().parents[2] / "ossie" / "validation" / "validate.py"
 SCHEMA = Path(__file__).resolve().parents[2] / "ossie" / "core-spec" / "ossie-schema.json"
@@ -61,10 +61,10 @@ def _auto_ontology_yaml() -> str:
 def _native_extension(item: dict[str, Any]) -> dict[str, Any]:
     extension = next(
         value
-        for value in item.get("custom_extensions") or []
+        for value in item.get("nonportable_extensions") or []
         if value["vendor_name"] == "NVIDIA_AUTO_ONTOLOGY"
     )
-    return json.loads(extension["data"])
+    return extension["data"]
 
 
 def _manual_sql(native: dict[str, Any], name: str) -> str:
@@ -1316,6 +1316,37 @@ def test_a_plain_ossie_model_resolves_field_named_keys_to_columns() -> None:
     ]
 
 
+def test_a_key_field_with_only_sql_resolves_to_the_column_it_reads() -> None:
+    """Skipped, the field left the key and the join naming `customer_number`,
+    a column the table does not have."""
+    model = yaml.safe_load(_ossie_yaml())
+    customers = next(
+        dataset for dataset in model["datasets"] if dataset["name"] == "customers"
+    )
+    key_field = next(
+        item for item in customers["fields"] if item["name"] == "customer_id"
+    )
+    key_field["name"] = "customer_number"
+    key_field["expression"] = {"sql": "customer_id"}
+    customers["primary_key"] = ["customer_number"]
+    model["relationships"][0]["to_columns"] = ["customer_number"]
+
+    native = yaml.safe_load(convert_ossie_to_auto_ontology(yaml.safe_dump(model)))
+
+    tables = {
+        table["name"]: table
+        for table in native["data_layer"]["databases"][0]["schemas"][0]["tables"]
+    }
+    assert tables["customers"]["pk"] == ["customer_id"]
+    assert [column["name"] for column in tables["customers"]["columns"]] == [
+        "customer_id",
+        "name",
+    ]
+    assert native["data_layer"]["joins"][0]["join_columns"] == [
+        {"source": "customer_id", "target": "customer_id"}
+    ]
+
+
 def test_an_export_from_before_identifier_names_keeps_its_identifiers() -> None:
     native = _display_named_native()
     _term(native, "Customer Orders")["name"] = (
@@ -1448,6 +1479,19 @@ def test_duplicate_auto_ontology_field_names_across_attribute_kinds_are_rejected
         convert_auto_ontology_to_ossie(yaml.safe_dump(native))
 
 
+def test_sql_only_field_and_metric_are_read_from_their_sql() -> None:
+    ossie = yaml.safe_load(_ossie_yaml())
+    orders = next(dataset for dataset in ossie["datasets"] if dataset["name"] == "orders")
+    net_total = next(field for field in orders["fields"] if field["name"] == "net_total")
+    net_total["expression"] = {"sql": "orders.net_total * 1.1"}
+    ossie["metrics"][0]["expression"] = {"sql": "SUM(orders.net_total)"}
+
+    converted = convert_ossie_to_auto_ontology(yaml.safe_dump(ossie))
+
+    assert "orders.net_total * 1.1" in converted
+    assert "SUM(orders.net_total)" in converted
+
+
 def test_catalog_only_auto_ontology_has_no_representable_terms() -> None:
     native = yaml.safe_load(_auto_ontology_yaml())
     native["semantic_layer"]["terms"] = []
@@ -1531,7 +1575,7 @@ def test_auto_ontology_sourced_catalog_is_never_widened_by_sql_identifiers() -> 
     assert "not_a_real_column" not in {column["name"] for column in after_columns}
 
 
-@pytest.mark.parametrize("version", ["0.2.0.dev0", "0.2.0", "0.2.1", "0.2.7.dev3"])
+@pytest.mark.parametrize("version", ["0.3.0.dev0", "0.3.0", "0.3.1", "0.3.7.dev3"])
 def test_any_release_in_the_supported_series_is_accepted(version: str) -> None:
     ossie = yaml.safe_load(_ossie_yaml())
     ossie["version"] = version
@@ -1541,7 +1585,7 @@ def test_any_release_in_the_supported_series_is_accepted(version: str) -> None:
     assert native["semantic_layer"]["terms"]
 
 
-@pytest.mark.parametrize("version", ["0.1.9", "0.3.0", "1.0.0", "", "dev"])
+@pytest.mark.parametrize("version", ["0.1.9", "0.2.0", "1.0.0", "", "dev"])
 def test_versions_outside_the_supported_series_are_rejected(version: str) -> None:
     ossie = yaml.safe_load(_ossie_yaml())
     ossie["version"] = version

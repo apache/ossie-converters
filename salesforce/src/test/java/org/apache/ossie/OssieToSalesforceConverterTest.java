@@ -328,6 +328,42 @@ class OssieToSalesforceConverterTest {
         assertNull(sfDataObject.get("semanticDimensions"), "the field should still be omitted");
     }
 
+    @Test
+    void testCalculatedFieldWithOnlyPortableSqlIsReportedAndOmitted() {
+        // An expression may carry only `sql`, with no `dialects` list to unwrap. Its `sql` is
+        // OSSIE_SQL_2026, and export only translates a calculation written in TABLEAU.
+        Map<String, Object> ossieField = Map.of(
+                "name", "order_year",
+                "dimension", Map.of(),
+                "expression", Map.of("sql", "YEAR(order_date)"));
+        Map<String, Object> sourceData = Map.of(
+                "datasets", List.of(Map.of("name", "Orders", "fields", List.of(ossieField))));
+        Map<String, Object> sfDataObject = new LinkedHashMap<>(Map.of("apiName", "Orders"));
+        Map<String, Object> outputData = new LinkedHashMap<>(
+                Map.of("semanticDataObjects", new ArrayList<>(List.of(sfDataObject))));
+
+        Logger fieldLogger = (Logger) LoggerFactory.getLogger(FieldMappingHandler.class);
+        ListAppender<ILoggingEvent> warnings = new ListAppender<>();
+        warnings.start();
+        fieldLogger.addAppender(warnings);
+        try {
+            new FieldMappingHandler(ConversionDirection.OSSIE_TO_SALESFORCE,
+                    new CustomExtensionHandler(jsonMapper))
+                    .execute(sourceData, outputData, Map.of());
+        } finally {
+            fieldLogger.detachAppender(warnings);
+        }
+
+        List<String> reported = warnings.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
+        assertEquals(1, reported.size(), "the omitted field should be reported once: " + reported);
+        assertTrue(reported.get(0).contains("order_year") && reported.get(0).contains("Orders"),
+                "the warning should name the field and its dataset: " + reported);
+        assertNull(sfDataObject.get("semanticDimensions"), "the field should be omitted");
+    }
+
     /**
      * Converts {@code ossieModel}, adding every warning {@link FieldMappingHandler} reported
      * while doing so to {@code warningsOut}.
@@ -396,7 +432,7 @@ class OssieToSalesforceConverterTest {
      * Export has to carry the second relationship's own endpoints and columns across.
      */
     private static String ossieModelWithAFilteredRelationshipFirst() {
-        return "version: 0.2.0.dev0\n"
+        return "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + dataset("Customers", "customer_id")
@@ -459,7 +495,7 @@ class OssieToSalesforceConverterTest {
         // as an enabled, queryable relationship that joins nothing, so this is a spec violation
         // (core-spec/spec.md requires the same count on both sides), not a Salesforce
         // limitation: the whole conversion must fail instead of silently dropping it.
-        String model = "version: 0.2.0.dev0\n"
+        String model = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + dataset("Customers", "customer_id", "tenant_id")
@@ -486,7 +522,7 @@ class OssieToSalesforceConverterTest {
         // A relationship naming an undeclared dataset used to be dropped by the entity lookup
         // before the column-count check ran, so this case was silently filtered instead of
         // rejected.
-        String model = "version: 0.2.0.dev0\n"
+        String model = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + dataset("Orders", "customer_id", "product_id")
@@ -545,7 +581,7 @@ class OssieToSalesforceConverterTest {
         // unclaimed, and whatever is left unclaimed is applied generically once every
         // handler has run -- putting the rejected relationships back into the payload in
         // their Ossie shape, which the semantic model API answers with HTTP 500.
-        String ossieModel = "version: 0.2.0.dev0\n"
+        String ossieModel = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Orders\n"
@@ -760,20 +796,20 @@ class OssieToSalesforceConverterTest {
         // Normalize line endings first: the fixture file may check out with CRLF depending on
         // the platform's autocrlf setting, but the substitutions below are written with LF.
         // The Ossie schema puts no minLength on a field label, so an empty one is a valid
-        // model, and a label restored from custom_extensions can be null. Salesforce rejects
+        // model, and a label restored from nonportable_extensions can be null. Salesforce rejects
         // both exactly as it rejects a missing MasterLabel.
         String yamlWithBlankLabels = ossieYaml.replace("\r\n", "\n")
                 .replace("    label: Unit Price\n", "    label: \"\"\n")
                 .replace("    label: Order ID\n", "")
                 .replace("        expression: order_id__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n",
                         "        expression: order_id__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n"
                         + "          \"label\" : null,\n");
         assertFalse(yamlWithBlankLabels.contains("label: Unit Price"), "fixture text substitution did not match");
@@ -814,7 +850,7 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(orderId);
         assertEquals("order_id", orderId.get("label"),
-                "a null label restored from custom_extensions should be defaulted to apiName");
+                "a null label restored from nonportable_extensions should be defaulted to apiName");
     }
 
     @Test
@@ -822,7 +858,7 @@ class OssieToSalesforceConverterTest {
         // Normalize line endings first: the fixture file may check out with CRLF depending on
         // the platform's autocrlf setting, but the substitution below is written with LF.
         // Drop the Ossie label from product_name and stash a Salesforce one in its
-        // custom_extensions instead, so the only label available is the restored one.
+        // nonportable_extensions instead, so the only label available is the restored one.
         String yamlWithExtensionLabel = ossieYaml.replace("\r\n", "\n").replace(
                 "  - name: product_name\n"
                         + "    datatype: String\n"
@@ -834,9 +870,9 @@ class OssieToSalesforceConverterTest {
                         + "      dialects:\n"
                         + "      - dialect: ANSI_SQL\n"
                         + "        expression: product_name__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n"
                         + "          \"dataType\" : \"Text\",\n",
                 "  - name: product_name\n"
@@ -848,9 +884,9 @@ class OssieToSalesforceConverterTest {
                         + "      dialects:\n"
                         + "      - dialect: ANSI_SQL\n"
                         + "        expression: product_name__c\n"
-                        + "    custom_extensions:\n"
+                        + "    nonportable_extensions:\n"
                         + "    - vendor_name: SALESFORCE\n"
-                        + "      data: |-\n"
+                        + "      data:\n"
                         + "        {\n"
                         + "          \"label\" : \"Product Name (Custom Label)\",\n"
                         + "          \"dataType\" : \"Text\",\n");
@@ -877,7 +913,7 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(productName);
         assertEquals("Product Name (Custom Label)", productName.get("label"),
-                "a label restored from custom_extensions should win over the apiName default");
+                "a label restored from nonportable_extensions should win over the apiName default");
     }
 
     @Test
@@ -992,9 +1028,9 @@ class OssieToSalesforceConverterTest {
                         + "    dialects:\n"
                         + "    - dialect: ANSI_SQL\n"
                         + "      expression: SUM([Orders].[amount])\n"
-                        + "  custom_extensions:\n"
+                        + "  nonportable_extensions:\n"
                         + "  - vendor_name: SALESFORCE\n"
-                        + "    data: |-\n"
+                        + "    data:\n"
                         + "      {\n"
                         + "        \"label\": \"Total Revenue (Custom Label)\",\n"
                         + "        \"dataType\": \"Currency\"\n"
@@ -1012,10 +1048,10 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(totalRevenue);
         assertEquals("Total Revenue (Custom Label)", totalRevenue.get("label"),
-                "custom_extensions on a metric should be restored onto its exported semanticCalculatedMeasurement");
+                "nonportable_extensions on a metric should be restored onto its exported semanticCalculatedMeasurement");
         assertEquals("Currency", totalRevenue.get("dataType"),
-                "exact Salesforce dataType restored from custom_extensions should win over the Tua compiler's derived type");
-        // The compiled Tua expression is still produced normally; restoring custom_extensions
+                "exact Salesforce dataType restored from nonportable_extensions should win over the Tua compiler's derived type");
+        // The compiled Tua expression is still produced normally; restoring nonportable_extensions
         // must not interfere with fields the expression compiler itself computes.
         assertEquals("SUM([Orders].[amount])", totalRevenue.get("expression"));
         assertEquals("Tua", totalRevenue.get("syntax"));
@@ -1026,9 +1062,9 @@ class OssieToSalesforceConverterTest {
                 .orElse(null);
         assertNotNull(avgOrderValue);
         assertEquals("avg_order_value", avgOrderValue.get("label"),
-                "a metric with no custom_extensions label should default its label to apiName");
+                "a metric with no nonportable_extensions label should default its label to apiName");
         assertEquals("Number", avgOrderValue.get("dataType"),
-                "a metric with no custom_extensions dataType should keep the Tua compiler's derived type");
+                "a metric with no nonportable_extensions dataType should keep the Tua compiler's derived type");
     }
 
     @Test
@@ -1172,12 +1208,12 @@ class OssieToSalesforceConverterTest {
 
     /**
      * Builds a model that never passed through Salesforce, so it carries no
-     * custom_extensions to restore the API's required properties from. Every other
+     * nonportable_extensions to restore the API's required properties from. Every other
      * converter in the hub hands the Salesforce side a document shaped like this.
      */
     private static String ossieModelWithoutSalesforceExtensions(String... sources) {
         StringBuilder yaml = new StringBuilder()
-                .append("version: 0.2.0.dev0\n")
+                .append("version: 0.3.0.dev0\n")
                 .append("name: Imported_Model\n")
                 .append("datasets:\n");
         for (int i = 0; i < sources.length; i++) {
@@ -1204,7 +1240,7 @@ class OssieToSalesforceConverterTest {
         Map<String, Object> sfModel = jsonMapper.readValue(results.get(0), new TypeReference<Map<String, Object>>() {});
 
         assertEquals("default", sfModel.get("dataspace"),
-                "a model with no Salesforce custom_extensions should still carry a dataspace");
+                "a model with no Salesforce nonportable_extensions should still carry a dataspace");
     }
 
     /**
@@ -1214,7 +1250,7 @@ class OssieToSalesforceConverterTest {
      * declares only {@code regionDatatype}, which is either absent or a portable type.
      */
     private static String ossieModelWithUntypedFields(String regionDatatype) {
-        return "version: 0.2.0.dev0\n"
+        return "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Orders\n"
@@ -1278,7 +1314,7 @@ class OssieToSalesforceConverterTest {
      * {@code declareTheKeyAsAFieldToo} also puts it among the fields.
      */
     private static String ossieModelWithAPrimaryKey(boolean declareTheKeyAsAFieldToo) {
-        return "version: 0.2.0.dev0\n"
+        return "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Customers\n"
@@ -1346,11 +1382,30 @@ class OssieToSalesforceConverterTest {
     }
 
     @Test
+    void testPrimaryKeyFieldWithOnlyPortableSqlKeepsTheRelationshipJoiningOnIt() throws Exception {
+        // A declared key field counts as covering the key, so no key field is added for it.
+        // Omitted for having no dialect entries, it would take the relationship with it.
+        String sqlOnlyKey = "  - name: customer_id\n"
+                + "    dimension: {}\n"
+                + "    expression:\n"
+                + "      sql: customer_id\n";
+        String ossieModel = ossieModelWithAPrimaryKey(true).replace(ossieDimension("customer_id"), sqlOnlyKey);
+        List<String> results = converter.convert(ossieModel);
+        Map<String, Object> sfModel = jsonMapper.readValue(results.get(0), new TypeReference<Map<String, Object>>() {});
+
+        assertTrue(dimensionsOf(sfModel, "Customers").stream()
+                        .anyMatch(d -> "customer_id".equals(d.get("apiName"))),
+                "a primary key field written only in sql should be exported as a dimension");
+        assertEquals(1, ((List<Map<String, Object>>) sfModel.get("semanticRelationships")).size(),
+                "the relationship joining on the primary key should survive export");
+    }
+
+    @Test
     void testTheFallbackDataTypeIsNamedInTheWarning() throws Exception {
         // The fallback can change the field's meaning -- a Time measurement ships as
         // Number -- so the warning has to say which dataType was chosen, not just that
         // one was. Omitting it instead is not an option: the API rejects such a field.
-        String ossieModel = "version: 0.2.0.dev0\n"
+        String ossieModel = "version: 0.3.0.dev0\n"
                 + "name: Imported_Model\n"
                 + "datasets:\n"
                 + "- name: Orders\n"
@@ -1427,7 +1482,7 @@ class OssieToSalesforceConverterTest {
         assertNotNull(customers);
         assertEquals("Customers__dll", customers.get("dataObjectName"));
         assertEquals("Dmo", customers.get("dataObjectType"),
-                "a dataObjectType restored from custom_extensions should win over the suffix default");
+                "a dataObjectType restored from nonportable_extensions should win over the suffix default");
     }
 
     @Test

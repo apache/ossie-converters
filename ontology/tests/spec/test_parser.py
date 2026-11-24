@@ -25,16 +25,22 @@ from pathlib import Path
 
 import pytest
 import yaml
-from ossie.models import OssieOntologyModel
+from ossie.models import OssieDialectExpression, OssieExpression, OssieOntologyModel
 from pydantic import ValidationError
 
 from ossie_ontology.converter.ossie_to_spec.converter import (
     OssieToSpecConverter,
+    _convert_expression as ossie_to_spec_expression,
     _convert_ontology_concepts,
 )
+from ossie_ontology.converter.spec_to_ossie.converter import (
+    _convert_expression as spec_to_ossie_expression,
+)
+from ossie_ontology.expr.sql import field_expression
 from ossie_ontology.model import (
     Concept,
     ConceptType,
+    DatasetField,
     DataType,
     Formula,
     OntologyComponent,
@@ -49,20 +55,20 @@ from ossie_ontology.parser import OssieParser
 
 def test_parse_returns_model_with_metadata(flights_model):
     assert flights_model.name == "Flights"
-    assert flights_model.version == "0.2.0.dev0"
+    assert flights_model.version == "0.3.0.dev0"
     assert flights_model.description == "Ontology of flights into and out of airports."
 
 
 def test_embedded_core_document_version_survives_roundtrip(flights_model, tmp_path):
     assert all(
-        mapping.semantic_model.version == "0.2.0.dev0"
+        mapping.semantic_model.version == "0.3.0.dev0"
         for mapping in flights_model.ontology_mappings
     )
 
     exported = OssieToSpecConverter.convert(flights_model).to_ossie_yaml()
     document = yaml.safe_load(exported)
     assert all(
-        mapping["semantic_model"]["version"] == "0.2.0.dev0"
+        mapping["semantic_model"]["version"] == "0.3.0.dev0"
         for mapping in document["ontology_mappings"]
     )
 
@@ -70,7 +76,7 @@ def test_embedded_core_document_version_survives_roundtrip(flights_model, tmp_pa
     path.write_text(exported)
     reparsed = OssieParser().parse(path)
     assert all(
-        mapping.semantic_model.version == "0.2.0.dev0"
+        mapping.semantic_model.version == "0.3.0.dev0"
         for mapping in reparsed.ontology_mappings
     )
 
@@ -100,7 +106,6 @@ def test_parse_rejects_a_null_embedded_version(flights_path, tmp_path):
 
 
 def test_parse_rejects_a_missing_document_version(flights_path, tmp_path):
-    """Unlike the embedded semantic model's, the file's own `version` is required."""
     document = yaml.safe_load(flights_path.read_text())
     del document["version"]
     path = tmp_path / "unversioned.yaml"
@@ -110,17 +115,19 @@ def test_parse_rejects_a_missing_document_version(flights_path, tmp_path):
         OssieParser().parse(path)
 
 
-def test_parse_defaults_a_missing_embedded_version(flights_path, tmp_path):
-    """`ossie.models.OssieDocument` gives `version` the one value the schema
-    pins, so `model_validate` fills in a missing one rather than rejecting it."""
+def test_parse_rejects_a_missing_embedded_version(flights_path, tmp_path):
+    """The embedded semantic model is a whole core document, so its `version` is
+    required too."""
     document = yaml.safe_load(flights_path.read_text())
     del document["ontology_mappings"][0]["semantic_model"]["version"]
     path = tmp_path / "unversioned.yaml"
     path.write_text(yaml.safe_dump(document))
 
-    model = OssieParser().parse(path)
-
-    assert model.ontology_mappings[0].semantic_model.version == "0.2.0.dev0"
+    with pytest.raises(
+        ValueError,
+        match=r"missing the required property: ontology_mappings\[0\]\.semantic_model\.version",
+    ):
+        OssieParser().parse(path)
 
 
 @pytest.mark.parametrize("missing", [True, False], ids=["missing", "empty"])
@@ -227,7 +234,7 @@ def test_ontology_mapping(flights_model):
 # ----- load_data --------------------------------------------------------
 
 _MINIMAL_SPEC = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "Minimal",
     "ontology": [{"concept": "Thing", "type": "EntityType"}],
 }
@@ -320,7 +327,7 @@ def test_to_ossie_yaml_is_deterministic_for_fixed_input(flights_path):
 
 def _write_spec(tmp_path: Path, concepts: list[dict]) -> Path:
     path = tmp_path / "spec.yaml"
-    path.write_text(yaml.safe_dump({"version": "0.2.0.dev0", "name": "Demo", "ontology": concepts}))
+    path.write_text(yaml.safe_dump({"version": "0.3.0.dev0", "name": "Demo", "ontology": concepts}))
     return path
 
 
@@ -445,7 +452,7 @@ def _write_mapped_spec(
             field["datatype"] = field_datatype
         fields.append(field)
     semantic_model: dict = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "sm",
         "datasets": [{"name": "T", "source": "DB.S.T", "fields": fields}],
     }
@@ -453,7 +460,7 @@ def _write_mapped_spec(
         semantic_model["metrics"] = metrics
     path = tmp_path / "spec.yaml"
     path.write_text(yaml.safe_dump({
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "Demo",
         "ontology": concepts,
         "ontology_mappings": [{"name": "m", "semantic_model": semantic_model, "concept_mappings": concept_mappings}],
@@ -794,7 +801,7 @@ def test_is_primitive_still_follows_a_chain_to_its_builtin_root():
 # ----- Global identifiers -----------------------------------------------
 
 _IRI_SPEC = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "Demo",
     "prefixes": {"foaf": "http://xmlns.com/foaf/0.1/"},
     "ontology": [
@@ -859,3 +866,40 @@ def test_a_document_without_iris_dumps_neither_field(tmp_path: Path):
 
     assert "iri:" not in dumped
     assert "prefixes:" not in dumped
+
+
+# ----- the top-level `sql` of an expression -----------------------------
+
+def test_a_field_with_only_sql_is_read_from_it():
+    """Read without its `sql`, such a field had no dialect and fell back to
+    the column it is named after."""
+    expression = spec_to_ossie_expression(OssieExpression(sql="amount * 1.1"))
+    field = DatasetField(name="amount_usd", expression=expression)
+
+    assert field_expression(field, ("SNOWFLAKE", "ANSI_SQL")) == "amount * 1.1"
+
+
+def test_the_top_level_sql_wins_over_an_ossie_sql_entry():
+    expression = spec_to_ossie_expression(
+        OssieExpression(
+            sql="amount * 1.1",
+            dialects=[
+                OssieDialectExpression(dialect="OSSIE_SQL_2026", expression="amount"),
+                OssieDialectExpression(dialect="SNOWFLAKE", expression="amount * 1.2"),
+            ],
+        )
+    )
+
+    assert expression.by_dialect("OSSIE_SQL_2026").expression == "amount * 1.1"
+    assert expression.primary.expression == "amount * 1.1"
+    assert expression.by_dialect("SNOWFLAKE").expression == "amount * 1.2"
+
+
+def test_a_field_with_only_sql_is_written_back_with_its_expression():
+    """Written without its `sql`, such a field was saved as `expression: {}`,
+    which the core schema rejects."""
+    written = ossie_to_spec_expression(
+        spec_to_ossie_expression(OssieExpression(sql="amount * 1.1"))
+    )
+
+    assert written.model_dump(exclude_none=True) == {"sql": "amount * 1.1"}

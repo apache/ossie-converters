@@ -37,14 +37,17 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize(
     "name",
     [
+        "atlan",
         "gooddata",
         "honeydew",
+        "lightdash",
         "microsoft",
         "nvidia",
         "omni",
         "orionbelt",
         "salesforce",
         "sigma",
+        "solid",
         "thoughtspot",
         "wisdom",
         "wisdom-semantic-view",
@@ -62,9 +65,12 @@ def test_registered_native_sources_have_real_members(name):
 @pytest.mark.parametrize(
     "fmt",
     [
+        "atlan",
         "gooddata",
         "hex",
         "honeydew",
+        "lightdash",
+        "lookml",
         "microsoft",
         "nvidia",
         "omni",
@@ -72,13 +78,14 @@ def test_registered_native_sources_have_real_members(name):
         "salesforce",
         "sigma",
         "snowflake",
+        "solid",
         "thoughtspot",
         "wisdom",
         "semantic-view",
     ],
 )
 def test_metadata_and_logs_do_not_establish_native_content(tmp_path, fmt):
-    directory = fmt in ("hex", "honeydew", "omni", "thoughtspot")
+    directory = fmt in ("hex", "honeydew", "lightdash", "omni", "thoughtspot")
     file = tmp_path / (
         "empty.table.tml"
         if fmt == "thoughtspot"
@@ -103,6 +110,21 @@ def test_aml_inspection_counts_source_members_but_not_dataset_or_log(tmp_path):
     content = native_content(tmp_path, "holistics", "directory")
     assert content["members"] == 1
     assert len(content["files"]) == 1
+
+
+def test_lookml_inspection_counts_declared_fields_not_comments(tmp_path):
+    file = tmp_path / "native.lkml"
+    file.write_text(
+        "# dimension: commented {\n"
+        "view: orders {\n  sql_table_name: `p.d.orders` ;;\n"
+        "  dimension: id {\n    sql: ${TABLE}.id ;;\n  }\n"
+        "  dimension_group: created {\n    type: time\n  }\n"
+        "  measure: total {\n    type: sum\n  }\n}\n"
+        "explore: orders {}\n"
+    )
+    content = native_content(file, "lookml", "file")
+    assert content["members"] == 3
+    assert content["files"] == [str(file)]
 
 
 def test_malformed_added_native_model_is_failure(tmp_path):
@@ -261,6 +283,12 @@ def test_wisdom_counts_computed_fields_and_measures_without_physical_columns(
         json.dumps({"tables": [{"zsheet_json": {key: [{"name": "amount"}]}}]})
     )
     assert native_content(output, "wisdom", "file")["members"] == 1
+
+
+def test_snowflake_counts_top_level_metrics(tmp_path):
+    output = tmp_path / "native.yaml"
+    output.write_text("metrics:\n- name: revenue\n  expr: SUM(amount)\n")
+    assert native_content(output, "snowflake", "file")["members"] == 1
 
 
 def test_sigma_counts_metrics_without_physical_columns(tmp_path):
