@@ -149,7 +149,8 @@ def test_native_bigquery_keeps_its_unit_last_argument_order():
     )
 
 
-def test_import_without_a_source_dialect_preserves_the_date_unit():
+@pytest.mark.parametrize("model_scope", [False, True])
+def test_import_without_a_source_dialect_preserves_the_date_unit(model_scope):
     files = {
         "model.yml": yaml.safe_dump(
             {
@@ -177,10 +178,12 @@ def test_import_without_a_source_dialect_preserves_the_date_unit():
             }
         )
     }
-    returned, _ = convert_cube_to_ossie(files)
-    metric = yaml.safe_load(returned)["metrics"][0]
+    returned, _ = convert_cube_to_ossie(files, scope_native_metrics=not model_scope)
+    document = yaml.safe_load(returned)
+    metric = (document if model_scope else document["datasets"][0])["metrics"][0]
+    qualifier = "ticket" if model_scope else "source"
     assert metric["expression"]["dialects"][0]["expression"] == (
-        "AVG(DATEDIFF(day, ticket.created_at, ticket.resolved_at))"
+        f"AVG(DATEDIFF(day, {qualifier}.created_at, {qualifier}.resolved_at))"
     )
 
 
