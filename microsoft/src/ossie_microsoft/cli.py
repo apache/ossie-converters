@@ -42,7 +42,7 @@ from pathlib import Path
 import yaml
 
 from ._common import LOGGER, ConversionError
-from ._report import collect_entries
+from ._report import collect_entries, source_document
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
 from .pbip import import_powerbi_project, reraise_tom_load_failure
 from .pbip_export import export_powerbi_project
@@ -209,12 +209,14 @@ def _run_export(args):
         "source_bindings": bindings,
         "require_source_bindings": args.strict and args.source_bindings is not None,
     }
-    if args.pbip:
-        folder = export_powerbi_project(ossie_yaml, args.pbip, force=args.force, **options)
-        if not args.quiet:
-            print(f"Wrote {folder}", file=sys.stderr)
-        return None
-    bim = convert_ossie_to_semantic_model(ossie_yaml, **options)
+    original = yaml.safe_load(ossie_yaml) if args.report is not None else None
+    with source_document(original):
+        if args.pbip:
+            folder = export_powerbi_project(ossie_yaml, args.pbip, force=args.force, **options)
+            if not args.quiet:
+                print(f"Wrote {folder}", file=sys.stderr)
+            return None
+        bim = convert_ossie_to_semantic_model(ossie_yaml, **options)
     # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
     return json.dumps(bim, indent=2, ensure_ascii=False) + "\n"
 
@@ -231,7 +233,7 @@ def main(argv=None):
     report = None
     if args.report is not None:
         try:
-            _check_report_path(args.report, args.input, args.output)
+            _check_report_path(args)
         except (OSError, ValueError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -286,15 +288,33 @@ def main(argv=None):
     return 1 if args.strict and counter.count else 0
 
 
-def _check_report_path(report, input_path, output_path):
-    for path in (input_path, output_path):
+def _check_report_path(args):
+    report = args.report
+    protected = [args.input, args.output, getattr(args, "source_bindings", None)]
+    source = Path(args.input)
+    if args.command == "import" and (source.is_dir() or source.suffix.lower() == ".pbip"):
+        root = source if source.is_dir() else source.parent
+        protected.extend(_project_artifacts(root))
+    destination = getattr(args, "pbip", None)
+    if destination is not None:
+        root = Path(destination)
+        if report.resolve().is_relative_to(root.resolve()):
+            raise ValueError("--report must be outside the --pbip output folder")
+        protected.extend(_project_artifacts(root))
+    for path in protected:
         if path is None:
             continue
         other = Path(path)
         if report.resolve() == other.resolve() or (
             report.exists() and other.exists() and report.samefile(other)
         ):
-            raise ValueError("--report must be separate from the model input and output")
+            raise ValueError("--report must be separate from conversion inputs and outputs")
+
+
+def _project_artifacts(folder):
+    for path in folder.rglob("*"):
+        if path.suffix.lower() in {".bim", ".tmdl", ".pbip", ".pbir", ".pbism"} and path.is_file():
+            yield path
 
 
 if __name__ == "__main__":

@@ -371,9 +371,16 @@ A completed conversion sets `completed: true`. The report is written in quiet mo
 conversion aborts, it includes `completed: false`, the `error`, and any entries
 recorded before the error. This also replaces a report from an earlier successful
 run when an unexpected conversion error or an interrupt aborts the current run
-(provided the report path remains writable). The empty JSON Pointer `""` identifies
-the root model, including its shared generated Direct Lake source. Keys have
-pointers to `primary_key` or the relevant `unique_keys` entry and include `columns`.
+(provided the report path remains safe and writable). The empty JSON Pointer `""`
+identifies a flat root model, including its shared generated Direct Lake source.
+For wrapped Ossie 0.1.1 inputs, pointers include `/semantic_model/0` and retain
+original `custom_extensions` paths. Keys point to `primary_key` or the relevant
+`unique_keys` entry and include `columns`.
+
+The report must be separate from all conversion inputs and outputs, including
+source-binding files and project artifacts (also through symlinks or hard links).
+With `--pbip`, keep the report outside the output folder. Unsafe report paths are
+rejected before conversion writes any files.
 
 | Reason code | Meaning |
 | --- | --- |

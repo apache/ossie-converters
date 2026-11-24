@@ -567,3 +567,194 @@ def test_calculated_column_report_distinguishes_dax_outcomes(
         assert "detail" not in entry
     assert entries["/model/tables/0/columns/0"]["status"] == "translated"
     assert "source_dialect" not in entries["/model/tables/0/columns/0"]
+
+
+@pytest.mark.parametrize(
+    "artifact,alias",
+    [
+        ("bim", "direct"),
+        ("bim", "symlink"),
+        ("bim", "hardlink"),
+        ("tmdl", "direct"),
+        ("pbir", "direct"),
+    ],
+)
+def test_report_cannot_overwrite_project_inputs(tmp_path, monkeypatch, capsys, artifact, alias):
+    bim = {"name": "shop", "model": {"tables": [{"name": "Orders", "columns": [{"name": "id"}]}]}}
+    folder = tmp_path / "Shop.SemanticModel"
+    folder.mkdir()
+    if artifact == "tmdl":
+        source = folder / "definition"
+        source.mkdir()
+        protected = source / "database.tmdl"
+        protected.write_text("database shop\n")
+        monkeypatch.setattr("ossie_microsoft.pbip.deserialize_tmdl_documents", lambda _: bim)
+    else:
+        protected = folder / "model.bim"
+        protected.write_text(json.dumps(bim))
+        source = folder
+        if artifact == "pbir":
+            report_folder = tmp_path / "Shop.Report"
+            report_folder.mkdir()
+            protected = report_folder / "definition.pbir"
+            protected.write_text(
+                json.dumps({"datasetReference": {"byPath": {"path": "../Shop.SemanticModel"}}})
+            )
+            source = tmp_path / "Shop.pbip"
+            source.write_text(json.dumps({"artifacts": [{"report": {"path": "Shop.Report"}}]}))
+    before = protected.read_bytes()
+    report = protected
+    if alias != "direct":
+        report = tmp_path / "report.json"
+        if alias == "symlink":
+            report.symlink_to(protected)
+        else:
+            report.hardlink_to(protected)
+    output = tmp_path / "out.yaml"
+    assert main(["import", "-i", str(source), "-o", str(output), "--report", str(report)]) == 1
+    assert "--report must be separate" in capsys.readouterr().err
+    assert protected.read_bytes() == before
+    assert not output.exists()
+
+
+def test_report_cannot_overwrite_source_bindings(tmp_path, capsys):
+    source, bindings, output = (
+        tmp_path / name for name in ("model.yaml", "bindings.yaml", "out.bim")
+    )
+    source.write_text(
+        yaml.safe_dump(
+            {"name": "shop", "datasets": [{"name": "Orders", "fields": [{"name": "id"}]}]}
+        )
+    )
+    bindings.write_text(
+        yaml.safe_dump(
+            {
+                "Orders": {
+                    "server": "host",
+                    "warehouse": "WH",
+                    "database": "DB",
+                    "schema": "PUBLIC",
+                    "table": "ORDERS",
+                }
+            }
+        )
+    )
+    before = bindings.read_bytes()
+    assert (
+        main(
+            [
+                "export",
+                "-i",
+                str(source),
+                "-o",
+                str(output),
+                "--source-bindings",
+                str(bindings),
+                "--report",
+                str(bindings),
+            ]
+        )
+        == 1
+    )
+    assert "--report must be separate" in capsys.readouterr().err
+    assert bindings.read_bytes() == before
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("artifact", ["metadata", "tmdl", "hardlink"])
+def test_report_cannot_overwrite_pbip_outputs(tmp_path, monkeypatch, capsys, artifact):
+    source = tmp_path / "model.yaml"
+    source.write_text(
+        yaml.safe_dump(
+            {"name": "shop", "datasets": [{"name": "Orders", "fields": [{"name": "id"}]}]}
+        )
+    )
+    target = tmp_path / "Shop.SemanticModel"
+    report = (
+        target / "definition.pbism" if artifact != "tmdl" else target / "definition/database.tmdl"
+    )
+    protected = None
+    if artifact == "hardlink":
+        target.mkdir()
+        protected = target / "definition.pbism"
+        protected.write_text("existing model metadata")
+        report = tmp_path / "report.json"
+        report.hardlink_to(protected)
+
+    def serialize(document, path, *, assembly_dir=None):
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "database.tmdl").write_text("database shop\n")
+
+    monkeypatch.setattr("ossie_microsoft.pbip_export.serialize_tmdl_folder", serialize)
+    assert (
+        main(
+            ["export", "-i", str(source), "--pbip", str(target), "--force", "--report", str(report)]
+        )
+        == 1
+    )
+    assert "--report must" in capsys.readouterr().err
+    if protected:
+        assert protected.read_text() == "existing model metadata"
+        assert not (target / "definition").exists()
+    else:
+        assert not target.exists()
+
+
+def test_export_report_pointers_resolve_in_legacy_and_flat_source_documents(tmp_path):
+    for wrapped in (True, False):
+        extension_key = "custom_extensions" if wrapped else "nonportable_extensions"
+        foreign = [{"vendor_name": "SNOWFLAKE", "data": {}}]
+        model = {
+            "name": "shop",
+            "datasets": [
+                {
+                    "name": "Orders",
+                    "fields": [
+                        {"name": "id", extension_key: foreign},
+                        {"name": "region"},
+                    ],
+                    "primary_key": ["id", "region"],
+                    "unique_keys": [["id", "region"]],
+                }
+            ],
+            "metrics": [
+                {"name": "Rows", "expression": make_expression("COUNTROWS(Orders)", "DAX")}
+            ],
+            "relationships": [
+                {
+                    "name": "self",
+                    "from": "Orders",
+                    "to": "Orders",
+                    "from_columns": ["id"],
+                    "to_columns": ["id"],
+                }
+            ],
+            extension_key: foreign,
+        }
+        document = (
+            {"version": "0.1.1", "semantic_model": [model]}
+            if wrapped
+            else {"version": OSSIE_VERSION, **model}
+        )
+        source, report = tmp_path / "source.yaml", tmp_path / "report.json"
+        source.write_text(yaml.safe_dump(document))
+        assert main(["export", "-i", str(source), "--report", str(report), "--quiet"]) == 0
+        entries = json.loads(report.read_text())["entries"]
+        prefix = "/semantic_model/0" if wrapped else ""
+        paths = {e["source_path"] for e in entries}
+        assert {
+            prefix,
+            f"{prefix}/datasets/0",
+            f"{prefix}/datasets/0/fields/0",
+            f"{prefix}/datasets/0/primary_key",
+            f"{prefix}/datasets/0/unique_keys/0",
+            f"{prefix}/metrics/0",
+            f"{prefix}/relationships/0",
+            f"{prefix}/{extension_key}/0",
+            f"{prefix}/datasets/0/fields/0/{extension_key}/0",
+        } <= paths
+        for path in paths:
+            value = document
+            for part in path.split("/")[1:]:
+                key = part.replace("~1", "/").replace("~0", "~")
+                value = value[int(key)] if isinstance(value, list) else value[key]

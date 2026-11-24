@@ -23,6 +23,7 @@ from contextvars import ContextVar
 from ._common import VENDOR
 
 _entries: ContextVar[list[dict] | None] = ContextVar("conversion_entries", default=None)
+_source_document: ContextVar[dict | None] = ContextVar("conversion_source_document", default=None)
 
 
 @contextmanager
@@ -34,11 +35,45 @@ def collect_entries(entries):
         _entries.reset(token)
 
 
+@contextmanager
+def source_document(document):
+    """Keep report pointers relative to the original export input document."""
+    token = _source_document.set(document)
+    try:
+        yield
+    finally:
+        _source_document.reset(token)
+
+
+def _original_source_pointer(path):
+    document = _source_document.get()
+    if not isinstance(document, dict) or "semantic_model" not in document:
+        return path
+    parts = ["semantic_model", "0", *(path.lstrip("/").split("/") if path else [])]
+    value = document
+    original = []
+    for part in parts:
+        if isinstance(value, dict):
+            if (
+                part == "nonportable_extensions"
+                and part not in value
+                and "custom_extensions" in value
+            ):
+                part = "custom_extensions"
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdecimal() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            value = None
+        original.append(part)
+    return "/" + "/".join(original)
+
+
 def record(kind, source_path, source, status, **details):
     entries = _entries.get()
     if entries is None:
         return
-    entry = {"kind": kind, "source_path": source_path, "status": status}
+    entry = {"kind": kind, "source_path": _original_source_pointer(source_path), "status": status}
     name = source.get("name") if isinstance(source, dict) else None
     if isinstance(name, str):
         entry["name"] = name
