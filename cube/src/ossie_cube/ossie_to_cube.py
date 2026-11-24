@@ -23,7 +23,7 @@ itself, plus -- when a prior import stashed them -- the original file paths and
 every Cube-only construct restored verbatim.
 
 Ossie features Cube has no field for (`unique_keys`, foreign-vendor
-`custom_extensions`, the structured form of `ai_context`) are parked under
+`nonportable_extensions`, the structured form of `ai_context`) are parked under
 `meta.ossie` rather than dropped, since Cube has a `meta` field at every level.
 That keeps `Ossie -> Cube -> Ossie` lossless as well.
 
@@ -170,7 +170,7 @@ def _convert_model(model, dialect, base_cube, issues):
         relationships, cube_names, issues)
     measures_by_cube = _build_measures(
         model, cube_names, plan, tables, datasets, relationships, base_cube, dialect,
-        issues)
+        issues, joins_by_cube)
 
     # Cubes, grouped by the file they belong in: several datasets can share one
     # stashed original path, in which case they go back into the same file.
@@ -334,7 +334,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
                    "unique_keys have no Cube field; parked under meta.ossie")
     foreign = foreign_vendor_extensions(ds)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
     if plan.key_from_unique_keys:
         # Recorded before the meta is assembled, so re-import does not hand back a
         # `primary_key` the Ossie model never declared: `unique_keys` is restored on its
@@ -345,7 +345,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
         parked["join_extensions"] = join_extensions
         issues.add(IssueType.PARKED_IN_META, scope,
                    f"a Cube join carries no metadata field, so relationship "
-                   f"custom_extensions for {', '.join(sorted(join_extensions))} are "
+                   f"nonportable_extensions for {', '.join(sorted(join_extensions))} are "
                    f"parked under meta.ossie.join_extensions")
     cube_extras = dict(stash.get("cube_extras") or {})
     stashed_meta = cube_extras.pop("meta", None)
@@ -834,7 +834,7 @@ def _build_dimensions(ds, plan, tables, dialect, issues):
         parked = {}
         foreign = foreign_vendor_extensions(field)
         if foreign:
-            parked["custom_extensions"] = foreign
+            parked["nonportable_extensions"] = foreign
         # Cube's `type` is coarser than Ossie's `datatype` (Integer/Decimal/Float all
         # become `number`), so the precise one is parked whenever importing would not
         # recover it. `meta.ossie` is Cube-side, so this costs the Ossie document
@@ -1075,8 +1075,19 @@ def _build_joins(relationships, cube_names, issues):
 
 # --- measures -------------------------------------------------------------------
 
+def _joined_datasets(joins_by_cube, root):
+    """The cubes reachable through the joins actually emitted for this export."""
+    seen, pending = set(), [root]
+    while pending:
+        cube = pending.pop()
+        if cube not in seen:
+            seen.add(cube)
+            pending.extend(join["name"] for join in joins_by_cube.get(cube, ()))
+    return seen
+
+
 def _build_measures(model, cube_names, plan, tables, datasets, relationships,
-                    base_cube, dialect, issues):
+                    base_cube, dialect, issues, joins_by_cube):
     """Group Ossie metrics into per-cube `measures` lists."""
     name = model.get("name", "<unnamed>")
     base_cache = []
@@ -1176,13 +1187,13 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
         target = refs.cube_of_metric(mname_raw)
         original_name, mname = mname, refs.native_name(mname_raw)
 
-        if len(referenced) > 1:
+        if len(referenced) > 1 and not (
+            stash.get("sql") and referenced <= _joined_datasets(joins_by_cube, target)
+        ):
             # Cube resolves a cross-cube member reference by adding an implicit join,
             # so the model needs a join path between these cubes -- which Ossie's
             # expression does not state and this converter cannot verify. Reported for
-            # every shape the measure can take: it used to be raised only from the
-            # calculated-measure fallback, so a decomposed metric (the shape with the
-            # *most* cross-cube references) reported nothing at all.
+            # generated measures and for restored SQL whose joins cannot be verified.
             issues.add(IssueType.APPROXIMATED, scope,
                        f"expression spans datasets {', '.join(sorted(referenced))}; "
                        f"Cube reaches the others from '{target}' through an implicit "
@@ -1232,9 +1243,10 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
 def _record_model_metric_name(measure, raw_name, requested_name, stash, issues, target):
     """Keep the Ossie name when its native slot belongs to a dataset metric."""
     native_name = measure["name"]
+    parked = measure.setdefault("meta", {}).setdefault("ossie", {})
+    parked["model_scoped"] = True
     if native_name != requested_name or stash.get("model_metric_name"):
-        measure.setdefault("meta", {}).setdefault("ossie", {})["model_metric_name"] = (
-            escape_braces_for_cube(raw_name))
+        parked["model_metric_name"] = escape_braces_for_cube(raw_name)
     if native_name != requested_name:
         issues.add(IssueType.APPROXIMATED, f"metric '{raw_name}'",
                    f"dataset metric keeps its Cube member name; model metric exported as "
@@ -1876,11 +1888,21 @@ class _MetricReferences:
         """
         whole = context if context is not None else text
         units = date_unit_spans(whole, source_dialect) if context_offset is not None else []
-        unit_marker = "__ossie_unit_"
-        while unit_marker in whole:
-            unit_marker += "alt_"
         attributed = {name: f"{cube}.{name}"
                       for name, cube in self._fields_in(whole, source_dialect).items()}
+        unit_marker = "__ossie_unit_"
+        if units:
+            # Avoid markers present in the expression or introduced by field/reference rewriting.
+            avoid = [
+                whole,
+                *attributed.values(),
+                *self._tables.datasets.values(),
+                *(v for mapping in (self._tables.references, self._tables.columns,
+                                    self._tables.inline_sql)
+                  for fields in mapping.values() for v in fields.values()),
+            ]
+            while any(unit_marker in s for s in avoid):
+                unit_marker += "alt_"
         masks, substitutions = {}, {}
         for i, (written, key) in enumerate(
                 sorted(self._referenced_in(whole, source_dialect).items())):
@@ -2159,7 +2181,7 @@ def _apply_measure_metadata(metric, measure, stash, used_dialect=None,
     parked = {}
     foreign = foreign_vendor_extensions(metric)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
     # Cube has no field for a measure's result type. Import infers one only for the
     # count family, whose result type does not depend on the operand, so anything else
     # (a `Decimal` sum) would be lost without parking it.
@@ -2278,7 +2300,7 @@ def _build_views(model, model_stash, cube_names, relationships, datasets,
     parked = {}
     foreign = foreign_vendor_extensions(model)
     if foreign:
-        parked["custom_extensions"] = foreign
+        parked["nonportable_extensions"] = foreign
 
     # Cube keeps cubes and views in one global namespace, so a view may not share a
     # name with a cube. The model name and a dataset name being equal is not exotic --
@@ -2309,7 +2331,7 @@ def _build_views(model, model_stash, cube_names, relationships, datasets,
             vendors = ", ".join(
                 sorted({str(e.get("vendor_name")) for e in foreign}))
             raise ConversionError(
-                f"Model carries custom_extensions for {vendors}, which have no Cube "
+                f"Model carries nonportable_extensions for {vendors}, which have no Cube "
                 f"field and ride on the view representing the model -- but no view "
                 f"is mapped, so there is nowhere to put them without losing them. "
                 f"Re-import naming the view the model maps to (`--view <name>`), or "

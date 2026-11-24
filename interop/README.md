@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 26 converter projects**, with explicit capability skips.
+The registry includes **all 29 converter projects**, with explicit capability skips.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -33,8 +33,11 @@ uv sync --project interop --locked --python 3.12
 uv run --project interop --locked python -m interop
 ```
 
-The runner needs Python 3.11+ and uv. Salesforce additionally needs Maven and
-Java 21+ on `PATH` (and a matching `JAVA_HOME` for Maven). Missing prerequisites
+The runner needs Python 3.11+ and uv. A uv older than a converter's
+`tool.uv.required-version` is reported as a `SKIP` naming the resolved executable, its
+version and the requirement, because uv refuses both `uv sync` and `uv run` in that case
+and every converter would otherwise fail identically. Salesforce additionally needs Maven
+and Java 21+ on `PATH` (and a matching `JAVA_HOME` for Maven). Missing prerequisites
 appear as `SKIP`; a preparation command that actually fails appears as `FAIL`.
 Dependencies are prepared once per converter: `uv sync --locked --no-dev` for
 Python converters with lockfiles and `mvn -B -DskipTests package` for Java converters.

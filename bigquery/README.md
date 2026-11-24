@@ -113,7 +113,14 @@ tagged entry of that dialect. It also supports expressions with only `sql`.
 `BIGQUERY` expressions are read as BigQuery. `ANSI_SQL` and `OSSIE_SQL_2026`
 use sqlglot's default ANSI dialect and are transpiled to BigQuery SQL.
 For example, `"Customer ID"` is an identifier in ANSI and a string literal in
-BigQuery, and `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`.
+BigQuery, `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`,
+`DATEADD(day, 7, d)` becomes `DATE_ADD(d, INTERVAL 7 DAY)`, and
+`DATEDIFF(day, start, end)` becomes `DATE_DIFF(end, start, DAY)`.
+`DATEDIFF(week, start, end)` becomes `DATE_DIFF(end, start, WEEK(MONDAY))`
+because Ossie weeks start Monday and BigQuery `WEEK` starts Sunday.
+`HOUR` / `MINUTE` / `SECOND` are left as-is with a warning until
+`TIMESTAMP_ADD` / `TIMESTAMP_DIFF` is mapped. A portable function with no
+BigQuery spelling is emitted as-is with a warning.
 Blank expressions are ignored, so a blank tagged entry falls back to the next
 supported expression. If only unsupported or blank dialect entries remain, the
 field/metric is skipped with a warning. An expression with no `dialects` and
@@ -130,14 +137,14 @@ Malformed input is reported as an `OssieConversionError` naming the entity (`Rel
 - **Looker project layout**: the output is one document. Looker expects views in `.view.lkml` files and explores in a `.model.lkml` file that also declares `connection` and `include`; the generated sections are labelled accordingly.
 - **Join type**: all joins are `left_outer` / `many_to_one`, which is what an Ossie relationship (many-side `from`, one-side `to`) declares. One-to-one and one-to-many joins would need extra information the spec does not carry.
 - **Window functions** in metrics cannot be LookML measures (see above).
-- **Dropped constructs**: `custom_extensions`, `unique_keys`, metric `datatype` (a LookML measure's type comes from its aggregate), relationship-level `ai_context`, and `ai_context` keys other than `synonyms` and `instructions` (such as `examples`) have no LookML counterpart and are dropped with a warning naming the entity. Field `label` is emitted; `description` plus `ai_context.instructions` and synonyms form the LookML description; dataset descriptions are kept as a comment and on the explore.
+- **Dropped constructs**: `nonportable_extensions`, `unique_keys`, metric `datatype` (a LookML measure's type comes from its aggregate), relationship-level `ai_context`, and `ai_context` keys other than `synonyms` and `instructions` (such as `examples`) have no LookML counterpart and are dropped with a warning naming the entity. Field `label` is emitted; `description` plus `ai_context.instructions` and synonyms form the LookML description; dataset descriptions are kept as a comment and on the explore.
 
 ## Roadmap
 
 Things this converter does not do yet, in rough order of value:
 
 - **LookML to Ossie import**, so a Looker project can be exchanged like the Snowflake and dbt models can. The module is named `ossie_to_lookml.py` and the CLI split out into `cli.py` for that reason; an importer would live beside it as `lookml_to_ossie.py` and reuse `lkml` for parsing.
-- **`OSSIE_SQL_2026` as the primary source**: once the Ossie expression language settles, translating its portable functions (`DATE_TRUNC('month', d)` → `DATE_TRUNC(d, MONTH)`, `DATEADD` → `DATE_ADD`, …) to BigQuery with sqlglot would let models written only in the Ossie dialect convert without a hand-written `BIGQUERY` expression; sqlglot already does most of that transpilation.
+- **Further `OSSIE_SQL_2026` function mappings**: `DATE_TRUNC`, `DATEADD` and `DATEDIFF` already transpile to BigQuery. Other portable functions (`DATE_PART`, …) still need an explicit BigQuery spelling; unknown functions already warn.
 - **Explore-level descriptions and `ai_context`**: relationship and model `ai_context` could feed Looker's explore `description` or `sql_always_where`-style hints once Looker exposes a stable place for agent context.
-- **Vendor extension passthrough**: a `LOOKER` (or `BIGQUERY`) `custom_extensions` vendor could carry LookML-only settings such as `value_format`, `drill_fields`, `group_label` and `view_label` on round trips.
+- **Vendor extension passthrough**: a `LOOKER` (or `BIGQUERY`) `nonportable_extensions` vendor could carry LookML-only settings such as `value_format`, `drill_fields`, `group_label` and `view_label` on round trips.
 - **Join cardinality**: if the spec grows a cardinality or join-type hint on relationships, map it to `relationship:` and `type:` instead of assuming `many_to_one` / `left_outer`.

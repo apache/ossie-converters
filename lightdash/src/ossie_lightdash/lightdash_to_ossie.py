@@ -21,23 +21,22 @@ The input is a dictionary in the shape of a dbt ``schema.yml``, whose
 information becomes Ossie vocabulary: datasets, fields, metrics, and
 relationships. Lightdash presentation attributes without Ossie vocabulary
 (``format``, ``round``, ``group_label``, ``hidden``, and so on) are stored in
-``custom_extensions`` entries with ``vendor_name: LIGHTDASH``, so the export
+``nonportable_extensions`` entries with ``vendor_name: LIGHTDASH``, so the export
 direction reproduces them exactly.
 """
 
-import json
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlglot.errors import SqlglotError
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
+    OssieSemanticModel,
     OssieExpression,
     OssieField,
     OssieMetric,
@@ -109,13 +108,13 @@ def _expression(expression: str, dialect: OssieDialect) -> OssieExpression:
     )
 
 
-def _lightdash_extension(data: Dict[str, Any]) -> List[OssieCustomExtension]:
+def _lightdash_extension(data: Dict[str, Any]) -> List[OssieNonportableExtension]:
     if not data:
         return []
     return [
-        OssieCustomExtension(
+        OssieNonportableExtension(
             vendor_name=LIGHTDASH_VENDOR_NAME,
-            data=json.dumps(data, ensure_ascii=False, sort_keys=True),
+            data=data,
         )
     ]
 
@@ -330,7 +329,7 @@ class _ModelContext:
 
 
 class LightdashToOssieConverter:
-    """Converts a dbt ``schema.yml`` dictionary with Lightdash meta into an ``OssieDocument``.
+    """Converts a dbt ``schema.yml`` dictionary with Lightdash meta into an ``OssieSemanticModel``.
 
     Lightdash SQL is written for the project's warehouse, and ``dialect``
     labels the emitted expressions with that warehouse's Ossie dialect. Use
@@ -349,7 +348,7 @@ class LightdashToOssieConverter:
         schema: Optional[str] = None,
         semantic_model_name: str = "lightdash_semantic_model",
         catalog: Optional[Catalog] = None,
-    ) -> ConverterResult[OssieDocument]:
+    ) -> ConverterResult[OssieSemanticModel]:
         issues: List[ConverterIssue] = []
         datasets: List[OssieDataset] = []
         metrics: List[OssieMetric] = []
@@ -410,12 +409,12 @@ class LightdashToOssieConverter:
                         "to": edge.to_model,
                         "from_columns": edge.from_columns,
                         "to_columns": edge.to_columns,
-                        "custom_extensions": _lightdash_extension(edge.extras) or None,
+                        "nonportable_extensions": _lightdash_extension(edge.extras) or None,
                     }
                 )
             )
 
-        document = OssieDocument(
+        document = OssieSemanticModel(
             version="0.3.0.dev0",
             name=semantic_model_name,
             datasets=datasets,
@@ -557,7 +556,7 @@ class LightdashToOssieConverter:
             primary_key=_primary_key(model_meta.get("primary_key")),
             ai_context=_ai_context(model_meta.get("ai_hint")),
             fields=fields or None,
-            custom_extensions=_lightdash_extension(stash) or None,
+            nonportable_extensions=_lightdash_extension(stash) or None,
         )
         return dataset, metrics, direct_edges, derived_edges
 
@@ -628,7 +627,7 @@ class LightdashToOssieConverter:
             label=label,
             description=column.get("description"),
             ai_context=ai_context,
-            custom_extensions=_lightdash_extension(extension_data) or None,
+            nonportable_extensions=_lightdash_extension(extension_data) or None,
         )
 
     def _convert_metric(
@@ -694,7 +693,7 @@ class LightdashToOssieConverter:
             ),
             description=definition.get("description"),
             ai_context=_ai_context(definition.get("ai_hint")),
-            custom_extensions=_lightdash_extension(extension_data) or None,
+            nonportable_extensions=_lightdash_extension(extension_data) or None,
         )
 
     @staticmethod

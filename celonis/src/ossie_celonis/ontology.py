@@ -517,7 +517,7 @@ def build_ontology_documents(model, *, semantic_model_iri=None, ontology_iri=Non
         mapping["semantic_model_ref"]["iri"] = semantic_model_iri
     if ontology_iri:
         mapping["ontology_ref"]["iri"] = ontology_iri
-    mapping["custom_extensions"] = [
+    mapping["nonportable_extensions"] = [
         _extension(
             "ontology",
             projection=ontology,

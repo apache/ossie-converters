@@ -33,10 +33,18 @@ metrics:
   description: Count all rows in the store sales fact table
   ai_context:
     instructions: 'Grain: table-level. Counts: All rows in TPCDS.PUBLIC.STORE_SALES.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_store_sales_count", "definition_version": 1}, "agent_context":
-      {"grain": "table-level", "population": "All rows in TPCDS.PUBLIC.STORE_SALES", "sql_dialect": "snowflake"}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_store_sales_count
+        definition_version: 1
+      agent_context:
+        grain: table-level
+        population: All rows in TPCDS.PUBLIC.STORE_SALES
+        sql_dialect: snowflake
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

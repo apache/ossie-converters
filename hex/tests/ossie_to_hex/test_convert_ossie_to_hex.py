@@ -518,7 +518,7 @@ Cause: ['description']
 Cause: ['ai_context']
 
 [WARNING] Not supported
-Cause: ['custom_extensions']\
+Cause: ['nonportable_extensions']\
 """)
 
 

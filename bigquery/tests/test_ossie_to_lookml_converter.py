@@ -816,11 +816,11 @@ class TestRelationships:
     def test_relationship_extensions_are_reported_as_dropped(self):
         rel = _rel("o2c", "orders", "customers", ["customer_id"], ["id"])
         rel["ai_context"] = {"instructions": "x"}
-        rel["custom_extensions"] = [{"vendor": "X", "attributes": {}}]
+        rel["nonportable_extensions"] = [{"vendor": "X", "attributes": {}}]
         with pytest.warns(UserWarning, match="relationship 'o2c'") as record:
             convert_ossie_to_lookml(_model([ORDERS, CUSTOMERS], [rel]))
         messages = [str(w.message) for w in record if "relationship 'o2c'" in str(w.message)]
-        assert any("ai_context" in m and "custom_extensions" in m for m in messages)
+        assert any("ai_context" in m and "nonportable_extensions" in m for m in messages)
 
 
 class TestExplores:
@@ -1043,6 +1043,117 @@ class TestSourceDialects:
     def test_ansi_date_trunc_is_transpiled(self):
         view = self._view(_field("m", expr="DATE_TRUNC('month', order_date)", dialect="OSSIE_SQL_2026"))
         assert "sql: DATE_TRUNC(${TABLE}.order_date, MONTH) ;;" in view
+
+    @pytest.mark.parametrize("dialect", ["ANSI_SQL", "OSSIE_SQL_2026"])
+    @pytest.mark.parametrize(
+        "expr, sql",
+        [
+            ("DATEADD(day, 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
+            ("DATEADD(month, -1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL -1 MONTH)"),
+            ("DATEADD(year, 1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 1 YEAR)"),
+            ("DATEADD(week, 1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 1 WEEK)"),
+            ("DATEADD('day', 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
+            (
+                "DATEADD(month, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 MONTH)",
+            ),
+            (
+                "DATEADD(quarter, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 QUARTER)",
+            ),
+            (
+                "DATEADD(year, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 YEAR)",
+            ),
+            (
+                "DATEDIFF(day, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY)",
+            ),
+            (
+                "DATEDIFF(week, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, WEEK(MONDAY))",
+            ),
+            (
+                "DATEDIFF(month, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, MONTH)",
+            ),
+            (
+                "DATEDIFF(year, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, YEAR)",
+            ),
+            (
+                "DATEADD(day, DATEDIFF(day, start_date, end_date), start_date)",
+                "DATE_ADD(${TABLE}.start_date, INTERVAL (DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY)) DAY)",
+            ),
+            (
+                "DATEADD(day, -1, DATEADD(month, 1, order_date))",
+                "DATE_ADD(DATE_ADD(${TABLE}.order_date, INTERVAL 1 MONTH), INTERVAL -1 DAY)",
+            ),
+            (
+                "DATEDIFF(day, start_date, '2024-12-31')",
+                "DATE_DIFF('2024-12-31', ${TABLE}.start_date, DAY)",
+            ),
+            (
+                'DATEDIFF(day, "ORDER_DATE", "SHIP_DATE")',
+                "DATE_DIFF(${TABLE}.`SHIP_DATE`, ${TABLE}.`ORDER_DATE`, DAY)",
+            ),
+        ],
+    )
+    def test_ossie_date_arithmetic_is_transpiled(self, dialect, expr, sql):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(_field("d", expr=expr, dialect=dialect))
+        assert f"sql: {sql} ;;" in view
+
+    def test_primary_sql_date_arithmetic_is_transpiled(self):
+        plus_week = {"name": "plus_week", "expression": {"sql": "DATEADD(day, 7, order_date)"}}
+        span_days = {
+            "name": "span_days",
+            "expression": {"sql": "DATEDIFF(day, start_date, end_date)"},
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(plus_week, span_days)
+        assert "sql: DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY) ;;" in view
+        assert "sql: DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY) ;;" in view
+
+    def test_datediff_metric_keeps_native_sum(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("start_date"), _field("end_date")],
+            primary_key=["id"],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(
+                _model([ds], metrics=[_metric("span", "SUM(DATEDIFF(day, t.start_date, t.end_date))")])
+            )
+        measure = _block(out, "measure: span")
+        assert "type: sum" in measure
+        assert "sql: DATE_DIFF(${t.end_date}, ${t.start_date}, DAY) ;;" in measure
+
+    def test_unknown_function_warns_and_is_emitted(self):
+        model = _model([_dataset("t", [_field("x", expr="FOO(order_date)")])])
+        with pytest.warns(UserWarning, match="Field 't.x'.*FOO was not translated to BigQuery"):
+            out = convert_ossie_to_lookml(model)
+        assert "sql: FOO(${TABLE}.order_date) ;;" in _block(out, "view: t")
+
+    @pytest.mark.parametrize("expr", ["DATEADD(hour, 1, created_at)", "DATEDIFF(hour, start_at, end_at)"])
+    def test_time_unit_dateadd_datediff_warn_and_are_not_date_add(self, expr):
+        model = _model([_dataset("t", [_field("d", expr=expr)])])
+        with pytest.warns(UserWarning, match="HOUR has no BigQuery DATE_ADD/DATE_DIFF spelling"):
+            out = convert_ossie_to_lookml(model)
+        sql = _block(out, "dimension: d")
+        assert "INTERVAL 1 HOUR" not in sql
+        assert "DATE_DIFF(" not in sql or "HOUR" not in sql
+
+    def test_bigquery_date_diff_with_date_part_column_is_not_repaired(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(
+                _field("d", expr="DATE_DIFF(day, first_day, ISOWEEK)", dialect="BIGQUERY")
+            )
+        assert "sql: DATE_DIFF(${TABLE}.day, ${TABLE}.first_day, ISOWEEK) ;;" in view
 
     def test_ansi_count_distinct_of_quoted_identifier(self):
         ds = _dataset("t", [_field("id"), _field("cid", expr='"customer id"')], primary_key=["id"])

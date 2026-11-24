@@ -83,7 +83,7 @@ def test_ossie_roundtrip_up_to_documented_normalizations(path, dataset_metric_pr
         original_model.setdefault("metrics", []).append(metric)
     original = strip_normalized(original_model)
     # Foreign-vendor extensions are dropped on export (documented); Ossie-side
-    # normalization strips all custom_extensions from both sides.
+    # normalization strips all nonportable_extensions from both sides.
     assert strip_normalized(parse(ossie2)) == original
 
 

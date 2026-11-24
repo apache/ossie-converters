@@ -137,8 +137,9 @@ requires no network access.
 
 ## Extensions and round trips
 
-Every generated extension uses `vendor_name: CELONIS`. Its `data` is a JSON
-string with `format_version: 1`. Core documents use three `kind` values:
+Every generated `nonportable_extensions` entry uses `vendor_name: CELONIS`.
+Its `data` is a JSON object with `format_version: 1`. Core documents use three
+`kind` values:
 
 - `dataset`: original entity, bindings, source container and core projection.
 - `relationship`: original relationship and core projection.

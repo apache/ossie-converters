@@ -74,8 +74,8 @@ def convert_ossie_field(
             if ossie_field.ai_context is not None:
                 ctx.warn("Not supported", code="ai-context")
 
-        with ctx.problem_scope("custom_extensions"):
-            if ossie_field.custom_extensions is not None:
+        with ctx.problem_scope("nonportable_extensions"):
+            if ossie_field.nonportable_extensions is not None:
                 ctx.warn("Not supported", code="custom-extensions")
 
         spec["unique"] = ctx.is_unique_field(ossie_field.name)

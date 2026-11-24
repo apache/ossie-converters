@@ -41,9 +41,9 @@ def minimal_files(**view_overrides):
 
 
 def stash_of(obj):
-    for ext in obj.get("custom_extensions") or []:
+    for ext in obj.get("nonportable_extensions") or []:
         if ext.get("vendor_name") == "OMNI":
-            return json.loads(ext["data"])
+            return ext["data"]
     return {}
 
 

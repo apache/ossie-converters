@@ -56,7 +56,7 @@ layout.
 | `metrics[]` | a `measure` on one model, or a dataset-level `metric` |
 | `relationships[]`, one column pair | `relationship(from.col > to.col, true)` in the dataset block |
 | `relationships[]`, composite | the long `RelationshipConfig` form, extra pairs in repeated `on` blocks |
-| `custom_extensions[HOLISTICS]` | restores `hidden`, `format`, `type`, `aggregation_type`, `param`, `persistence`, `owner`, `table_name`, the relationship kind and `active` |
+| `nonportable_extensions[HOLISTICS]` | restores `hidden`, `format`, `type`, `aggregation_type`, `param`, `persistence`, `owner`, `table_name`, the relationship kind and `active` |
 
 ## Properties AML requires and Ossie has no field for
 

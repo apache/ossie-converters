@@ -64,7 +64,7 @@ def concepts(b):
 
 
 def mapping_metadata(b):
-    return json.loads(b["mapping"]["custom_extensions"][0]["data"])
+    return b["mapping"]["nonportable_extensions"][0]["data"]
 
 
 def type_relation(b):

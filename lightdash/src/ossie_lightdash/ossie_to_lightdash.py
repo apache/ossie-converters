@@ -21,7 +21,7 @@
 into a dbt project that Lightdash reads. ``convert_models`` produces native
 Lightdash model files (``type: model``, ``sql_from``, typed dimensions),
 which ``lightdash deploy`` reads directly. Lightdash presentation attributes
-that have no Ossie vocabulary round-trip through ``custom_extensions``
+that have no Ossie vocabulary round-trip through ``nonportable_extensions``
 entries with ``vendor_name: LIGHTDASH``. Their keys are merged into the
 generated definitions and win for presentation attributes. Structural keys
 (``sql`` and ``label`` on dimensions, ``sql`` and ``description`` on metrics,
@@ -29,7 +29,6 @@ generated definitions and win for presentation attributes. Structural keys
 definition derived from Ossie.
 """
 
-import json
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -38,7 +37,6 @@ from sqlglot.errors import SqlglotError
 from ossie import (
     OssieDataset,
     OssieDialect,
-    OssieDocument,
     OssieExpression,
     OssieMetric,
     OssieSemanticModel,
@@ -88,19 +86,11 @@ JoinReferences = Dict[str, str]
 def _lightdash_extension_data(element: Any, issues: List[ConverterIssue]) -> Dict[str, Any]:
     """Gets the ``LIGHTDASH`` extension data of an Ossie element, or an empty mapping."""
     data: Dict[str, Any] = {}
-    for extension in element.custom_extensions or []:
+    for extension in element.nonportable_extensions or []:
         # The vendor name is LIGHTDASH. Documents written before it was
         # registered used the lowercase name.
         if extension.vendor_name.upper() == LIGHTDASH_VENDOR_NAME:
-            try:
-                data.update(json.loads(extension.data))
-            except (TypeError, ValueError):
-                issues.append(
-                    ConverterIssue(
-                        issue_type=ConverterIssueType.EXTENSION_DATA_INVALID,
-                        element_name=getattr(element, "name", "<unnamed>"),
-                    )
-                )
+            data.update(extension.data)
         else:
             issues.append(
                 ConverterIssue(
@@ -238,7 +228,7 @@ def _model_name_for(dataset: OssieDataset) -> str:
 
 
 class OssieToLightdashConverter:
-    """Converts an ``OssieDocument`` into Lightdash definitions.
+    """Converts an ``OssieSemanticModel`` into Lightdash definitions.
 
     ``dialect`` is the expression dialect to prefer, the project's warehouse.
     ``OSSIE_SQL_2026`` and ``ANSI_SQL`` are the fallbacks. For an expression
@@ -255,7 +245,7 @@ class OssieToLightdashConverter:
         self._dialect = dialect
         self._meta_under_config = meta_under_config
 
-    def convert(self, document: OssieDocument) -> ConverterResult[Dict[str, Any]]:
+    def convert(self, document: OssieSemanticModel) -> ConverterResult[Dict[str, Any]]:
         """Converts the document into a dbt ``schema.yml`` dictionary with Lightdash ``meta``."""
         issues: List[ConverterIssue] = []
         models = [model for _, model in self._convert_semantic_model(document, issues)]
@@ -266,7 +256,7 @@ class OssieToLightdashConverter:
                     _nest_meta_under_config(column)
         return ConverterResult(output={"version": 2, "models": models}, issues=issues)
 
-    def convert_models(self, document: OssieDocument) -> ConverterResult[List[Dict[str, Any]]]:
+    def convert_models(self, document: OssieSemanticModel) -> ConverterResult[List[Dict[str, Any]]]:
         """Converts the document into Lightdash model files, one dictionary per dataset.
 
         The model-file format has a place for everything the dbt format keeps

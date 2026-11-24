@@ -23,7 +23,7 @@ from tempfile import NamedTemporaryFile
 from urllib.parse import quote
 
 import yaml
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from ossie._loading import UniqueKeyLoader
 
 from .converter import celonis_to_ossie, ossie_to_celonis
@@ -157,9 +157,9 @@ def main(argv=None):
         else:
             text = args.input.read_text(encoding="utf-8")
             document = (
-                OssieDocument.from_ossie_json(text)
+                OssieSemanticModel.from_ossie_json(text)
                 if args.input.suffix.lower() == ".json"
-                else OssieDocument.from_ossie_yaml(text)
+                else OssieSemanticModel.from_ossie_yaml(text)
             )
             model = json.loads(document.to_ossie_json())
             ontology, mapping = None, None

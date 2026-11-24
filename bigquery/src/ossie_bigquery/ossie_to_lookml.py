@@ -53,9 +53,29 @@ _DIALECT_PREFERENCE = ("BIGQUERY", "ANSI_SQL", "OSSIE_SQL_2026")
 # How sqlglot reads each dialect. ANSI_SQL and OSSIE_SQL_2026 use sqlglot's
 # default (ANSI-style) dialect and are transpiled to BigQuery on output, since
 # the two disagree on quoting ("x" is an identifier in ANSI, a string literal
-# in BigQuery) and on argument order (DATE_TRUNC). Same mapping as
-# interop/contracts.py and the orionbelt converter.
+# in BigQuery) and on argument order (DATE_TRUNC, DATEADD, DATEDIFF). Same
+# mapping as interop/contracts.py and the orionbelt converter.
 _SQLGLOT_DIALECTS = {"BIGQUERY": "bigquery", "ANSI_SQL": None, "OSSIE_SQL_2026": None}
+
+# Ossie DATEADD/DATEDIFF take a unit as the first argument. sqlglot's default
+# reader treats that unit as a column, so _qualify would emit ${TABLE}.day and
+# BigQuery has no DATEADD. Canonical names are the BigQuery DATE_ADD /
+# DATE_DIFF date_part values. HOUR/MINUTE/SECOND need TIMESTAMP_ADD /
+# TIMESTAMP_DIFF; they are not rewritten to DATE_ADD/DATE_DIFF.
+_DATE_PARTS = {
+    "YEAR": "YEAR", "YEARS": "YEAR", "YY": "YEAR", "YYYY": "YEAR",
+    "QUARTER": "QUARTER", "QUARTERS": "QUARTER",
+    "MONTH": "MONTH", "MONTHS": "MONTH", "MM": "MONTH",
+    "WEEK": "WEEK", "WEEKS": "WEEK",  # DATE_ADD; DATE_DIFF uses WEEK(MONDAY)
+    "DAY": "DAY", "DAYS": "DAY", "DD": "DAY", "D": "DAY",
+}
+_TIMESTAMP_PARTS = {
+    "HOUR": "HOUR", "HOURS": "HOUR", "HH": "HOUR",
+    "MINUTE": "MINUTE", "MINUTES": "MINUTE", "MI": "MINUTE",
+    "SECOND": "SECOND", "SECONDS": "SECOND", "SS": "SECOND",
+}
+_DATE_ADD_NAMES = frozenset({"DATEADD"})
+_DATE_DIFF_NAMES = frozenset({"DATEDIFF"})
 
 # A valid LookML object name (view, field, join); also a bare SQL identifier.
 _LOOKML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -699,7 +719,7 @@ def _parse(expr, dialect, context):
     text verbatim. SqlglotError covers tokenizer errors (an unterminated
     string) as well as parse errors."""
     try:
-        return sqlglot.parse_one(expr, read=_SQLGLOT_DIALECTS[dialect])
+        tree = sqlglot.parse_one(expr, read=_SQLGLOT_DIALECTS[dialect])
     except sqlglot.errors.SqlglotError as e:
         first_line = str(e).splitlines()[0]
         if dialect != "BIGQUERY":
@@ -714,12 +734,185 @@ def _parse(expr, dialect, context):
                 warnings.warn(
                     f"{context}: not valid {dialect} ({first_line}); read as BIGQUERY"
                 )
-                return tree
+                return _prepare_tree(tree, expr, "BIGQUERY", context)
         warnings.warn(
             f"{context}: could not parse expression ({first_line}); emitted "
             f"verbatim, verify column references in LookML"
         )
         return None
+    return _prepare_tree(tree, expr, dialect, context)
+
+
+def _prepare_tree(tree, expr, dialect, context):
+    """Maps Ossie date functions to BigQuery and warns on leftover calls."""
+    tree = _rewrite_ossie_date_functions(tree, expr, dialect, context)
+    if dialect != "BIGQUERY":
+        _warn_unknown_functions(tree, context)
+    return tree
+
+
+def _rewrite_ossie_date_functions(tree, original, dialect, context):
+    """Rewrite DATEADD/DATEDIFF bottom-up so nested calls are rewritten too.
+
+    sqlglot ``transform`` does not walk children of a replaced node, so a
+    DATEADD whose amount is a DATEDIFF would keep the inner call in the
+    default-reader shape.
+    """
+    root = tree
+    for node in reversed(list(tree.walk())):
+        replacement = _rewrite_ossie_date_function(node, original, dialect, context)
+        if replacement is node:
+            continue
+        if node is root:
+            root = replacement
+        else:
+            node.replace(replacement)
+    return root
+
+
+def _rewrite_ossie_date_function(node, original, dialect, context):
+    """DATEADD(part, n, d) -> DATE_ADD(d, INTERVAL n PART);
+    DATEDIFF(part, start, end) -> DATE_DIFF(end, start, PART)."""
+    if isinstance(node, exp.Anonymous):
+        name = str(node.this).upper()
+        args = list(node.expressions)
+        if name in _DATE_ADD_NAMES and len(args) == 3:
+            return _rewrite_date_add(args[0], args[1], args[2], context) or node
+        if name in _DATE_DIFF_NAMES and len(args) == 3:
+            return _rewrite_date_diff(args[0], args[1], args[2], original, context) or node
+        return node
+    if isinstance(node, exp.DateDiff) and dialect != "BIGQUERY":
+        # Default reader: DATEDIFF(day, start, end) has this=day (a column)
+        # and unit=END_DATE (the end date, not a date part). Skip on BIGQUERY
+        # so DATE_DIFF(day, first_day, ISOWEEK) stays a column named day.
+        if _timestamp_part_name(node.this):
+            _warn_unmapped_time_unit("DATEDIFF", node.this, context)
+            return node
+        part = _date_part_name(node.this)
+        if part and not _date_part_name(node.args.get("unit")):
+            end = _end_from_unit(node.args.get("unit"), original)
+            return exp.DateDiff(
+                this=end,
+                expression=node.expression,
+                unit=exp.var(_date_diff_unit(part)),
+            )
+    return node
+
+
+def _rewrite_date_add(unit, amount, value, context):
+    if _timestamp_part_name(unit):
+        _warn_unmapped_time_unit("DATEADD", unit, context)
+        return None
+    part = _date_part_name(unit)
+    if not part:
+        return None
+    return exp.DateAdd(this=value, expression=amount, unit=exp.var(part))
+
+
+def _rewrite_date_diff(unit, start, end, original, context):
+    if _timestamp_part_name(unit):
+        _warn_unmapped_time_unit("DATEDIFF", unit, context)
+        return None
+    part = _date_part_name(unit)
+    if not part:
+        return None
+    return exp.DateDiff(
+        this=end, expression=start, unit=exp.var(_date_diff_unit(part))
+    )
+
+
+def _part_token(node):
+    if node is None:
+        return None
+    if isinstance(node, exp.Literal) and node.is_string:
+        return str(node.this)
+    if isinstance(node, exp.Column) and not node.table:
+        return node.name
+    if isinstance(node, (exp.Var, exp.Identifier)):
+        return node.name
+    return None
+
+
+def _date_part_name(node):
+    """Canonical BigQuery DATE_ADD/DATE_DIFF part when `node` is a unit."""
+    token = _part_token(node)
+    return _DATE_PARTS.get(token.upper()) if token else None
+
+
+def _date_diff_unit(part: str) -> str:
+    """BigQuery ``WEEK`` starts Sunday; Ossie ``DATE_TRUNC('week', ...)`` is Monday."""
+    return "WEEK(MONDAY)" if part == "WEEK" else part
+
+
+def _timestamp_part_name(node):
+    """HOUR/MINUTE/SECOND: BigQuery DATE_ADD/DATE_DIFF reject these."""
+    token = _part_token(node)
+    return _TIMESTAMP_PARTS.get(token.upper()) if token else None
+
+
+def _warn_unmapped_time_unit(func, unit, context):
+    part = _timestamp_part_name(unit)
+    warnings.warn(
+        f"{context}: {func} {part} has no BigQuery DATE_ADD/DATE_DIFF spelling; "
+        f"emitted as-is until TIMESTAMP_ADD/TIMESTAMP_DIFF is mapped"
+    )
+
+
+def _end_from_unit(unit, original):
+    """Rebuilds the DATEDIFF end date sqlglot stored as a date-part unit."""
+    if isinstance(unit, (exp.Literal, exp.Column)):
+        return unit
+    if isinstance(unit, exp.Var):
+        name = unit.name
+    elif isinstance(unit, exp.Identifier):
+        name = unit.name
+    elif isinstance(unit, str):
+        name = unit
+    else:
+        return unit
+    if _is_date_literal(name, original):
+        return exp.Literal.string(name)
+    if original and re.search('"' + re.escape(name) + '"', original):
+        return exp.column(name, quoted=True)
+    match = re.search(r"(?i)\b" + re.escape(name) + r"\b", original or "")
+    return exp.column(match.group(0) if match else name)
+
+
+def _is_date_literal(name, original):
+    """True when *name* was a single-quoted string in *original*.
+
+    Double quotes delimit an identifier in ANSI_SQL and OSSIE_SQL_2026.
+    """
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T].*)?", name):
+        return True
+    return bool(original and re.search("'" + re.escape(name) + "'", original))
+
+
+def _anonymous_time_unit_call(node):
+    name = str(node.this).upper()
+    args = list(node.expressions)
+    return (
+        name in _DATE_ADD_NAMES | _DATE_DIFF_NAMES
+        and len(args) == 3
+        and _timestamp_part_name(args[0]) is not None
+    )
+
+
+def _warn_unknown_functions(tree, context):
+    """Warns when a portable call was not given a BigQuery spelling.
+
+    Typed nodes (SUM, DATE_TRUNC, the rewritten DATE_ADD / DATE_DIFF) already
+    have a BigQuery spelling. sqlglot leaves everything else as Anonymous.
+    """
+    names = sorted({
+        str(node.this).upper()
+        for node in tree.find_all(exp.Anonymous)
+        if node.this and not _anonymous_time_unit_call(node)
+    })
+    for name in names:
+        warnings.warn(
+            f"{context}: {name} was not translated to BigQuery; emitted as-is"
+        )
 
 
 def _qualify(expr, dialect, home, plans, context, tree=None, metric=False):
@@ -1300,7 +1493,7 @@ def _indent(text, levels):
 def _warn_dropped_fields(source, context, extra=None, skip=()):
     """Warns about Ossie properties that have no LookML counterpart."""
     dropped = list(extra or [])
-    for key in ("custom_extensions", "version", "label"):
+    for key in ("nonportable_extensions", "version", "label"):
         if key not in skip and source.get(key):
             dropped.append(key)
     if dropped:

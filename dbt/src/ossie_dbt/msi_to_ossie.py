@@ -23,17 +23,17 @@ from itertools import combinations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataType,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
@@ -149,7 +149,7 @@ class MSIToOssieConverter:
 
     def convert(
         self, manifest: PydanticSemanticManifest, ossie_model_name: str = "semantic_model"
-    ) -> ConverterResult[OssieDocument]:
+    ) -> ConverterResult[OssieSemanticModel]:
         helper_families = unchanged_ratio_helpers(manifest.metrics, manifest.saved_queries)
         manifest = PydanticSemanticManifestTransformer.transform(manifest)
         issues: List[ConverterIssue] = []
@@ -211,7 +211,7 @@ class MSIToOssieConverter:
                     expression=self._make_expression(expr),
                     description=metric.description,
                     datatype=self._resolve_datatype(metric.datatype, metric.config),
-                    custom_extensions=self._custom_extensions_from_meta(metric.config),
+                    nonportable_extensions=self._custom_extensions_from_meta(metric.config),
                 )
             )
             if len(manifest.semantic_models) > 1 and self._aggregates_a_constant(metric):
@@ -237,7 +237,7 @@ class MSIToOssieConverter:
         ossie_metrics = [metric for metric in ossie_metrics if metric.name not in helpers]
 
         return ConverterResult(
-            output=OssieDocument(
+            output=OssieSemanticModel(
                 version="0.3.0.dev0",
                 name=ossie_model_name,
                 datasets=datasets,
@@ -265,7 +265,7 @@ class MSIToOssieConverter:
             unique_keys=unique_keys if unique_keys else None,
             description=sm.description,
             fields=fields if fields else None,
-            custom_extensions=self._custom_extensions_from_meta(sm.config),
+            nonportable_extensions=self._custom_extensions_from_meta(sm.config),
         )
 
     def _convert_dimension(self, dim: Dimension) -> OssieField:
@@ -279,7 +279,7 @@ class MSIToOssieConverter:
             label=dim.label,
             description=dim.description,
             datatype=self._resolve_datatype(dim.datatype, dim.config),
-            custom_extensions=self._custom_extensions_from_meta(dim.config),
+            nonportable_extensions=self._custom_extensions_from_meta(dim.config),
         )
 
     @staticmethod
@@ -312,7 +312,7 @@ class MSIToOssieConverter:
             label=entity.label,
             description=entity.description,
             datatype=self._resolve_datatype(None, entity.config),
-            custom_extensions=self._custom_extensions_from_meta(entity.config),
+            nonportable_extensions=self._custom_extensions_from_meta(entity.config),
         )
 
     def _convert_measure(self, measure: Measure) -> OssieField:
@@ -324,14 +324,14 @@ class MSIToOssieConverter:
             label=measure.label,
             description=measure.description,
             datatype=self._resolve_datatype(None, measure.config),
-            custom_extensions=self._custom_extensions_from_meta(measure.config),
+            nonportable_extensions=self._custom_extensions_from_meta(measure.config),
         )
 
     @staticmethod
     def _custom_extensions_from_meta(
         config: Optional[SemanticLayerElementConfig],
-    ) -> Optional[List[OssieCustomExtension]]:
-        """Carry a non-empty MSI `config.meta` dict across as one Ossie `custom_extensions` entry.
+    ) -> Optional[List[OssieNonportableExtension]]:
+        """Carry a non-empty MSI `config.meta` dict across as one Ossie `nonportable_extensions` entry.
 
         `config.meta` is otherwise silently dropped at this boundary (#42). It goes under a
         `meta` key, mirroring dbt's own `config`, so Ossie -> dbt can tell it apart from
@@ -339,12 +339,12 @@ class MSIToOssieConverter:
         """
         if config is None or not config.meta:
             return None
-        # YAML-parsed meta can hold datetime.date. default=str keeps those
-        # values instead of aborting the conversion.
+        # YAML-parsed meta can hold datetime.date, which extension data rejects.
+        # The JSON round trip with default=str keeps those values as strings.
         return [
-            OssieCustomExtension(
+            OssieNonportableExtension(
                 vendor_name=OssieVendor.DBT.value,
-                data=json.dumps({"meta": config.meta}, default=str),
+                data=json.loads(json.dumps({"meta": config.meta}, default=str)),
             )
         ]
 

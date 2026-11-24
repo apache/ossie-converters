@@ -23,7 +23,7 @@ A two-way converter between [Ossie semantic models](https://github.com/apache/os
 
 This converter supports conversion in both directions between Ossie YAML and
 Salesforce Semantic Model JSON. Unmapped Salesforce properties are preserved in
-`custom_extensions`; see the mapping reference for direction-specific limits.
+`nonportable_extensions`; see the mapping reference for direction-specific limits.
 
 Each Ossie file contains one model, with `version`, `name`, `datasets`,
 `relationships`, and `metrics` at the document root. Legacy `semantic_model`
@@ -154,7 +154,7 @@ ossieToSf.convert(Paths.get("input/model.yaml"), Paths.get("output/"));
 ### Features
 
 - **Schema-validated** - Input is validated against JSON Schema before processing
-- **Lossless conversion** - Unmapped properties are preserved in `custom_extensions`
+- **Lossless conversion** - Unmapped properties are preserved in `nonportable_extensions`
 - **Bidirectional** - Supports both directions, with direction-specific limits documented below
 - **Supports Ossie Specification v0.2.0.dev0**
 
@@ -174,9 +174,9 @@ ossieToSf.convert(Paths.get("input/model.yaml"), Paths.get("output/"));
 | `semanticRelationships[]` | `relationships[]` |
 | `criteria[]` | `from_columns` + `to_columns` |
 | `semanticCalculatedMeasurements[]` | `metrics[]` |
-| `semanticCalculatedDimensions[]` | Converted to `fields[]` if single data object dependency, otherwise stored in `custom_extensions` |
+| `semanticCalculatedDimensions[]` | Converted to `fields[]` if single data object dependency, otherwise stored in `nonportable_extensions` |
 | `businessPreferences` | `ai_context` |
-| Unmapped properties | `custom_extensions` (vendor: `SALESFORCE`) |
+| Unmapped properties | `nonportable_extensions` (vendor: `SALESFORCE`) |
 
 The semantic model API returns a stored formula HTML-escaped, so `'A&B'` comes
 back as `&#39;A&amp;B&#39;`. Import decodes it, in a calculated measurement, in a
@@ -200,7 +200,7 @@ the Ossie expression reads as it was written.
 | `from_columns` + `to_columns` | `criteria[]` |
 | `metrics[]` | Validated Tua expressions in `semanticCalculatedMeasurements[]` |
 | `ai_context` | `businessPreferences` |
-| `custom_extensions` (vendor: `SALESFORCE`) | Restored properties |
+| `nonportable_extensions` (vendor: `SALESFORCE`) | Restored properties |
 
 ### Required Salesforce Properties
 
@@ -290,7 +290,7 @@ dimensions.
 
 ### Relationship Handling
 
-**Unsupported relationships** (containing Formula or SemanticField types) are stored in `custom_extensions` at the model level rather than being converted to Ossie relationships.
+**Unsupported relationships** (containing Formula or SemanticField types) are stored in `nonportable_extensions` at the model level rather than being converted to Ossie relationships.
 
 **Primary key columns** are exported as dimensions. Salesforce resolves a join
 criterion against the declared semantic fields rather than against the table's
@@ -490,7 +490,7 @@ missing fields.
 
 **GenericMappingEngine** — Path-based property mapping using `mappings.yaml` configuration
 
-**CustomExtensionHandler** — Preserves unmapped Salesforce properties in Ossie's `custom_extensions` for lossless bi-directional conversion
+**CustomExtensionHandler** — Preserves unmapped Salesforce properties in Ossie's `nonportable_extensions` for lossless bi-directional conversion
 
 **SchemaValidator** — Validates input against JSON schemas before conversion
 

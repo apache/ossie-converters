@@ -22,21 +22,20 @@ holding the domain ZSheet, one ZSheet per table, and connection metadata,
 all serialized as protobuf-JSON (camelCase keys).
 """
 
-import json
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 from ossie_wisdom.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
@@ -56,10 +55,10 @@ _TIME_DATA_TYPES = {"DATE", "DATETIME", "TIMESTAMP"}
 _SIMPLE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Relationship `ai_context` notes for the Wisdom types Ossie direction can't express.
-# The type itself is kept in a WISDOM custom extension; the notes are for readers.
-# ONE_TO_MANY's note is no longer written (the edge is flipped, so it would contradict
-# the direction), but ossie_to_wisdom still reads all three, matched exactly, from
-# documents that carry no WISDOM extension.
+# The type itself is kept in a WISDOM custom extension. ONE_TO_MANY's note is no longer
+# written (the edge is flipped, so it would contradict the direction), but ossie_to_wisdom
+# still reads all three, matched exactly, when a relationship has no usable WISDOM
+# extension: documents written before it, and entries that are malformed or stale.
 RELATIONSHIP_TYPE_NOTES = {
     "ONE_TO_MANY": "one-to-many relationship",
     "ONE_TO_ONE": "one-to-one relationship",
@@ -71,20 +70,17 @@ RELATIONSHIP_TYPE_NOTES = {
 EXTENSION_VERSION = 1
 
 
-def encode_extension_data(data: dict) -> str:
-    """Serializes a WISDOM custom extension payload; inverse of :func:`decode_extension_data`."""
-    return json.dumps({"_v": EXTENSION_VERSION, **data}, sort_keys=True)
+def encode_extension_data(data: dict) -> dict:
+    """Builds a WISDOM extension payload; inverse of :func:`decode_extension_data`."""
+    return {"_v": EXTENSION_VERSION, **data}
 
 
-def decode_extension_data(data: str) -> dict | None:
-    """Parses a WISDOM custom extension payload, or returns None when it is not a JSON object
-    or was written in a format version this converter does not understand."""
-    try:
-        decoded = json.loads(data)
-    except (TypeError, ValueError, RecursionError):
+def decode_extension_data(data: dict) -> dict | None:
+    """Reads a WISDOM extension payload, or returns None when it is not an object or was
+    written in a format version this converter does not understand."""
+    if not isinstance(data, dict):
         return None
-    if not isinstance(decoded, dict):
-        return None
+    decoded = dict(data)
     version = decoded.pop("_v", EXTENSION_VERSION)
     if version != EXTENSION_VERSION or isinstance(version, bool):
         return None
@@ -94,7 +90,7 @@ def decode_extension_data(data: str) -> dict | None:
 class WisdomToOssieConverter:
     """Converts a wisdom domain export dict into an Ossie Document."""
 
-    def convert(self, export: dict) -> ConverterResult[OssieDocument]:
+    def convert(self, export: dict) -> ConverterResult[OssieSemanticModel]:
         issues: List[ConverterIssue] = []
 
         domain = export.get("domain", {}).get("zsheet_json", {})
@@ -114,7 +110,7 @@ class WisdomToOssieConverter:
         dataset_names = {d.name for d in datasets}
         relationships = self._convert_relationships(domain, dataset_names, issues)
 
-        document = OssieDocument(
+        document = OssieSemanticModel(
             name=domain.get("ref", {}).get("name") or export.get("export_metadata", {}).get("domain_name", "domain"),
             description=domain.get("description") or None,
             ai_context=self._build_ai_context(domain),
@@ -335,12 +331,12 @@ class WisdomToOssieConverter:
                 suffix += 1
             seen_names.add(name)
 
-            custom_extensions = None
+            nonportable_extensions = None
             if relationship_type in RELATIONSHIP_TYPE_NOTES:
                 # The endpoints let ossie_to_wisdom tell when `from`/`to` were edited after this.
                 data = {"relationshipType": relationship_type, "normalizedEndpoints": [from_dataset, to_dataset]}
-                custom_extensions = [
-                    OssieCustomExtension(vendor_name=OssieVendor.WISDOM.value, data=encode_extension_data(data))
+                nonportable_extensions = [
+                    OssieNonportableExtension(vendor_name=OssieVendor.WISDOM.value, data=encode_extension_data(data))
                 ]
 
             relationships.append(
@@ -351,7 +347,7 @@ class WisdomToOssieConverter:
                     from_columns=from_columns,
                     to_columns=to_columns,
                     ai_context=ai_context,
-                    custom_extensions=custom_extensions,
+                    nonportable_extensions=nonportable_extensions,
                 )
             )
         return relationships

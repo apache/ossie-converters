@@ -317,8 +317,8 @@ def test_non_ansi_metrics_and_malformed_extensions_fail(pig):
     with pytest.raises(ConversionError, match="PQL"):
         ossie_to_celonis(model)
     del model["metrics"]
-    model["custom_extensions"][0]["data"] = "{"
-    with pytest.raises(ConversionError, match="extension JSON"):
+    model["nonportable_extensions"][0]["data"] = "{"
+    with pytest.raises(ConversionError, match="nonportable_extensions.*data"):
         ossie_to_celonis(model)
 
 
@@ -397,16 +397,16 @@ def test_metadata_edits_keep_original_relationship_and_key_contract(pig):
 
 def test_foreign_extensions_preserved_as_native_attributes(pig):
     model = convert(pig)
-    extra = {"vendor_name": "OTHER_VENDOR", "data": '{"keep":true}'}
-    model["custom_extensions"].append(extra)
-    model["datasets"][0]["custom_extensions"].append(extra)
-    model["relationships"][0]["custom_extensions"].append(extra)
+    extra = {"vendor_name": "OTHER_VENDOR", "data": {"keep": True}}
+    model["nonportable_extensions"].append(extra)
+    model["datasets"][0]["nonportable_extensions"].append(extra)
+    model["relationships"][0]["nonportable_extensions"].append(extra)
     restored = ossie_to_celonis(model)
     attrs = restored["objects"][0]["attributes"]
-    assert json.loads(attrs["apache_ossie"])["custom_extensions"] == [extra]
-    assert json.loads(attrs["apache_ossie_model"])["custom_extensions"] == [extra]
+    assert json.loads(attrs["apache_ossie"])["nonportable_extensions"] == [extra]
+    assert json.loads(attrs["apache_ossie_model"])["nonportable_extensions"] == [extra]
     assert json.loads(restored["relationships"][1]["attributes"]["apache_ossie"])[
-        "custom_extensions"
+        "nonportable_extensions"
     ] == [extra]
     imported = celonis_to_ossie(restored)
     assert ossie_to_celonis(imported) == restored

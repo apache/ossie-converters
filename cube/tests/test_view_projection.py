@@ -26,11 +26,11 @@ from _cube_gate import assert_cube_compiles, assert_ossie_is_valid, cube_gate
 from _roundtrip_helpers import RandomRnd, build_cube_model
 from _util import by_name, expr_of, model_of, stash_of
 
+from _util import import_model_scoped as convert_cube_to_ossie
+from _util import project_model_scoped as convert_cube_view_to_ossie
 from ossie_cube import (
     ConversionError,
     IssueType,
-    convert_cube_to_ossie,
-    convert_cube_view_to_ossie,
     convert_ossie_to_cube,
 )
 from ossie_cube._common import dump_yaml, load_yaml
@@ -1001,7 +1001,7 @@ def test_only_the_published_surface_carries_a_stash():
     out, _, issues = _project(text)
     model = model_of(out)
     datasets = by_name(model["datasets"])
-    assert "custom_extensions" not in model
+    assert "nonportable_extensions" not in model
     assert stash_of(datasets["orders"]) == {"cube_extras": {"data_source": "crm"}}
     assert stash_of(datasets["users"]) == {"cube_extras": {"data_source": "crm"}}
     assert stash_of(by_name(datasets["orders"]["fields"])["status"]) == {"format": "id"}

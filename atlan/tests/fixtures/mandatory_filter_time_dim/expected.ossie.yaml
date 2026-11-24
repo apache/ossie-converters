@@ -77,12 +77,25 @@ metrics:
   ai_context:
     instructions: 'Grain: return ticket. Counts: Store returns that are not void. Unit: returns. Re-aggregation:
       none.'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: ATLAN
-    data: '{"registry": {"id": "metric_synth_open_returns", "definition_version": 1}, "agent_context":
-      {"grain": "return ticket", "population": "Store returns that are not void", "unit": "returns", "reaggregation":
-      "none", "sql_dialect": "snowflake", "dimensions": ["store_returns.sr_returned_date", "store_returns.store_name",
-      "store_returns.sr_return_status"], "timeframe_field": "store_returns.sr_returned_date"}}'
-custom_extensions:
+    data:
+      registry:
+        id: metric_synth_open_returns
+        definition_version: 1
+      agent_context:
+        grain: return ticket
+        population: Store returns that are not void
+        unit: returns
+        reaggregation: none
+        sql_dialect: snowflake
+        dimensions:
+        - store_returns.sr_returned_date
+        - store_returns.store_name
+        - store_returns.sr_return_status
+        timeframe_field: store_returns.sr_returned_date
+nonportable_extensions:
 - vendor_name: ATLAN
-  data: '{"registry": {"workspace_id": "workspace_synthetic_tpcds"}}'
+  data:
+    registry:
+      workspace_id: workspace_synthetic_tpcds

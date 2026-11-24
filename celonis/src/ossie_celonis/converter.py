@@ -23,7 +23,7 @@ import warnings
 from copy import deepcopy
 from urllib.parse import quote
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 
 VENDOR = "CELONIS"
 FORMAT_VERSION = 1
@@ -91,23 +91,16 @@ def _expression(text):
 def _extension(kind, **data):
     return {
         "vendor_name": VENDOR,
-        "data": json.dumps(
-            {"format_version": FORMAT_VERSION, "kind": kind, **data},
-            ensure_ascii=False,
-            allow_nan=False,
-        ),
+        "data": deepcopy({"format_version": FORMAT_VERSION, "kind": kind, **data}),
     }
 
 
 def _metadata(node, kind):
     found = []
-    for extension in node.get("custom_extensions", []):
+    for extension in node.get("nonportable_extensions", []):
         if extension["vendor_name"] != VENDOR:
             continue
-        try:
-            data = json.loads(extension["data"])
-        except (ValueError, TypeError) as exc:
-            raise ConversionError("Invalid CELONIS extension JSON") from exc
+        data = extension["data"]
         if isinstance(data, dict) and data.get("kind") == kind:
             if data.get("format_version") != FORMAT_VERSION:
                 raise ConversionError("Unsupported CELONIS extension format_version")
@@ -118,16 +111,16 @@ def _metadata(node, kind):
 
 
 def _core(node):
-    return {k: deepcopy(v) for k, v in node.items() if k != "custom_extensions"}
+    return {k: deepcopy(v) for k, v in node.items() if k != "nonportable_extensions"}
 
 
 def _extra_extensions(node, kind):
     native = _metadata(node, kind)
     return [
         deepcopy(e)
-        for e in node.get("custom_extensions", [])
+        for e in node.get("nonportable_extensions", [])
         if not (
-            native and e["vendor_name"] == VENDOR and json.loads(e["data"]) == native
+            native and e["vendor_name"] == VENDOR and e["data"] == native
         )
     ]
 
@@ -139,7 +132,7 @@ def _row_projection(dataset):
 def _validate(model):
     # The shared parser rejects legacy wrappers, unknown fields, nulls and invalid dialects.
     try:
-        OssieDocument.from_ossie_json(json.dumps(model, allow_nan=False))
+        OssieSemanticModel.from_ossie_json(json.dumps(model, allow_nan=False))
     except ValueError as exc:
         raise ConversionError(f"Invalid Ossie document: {exc}") from exc
     datasets = {}
@@ -267,7 +260,7 @@ def celonis_to_ossie(pig, *, name=None):
                 dataset["description"] = entity["description"]
             if isinstance(entity.get("agentContext"), str):
                 dataset["ai_context"] = entity["agentContext"]
-            dataset["custom_extensions"] = [
+            dataset["nonportable_extensions"] = [
                 _extension(
                     "dataset",
                     bucket=bucket,
@@ -319,7 +312,7 @@ def celonis_to_ossie(pig, *, name=None):
             )
         if isinstance(relationship.get("agentContext"), str):
             converted["ai_context"] = relationship["agentContext"]
-        converted["custom_extensions"] = [
+        converted["nonportable_extensions"] = [
             _extension("relationship", entity=relationship, projection=_core(converted))
         ]
         model["relationships"].append(converted)
@@ -331,7 +324,7 @@ def celonis_to_ossie(pig, *, name=None):
         for b in pig.get("dataBindings", [])
         if _identity_key(_identity(b["entityRef"])) not in dataset_names
     ]
-    model["custom_extensions"] = [
+    model["nonportable_extensions"] = [
         _extension(
             "model",
             remainder=remainder,
@@ -488,7 +481,7 @@ def ossie_to_celonis(
             semantics = _core(dataset)
             extras = _extra_extensions(dataset, "dataset")
             if extras:
-                semantics["custom_extensions"] = extras
+                semantics["nonportable_extensions"] = extras
             entity.setdefault("attributes", None)
             entity["attributes"] = {
                 **(entity["attributes"] or {}),
@@ -499,7 +492,8 @@ def ossie_to_celonis(
             entity["attributes"] = {
                 **(entity.get("attributes") or {}),
                 "apache_ossie": json.dumps(
-                    {**_core(dataset), "custom_extensions": extras}, ensure_ascii=False
+                    {**_core(dataset), "nonportable_extensions": extras},
+                    ensure_ascii=False,
                 ),
             }
         if package_key:
@@ -562,7 +556,7 @@ def ossie_to_celonis(
             entity["attributes"] = {
                 **(entity.get("attributes") or {}),
                 "apache_ossie": json.dumps(
-                    {**_core(relationship), "custom_extensions": extras}
+                    {**_core(relationship), "nonportable_extensions": extras}
                 ),
             }
         if package_key:
@@ -592,10 +586,12 @@ def ossie_to_celonis(
         header = {
             k: deepcopy(v)
             for k, v in model.items()
-            if k not in ("datasets", "relationships", "metrics", "custom_extensions")
+            if k not in (
+                "datasets", "relationships", "metrics", "nonportable_extensions"
+            )
         }
         if model_extras:
-            header["custom_extensions"] = model_extras
+            header["nonportable_extensions"] = model_extras
         first = next(
             e
             for bucket in ("objects", "eventSources", "events")

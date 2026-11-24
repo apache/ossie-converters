@@ -223,7 +223,7 @@ def test_field_name_survives_a_round_trip_as_a_field(tmp_path: Path):
     model = _convert(tmp_path, object_types, datasets=datasets)
 
     roundtrip = tmp_path / "roundtrip.yaml"
-    roundtrip.write_text(OssieToSpecConverter.convert(model).dump_yaml())
+    roundtrip.write_text(OssieToSpecConverter.convert(model).to_ossie_yaml())
     reparsed = OssieParser().parse(roundtrip)
 
     expressions = [

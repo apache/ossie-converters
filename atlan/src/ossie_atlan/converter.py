@@ -823,7 +823,7 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         ext = {k: dim[k] for k in ("values", "value_map", "values_truncated") if dim.get(k) not in (None, [], {})}
         alias = aliases.pop()
         if ext or dim.get("filter_form"):
-            extra["custom_extensions"] = [{"vendor_name": "ATLAN", "data": ext}]
+            extra["nonportable_extensions"] = [{"vendor_name": "ATLAN", "data": ext}]
         fname = m.field(alias, node, name=_slug(dim["name"]) or dim["name"], **extra)
         dim_refs.append(f"{m.alias_ds[alias]}.{fname}")
         if dim.get("filter_form"):                     # after the field exists, so it is reused
@@ -911,7 +911,7 @@ def to_ossie(art: dict) -> tuple[dict, list[dict], list[dict]]:
         ctx["verified_sql"] = prov["observed_sql"]
     if prov.get("trust_score") is not None:
         ctx["trust"] = {"score": prov["trust_score"]}
-    metric["custom_extensions"] = [{"vendor_name": "ATLAN", "data": {
+    metric["nonportable_extensions"] = [{"vendor_name": "ATLAN", "data": {
         # a record with no id is a metric not yet in the registry (an export of a new one)
         "registry": {**({"id": art["id"]} if art.get("id") else {}), "definition_version": d.get("version"),
                      **({"output_column": art["output_column"]} if art.get("output_column") else {})},
@@ -949,13 +949,13 @@ def _conflict(ds: dict, rels: dict, owner: dict, m: dict, dsl: list[dict], rl: l
             if g is None:
                 continue
             for k, v in f.items():
-                if k in ("custom_extensions", "description", "ai_context"):
+                if k in ("nonportable_extensions", "description", "ai_context"):
                     continue
                 if k in g and g[k] != v:
                     return (f"field {d['name']}.{f['name']}: metrics {owner[(d['name'], f['name'])]} and "
                             f"{m['name']} disagree on {k!r}")
-            for x in f.get("custom_extensions") or []:
-                gx = next((y for y in g.get("custom_extensions") or [] if y["vendor_name"] == x["vendor_name"]), None)
+            for x in f.get("nonportable_extensions") or []:
+                gx = next((y for y in g.get("nonportable_extensions") or [] if y["vendor_name"] == x["vendor_name"]), None)
                 if gx and any(k in gx["data"] and gx["data"][k] != v for k, v in x["data"].items()):
                     return f"field {d['name']}.{f['name']}: metrics disagree on its values or filter form"
         if d.get("primary_key") and have.get("primary_key") not in (None, d["primary_key"]):
@@ -1004,17 +1004,17 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
                     owner[(d["name"], f["name"])] = m["name"]
                     continue
                 for k, v in f.items():
-                    if k == "custom_extensions":
+                    if k == "nonportable_extensions":
                         continue
                     if k in g and g[k] != v:               # prose only (checked above): first wording wins
                         notes.append(("prose", m["name"], f"{d['name']}.{f['name']}: {k} differs from "
                                       f"{owner[(d['name'], f['name'])]}; kept the first"))
                         continue
                     g.setdefault(k, v)
-                for x in f.get("custom_extensions") or []:
-                    gx = next((y for y in g.setdefault("custom_extensions", []) if y["vendor_name"] == x["vendor_name"]), None)
+                for x in f.get("nonportable_extensions") or []:
+                    gx = next((y for y in g.setdefault("nonportable_extensions", []) if y["vendor_name"] == x["vendor_name"]), None)
                     if gx is None:
-                        g["custom_extensions"].append(copy.deepcopy(x))
+                        g["nonportable_extensions"].append(copy.deepcopy(x))
                     else:
                         for k, v in x["data"].items():
                             gx["data"].setdefault(k, v)
@@ -1033,33 +1033,25 @@ def merge(parts: list[tuple[dict, list[dict], list[dict]]], name: str = "model",
         doc["relationships"] = list(rels.values())
     doc["metrics"] = metrics
     if workspace_id:
-        doc["custom_extensions"] = [{"vendor_name": "ATLAN", "data": {"registry": {"workspace_id": workspace_id}}}]
+        doc["nonportable_extensions"] = [{"vendor_name": "ATLAN", "data": {"registry": {"workspace_id": workspace_id}}}]
     if notes:
         doc["_merge_notes"] = notes
     return doc
 
 
 def export(doc: dict) -> dict:
-    """The strict Ossie 0.3.0.dev0 form: every ATLAN extension's data as a JSON string; private
-    keys (`_merge_notes`) dropped."""
-    out = json.loads(json.dumps({k: v for k, v in doc.items() if not k.startswith("_")}))
-    holders = [out] + out["datasets"] + [f for d in out["datasets"] for f in d.get("fields", []) + d.get("metrics", [])] \
-        + out.get("relationships", []) + out.get("metrics", [])
-    for h in holders:
-        for x in h.get("custom_extensions") or []:
-            if not isinstance(x["data"], str):
-                x["data"] = json.dumps(x["data"])
-    return out
+    """The Ossie 0.3.0.dev0 document, with private keys (`_merge_notes`) dropped."""
+    return json.loads(json.dumps({k: v for k, v in doc.items() if not k.startswith("_")}))
 
 
 def _registry_of(m: dict) -> dict:
-    return next((x["data"].get("registry") or {} for x in m.get("custom_extensions") or []
+    return next((x["data"].get("registry") or {} for x in m.get("nonportable_extensions") or []
                  if x["vendor_name"] == "ATLAN"), {})
 
 
 def agent_context(m: dict) -> dict:
     """The ATLAN agent_context block of an Ossie metric ({} when there is none)."""
-    return next((x["data"].get("agent_context") or {} for x in m.get("custom_extensions") or []
+    return next((x["data"].get("agent_context") or {} for x in m.get("nonportable_extensions") or []
                  if x["vendor_name"] == "ATLAN"), {})
 
 
@@ -1143,7 +1135,7 @@ def _reverse_parts(doc: dict, m: dict, aliases: dict[str, str] | None = None,
     ctx = agent_context(m)
     ds = {d["name"]: d for d in doc.get("datasets") or []}
     from_registry = any(x["vendor_name"] == "ATLAN" and "registry" in x["data"]
-                        for x in m.get("custom_extensions") or [])
+                        for x in m.get("nonportable_extensions") or [])
     names = ctx.get("relationships", [] if from_registry else None)   # converted: absent = none
     rels = [r for r in doc.get("relationships") or [] if names is None or r["name"] in names]
     expr_text = expression_text(m)

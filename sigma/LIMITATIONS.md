@@ -31,7 +31,7 @@ model — they describe how Sigma displays it and who may see it — and Ossie h
 equivalent for any of them.
 
 All of it is preserved verbatim under a `native` key in the owning object's
-`custom_extensions` (`vendor_name: SIGMA`) and restored unchanged on export, matching
+`nonportable_extensions` (`vendor_name: SIGMA`) and restored unchanged on export, matching
 how the Databricks, Omni, and Orion Belt converters handle vendor-only features. The
 residue is captured **by subtraction** — everything the converter does not explicitly
 map — so a future `schemaVersion` that adds fields still round-trips rather than
@@ -55,7 +55,7 @@ document and is rejected with a `ValueError`.
 `union`. Only the first is a `database.schema.table` location, which is what
 `OssieDataset.source` is defined to hold. The other five get a readable marker
 (`sql:<connectionId>`, `join:<elementId>`, ...) plus a `DERIVED_ELEMENT_NOT_MODELED`
-issue; the full native `source` block lives in `custom_extensions`, so export
+issue; the full native `source` block lives in `nonportable_extensions`, so export
 reproduces it exactly. An Ossie document that never came from Sigma can only ever
 produce a `warehouse-table` source, since that is all a location string implies.
 
@@ -65,7 +65,7 @@ Sigma addresses a relationship key either by the element's own column id or by a
 `inode-<file>/<PHYSICAL_COLUMN>` reference straight to the warehouse column, bypassing
 the modeled column list. The converter resolves both to a modeled field name where it
 can, records `RELATIONSHIP_COLUMN_UNRESOLVED` where it cannot, and **always** keeps the
-raw `keys` in `custom_extensions`, so Sigma → Ossie → Sigma is exact either way.
+raw `keys` in `nonportable_extensions`, so Sigma → Ossie → Sigma is exact either way.
 A relationship with no join keys (`keys: []` or missing keys) cannot be represented as
 an Ossie relationship (which requires at least one join column on each side) and is
 dropped with a `RELATIONSHIP_DROPPED` issue.
@@ -154,7 +154,7 @@ gets no `datatype` at all. Ossie → Sigma emits only `number`, and only for num
 columns (`Integer`, `Decimal`, `Float`). Sigma rejects the whole model for a kind it does
 not know, and writing `datetime` ourselves would mean choosing a default date format, so
 `Date`, `DateTime` and `DateTimeTz` get no `format` and Sigma shows its own default.
-A format kept in `custom_extensions` is still written back. `String`,
+A format kept in `nonportable_extensions` is still written back. `String`,
 `Boolean`, `Time`, and `Opaque` produce no `format` key, because an invented `kind`
 would be rejected for the whole document. The full native format object is always
 preserved, so display detail (`formatString`, `currencySymbol`, ...) survives.
@@ -163,7 +163,7 @@ preserved, so display detail (`formatString`, `currencySymbol`, ...) survives.
 
 Sigma element/column/relationship ids are load-bearing — controls, other data models,
 and materializations reference them — so the converter never invents an id for an
-object that has one. Native ids ride in `custom_extensions` and are reused verbatim.
+object that has one. Native ids ride in `nonportable_extensions` and are reused verbatim.
 Objects originating outside Sigma get a `uuid5` of a fixed namespace plus their
 dataset/field path: deterministic across runs, processes, and machines (pinned by
 `test_synthesized_ids_are_stable_across_processes`), but not pre-registered with
