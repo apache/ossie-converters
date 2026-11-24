@@ -39,7 +39,6 @@ from ossie import (
     OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
-    OssieDocument,
     OssieExpression,
     OssieRelationship,
     OssieSemanticModel,
@@ -68,7 +67,7 @@ def _stable_id(prefix: str, value: str) -> str:
 class OssieToWisdomConverter:
     """Converts an Ossie Document into a wisdom domain export dict."""
 
-    def convert(self, document: OssieDocument, exported_at: Optional[str] = None) -> ConverterResult[dict]:
+    def convert(self, document: OssieSemanticModel, exported_at: Optional[str] = None) -> ConverterResult[dict]:
         issues: List[ConverterIssue] = []
 
         model = document

@@ -20,7 +20,7 @@ import sqlite3
 import pytest
 import sqlglot
 from sqlglot import exp
-from ossie import OssieNonportableExtension, OssieDataType, OssieDocument, OssieVendor
+from ossie import OssieNonportableExtension, OssieDataType, OssieSemanticModel, OssieVendor
 from metricflow_semantic_interfaces.implementations.semantic_manifest import PydanticSemanticManifest
 from metricflow_semantic_interfaces.implementations.saved_query import PydanticSavedQuery, PydanticSavedQueryQueryParams
 from ossie_dbt.converter_issues import ConverterIssueType
@@ -105,7 +105,7 @@ def test_metadata_and_ratio_remain_stable_across_three_serialized_round_trips(ex
                 assert current_sql == previous_sql
         normalized_expression = current_expression
         previous_sql = current_sql
-        doc = OssieDocument.model_validate_json(reverse.output.model_dump_json())
+        doc = OssieSemanticModel.model_validate_json(reverse.output.model_dump_json())
 
 def test_editing_restored_user_metadata_invalidates_the_original_signature():
     manifest = OssieToMSIConverter().convert(_document()).output
@@ -210,4 +210,4 @@ def test_restored_datatype_is_applied_before_signing_ratio_family(datatype):
         assert [m.name for m in reverse.output.metrics] == ["avg"]
         assert reverse.output.metrics[0].datatype == datatype
         assert _user_metadata(reverse.output.metrics[0].nonportable_extensions[0].data["meta"]) == expected
-        doc = OssieDocument.model_validate_json(reverse.output.model_dump_json())
+        doc = OssieSemanticModel.model_validate_json(reverse.output.model_dump_json())

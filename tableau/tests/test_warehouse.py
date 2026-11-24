@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from ossie.models import OssieDocument
+from ossie.models import OssieSemanticModel
 from ossie_tableau import warehouse
 from ossie_tableau.cli import main
 from ossie_tableau.tds_writer import BigQueryConn, SnowflakeConn, write_tds
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.unit
 def _bigquery_fixture() -> Path:
     return Path(__file__).parent / "fixtures" / "synthetic_bigquery" / "synthetic_bigquery.tds"
 
-DOC = OssieDocument.model_validate({
+DOC = OssieSemanticModel.model_validate({
     "name": "m",
     "datasets": [{"name": "T", "source": "DB.SCH.T", "fields": [
         {"name": "ID", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "ID"}]}, "datatype": "Integer"}]}],
@@ -234,7 +234,7 @@ def test_bigquery_date_of_text_expression_tries_iso_then_us_format():
 
 
 def test_bigquery_ansi_quoted_column_is_a_physical_column_not_a_string_literal():
-    doc = OssieDocument.model_validate({
+    doc = OssieSemanticModel.model_validate({
         "name": "m",
         "datasets": [{"name": "T", "source": "p.d.T", "fields": [
             {"name": "Postal Code", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": '"Postal Code"'}]},

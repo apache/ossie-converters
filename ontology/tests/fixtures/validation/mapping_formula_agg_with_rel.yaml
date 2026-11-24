@@ -28,15 +28,18 @@ ontology:
       - name: itemId
         roles:
           - concept: Integer
+        verbalizes: ['{Item} has {Integer}']
         multiplicity: OneToOne
       - name: grossReturns
         roles:
           - concept: Store
           - concept: Decimal
+        verbalizes: ['{Item} has {Store} has {Decimal}']
         multiplicity: ManyToOne
       - name: weekSales
         roles:
           - concept: TotalSales
+        verbalizes: ['{Item} has {TotalSales}']
         multiplicity: ManyToOne
   - concept: Store
     type: EntityType
@@ -45,6 +48,7 @@ ontology:
       - name: storeId
         roles:
           - concept: Integer
+        verbalizes: ['{Store} has {Integer}']
         multiplicity: OneToOne
 ontology_mappings:
   - name: mapping
@@ -56,9 +60,9 @@ ontology_mappings:
           source: SALES
           fields:
             - name: item_id
-              expression: {}
+              expression: { sql: item_id }
             - name: amount
-              expression: {}
+              expression: { sql: amount }
     concept_mappings:
       - concept: Item
         object_mappings:

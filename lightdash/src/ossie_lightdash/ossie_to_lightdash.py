@@ -37,7 +37,6 @@ from sqlglot.errors import SqlglotError
 from ossie import (
     OssieDataset,
     OssieDialect,
-    OssieDocument,
     OssieExpression,
     OssieMetric,
     OssieSemanticModel,
@@ -229,7 +228,7 @@ def _model_name_for(dataset: OssieDataset) -> str:
 
 
 class OssieToLightdashConverter:
-    """Converts an ``OssieDocument`` into Lightdash definitions.
+    """Converts an ``OssieSemanticModel`` into Lightdash definitions.
 
     ``dialect`` is the expression dialect to prefer, the project's warehouse.
     ``OSSIE_SQL_2026`` and ``ANSI_SQL`` are the fallbacks. For an expression
@@ -246,7 +245,7 @@ class OssieToLightdashConverter:
         self._dialect = dialect
         self._meta_under_config = meta_under_config
 
-    def convert(self, document: OssieDocument) -> ConverterResult[Dict[str, Any]]:
+    def convert(self, document: OssieSemanticModel) -> ConverterResult[Dict[str, Any]]:
         """Converts the document into a dbt ``schema.yml`` dictionary with Lightdash ``meta``."""
         issues: List[ConverterIssue] = []
         models = [model for _, model in self._convert_semantic_model(document, issues)]
@@ -257,7 +256,7 @@ class OssieToLightdashConverter:
                     _nest_meta_under_config(column)
         return ConverterResult(output={"version": 2, "models": models}, issues=issues)
 
-    def convert_models(self, document: OssieDocument) -> ConverterResult[List[Dict[str, Any]]]:
+    def convert_models(self, document: OssieSemanticModel) -> ConverterResult[List[Dict[str, Any]]]:
         """Converts the document into Lightdash model files, one dictionary per dataset.
 
         The model-file format has a place for everything the dbt format keeps

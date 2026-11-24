@@ -114,7 +114,7 @@ from ossie_lightdash import LightdashToOssieConverter, OssieToLightdashConverter
 result = LightdashToOssieConverter(OssieDialect.BIGQUERY).convert(
     schema_yml, database="analytics_db", schema="marts"
 )
-result.output   # OssieDocument
+result.output   # OssieSemanticModel
 result.issues   # [ConverterIssue(issue_type, element_name), ...]
 
 models = OssieToLightdashConverter(OssieDialect.BIGQUERY).convert_models(document)

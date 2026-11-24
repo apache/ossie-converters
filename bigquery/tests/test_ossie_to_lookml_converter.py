@@ -1051,10 +1051,27 @@ class TestSourceDialects:
             ("DATEADD(day, 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
             ("DATEADD(month, -1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL -1 MONTH)"),
             ("DATEADD(year, 1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 1 YEAR)"),
+            ("DATEADD(week, 1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 1 WEEK)"),
             ("DATEADD('day', 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
+            (
+                "DATEADD(month, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 MONTH)",
+            ),
+            (
+                "DATEADD(quarter, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 QUARTER)",
+            ),
+            (
+                "DATEADD(year, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 YEAR)",
+            ),
             (
                 "DATEDIFF(day, start_date, end_date)",
                 "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY)",
+            ),
+            (
+                "DATEDIFF(week, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, WEEK(MONDAY))",
             ),
             (
                 "DATEDIFF(month, start_date, end_date)",

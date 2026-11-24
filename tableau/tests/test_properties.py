@@ -23,7 +23,7 @@ import sqlglot
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from ossie.models import OssieDocument
+from ossie.models import OssieSemanticModel
 from ossie_tableau.convert import convert_datasource, convert_file
 from ossie_tableau.losses import KNOWN_KINDS
 from ossie_tableau.tds_writer import SnowflakeConn, write_tds
@@ -72,7 +72,7 @@ def documents(draw):
     doc = {"name": "gen", "datasets": datasets, "relationships": rels}
     if metrics:
         doc["metrics"] = metrics
-    return OssieDocument.model_validate(doc)
+    return OssieSemanticModel.model_validate(doc)
 
 
 @SET

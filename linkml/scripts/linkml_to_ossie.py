@@ -58,4 +58,4 @@ if __name__ == "__main__":
 
         spec = LinkmlToOssieConverter().convert_to_spec(schema)
 
-    print(spec.dump_yaml())
+    print(spec.to_ossie_yaml())

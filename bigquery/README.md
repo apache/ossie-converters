@@ -116,6 +116,8 @@ For example, `"Customer ID"` is an identifier in ANSI and a string literal in
 BigQuery, `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`,
 `DATEADD(day, 7, d)` becomes `DATE_ADD(d, INTERVAL 7 DAY)`, and
 `DATEDIFF(day, start, end)` becomes `DATE_DIFF(end, start, DAY)`.
+`DATEDIFF(week, start, end)` becomes `DATE_DIFF(end, start, WEEK(MONDAY))`
+because Ossie weeks start Monday and BigQuery `WEEK` starts Sunday.
 `HOUR` / `MINUTE` / `SECOND` are left as-is with a warning until
 `TIMESTAMP_ADD` / `TIMESTAMP_DIFF` is mapped. A portable function with no
 BigQuery spelling is emitted as-is with a warning.
