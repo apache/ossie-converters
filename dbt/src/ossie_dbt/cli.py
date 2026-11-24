@@ -94,12 +94,12 @@ def _cmd_msi_to_ossie(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    manifest = parse_manifest_from_dbt_generated_manifest(input_path.read_text())
+    manifest = parse_manifest_from_dbt_generated_manifest(input_path.read_text(encoding="utf-8-sig"))
     result = MSIToOssieConverter().convert(manifest, ossie_model_name=args.model_name)
 
     _print_issues(result.issues)
 
-    output_path.write_text(result.output.to_ossie_yaml())
+    output_path.write_text(result.output.to_ossie_yaml(), encoding="utf-8")
     print(f"Written to {output_path}", file=sys.stderr)
 
 
@@ -107,14 +107,16 @@ def _cmd_ossie_to_msi(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    raw = yaml.safe_load(input_path.read_text())
+    raw = yaml.safe_load(input_path.read_text(encoding="utf-8-sig"))
     document = OssieDocument.model_validate(raw)
     result = OssieToMSIConverter().convert(document)
     _print_issues(result.issues)
 
     # PydanticSemanticManifest subclasses pydantic.v1.BaseModel, whose JSON
     # serializer is .json(), not the pydantic v2 .model_dump_json().
-    output_path.write_text(result.output.json(by_alias=True, exclude_none=True, indent=2))
+    output_path.write_text(
+        result.output.json(by_alias=True, exclude_none=True, indent=2), encoding="utf-8"
+    )
     print(f"Written to {output_path}", file=sys.stderr)
 
 

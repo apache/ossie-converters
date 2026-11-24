@@ -131,7 +131,7 @@ def _validate_json_schema(
         )
         return
 
-    with open(schema_path) as f:
+    with open(schema_path, encoding="utf-8-sig") as f:
         schema = json.load(f)
 
     validator_cls = (

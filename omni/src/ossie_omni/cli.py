@@ -81,7 +81,7 @@ def _read_model_dir(path):
             if not (base.endswith((".yaml", ".yml", ".view", ".topic"))
                     or base in ("model", "relationships")):
                 continue
-            with open(os.path.join(dirpath, fname)) as fh:
+            with open(os.path.join(dirpath, fname), encoding="utf-8-sig") as fh:
                 files[rel] = fh.read()
     return files
 
@@ -90,7 +90,7 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     try:
         if args.command == "export":
-            with open(args.input) as fh:
+            with open(args.input, encoding="utf-8-sig") as fh:
                 ossie_yaml = fh.read()
             files = convert_ossie_to_omni(ossie_yaml, base_view=args.base_view,
                                         dialect=args.dialect)
@@ -100,14 +100,14 @@ def main(argv=None):
             for rel, text in files.items():
                 dest = dests[rel]
                 os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-                with open(dest, "w") as fh:
+                with open(dest, "w", encoding="utf-8") as fh:
                     fh.write(text)
             print(f"Wrote {len(files)} file(s) to {args.output}", file=sys.stderr)
         else:
             files = _read_model_dir(args.input)
             out = convert_omni_to_ossie(files, model_name=args.name, topic=args.topic)
             if args.output:
-                with open(args.output, "w") as fh:
+                with open(args.output, "w", encoding="utf-8") as fh:
                     fh.write(out)
             else:
                 sys.stdout.write(out)

@@ -574,7 +574,7 @@ def convert_honeydew_to_ossie(workspace_dir: str) -> str:
     if not os.path.exists(workspace_path):
         raise HoneydewConversionError(f"workspace.yml not found in '{workspace_dir}'")
 
-    with open(workspace_path) as f:
+    with open(workspace_path, encoding="utf-8-sig") as f:
         workspace = yaml.safe_load(f) or {}
 
     model_name = workspace.get("name") or os.path.basename(workspace_dir.rstrip("/\\"))
@@ -650,7 +650,7 @@ def _read_entity_dir(entity_dir: str, entity_name: str) -> dict[str, Any]:
 
     entity_yml = os.path.join(entity_dir, f"{entity_name}.yml")
     if os.path.exists(entity_yml):
-        with open(entity_yml) as f:
+        with open(entity_yml, encoding="utf-8-sig") as f:
             ey = yaml.safe_load(f) or {}
         data["keys"] = _coerce_list(ey.get("keys"))
         data["description"] = ey.get("description")
@@ -667,7 +667,7 @@ def _read_entity_dir(entity_dir: str, entity_name: str) -> dict[str, Any]:
         all_ds: list[dict[str, Any]] = []
         for fn in sorted(os.listdir(datasets_dir)):
             if fn.endswith((".yml", ".yaml")):
-                with open(os.path.join(datasets_dir, fn)) as f:
+                with open(os.path.join(datasets_dir, fn), encoding="utf-8-sig") as f:
                     all_ds.append(yaml.safe_load(f) or {})
         if len(all_ds) > 1:
             warnings.warn(
@@ -685,14 +685,14 @@ def _read_entity_dir(entity_dir: str, entity_name: str) -> dict[str, Any]:
     if os.path.isdir(attrs_dir):
         for fn in sorted(os.listdir(attrs_dir)):
             if fn.endswith((".yml", ".yaml")):
-                with open(os.path.join(attrs_dir, fn)) as f:
+                with open(os.path.join(attrs_dir, fn), encoding="utf-8-sig") as f:
                     data["calculated_attributes"].append(yaml.safe_load(f) or {})
 
     metrics_dir = os.path.join(entity_dir, "metrics")
     if os.path.isdir(metrics_dir):
         for fn in sorted(os.listdir(metrics_dir)):
             if fn.endswith((".yml", ".yaml")):
-                with open(os.path.join(metrics_dir, fn)) as f:
+                with open(os.path.join(metrics_dir, fn), encoding="utf-8-sig") as f:
                     data["metrics"].append(yaml.safe_load(f) or {})
 
     return data
@@ -1053,7 +1053,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "ossie-to-honeydew":
-        with open(args.input) as f:
+        with open(args.input, encoding="utf-8-sig") as f:
             ossie_yaml = f.read()
         try:
             files = convert_ossie_to_honeydew(ossie_yaml)
@@ -1068,7 +1068,7 @@ def main() -> None:
                 sys.exit(1)
             full_path = os.path.normpath(os.path.join(output_abs, rel_path))
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            with open(full_path, "w") as f:
+            with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)
         print(f"Wrote {len(files)} file(s) to {args.output}")
 
@@ -1079,7 +1079,7 @@ def main() -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write(ossie_yaml)
         print(f"Converted {args.input} → {args.output}")
 

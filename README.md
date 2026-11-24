@@ -51,6 +51,13 @@ query-result equivalence.
 Contributions follow the Apache Ossie
 [contribution guide](https://github.com/apache/ossie/blob/main/CONTRIBUTING.md).
 
+## Text file encoding
+
+Use UTF-8 for semantic-model YAML and JSON files. The BigQuery, Snowflake, dbt,
+OrionBelt, Sigma, Honeydew and Omni CLIs read UTF-8 (with an optional UTF-8 BOM)
+and write UTF-8, independently of the system locale. This includes native model
+directories and OrionBelt's legacy CLI.
+
 ## Document format
 
 Converters use the [flat core format](https://github.com/apache/ossie/tree/main/core-spec): one model per JSON/YAML document,
