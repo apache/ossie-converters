@@ -39,6 +39,7 @@ from ossie import (
     OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
+    OssieDialectExpression,
     OssieDocument,
     OssieExpression,
     OssieRelationship,
@@ -63,6 +64,19 @@ _WISDOM_DIALECT = {
 def _stable_id(prefix: str, value: str) -> str:
     # usedforsecurity=False: IDs only, and required for FIPS-enabled OpenSSL builds.
     return f"{prefix}_{hashlib.md5(value.encode('utf-8'), usedforsecurity=False).hexdigest()}"
+
+
+def _dialect_entries(expression: OssieExpression) -> List[OssieDialectExpression]:
+    """The expression's dialect entries, with the top-level `sql` leading as the OSSIE_SQL_2026 one.
+
+    `sql` is the OSSIE_SQL_2026 form, and the specification has it win over an
+    OSSIE_SQL_2026 entry, so it replaces one.
+    """
+    entries = list(expression.dialects or [])
+    if expression.sql is None:
+        return entries
+    portable = OssieDialectExpression(dialect=OssieDialect.OSSIE_SQL_2026, expression=expression.sql)
+    return [portable] + [entry for entry in entries if entry.dialect != OssieDialect.OSSIE_SQL_2026]
 
 
 class OssieToWisdomConverter:
@@ -214,9 +228,7 @@ class OssieToWisdomConverter:
         columns: List[dict] = []
         formulas: List[dict] = []
         for field in dataset.fields or []:
-            if not self._has_dialects(field.expression, f"{dataset.name}.{field.name}", issues):
-                continue
-            expression = self._pick_expression(field.expression, dialect, f"{dataset.name}.{field.name}", issues)
+            expression =self._pick_expression(field.expression, dialect, f"{dataset.name}.{field.name}", issues)
             if field.ai_context is not None:
                 issues.append(
                     ConverterIssue(
@@ -292,19 +304,11 @@ class OssieToWisdomConverter:
             return "", parts[0], parts[1]
         return "", "", source
 
-    def _has_dialects(self, expression: OssieExpression, element_name: str, issues: List[ConverterIssue]) -> bool:
-        # An expression that carries only `sql` has no dialect entry to pick from.
-        if expression.dialects:
-            return True
-        issues.append(
-            ConverterIssue(issue_type=ConverterIssueType.MISSING_DIALECT_EXPRESSION, element_name=element_name)
-        )
-        return False
-
     def _pick_expression(
         self, expression: OssieExpression, dialect: OssieDialect, element_name: str, issues: List[ConverterIssue]
     ) -> str:
-        by_dialect = {entry.dialect: entry.expression for entry in expression.dialects}
+        entries = _dialect_entries(expression)
+        by_dialect = {entry.dialect: entry.expression for entry in entries}
         if dialect in by_dialect:
             return by_dialect[dialect]
         if OssieDialect.ANSI_SQL in by_dialect:
@@ -315,7 +319,7 @@ class OssieToWisdomConverter:
         issues.append(
             ConverterIssue(issue_type=ConverterIssueType.MISSING_DIALECT_EXPRESSION, element_name=element_name)
         )
-        return expression.dialects[0].expression
+        return entries[0].expression
 
     def _is_bare_column(self, expression: str, name: str) -> bool:
         return expression in (name, f'"{name}"', f"`{name}`")
@@ -330,10 +334,8 @@ class OssieToWisdomConverter:
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.AI_CONTEXT_DROPPED, element_name=metric.name)
                 )
-            if not self._has_dialects(metric.expression, metric.name, issues):
-                continue
             # Attach to a dataset first so the expression can be picked in that dataset's dialect.
-            reference_text = " ".join(entry.expression for entry in metric.expression.dialects)
+            reference_text = " ".join(entry.expression for entry in _dialect_entries(metric.expression))
             dataset_name = self._find_referenced_dataset(reference_text, dataset_names)
             if dataset_name is None:
                 dataset_name = dataset_names[0]

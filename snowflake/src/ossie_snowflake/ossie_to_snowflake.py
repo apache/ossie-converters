@@ -457,22 +457,20 @@ def _convert_relationship(rel):
 def _extract_expression(expression, field_name):
     """Selects the best dialect expression for Snowflake.
 
-    Prefer SNOWFLAKE, ANSI_SQL, and tagged OSSIE_SQL_2026 in that order, then
-    translate a BIGQUERY alternative. Return None when no usable dialect exists.
+    Prefer SNOWFLAKE, ANSI_SQL, and OSSIE_SQL_2026 in that order, then
+    translate a BIGQUERY alternative. The top-level `sql` is the OSSIE_SQL_2026
+    form and wins over an OSSIE_SQL_2026 entry, as the specification requires.
+    Return None when no usable dialect exists. Raise OssieConversionError if the
+    expression has neither `sql` nor dialects.
     """
     if expression is None or not isinstance(expression, dict):
         raise OssieConversionError(
             f"Missing or malformed expression for field/metric '{field_name}'"
         )
 
-    dialects = expression.get("dialects")
-    if not dialects:
-        if expression.get("sql") is not None:
-            warnings.warn(
-                f"Skipping field/metric '{field_name}': it has only a portable sql "
-                f"expression and no dialect entries"
-            )
-            return None
+    dialects = expression.get("dialects") or []
+    sql = expression.get("sql")
+    if not dialects and sql is None:
         raise OssieConversionError(
             f"Missing expression for field/metric '{field_name}'"
         )
@@ -493,6 +491,8 @@ def _extract_expression(expression, field_name):
             ossie_sql_expr = d.get("expression")
         elif dialect_name == "BIGQUERY":
             bigquery_expr = d.get("expression")
+    if sql is not None:
+        ossie_sql_expr = sql
 
     if snowflake_expr is not None:
         return snowflake_expr

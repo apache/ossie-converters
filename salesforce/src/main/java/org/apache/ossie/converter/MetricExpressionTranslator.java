@@ -49,11 +49,13 @@ final class MetricExpressionTranslator {
         try {
             Map<String, Object> expression = getMap(metric, "expression");
             List<Object> dialects = expression == null ? null : getList(expression, "dialects");
-            if (dialects == null) {
-                throw new IllegalArgumentException("missing expression.dialects; provide one of " + SUPPORTED);
+            String sql = expression == null ? null : getString(expression, "sql");
+            if (dialects == null && sql == null) {
+                throw new IllegalArgumentException(
+                        "missing expression.sql and expression.dialects; provide sql or one of " + SUPPORTED);
             }
             Map<String, String> candidates = new java.util.LinkedHashMap<>();
-            for (Object entry : dialects) {
+            for (Object entry : dialects == null ? List.of() : dialects) {
                 Map<String, Object> value = asMap(entry);
                 String dialect = getString(value, "dialect");
                 if (DIALECTS.contains(dialect)) {
@@ -62,6 +64,10 @@ final class MetricExpressionTranslator {
                     }
                     candidates.put(dialect, getString(value, "expression"));
                 }
+            }
+            // The top-level sql is the OSSIE_SQL_2026 form, and the spec has it win over an OSSIE_SQL_2026 entry.
+            if (sql != null) {
+                candidates.put("OSSIE_SQL_2026", sql);
             }
             String dialect = DIALECTS.stream().filter(candidates::containsKey).findFirst()
                     .orElseThrow(() -> new IllegalArgumentException(

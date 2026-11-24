@@ -308,7 +308,9 @@ nothing, so the conversion fails instead of producing that model.
 ### Metric expressions
 
 Metrics select `TABLEAU`, then `SNOWFLAKE`, then `ANSI_SQL`, then
-`OSSIE_SQL_2026`, independent of entry order. The selected expression is parsed
+`OSSIE_SQL_2026`, independent of entry order. The top-level `sql` is the
+`OSSIE_SQL_2026` form and wins over an `OSSIE_SQL_2026` entry, as the
+specification requires. The selected expression is parsed
 and validated; an invalid preferred expression fails rather than falling back to
 another dialect. Duplicate selected dialect entries are errors. Successful
 conversion exports every declared metric.
