@@ -36,6 +36,7 @@ _DIALECTS = {
     "SNOWFLAKE": "snowflake",
     "BIGQUERY": "bigquery",
     "CLICKHOUSE": "clickhouse",
+    "TRINO": "trino",
 }
 
 

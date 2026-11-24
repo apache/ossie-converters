@@ -23,11 +23,10 @@ import yaml
 from _cube_gate import assert_cube_compiles, assert_ossie_is_valid, cube_gate
 from _util import by_name, expr_of, parse_files, stash_of
 
-from ossie_cube import (
-    convert_cube_to_ossie,
-    convert_cube_view_to_ossie,
-    convert_ossie_to_cube,
-)
+from _util import import_model_scoped as convert_cube_to_ossie
+from _util import project_model_scoped as convert_cube_view_to_ossie
+
+from ossie_cube import convert_ossie_to_cube
 
 
 from ossie_cube._common import OSSIE_VERSION
@@ -802,3 +801,53 @@ def test_review_key_dependencies_compile_in_native_cube():
     assert_cube_compiles(
         export(yaml.safe_load(returned)), "projected geo-coordinate key"
     )
+
+
+@pytest.mark.parametrize("scope_native_metrics", [False, True])
+def test_projected_computed_key_counts_support_both_metric_scopes(scope_native_metrics):
+    import ossie_cube
+
+    native = {"cubes": [{
+        "name": "orders", "sql_table": "sales.public.orders",
+        "dimensions": [{"name": "id", "sql": "LOWER(email)", "type": "string", "primary_key": True}],
+        "measures": [{"name": "rows", "type": "count"}],
+    }], "views": [{"name": "sales", "cubes": [{"join_path": "orders", "includes": ["rows"]}]}]}
+    files = {"model.yml": yaml.safe_dump(native)}
+    key = None
+    for _ in range(2):
+        out, _, _ = ossie_cube.convert_cube_view_to_ossie(
+            files, "sales", scope_native_metrics=scope_native_metrics
+        )
+        model = yaml.safe_load(out)
+        assert_declared(model)
+        assert_ossie_is_valid(out, "computed projected key in both metric scopes")
+        ds = by_name(model["datasets"])["orders"]
+        key = key or ds["primary_key"][0]
+        assert ds["primary_key"] == [key]
+        metrics = ds["metrics"] if scope_native_metrics else model["metrics"]
+        expected = key if scope_native_metrics else f"orders.{key}"
+        assert expr_of(by_name(metrics)["rows"]) == f"COUNT(DISTINCT {expected})"
+        files = export(model)
+        assert by_name(cubes(files)["orders"]["measures"])["rows"]["type"] == "count"
+        assert "sql" not in by_name(cubes(files)["orders"]["measures"])["rows"]
+
+
+def test_native_dataset_metrics_keep_physical_columns_distinct_from_declared_keys():
+    import ossie_cube
+
+    native = {"cubes": [{
+        "name": "orders", "sql_table": "sales.public.orders",
+        "dimensions": [{"name": "id", "sql": "LOWER(email)", "type": "string", "primary_key": True}],
+        "measures": [{"name": "rows", "type": "count"}, {"name": "raw_sum", "type": "sum", "sql": "id"}],
+    }], "views": [{"name": "sales", "cubes": [{"join_path": "orders", "includes": ["rows", "raw_sum"]}]}]}
+    files = {"model.yml": yaml.safe_dump(native)}
+    imported, _ = ossie_cube.convert_cube_to_ossie(files)
+    projected, _, _ = ossie_cube.convert_cube_view_to_ossie(files, "sales")
+    for out in (imported, projected):
+        model = yaml.safe_load(out)
+        assert_declared(model)
+        assert_ossie_is_valid(out, "native raw columns with declared computed keys")
+        ds = by_name(model["datasets"])["orders"]
+        metrics = by_name(ds["metrics"])
+        assert expr_of(metrics["rows"]) == f"COUNT(DISTINCT {ds['primary_key'][0]})"
+        assert expr_of(metrics["raw_sum"]) == "SUM(source.id)"

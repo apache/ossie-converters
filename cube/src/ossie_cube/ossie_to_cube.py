@@ -201,7 +201,7 @@ def _convert_model(model, dialect, base_cube, issues):
         relationships, cube_names, issues, datasets, plan)
     measures_by_cube = _build_measures(
         model, cube_names, plan, tables, datasets, relationships, base_cube, dialect,
-        issues, base_relationships=base_relationships)
+        issues, joins_by_cube, base_relationships=base_relationships)
 
     # Cubes, grouped by the file they belong in: several datasets can share one
     # stashed original path, in which case they go back into the same file.
@@ -1284,8 +1284,19 @@ def _model_metric_measure_names(metrics):
     return names
 
 
+def _joined_datasets(joins_by_cube, root):
+    """The cubes reachable through the joins actually emitted for this export."""
+    seen, pending = set(), [root]
+    while pending:
+        cube = pending.pop()
+        if cube not in seen:
+            seen.add(cube)
+            pending.extend(join["name"] for join in joins_by_cube.get(cube, ()))
+    return seen
+
+
 def _build_measures(model, cube_names, plan, tables, datasets, relationships,
-                    base_cube, dialect, issues, *, base_relationships=None):
+                    base_cube, dialect, issues, joins_by_cube, *, base_relationships=None):
     """Group Ossie metrics into per-cube `measures` lists."""
     name = model.get("name", "<unnamed>")
     base_cache = []
@@ -1375,13 +1386,13 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
         target = refs.cube_of_metric(mname_raw)
         original_name, mname = mname, refs.native_name(mname_raw)
 
-        if len(referenced) > 1:
+        if len(referenced) > 1 and not (
+            stash.get("sql") and referenced <= _joined_datasets(joins_by_cube, target)
+        ):
             # Cube resolves a cross-cube member reference by adding an implicit join,
             # so the model needs a join path between these cubes -- which Ossie's
             # expression does not state and this converter cannot verify. Reported for
-            # every shape the measure can take: it used to be raised only from the
-            # calculated-measure fallback, so a decomposed metric (the shape with the
-            # *most* cross-cube references) reported nothing at all.
+            # generated measures and for restored SQL whose joins cannot be verified.
             issues.add(IssueType.APPROXIMATED, scope,
                        f"expression spans datasets {', '.join(sorted(referenced))}; "
                        f"Cube reaches the others from '{target}' through an implicit "
@@ -1431,9 +1442,10 @@ def _build_measures(model, cube_names, plan, tables, datasets, relationships,
 def _record_model_metric_name(measure, raw_name, requested_name, stash, issues, target):
     """Keep the Ossie name when its native slot belongs to a dataset metric."""
     native_name = measure["name"]
+    parked = measure.setdefault("meta", {}).setdefault("ossie", {})
+    parked["model_scoped"] = True
     if native_name != requested_name or stash.get("model_metric_name"):
-        measure.setdefault("meta", {}).setdefault("ossie", {})["model_metric_name"] = (
-            escape_braces_for_cube(raw_name))
+        parked["model_metric_name"] = escape_braces_for_cube(raw_name)
     if native_name != requested_name:
         issues.add(IssueType.APPROXIMATED, f"metric '{raw_name}'",
                    f"dataset metric keeps its Cube member name; model metric exported as "
@@ -2068,11 +2080,21 @@ class _MetricReferences:
         """
         whole = context if context is not None else text
         units = date_unit_spans(whole, source_dialect) if context_offset is not None else []
-        unit_marker = "__ossie_unit_"
-        while unit_marker in whole:
-            unit_marker += "alt_"
         attributed = {name: f"{cube}.{name}"
                       for name, cube in self._fields_in(whole, source_dialect).items()}
+        unit_marker = "__ossie_unit_"
+        if units:
+            # Avoid markers present in the expression or introduced by field/reference rewriting.
+            avoid = [
+                whole,
+                *attributed.values(),
+                *self._tables.datasets.values(),
+                *(v for mapping in (self._tables.references, self._tables.columns,
+                                    self._tables.inline_sql)
+                  for fields in mapping.values() for v in fields.values()),
+            ]
+            while any(unit_marker in s for s in avoid):
+                unit_marker += "alt_"
         masks, substitutions = {}, {}
         for i, (written, key) in enumerate(
                 sorted(self._referenced_in(whole, source_dialect).items())):

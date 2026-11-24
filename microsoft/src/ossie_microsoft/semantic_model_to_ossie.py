@@ -59,7 +59,7 @@ from ._common import (
     warn_unsupported,
     write_stash,
 )
-from ._dax_to_sql import translate_measure
+from ._dax_to_sql import RowColumn, translate_column, translate_measure
 
 # What happens to a TMSL construct Apache Ossie cannot express: it survives a round trip
 # back to Power BI, but it is invisible to any other consumer of the document.
@@ -111,10 +111,10 @@ def convert_semantic_model_to_ossie(semantic_model: dict | str, translate_dax: b
         semantic_model: A ``model.bim`` document, either parsed (a TMSL mapping) or as
             JSON text, or a single TMDL document as text. TMDL input requires the
             optional ``tom`` extra.
-        translate_dax: When true, DAX measures with an exact ``OSSIE_SQL_2026`` form
-            (see ``_dax_to_sql``) are translated, with the original DAX
-            kept as a fallback dialect; measures that cannot be translated safely are
-            kept as DAX with a diagnostic. Off by default, so the default output is
+        translate_dax: When true, DAX measures and calculated columns with an exact
+            ``OSSIE_SQL_2026`` form (see ``_dax_to_sql``) are translated, with the
+            original DAX kept as a fallback dialect; those that cannot be translated
+            safely are kept as DAX with a diagnostic. Off by default, so the default output is
             unchanged.
 
     Returns:
@@ -149,9 +149,9 @@ def _as_tmsl(semantic_model):
 def build_ossie_document(bim_file, translate_dax=False):
     """Convert a parsed ``model.bim`` document into an Apache Ossie document (dict).
 
-    When ``translate_dax`` is true, measures are translated to ``OSSIE_SQL_2026``
-    where the translation is exact (see ``_dax_to_sql``); otherwise every
-    measure is kept as DAX, which is the default.
+    When ``translate_dax`` is true, measures and calculated columns are translated to
+    ``OSSIE_SQL_2026`` where the translation is exact (see ``_dax_to_sql``); otherwise
+    they are kept as DAX, which is the default.
     """
     if not isinstance(bim_file, dict):
         raise TypeError("bim_file must be a parsed model.bim document (dict)")
@@ -179,7 +179,7 @@ def build_ossie_document(bim_file, translate_dax=False):
     model_ai_context, model_stash = _split_ai_context(model, _MODEL_CONSUMED)
     if model_ai_context is not None:
         semantic_model["ai_context"] = model_ai_context
-    semantic_model["datasets"] = [_convert_table(t) for t in tables]
+    semantic_model["datasets"] = [_convert_table(t, translate_dax) for t in tables]
 
     relationships, excluded_relationships = _convert_relationships(
         model.get("relationships") or [], exported_names
@@ -276,9 +276,10 @@ def _is_measure_table(table):
     )
 
 
-def _convert_table(table):
+def _convert_table(table, translate_dax=False):
     dataset = {"name": table["name"], "source": _table_source(table)}
     scope = f"table '{table['name']}'"
+    row_columns = _row_columns(table) if translate_dax else None
 
     warn_unsupported(scope, table, TMSL_UNSUPPORTED_TABLE, "Apache Ossie", _PRESERVED)
     primary_key = []
@@ -294,7 +295,7 @@ def _convert_table(table):
         if column.get("type") == "rowNumber":
             excluded_columns.append(column)
             continue
-        field, column_stash = _convert_column(column, scope)
+        field, column_stash = _convert_column(column, scope, table["name"], row_columns)
         fields.append(field)
         field_stashes.append((field, column_stash))
         if column.get("isKey"):
@@ -397,11 +398,50 @@ def _qualified_name_from_bigquery_m(expression):
     return ".".join(parts)
 
 
+def _qualified_name_from_snowflake_m(expression):
+    """Read the selected static Database/Schema/Table-or-View navigation chain."""
+    identifier = r'(?:[A-Za-z_]\w*|#"(?:[^\"]|\"\")*")'
+    connection = re.search(
+        rf'({identifier})\s*=\s*Snowflake\.Databases\s*\(', expression
+    )
+    selected = re.search(rf'\bin\s+({identifier})\s*$', expression)
+    if connection is None or selected is None:
+        return None
+
+    def unquote(value):
+        if value.startswith('#"'):
+            value = value[2:-1]
+        return value.replace('""', '"').replace('#(#)(', '#(')
+
+    paths = {unquote(connection.group(1)): ()}
+    steps = re.finditer(
+        rf'({identifier})\s*=\s*({identifier})\s*\{{\s*\['
+        r'((?:[^\]"\[]|"(?:[^\"]|\"\")*")*)\]\s*\}\s*\[Data\]',
+        expression,
+    )
+    for step in steps:
+        parent = paths.get(unquote(step.group(2)))
+        properties = dict(re.findall(r'(Name|Kind)\s*=\s*"((?:[^\"]|\"\")*)"', step.group(3)))
+        kind, name = properties.get("Kind"), properties.get("Name")
+        if parent is None or name is None:
+            continue
+        expected = ({"Database"}, {"Schema"}, {"Table", "View"})
+        if len(parent) < 3 and kind in expected[len(parent)]:
+            paths[unquote(step.group(1))] = (*parent, unquote(name))
+    parts = paths.get(unquote(selected.group(1)), ())
+    if len(parts) != 3:
+        return None
+    # Preserve case and special characters of quoted Snowflake object names.
+    return ".".join(part if re.fullmatch(r"[A-Z_][A-Z0-9_$]*", part)
+                    else '"' + part.replace('"', '""') + '"' for part in parts)
+
+
 # Each parser returns a qualified name, or None when the M expression is not
 # that warehouse. Another warehouse is another function in this tuple.
 _M_SOURCE_PARSERS = (
     _qualified_name_from_sql_server_m,
     _qualified_name_from_bigquery_m,
+    _qualified_name_from_snowflake_m,
 )
 
 
@@ -418,7 +458,7 @@ def _qualified_name_from_m(expression):
 # ---------------------------------------------------------------------------
 
 
-def _convert_column(column, table_scope):
+def _convert_column(column, table_scope, table_name=None, row_columns=None):
     name = column["name"]
     scope = f"{table_scope} column '{name}'"
 
@@ -426,8 +466,11 @@ def _convert_column(column, table_scope):
 
     if column.get("type") == "calculated":
         # A calculated column is DAX. It is carried across as DAX rather than rewritten
-        # into SQL, so no expression semantics are invented.
-        expression = make_expression(text(column.get("expression", "")), DIALECT_DAX)
+        # into SQL, so no expression semantics are invented, unless translation is on
+        # and the translation is exact.
+        expression = _calculated_column_expression(
+            text(column.get("expression", "")), scope, table_name, row_columns, name
+        )
     else:
         expression = make_expression(column.get("sourceColumn") or name, DIALECT_ANSI)
 
@@ -539,6 +582,77 @@ def _build_field_resolver(datasets):
         return table, column, known[(table, column)]
 
     return resolve
+
+
+#: TMSL data types a calculated column translation can read, by fragment kind.
+_ROW_KINDS = {
+    "string": "text",
+    "int64": "number",
+    "decimal": "number",
+    "double": "number",
+    "boolean": "boolean",
+}
+
+# The declared types a calculated column is translated under. ``int64`` and ``decimal``
+# are left out on purpose: DAX stores the expression's value converted to a whole number
+# or to a fixed decimal, and the translator does not tell those from other numbers yet,
+# so ``[Amount] / 3`` in an ``int64`` column would come out as ``amount / 3``.
+_CALCULATED_ROW_KINDS = {
+    "string": "text",
+    "double": "number",
+    "boolean": "boolean",
+}
+
+
+def _row_kind(data_type, calculated):
+    """Return the ``RowColumn.kind`` of a column with this TMSL ``dataType``."""
+    if not calculated:
+        return _ROW_KINDS.get(data_type)
+    if not data_type or data_type in TMSL_UNTYPED:
+        # Nothing is declared (``automatic`` and ``unknown`` mean the engine has not
+        # resolved a type), so the column's type is its expression's.
+        return None
+    # Any other declared type keeps its own name, so no expression is taken for it.
+    return _CALCULATED_ROW_KINDS.get(data_type, data_type)
+
+
+def _row_columns(table):
+    """Describe ``table``'s columns for translating its calculated columns."""
+    columns = {}
+    for column in table.get("columns") or []:
+        if not isinstance(column, dict) or not column.get("name"):
+            continue
+        if column.get("type") == "rowNumber":
+            continue
+        calculated = column.get("type") == "calculated"
+        columns[column["name"]] = RowColumn(
+            source=None if calculated else (column.get("sourceColumn") or column["name"]),
+            dax=text(column.get("expression", "")) if calculated else None,
+            kind=_row_kind(column.get("dataType"), calculated),
+            # TOM's default is nullable; only an explicit false rules BLANK out.
+            nullable=column.get("isNullable") is not False,
+        )
+    return columns
+
+
+def _calculated_column_expression(dax_expression, scope, table_name, row_columns, name):
+    """Build a calculated column's field expression, like ``_measure_expression``."""
+    if row_columns is None:
+        return make_expression(dax_expression, DIALECT_DAX)
+    declared = row_columns[name].kind
+    sql, reason = translate_column(dax_expression, table_name, row_columns, declared)
+    if sql is None:
+        warn(
+            scope,
+            f"DAX calculated column kept as-is; not translated to OSSIE_SQL_2026 ({reason})",
+        )
+        return make_expression(dax_expression, DIALECT_DAX)
+    return {
+        "dialects": [
+            {"dialect": DIALECT_OSSIE_SQL, "expression": sql},
+            {"dialect": DIALECT_DAX, "expression": dax_expression},
+        ]
+    }
 
 
 def _measure_expression(dax_expression, scope, translate_dax, resolve_field, measures=None):

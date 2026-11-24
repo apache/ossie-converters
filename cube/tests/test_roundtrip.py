@@ -36,7 +36,8 @@ from _cube_gate import (
 from _util import (REPO_ROOT, canon, load_fixture, load_fixture_dir, parse,
                    parse_files)
 
-from ossie_cube import IssueType, convert_cube_to_ossie, convert_ossie_to_cube
+from _util import import_model_scoped as convert_cube_to_ossie
+from ossie_cube import IssueType, convert_ossie_to_cube
 from ossie_cube._common import OSSIE_VERSION
 
 FIXTURES = ["fixtureA_cube", "tpcds_cube"]
@@ -639,3 +640,31 @@ def test_the_second_export_cycle_still_compiles():
     """The half of the above that genuinely needs Cube."""
     _, second = _two_export_cycles(_COMPUTED_KEY_FIELD)
     assert_cube_compiles(second, "second export cycle")
+
+
+def test_default_dataset_scope_roundtrip_keeps_native_metadata_and_documents_normalization():
+    from ossie_cube import convert_cube_to_ossie as import_default
+
+    files = load_fixture_dir("fixtureA_cube")
+    original = parse_files(files)
+    for content in original.values():
+        for cube in content.get("cubes", []):
+            for measure in cube.get("measures", []):
+                if measure["name"] == "total_amount":
+                    measure["drill_members"] = ["id"]
+                    measure["meta"] = {"custom": {"owner": "finance"}}
+    files = {path: yaml.safe_dump(content) for path, content in original.items()}
+    imported, _ = import_default(files)
+    exported, _ = convert_ossie_to_cube(imported)
+    actual = parse_files(exported)
+    measures = {m["name"]: m for c in actual.values() for cube in c.get("cubes", [])
+                for m in cube.get("measures", [])}
+    assert measures["total_amount"]["format"] == "currency"
+    assert measures["total_amount"]["drill_members"] == ["id"]
+    assert measures["total_amount"]["meta"]["custom"] == {"owner": "finance"}
+    assert "dataset_metric" in measures["total_amount"]["meta"]["ossie"]
+    assert measures["avg_order_value"]["sql"].replace("{CUBE}.", "") == "SUM(amount) / COUNT(DISTINCT id)"
+    # Confirm the normalized default representation stabilizes after one round trip.
+    imported_again, _ = import_default(exported)
+    exported_again, _ = convert_ossie_to_cube(imported_again)
+    assert parse_files(exported_again) == actual

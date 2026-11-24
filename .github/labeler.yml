@@ -108,6 +108,10 @@ converter/snowflake:
   - changed-files:
       - any-glob-to-any-file: 'snowflake/**'
 
+converter/solid:
+  - changed-files:
+      - any-glob-to-any-file: 'solid/**'
+
 converter/tableau:
   - changed-files:
       - any-glob-to-any-file: 'tableau/**'

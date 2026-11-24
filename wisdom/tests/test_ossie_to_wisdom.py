@@ -442,6 +442,7 @@ def test_malformed_wisdom_extension_exports_many_to_one(data):
     assert [issue.element_name for issue in _issues_of(result, ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED)] == [
         "orders_to_customers"
     ]
+    assert _issues_of(result, ConverterIssueType.CUSTOM_EXTENSION_DROPPED) == []
 
 
 def test_consumed_wisdom_extension_is_not_reported_as_dropped():
@@ -523,7 +524,9 @@ def test_note_is_read_when_wisdom_extension_is_stale():
         ],
     )
     assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
-    assert result.issues == []
+    assert [(issue.issue_type, issue.element_name) for issue in result.issues] == [
+        (ConverterIssueType.CUSTOM_EXTENSION_DROPPED, "orders_to_customers")
+    ]
 
 
 def test_renamed_dataset_keeps_many_to_many_through_its_note():
@@ -552,7 +555,9 @@ def test_renamed_dataset_keeps_many_to_many_through_its_note():
     result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
     edge = result.output["domain"]["zsheet_json"]["relationshipGraph"]["relationships"][0]
     assert edge["properties"]["relationshipType"] == "MANY_TO_MANY"
-    assert result.issues == []
+    assert [(issue.issue_type, issue.element_name) for issue in result.issues] == [
+        (ConverterIssueType.CUSTOM_EXTENSION_DROPPED, "orders_to_tags")
+    ]
 
 
 @pytest.mark.parametrize("data", [{}, {"_v": 2, "relationshipType": "ONE_TO_MANY"}])
@@ -561,7 +566,9 @@ def test_unreadable_wisdom_extension_falls_back_to_the_note(data):
         ai_context="one-to-one relationship", nonportable_extensions=[_wisdom_extension(data)]
     )
     assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
-    assert result.issues == []
+    assert [(issue.issue_type, issue.element_name) for issue in result.issues] == [
+        (ConverterIssueType.CUSTOM_EXTENSION_DROPPED, "orders_to_customers")
+    ]
 
 
 def test_unresolved_metric_attaches_to_first_dataset():

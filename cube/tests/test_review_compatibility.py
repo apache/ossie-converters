@@ -24,11 +24,10 @@ import yaml
 from _cube_gate import assert_cube_compiles, assert_ossie_is_valid, cube_gate
 from _util import by_name, expr_of, parse_files
 
-from ossie_cube import (
-    convert_cube_to_ossie,
-    convert_cube_view_to_ossie,
-    convert_ossie_to_cube,
-)
+from _util import import_model_scoped as convert_cube_to_ossie
+from _util import project_model_scoped as convert_cube_view_to_ossie
+
+from ossie_cube import convert_ossie_to_cube
 from ossie_cube._common import OSSIE_VERSION
 from ossie_cube.converter_issues import IssueType
 

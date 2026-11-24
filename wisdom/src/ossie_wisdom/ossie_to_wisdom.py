@@ -153,7 +153,7 @@ class OssieToWisdomConverter:
         for metric in model.metrics or []:
             elements.append((metric.name, metric.nonportable_extensions))
         for name, extensions in elements:
-            # Entries already read by _convert_relationships (keyed by id) are not dropped.
+            # Entries _convert_relationships used or already reported (keyed by id) are skipped.
             if any(id(extension) not in consumed for extension in extensions or []):
                 issues.append(
                     ConverterIssue(issue_type=ConverterIssueType.CUSTOM_EXTENSION_DROPPED, element_name=name)
@@ -384,14 +384,18 @@ class OssieToWisdomConverter:
             relationship_type = None
             extension = self._wisdom_extension(relationship)
             if extension is not None:
-                consumed.add(id(extension))
                 relationship_type = self._stored_relationship_type(extension, relationship)
+                if relationship_type is not None:
+                    consumed.add(id(extension))
             if relationship_type is None and isinstance(relationship.ai_context, str):
                 # Fall back to the note for documents written before the WISDOM extension,
-                # and for entries that are stale or unreadable.
+                # and for entries that are stale or unreadable. An entry the note replaces
+                # stays unconsumed, so it is reported as dropped.
                 relationship_type = _NOTE_RELATIONSHIP_TYPES.get(relationship.ai_context.strip())
             if relationship_type is None:
                 if extension is not None:
+                    # Reported once, as unresolved, rather than also as dropped.
+                    consumed.add(id(extension))
                     issues.append(
                         ConverterIssue(
                             issue_type=ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED,

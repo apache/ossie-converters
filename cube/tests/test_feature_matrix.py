@@ -48,7 +48,8 @@ from _cube_gate import (
 )
 from _util import by_name, expr_of, model_of, parse_files, stash_of
 
-from ossie_cube import IssueType, convert_cube_to_ossie, convert_ossie_to_cube
+from _util import import_model_scoped as convert_cube_to_ossie
+from ossie_cube import IssueType, convert_ossie_to_cube
 
 _FEATURES = pathlib.Path(__file__).resolve().parent / "fixtures" / "features"
 _FIXTURES = sorted(p.name for p in _FEATURES.glob("*.yml"))

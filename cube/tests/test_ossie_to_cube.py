@@ -22,10 +22,10 @@ from textwrap import dedent
 import pytest
 from _util import by_name, expr_of, model_of, parse
 
+from _util import import_model_scoped as convert_cube_to_ossie
 from ossie_cube import (
     ConversionError,
     IssueType,
-    convert_cube_to_ossie,
     convert_ossie_to_cube,
 )
 from ossie_cube._common import OSSIE_VERSION

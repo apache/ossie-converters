@@ -271,7 +271,7 @@ def test_fanout_warns_by_default_and_the_flag_exits_nonzero(tmp_path, capsys):
     assert main(["import", "-i", str(model)]) == 0
     captured = capsys.readouterr()
     assert "FANOUT_UNSAFE_METRIC" in captured.err
-    assert parse(captured.out)["metrics"]
+    assert parse(captured.out)["datasets"][1]["metrics"]
 
     assert main(["import", "-i", str(model), "--strict-fanout"]) == 1
     assert "FANOUT_UNSAFE_METRIC" in capsys.readouterr().err
@@ -318,7 +318,7 @@ def test_a_cli_round_trip_reproduces_the_fixture(tmp_path, capsys):
                                       for k, v in fixture.items()})
     ossie = tmp_path / "model.yaml"
     back = tmp_path / "back"
-    assert main(["import", "-i", str(src), "-o", str(ossie)]) == 0
+    assert main(["import", "-i", str(src), "-o", str(ossie), "--model-scoped-metrics"]) == 0
     assert main(["export", "-i", str(ossie), "-o", str(back)]) == 0
     capsys.readouterr()
     for rel in fixture:
