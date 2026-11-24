@@ -104,8 +104,6 @@ def strip_normalized(ossie):
       (only `is_time: true` has an Omni form -- `timeframes`).
     - a primary-key column no field covers materializes as a hidden
       dimension on export, so it comes back as an extra (stash-only) field.
-    - expression `sql`: Omni holds one SQL string, imported as `ANSI_SQL`, so
-      `sql` is dropped beside an `ANSI_SQL` dialect and becomes one otherwise.
     """
     ossie = copy.deepcopy(ossie)
     model = ossie
