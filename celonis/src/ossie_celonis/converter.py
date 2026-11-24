@@ -129,6 +129,28 @@ def _row_projection(dataset):
     return [(f["name"], f["expression"]) for f in dataset.get("fields", [])]
 
 
+def _ossie_attribute(entity, name):
+    attributes = entity.get("attributes")
+    value = attributes.get(name) if isinstance(attributes, dict) else None
+    if not isinstance(value, str):
+        return {}
+    try:
+        decoded = json.loads(value)
+    except ValueError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _import_agent_context(entity):
+    text = entity.get("agentContext")
+    context = _ossie_attribute(entity, "apache_ossie").get("ai_context")
+    # Decode only our preserved object, and only while the native text still
+    # matches it. Ordinary JSON-looking text and later native edits stay text.
+    if isinstance(context, dict) and _agent_context(context) == text:
+        return deepcopy(context)
+    return text if isinstance(text, str) else None
+
+
 def _validate(model):
     # The shared parser rejects legacy wrappers, unknown fields, nulls and invalid dialects.
     try:
@@ -228,7 +250,7 @@ def celonis_to_ossie(pig, *, name=None):
             }:
                 raise ConversionError(f"Dataset identity collision: {dataset_name}")
             dataset_names[_identity_key(identity)] = dataset_name
-            packages.add(entity.get("authoringOrigin", {}).get("packageKey"))
+            packages.add((entity.get("authoringOrigin") or {}).get("packageKey"))
             native_bindings = bindings.get(_identity_key(identity), [])
             dataset = {
                 "name": dataset_name,
@@ -258,8 +280,9 @@ def celonis_to_ossie(pig, *, name=None):
                 dataset["primary_key"] = deepcopy(keys)
             if isinstance(entity.get("description"), str):
                 dataset["description"] = entity["description"]
-            if isinstance(entity.get("agentContext"), str):
-                dataset["ai_context"] = entity["agentContext"]
+            context = _import_agent_context(entity)
+            if context is not None:
+                dataset["ai_context"] = context
             dataset["nonportable_extensions"] = [
                 _extension(
                     "dataset",
@@ -272,6 +295,17 @@ def celonis_to_ossie(pig, *, name=None):
             model["datasets"].append(dataset)
     if name is None and len(packages) == 1 and None not in packages:
         model["name"] = next(iter(packages))
+    first = next(
+        (
+            e
+            for bucket in ("objects", "eventSources", "events")
+            for e in pig.get(bucket, [])
+        ),
+        {},
+    )
+    context = _ossie_attribute(first, "apache_ossie_model").get("ai_context")
+    if isinstance(context, (str, dict)):
+        model["ai_context"] = deepcopy(context)
     preserved_relationships = []
     relationship_order = []
     for relationship in _array(pig, "relationships"):
@@ -296,11 +330,11 @@ def celonis_to_ossie(pig, *, name=None):
             "from": dataset_names[source],
             "to": dataset_names[target],
             "from_columns": [
-                _text(m.get("sourceField", {}).get("id"), "sourceField.id")
+                _text((m.get("sourceField") or {}).get("id"), "sourceField.id")
                 for m in mappings
             ],
             "to_columns": [
-                _text(m.get("targetField", {}).get("id"), "targetField.id")
+                _text((m.get("targetField") or {}).get("id"), "targetField.id")
                 for m in mappings
             ],
         }
@@ -310,8 +344,9 @@ def celonis_to_ossie(pig, *, name=None):
                 converted["to_columns"],
                 converted["from_columns"],
             )
-        if isinstance(relationship.get("agentContext"), str):
-            converted["ai_context"] = relationship["agentContext"]
+        context = _import_agent_context(relationship)
+        if context is not None:
+            converted["ai_context"] = context
         converted["nonportable_extensions"] = [
             _extension("relationship", entity=relationship, projection=_core(converted))
         ]
@@ -465,7 +500,7 @@ def ossie_to_celonis(
                             "name": entity["entityIdentifier"]["name"] + "-binding",
                             "entityType": "DATA_BINDING",
                         },
-                        "authoringOrigin": deepcopy(entity["authoringOrigin"]),
+                        "authoringOrigin": deepcopy(entity.get("authoringOrigin") or {}),
                         "entityRef": deepcopy(entity["entityIdentifier"]),
                         "bindingType": "READ_ONLY",
                         "dialect": "STARROCKS",
@@ -497,6 +532,7 @@ def ossie_to_celonis(
                 ),
             }
         if package_key:
+            entity["authoringOrigin"] = entity.get("authoringOrigin") or {}
             entity["authoringOrigin"]["packageKey"] = package_key
             for binding in bindings:
                 binding["authoringOrigin"] = {
@@ -552,7 +588,7 @@ def ossie_to_celonis(
                     ],
                 )
         extras = _extra_extensions(relationship, "relationship")
-        if extras:
+        if extras or isinstance(relationship.get("ai_context"), dict):
             entity["attributes"] = {
                 **(entity.get("attributes") or {}),
                 "apache_ossie": json.dumps(
@@ -560,6 +596,7 @@ def ossie_to_celonis(
                 ),
             }
         if package_key:
+            entity["authoringOrigin"] = entity.get("authoringOrigin") or {}
             entity["authoringOrigin"]["packageKey"] = package_key
         pig["relationships"].append(entity)
     if metadata:

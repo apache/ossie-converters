@@ -236,6 +236,70 @@ def test_type_endpoint_resolution_and_case_insensitivity(context_pig):
         celonis_to_ossie_bundle(context_pig)
 
 
+def test_case_distinct_core_datasets_keep_concepts_and_row_mappings():
+    model = {
+        "version": "0.3.0.dev0",
+        "name": "example",
+        "datasets": [
+            {
+                "name": name,
+                "source": name,
+                "primary_key": ["ID"],
+                "fields": [
+                    {
+                        "name": "ID",
+                        "datatype": "Integer",
+                        "expression": {"sql": "ID"},
+                    },
+                    {
+                        "name": field,
+                        "datatype": "String",
+                        "expression": {"sql": field},
+                    },
+                ],
+            }
+            for name, field in [("Orders", "UpperValue"), ("orders", "LowerValue")]
+        ],
+        "relationships": [
+            {
+                "name": "case_distinct_join",
+                "from": "Orders",
+                "to": "orders",
+                "from_columns": ["ID"],
+                "to_columns": ["ID"],
+            }
+        ],
+    }
+    ontology, mapping = build_ontology_documents(model)
+    components = {c["concept"]: c for c in ontology["ontology"]}
+    records = mapping["nonportable_extensions"][0]["data"]["concepts"]
+    by_dataset = {r["dataset"]: r["concept"] for r in records}
+    assert set(by_dataset) == {"Orders", "orders"}
+    assert len(components) == len(set(by_dataset.values())) == 2
+    mappings = {m["concept"]: m for m in mapping["concept_mappings"]}
+    assert set(mappings) == set(components)
+    for dataset, field in [("Orders", "UpperValue"), ("orders", "LowerValue")]:
+        concept = by_dataset[dataset]
+        assert components[concept]["identify_by"] == ["field_ID"]
+        assert mappings[concept]["object_mappings"][0]["referent_mappings"] == [
+            {"relationship": "field_ID", "expression": f'"{dataset}"."ID"'}
+        ]
+        child = mappings[concept]["link_mappings"][0]["children"][0]
+        assert child["object_mapping"]["expression"] == f'"{dataset}"."{field}"'
+    join = components[by_dataset["Orders"]]["relationships"][-1]
+    assert join["roles"][0]["concept"] == by_dataset["orders"]
+    validate_ontology_documents(model, ontology, mapping)
+
+
+def test_duplicate_native_dataset_identity_is_rejected(context_pig):
+    model = bundle(context_pig)["semantic_model"]
+    duplicate = deepcopy(model["datasets"][0])
+    duplicate["name"] += "_copy"
+    model["datasets"].append(duplicate)
+    with pytest.raises(ConversionError, match="Duplicate native ontology entity"):
+        build_ontology_documents(model)
+
+
 def test_concept_and_property_description_edits(context_pig):
     b = bundle(context_pig)
     concepts(b)["demo_Order"]["description"] = "Updated order meaning"

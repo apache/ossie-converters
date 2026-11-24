@@ -169,6 +169,9 @@ Model-level metadata and other vendors' model extensions are carried in the
 first entity's `attributes.apache_ossie_model`; relationship extensions are
 carried in that relationship's `attributes.apache_ossie`. These native string
 attributes preserve the additional Ossie metadata during export.
+Structured `ai_context` values are restored from these attributes on import.
+For datasets and joins, restoration requires the preserved object to match the
+native `agentContext` text; later native edits and ordinary text remain strings.
 
 ## First-version limits
 

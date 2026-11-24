@@ -265,9 +265,13 @@ def build_ontology_documents(model, *, semantic_model_iri=None, ontology_iri=Non
     concepts, records, by_identity, by_dataset = {}, [], {}, {}
     taken = {n.casefold() for n in BUILTINS}
 
-    def add_concept(identity, bucket, entity, dataset=None):
+    def add_concept(identity, bucket, entity, dataset=None, *, native_identity=True):
         key = _identity_key(identity)
-        if key in by_identity:
+        if native_identity and key in by_identity:
+            if dataset is not None:
+                raise ConversionError(
+                    f"Duplicate native ontology entity identity: {key}"
+                )
             return by_identity[key]
         name = _unique("_".join(identity[:2]), taken)
         component = {"concept": name, "type": "EntityType", "extends": ["Any"]}
@@ -277,7 +281,8 @@ def build_ontology_documents(model, *, semantic_model_iri=None, ontology_iri=Non
         if isinstance(description, str):
             component["description"] = description
         concepts[name] = component
-        by_identity[key] = name
+        if native_identity:
+            by_identity[key] = name
         records.append(
             {
                 "concept": name,
@@ -300,6 +305,9 @@ def build_ontology_documents(model, *, semantic_model_iri=None, ontology_iri=Non
             native["bucket"] if native else "objects",
             native["entity"] if native else {},
             dataset,
+            # Ossie dataset names are case-sensitive; only native references
+            # participate in the case-insensitive Celonis identity lookup.
+            native_identity=native is not None,
         )
         by_dataset[dataset["name"]] = name
     # Systems have conceptual identity, but no fabricated row population.

@@ -304,6 +304,70 @@ def test_opaque_type_preserved(pig):
     assert ossie_to_celonis(model) == pig
 
 
+def test_null_authoring_origin_round_trip_and_package_override(pig):
+    for item in pig["objects"] + pig["relationships"]:
+        item["authoringOrigin"] = None
+    model = convert(pig)
+    assert ossie_to_celonis(model) == pig
+    model["datasets"][0]["source"] = "new_source"
+    exported = ossie_to_celonis(model, package_key="target")
+    assert exported["objects"][0]["authoringOrigin"]["packageKey"] == "target"
+    assert all(
+        b["authoringOrigin"]["packageKey"] == "target"
+        for b in exported["dataBindings"]
+    )
+    assert exported["relationships"][1]["authoringOrigin"]["packageKey"] == "target"
+
+
+@pytest.mark.parametrize("side", ["sourceField", "targetField"])
+def test_null_foreign_key_reference_exits_cleanly(pig, side, tmp_path, capsys):
+    pig["relationships"][1]["foreignKeyMappings"][0][side] = None
+    with pytest.raises(ConversionError, match=f"{side}.id"):
+        celonis_to_ossie(pig)
+    source, output = tmp_path / "input.json", tmp_path / "output.yaml"
+    source.write_text(json.dumps(pig))
+    output.write_text("unchanged")
+    with pytest.raises(SystemExit) as exc:
+        main(["celonis-to-ossie", "--core-only", "-i", str(source), "-o", str(output)])
+    assert exc.value.code == 2
+    assert output.read_text() == "unchanged"
+    error = capsys.readouterr().err
+    assert f"{side}.id" in error
+    assert "Traceback" not in error
+
+
+def test_structured_context_round_trips_at_all_scopes(pig):
+    model = convert(pig)
+    context = {"instructions": "use for orders", "business_rules": ["Keep IDs"]}
+    model["ai_context"] = deepcopy(context)
+    model["datasets"][0]["ai_context"] = deepcopy(context)
+    model["relationships"][0]["ai_context"] = deepcopy(context)
+    exported = ossie_to_celonis(model)
+    assert exported["objects"][0]["agentContext"] == json.dumps(context)
+    assert exported["relationships"][1]["agentContext"] == json.dumps(context)
+    imported = convert(exported)
+    assert imported["ai_context"] == context
+    assert imported["datasets"][0]["ai_context"] == context
+    assert imported["relationships"][0]["ai_context"] == context
+    assert ossie_to_celonis(imported) == exported
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_json_looking_context_stays_text(pig, edited):
+    text = '{"instructions": "native text"}'
+    if edited:
+        model = convert(pig)
+        model["datasets"][0]["ai_context"] = {"instructions": "original object"}
+        model["relationships"][0]["ai_context"] = {"instructions": "original object"}
+        pig = ossie_to_celonis(model)
+    pig["objects"][0]["agentContext"] = text
+    pig["relationships"][1]["agentContext"] = text
+    imported = convert(pig)
+    assert imported["datasets"][0]["ai_context"] == text
+    assert imported["relationships"][0]["ai_context"] == text
+    assert ossie_to_celonis(imported) == pig
+
+
 def test_non_ansi_metrics_and_malformed_extensions_fail(pig):
     model = convert(pig)
     model["metrics"] = [
