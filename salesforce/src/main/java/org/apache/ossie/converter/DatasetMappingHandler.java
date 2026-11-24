@@ -36,8 +36,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Supports both conversion directions:
  * <ul>
- *   <li>Ossie → Salesforce: datasets → semanticDataObjects, apply SF defaults, restore custom_extensions</li>
- *   <li>Salesforce → Ossie: semanticDataObjects → datasets, store unmapped properties in custom_extensions</li>
+ *   <li>Ossie → Salesforce: datasets → semanticDataObjects, apply SF defaults, restore nonportable_extensions</li>
+ *   <li>Salesforce → Ossie: semanticDataObjects → datasets, store unmapped properties in nonportable_extensions</li>
  * </ul>
  *
  */
@@ -121,7 +121,7 @@ public class DatasetMappingHandler implements PipelineStep {
 
         outputData.putAll(mappedData);
 
-        // Store unmapped SF properties in custom_extensions
+        // Store unmapped SF properties in nonportable_extensions
         customExtensionHandler.storeUnmappedProperties(outputData, filteredSourceData, allHandledProps, Level.DATASETS);
 
         if (!sharedEntities.isEmpty()) {
@@ -164,7 +164,7 @@ public class DatasetMappingHandler implements PipelineStep {
     }
 
     /**
-     * Stores shared entities in semanticDataObjects in top-level custom_extensions.
+     * Stores shared entities in semanticDataObjects in top-level nonportable_extensions.
      *
      * @param outputData The output Ossie data
      * @param sharedEntities List of non-standard semanticDataObjects

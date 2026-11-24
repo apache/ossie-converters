@@ -73,7 +73,7 @@ def load(text: str) -> object:
 
     A malformed document raises `ConversionError` naming the failure, never a
     bare `yaml.YAMLError` traceback. `stash.py` holds the same contract for
-    malformed `custom_extensions` JSON.
+    malformed `nonportable_extensions` data.
     """
     try:
         return yaml.load(text, Loader=Yaml12Loader)

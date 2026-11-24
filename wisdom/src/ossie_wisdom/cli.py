@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from ossie_wisdom.converter_issues import ConverterIssueType
 from ossie_wisdom.ossie_to_wisdom import OssieToWisdomConverter
 from ossie_wisdom.wisdom_to_ossie import WisdomToOssieConverter
@@ -46,6 +46,7 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
     ConverterIssueType.MISSING_DIALECT_EXPRESSION: "no expression was available in the dataset's dialect or ANSI_SQL; the first available dialect was used",
     ConverterIssueType.UNIQUE_KEYS_DROPPED: "wisdom has no unique-key construct",
     ConverterIssueType.CUSTOM_EXTENSION_DROPPED: "wisdom cannot store Ossie custom extensions",
+    ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED: "its WISDOM custom extension is malformed or no longer matches its from/to; it was exported as MANY_TO_ONE",
 }
 
 _DROPPED_ISSUE_TYPES = {
@@ -80,7 +81,7 @@ def _cmd_ossie_to_wisdom(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    document = OssieDocument.model_validate(yaml.safe_load(input_path.read_text()))
+    document = OssieSemanticModel.model_validate(yaml.safe_load(input_path.read_text()))
     result = OssieToWisdomConverter().convert(document)
 
     _print_issues(result)

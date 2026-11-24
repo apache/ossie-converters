@@ -218,10 +218,29 @@ wheels = [
 ]
 
 [[package]]
+name = "apache-ossie"
+version = "0.3.0.dev0"
+source = { editable = "../ossie/python" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0" }]
+
+[[package]]
 name = "apache-ossie-ontology"
 version = "0.1.0"
 source = { editable = "../ontology" }
 dependencies = [
+    { name = "apache-ossie" },
     { name = "ply" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -229,6 +248,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "apache-ossie", editable = "../ossie/python" },
     { name = "ply" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -288,7 +308,7 @@ relationalai = [
 [package.metadata]
 requires-dist = [
     { name = "apache-ossie-ontology", editable = "../ontology" },
-    { name = "relationalai", marker = "extra == 'relationalai'", specifier = "==1.39.0" },
+    { name = "relationalai", marker = "extra == 'relationalai'", specifier = "==2.2.1" },
 ]
 provides-extras = ["relationalai"]
 
@@ -2007,7 +2027,7 @@ wheels = [
 
 [[package]]
 name = "relationalai"
-version = "1.39.0"
+version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2041,9 +2061,9 @@ dependencies = [
     { name = "websockets" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/e8/4e02154ff1e9e7718233c1cfab4bcfe69237b87e647a448986fbc9d64a90/relationalai-1.39.0.tar.gz", hash = "sha256:3cc45f87b93b05daa16a67e2ba6180c5cf2744de2bb9c79be5616e707cf3683a", size = 4761938, upload-time = "2026-10-29T19:56:19.573Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/2c/f433f1c96aee817b3573a78506e2fb86667a9317b8fc1065c6c3333cc1c6/relationalai-2.2.1.tar.gz", hash = "sha256:76f69cc892998227a5c18fc8029870bef003b79217189a69ad9bff84103823f6", size = 4795594, upload-time = "2026-11-19T05:20:41.067Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/1e/41ecd27c48eb5f354e3dcf16cd444011094de6ae3271a6afb57b977c8332/relationalai-1.39.0-py3-none-any.whl", hash = "sha256:33cbf6bc1a2ad598ffa4960bc0ddada1eab0a719de61ad6cc48ab378845126c7", size = 5479979, upload-time = "2026-10-29T19:56:17.573Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/c1/262f8cc0cb3f66f7016520baadbcfabe14655cad3b376d58c81433275081/relationalai-2.2.1-py3-none-any.whl", hash = "sha256:9bb034dd2f4bc59e8a21e6f192c45469ab202adcbdc86466cde9a2be1f09b93d", size = 5539739, upload-time = "2026-11-19T05:20:39.309Z" },
 ]
 
 [[package]]
@@ -2176,7 +2196,7 @@ secure-local-storage = [
 
 [[package]]
 name = "snowflake-snowpark-python"
-version = "1.55.3"
+version = "1.57.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cloudpickle" },
@@ -2189,9 +2209,9 @@ dependencies = [
     { name = "tzlocal" },
     { name = "wheel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bb/dc/f572f52703e7498f7a4e2480fb0bf9828660ee829f535eeb8a60be5e4f13/snowflake_snowpark_python-1.55.3.tar.gz", hash = "sha256:c4a158545d0e589b116a62003e8748f79b161eaf578b98d531d85b1f8164a8e7", size = 1824761, upload-time = "2026-10-22T18:41:11.048Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/c3/9f03e683e6ea45f690d85ec9498b839a3d11c35be0af541cfbd148908a24/snowflake_snowpark_python-1.57.0.tar.gz", hash = "sha256:6ebd3f81e2668dae706adc076b3aa0fbcd34995f59aa51d4825285e515575262", size = 1875160, upload-time = "2026-11-12T21:19:16.468Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/0c/522126ce0b51b4447ec9e7390bf9149b49bf9ee66ebebd86f4f6eb5e1bae/snowflake_snowpark_python-1.55.3-py3-none-any.whl", hash = "sha256:107f871e6056771f0a2947d9f421fb7a181e39e7619eb4ed2e502b62f5e34746", size = 1912840, upload-time = "2026-10-22T18:41:09.085Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/3e/39b43d63a1cb38805ceaefa8c687ca79b5e4284fd28afb6082e6b0767ec1/snowflake_snowpark_python-1.57.0-py3-none-any.whl", hash = "sha256:a451c023692b271bca7a2122b5af7c1c5d94dd79a4d2b7d2926c1f7d39598986", size = 1963377, upload-time = "2026-11-12T21:19:14.577Z" },
 ]
 
 [[package]]

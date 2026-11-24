@@ -39,10 +39,10 @@ public final class ConverterConstants {
 
     // Ossie root structure
     public static final String VERSION = "version";
-    public static final String OSSIE_VERSION = "0.2.0.dev0";
+    public static final String OSSIE_VERSION = "0.3.0.dev0";
 
     // Ossie semantic model structure
-    public static final String CUSTOM_EXTENSIONS = "custom_extensions";
+    public static final String CUSTOM_EXTENSIONS = "nonportable_extensions";
     public static final String DATASETS = "datasets";
     public static final String FIELDS = "fields";
     public static final String METRICS = "metrics";

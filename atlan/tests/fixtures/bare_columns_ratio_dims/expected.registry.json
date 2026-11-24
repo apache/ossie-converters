@@ -1,0 +1,77 @@
+{
+ "active_shoppers_change_vs_60_90_days_ago": {
+  "name": "active_shoppers_change_vs_60_90_days_ago",
+  "description": "Percentage change in active shoppers against the value 60 to 90 days ago",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "100.0 * (SUM(m.ACTIVE_SHOPPERS) - SUM(m.SHOPPERS_90D)) / NULLIF(SUM(m.SHOPPERS_90D), 0)",
+   "aggregation": {
+    "type": "ratio",
+    "reaggregation": "none",
+    "null_handling": "ignore"
+   },
+   "output": {
+    "alias": "active_shoppers_change_vs_60_90_days_ago",
+    "datatype": "decimal",
+    "unit": "percent"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_MONTHLY_SNAPSHOT",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_MONTHLY_SNAPSHOT",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [],
+   "dimensions": [
+    {
+     "name": "store_name",
+     "sql": "m.STORE_NAME",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Store name."
+    },
+    {
+     "name": "division",
+     "sql": "m.DIVISION",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Sales division."
+    },
+    {
+     "name": "state",
+     "sql": "m.STATE",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Store state."
+    },
+    {
+     "name": "segment",
+     "sql": "m.SEGMENT",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Store size segment."
+    },
+    {
+     "name": "lifecycle_stage",
+     "sql": "m.LIFECYCLE_STAGE",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Opened, mature or closing."
+    },
+    {
+     "name": "milestone",
+     "sql": "m.MILESTONE",
+     "kind": "categorical",
+     "datatype": "string",
+     "description": "Latest milestone reached."
+    }
+   ],
+   "examples": [],
+   "grain": "store",
+   "population": "Stores with a monthly snapshot"
+  }
+ }
+}

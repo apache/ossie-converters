@@ -17,18 +17,18 @@
 
 """Execute an ordered matrix without hiding failed setup or empty conversions."""
 
-from dataclasses import replace
-from datetime import datetime, timezone
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
+import tomllib
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 
 import yaml
 
 from .bindings import check_bindings
-from .contracts import check_document, check_native_sources
 from .checks import (
     ContentError,
     Validator,
@@ -37,9 +37,11 @@ from .checks import (
     meaningful_ossie,
     native_content,
 )
+from .contracts import check_document, check_lookml_portable_sql, check_native_sources
 from .execution import diagnostics, has_degradation, run_command, succeeded
 from .live_databricks import run_check as run_live_databricks
 from .manifest import Manifest, expand
+from . import portability_execution
 from .portability import GRADER, as_dict, diagnostics_text, load_grader
 
 
@@ -94,6 +96,50 @@ def _dirty(path):
     return bool(result.stdout) if result.returncode == 0 else None
 
 
+def _uv_version(executable):
+    """Return (version, error) for a uv executable, without trusting its name."""
+    result = subprocess.run(
+        [executable, "--version"], capture_output=True, text=True, check=False
+    )
+    match = re.search(r"(\d+\.\d+(?:\.\d+)?)", result.stdout or result.stderr)
+    if result.returncode != 0 or match is None:
+        return None, (result.stderr or result.stdout or "").strip()
+    return match.group(1), None
+
+
+def _required_uv_version(converter):
+    """Read tool.uv.required-version from the converter's pyproject, if declared."""
+    pyproject = converter.cwd / "pyproject.toml"
+    if not pyproject.is_file():
+        return None
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return data.get("tool", {}).get("uv", {}).get("required-version")
+
+
+def _satisfies(version, requirement):
+    """Evaluate a uv `required-version` clause (e.g. `>=0.9.0`) against a version."""
+    match = re.fullmatch(r"\s*(>=|>|<=|<|==)?\s*(\d+(?:\.\d+)*)\s*", requirement or "")
+    if match is None:
+        return None
+    operator, required = match.group(1) or ">=", tuple(
+        int(part) for part in match.group(2).split(".")
+    )
+    actual = tuple(int(part) for part in version.split("."))
+    width = max(len(actual), len(required))
+    actual += (0,) * (width - len(actual))
+    required += (0,) * (width - len(required))
+    return {
+        ">=": actual >= required,
+        ">": actual > required,
+        "<=": actual <= required,
+        "<": actual < required,
+        "==": actual == required,
+    }[operator]
+
+
 class Runner:
     def __init__(
         self,
@@ -110,6 +156,7 @@ class Runner:
         self.timeout, self.prepare_enabled, self.native = timeout, prepare, native
         self.validator = Validator(root)
         self.live_databricks = live_databricks
+        self._uv_probe = None
         self.report = {
             "schema_version": 1,
             "metadata": {
@@ -169,6 +216,34 @@ class Runner:
                 reason=f"missing toolchain executable(s): {', '.join(missing)}",
             )
             return result
+        if converter.toolchain == "uv":
+            # A stale uv earlier on PATH makes every converter fail with uv's own
+            # required-version refusal, which reads like a broken matrix rather
+            # than an environment problem. Probe the resolved executable once and
+            # report the path, the version and the requirement that rejected it.
+            if self._uv_probe is None:
+                executable = shutil.which("uv")
+                version, error = _uv_version(executable)
+                self._uv_probe = (executable, version, error)
+            executable, version, error = self._uv_probe
+            required = _required_uv_version(converter)
+            satisfied = (
+                _satisfies(version, required)
+                if version is not None and required is not None
+                else True
+            )
+            if version is None or satisfied is False:
+                reason = (
+                    f"uv at {executable} is {version or 'unusable'}"
+                    + (f" ({error})" if error else "")
+                    + (
+                        f"; {converter.name}/pyproject.toml requires {required}"
+                        if required
+                        else ""
+                    )
+                )
+                result.update(grade="SKIP", reason=reason)
+                return result
         if converter.toolchain == "maven":
             stage = self.command(
                 result,
@@ -304,7 +379,7 @@ class Runner:
         suffix = (
             ".json"
             if converter.native_format
-            in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+            in ("atlan", "dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
             else ".lkml"
             if converter.native_format == "lookml"
             else ".yaml"
@@ -503,11 +578,14 @@ class Runner:
         """One portability fixture through one converter and back, then graded.
 
         The grade is the same as a Tier B return; `grading` holds the core grader's
-        findings. A converter that refuses the document (export or re-import fails,
-        or nothing comes back) is graded against an empty document, which the
-        grader reports as REJECTED. A skip is not graded. A mode re-imports the
-        export its converter's case recorded in `exports`. A case the grader cannot
-        grade keeps its round-trip grade and says why in `grading_error`."""
+        findings and `execution` the execution check of the metrics it marks
+        REWRITTEN, read from the same report. A converter that refuses the document
+        (export or re-import fails, or nothing comes back) is graded against an
+        empty document, which the grader reports as REJECTED. A skip is not graded.
+        A mode re-imports the export its converter's case recorded in `exports`. A
+        case the grader cannot grade keeps its round-trip grade and says why in
+        `grading_error`; an execution check that cannot finish says why in
+        `execution_error` and leaves the grading in place."""
         label = mode or converter.name
         case_id = f"{variant}--to--{label}"
         directory = self.output / "portability" / case_id
@@ -522,6 +600,7 @@ class Runner:
             "output": str(directory / "conversion" / "returned.yaml"),
             "native_gate": _result("SKIP", "export has not succeeded"),
             "grading": None,
+            "execution": None,
         }
         shutil.copyfile(path, result["input"])
         data = self.validate(result, Path(result["input"]))
@@ -591,12 +670,22 @@ class Runner:
             except (UnicodeDecodeError, ValueError, yaml.YAMLError) as error:
                 # Nothing readable came back: graded as a refusal, and said so.
                 result["grading_note"] = f"returned document unreadable: {error}"
+        input_document = grader._load(result["input"])
         report = grader.grade(
-            grader._load(result["input"]),
+            input_document,
             document,
             diagnostics_text=diagnostics_text(result["diagnostics"]),
             converter=label,
         )
+        try:
+            result["execution"] = portability_execution.as_dict(
+                portability_execution.check(
+                    input_document, document, converter=label, graded=report
+                )
+            )
+        except Exception as error:
+            # Report-only, like the grading: a failure stays on this case.
+            result["execution_error"] = f"{type(error).__name__}: {error}"
         return as_dict(report)
 
     def document_regression(self, name, regression, target):
@@ -653,6 +742,16 @@ class Runner:
                 _skip(result, accepted["reason"], because=accepted)
             return result
         result["content"] = accepted["content"]
+        if regression.category == "portable-sql" and converter.native_format == "lookml":
+            result["native_assertions"] = check_lookml_portable_sql(
+                Path(accepted["output"]), regression.assertions
+            )
+            result["output"] = accepted["output"]
+            if result["native_assertions"]["grade"] != "OK":
+                result.update(grade="FAIL", reason="portable SQL assertions failed in native LookML")
+            else:
+                result.update(grade=accepted["grade"], reason=accepted["reason"])
+            return result
         if regression.category == "sources":
             result["native_assertions"] = check_native_sources(
                 Path(accepted["output"]), converter.native_format, regression.assertions

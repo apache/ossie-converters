@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 
 # The repository root holds `ossie`, the apache/ossie checkout the converters
 # build and test against (a git submodule; see the root README).
@@ -53,7 +53,7 @@ def assert_valid_ossie(ossie_schema):
     Python models accept but the spec does not."""
     jsonschema = pytest.importorskip("jsonschema")
 
-    def check(document: OssieDocument) -> None:
+    def check(document: OssieSemanticModel) -> None:
         payload = document.model_dump(mode="json", by_alias=True, exclude_none=True)
         jsonschema.validate(payload, ossie_schema)
 

@@ -148,11 +148,11 @@ public class OssieYamlGenerator {
 
     private void generateCustomExtensions(
             StringBuilder sb, List<CustomExtension> extensions, String indent) {
-        sb.append(indent).append("custom_extensions:\n");
+        sb.append(indent).append("nonportable_extensions:\n");
         for (CustomExtension ext : extensions) {
             sb.append(indent).append("  - vendor_name: ").append(ext.getVendorName()).append("\n");
-            sb.append(indent).append("    data: '")
-                    .append(ext.getData().replace("'", "''")).append("'\n");
+            // `data` is a JSON object, which YAML reads as a flow mapping.
+            sb.append(indent).append("    data: ").append(ext.getData()).append("\n");
         }
     }
 

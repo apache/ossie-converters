@@ -114,7 +114,7 @@ def test_invalid_ossie_document(ctx: ExportContext, tmp_path: Path) -> None:
     assert result is None
     assert _problems(ctx, path) == snapshot(
         """\
-[FATAL] Invalid Ossie document: 3 validation errors for OssieDocument
+[FATAL] Invalid Ossie document: 3 validation errors for OssieSemanticModel
 name
   Field required [type=missing, input_value={'foo': 'bar'}, input_type=dict]
     For further information visit https://errors.pydantic.dev/2.13/v/missing
@@ -131,7 +131,7 @@ foo
 def test_invalid_members(ctx: ExportContext, tmp_path: Path) -> None:
     path = tmp_path / "sales.yaml"
     data = dedent("""\
-        version: 0.2.0.dev0
+        version: 0.3.0.dev0
         name: sales
         datasets:
           - name: orders
@@ -175,7 +175,7 @@ def test_invalid_members(ctx: ExportContext, tmp_path: Path) -> None:
 
     assert document is not None
     assert document.to_ossie_yaml() == snapshot("""\
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: sales
 datasets:
 - name: orders

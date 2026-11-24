@@ -73,6 +73,34 @@ def _contains_query(sql: str, dialect: str) -> bool:
     return parsed is not None and parsed[1].find(exp.Query) is not None
 
 
+def _ossie_ext_data(ext: dict) -> dict:
+    """A copy of an Ossie extension's object ``data``, or {} when it is not an object."""
+    data = ext.get("data")
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _migrate_legacy_extensions(obj: Any) -> None:
+    """Move a v0.1.x ``custom_extensions`` list, JSON-string ``data`` and all, to
+    ``nonportable_extensions`` with object ``data``, recursively and in place."""
+    if isinstance(obj, list):
+        for item in obj:
+            _migrate_legacy_extensions(item)
+        return
+    if not isinstance(obj, dict):
+        return
+    legacy = obj.pop("custom_extensions", None)
+    if isinstance(legacy, list):
+        for ext in legacy:
+            if isinstance(ext, dict) and isinstance(ext.get("data"), str):
+                try:
+                    ext["data"] = json.loads(ext["data"])
+                except json.JSONDecodeError:
+                    pass
+        obj.setdefault("nonportable_extensions", legacy)
+    for value in obj.values():
+        _migrate_legacy_extensions(value)
+
+
 class OssietoOBML:
     """Convert an Ossie semantic model YAML to OBML format."""
 
@@ -113,6 +141,7 @@ class OssietoOBML:
             return  # already v0.2+ (or future) — nothing to do
 
         model = self.ossie
+        _migrate_legacy_extensions(model)
         for ds in model.get("datasets", []) or []:
             # Promote legacy primary_key / unique_keys from OBSL extras
             # only if the dataset doesn't already declare them.
@@ -227,11 +256,11 @@ class OssietoOBML:
                 }
             )
 
-        # ── Restore model-level properties from custom_extensions ────
-        for ext in model.get("custom_extensions", []):
+        # ── Restore model-level properties from nonportable_extensions ────
+        for ext in model.get("nonportable_extensions", []):
             if _is_obml_extension(ext):
                 try:
-                    ext_data = json.loads(ext.get("data", "{}"))
+                    ext_data = _ossie_ext_data(ext)
                     if ext_data.get("obml_filters"):
                         obml["filters"] = ext_data["obml_filters"]
                     if ext_data.get("obml_settings"):
@@ -248,7 +277,7 @@ class OssietoOBML:
                 break
 
         # Preserve third-party vendor extensions verbatim
-        self._carry_foreign_extensions(model.get("custom_extensions"), obml)
+        self._carry_foreign_extensions(model.get("nonportable_extensions"), obml)
 
         self._restore_column_names(obml, datasets)
         return obml
@@ -351,10 +380,10 @@ class OssietoOBML:
         Read ahead of the metrics, which need the numeric default; the model
         properties themselves are restored after them, as before.
         """
-        for ext in model.get("custom_extensions", []):
+        for ext in model.get("nonportable_extensions", []):
             if _is_obml_extension(ext):
                 try:
-                    data = json.loads(ext.get("data", "{}"))
+                    data = _ossie_ext_data(ext)
                 except (json.JSONDecodeError, TypeError):
                     return None
                 return data.get("obml_settings") if isinstance(data, dict) else None
@@ -362,7 +391,7 @@ class OssietoOBML:
 
     @staticmethod
     def _carry_foreign_extensions(ossie_exts: list[dict] | None, obml_target: dict[str, Any]) -> None:
-        """Carry third-party Ossie custom_extensions verbatim into OBML.
+        """Carry third-party Ossie nonportable_extensions verbatim into OBML.
 
         Our own payloads and Ossie-native stashes are reconstructed elsewhere;
         any other vendor's extension is preserved unchanged on the OBML side
@@ -372,7 +401,7 @@ class OssietoOBML:
             vendor = ext.get("vendor_name")
             if vendor and not _is_internal_vendor(vendor, ext.get("data")):
                 obml_target.setdefault("customExtensions", []).append(
-                    {"vendor": vendor, "data": ext.get("data", "")}
+                    {"vendor": vendor, "data": json.dumps(ext.get("data") or {})}
                 )
 
     def _parse_source(self, source: str) -> tuple[str, str, str]:
@@ -466,11 +495,11 @@ class OssietoOBML:
                     }
                 ]
 
-        # Restore DataObject owner / comment / refresh from custom_extensions
-        for ext in ds.get("custom_extensions", []):
+        # Restore DataObject owner / comment / refresh from nonportable_extensions
+        for ext in ds.get("nonportable_extensions", []):
             if _is_obml_extension(ext):
                 try:
-                    ext_data = json.loads(ext.get("data", "{}"))
+                    ext_data = _ossie_ext_data(ext)
                     if ext_data.get("obml_owner"):
                         do["owner"] = ext_data["obml_owner"]
                     if ext_data.get("obml_comment"):
@@ -503,7 +532,7 @@ class OssietoOBML:
             )
 
         # Preserve third-party vendor extensions verbatim
-        self._carry_foreign_extensions(ds.get("custom_extensions"), do)
+        self._carry_foreign_extensions(ds.get("nonportable_extensions"), do)
 
         return name, do
 
@@ -561,11 +590,11 @@ class OssietoOBML:
                     }
                 ]
 
-        # Restore OBML-only column properties from custom_extensions
-        for ext in field.get("custom_extensions", []):
+        # Restore OBML-only column properties from nonportable_extensions
+        for ext in field.get("nonportable_extensions", []):
             if _is_obml_extension(ext):
                 try:
-                    ext_data = json.loads(ext.get("data", "{}"))
+                    ext_data = _ossie_ext_data(ext)
                     # Restore the exact OBML abstractType stashed on export, so a
                     # narrowing datatype map (e.g. time_tz -> Time) never
                     # degrades an OBML-origin round trip. The stash yields to a
@@ -609,7 +638,7 @@ class OssietoOBML:
             )
 
         # Preserve third-party vendor extensions verbatim
-        self._carry_foreign_extensions(field.get("custom_extensions"), col)
+        self._carry_foreign_extensions(field.get("nonportable_extensions"), col)
 
         return name, col
 
@@ -775,11 +804,11 @@ class OssietoOBML:
                 ai_ctx = field.get("ai_context")
                 if isinstance(ai_ctx, dict) and ai_ctx.get("synonyms"):
                     dim_def["synonyms"] = list(ai_ctx["synonyms"])
-                # Restore OBML-only dimension properties from custom_extensions
-                for ext in field.get("custom_extensions", []):
+                # Restore OBML-only dimension properties from nonportable_extensions
+                for ext in field.get("nonportable_extensions", []):
                     if _is_obml_extension(ext):
                         try:
-                            ext_data = json.loads(ext.get("data", "{}"))
+                            ext_data = _ossie_ext_data(ext)
                             if ext_data.get("obml_time_grain"):
                                 dim_def["timeGrain"] = ext_data["obml_time_grain"]
                             if ext_data.get("obml_dimension_format"):
@@ -869,7 +898,7 @@ class OssietoOBML:
             if isinstance(ossie_ai_ctx, dict) and ossie_ai_ctx.get("synonyms"):
                 ossie_synonyms = list(ossie_ai_ctx["synonyms"])
 
-            # Restore OBML-only properties from custom_extensions
+            # Restore OBML-only properties from nonportable_extensions
             obml_extras = self._extract_obml_extras(m)
 
             # An OBML-origin measure or metric carries its whole definition.
@@ -883,7 +912,7 @@ class OssietoOBML:
                 self._restored_names.add(name)
                 continue
 
-            # Check for cumulative metric stored in custom_extensions
+            # Check for cumulative metric stored in nonportable_extensions
             if obml_extras.get("obml_metric_type") == "cumulative":
                 cum_metric = self._reconstruct_cumulative_metric(
                     name, obml_extras, ossie_description, ossie_synonyms
@@ -891,7 +920,7 @@ class OssietoOBML:
                 metrics[name] = cum_metric
                 continue
 
-            # Check for period-over-period metric stored in custom_extensions
+            # Check for period-over-period metric stored in nonportable_extensions
             if obml_extras.get("obml_metric_type") == "period_over_period":
                 pop_metric = self._reconstruct_pop_metric(
                     name, obml_extras, ossie_description, ossie_synonyms
@@ -1034,7 +1063,7 @@ class OssietoOBML:
         for m in ossie_metrics:
             target = metrics.get(m["name"]) or measures.get(m["name"])
             if target is not None:
-                self._carry_foreign_extensions(m.get("custom_extensions"), target)
+                self._carry_foreign_extensions(m.get("nonportable_extensions"), target)
                 # Ossie metric `datatype` -> OBML exact `dataType` (its natural
                 # home; `Decimal` -> the model's decimal(p, s)). Opaque, unknown
                 # and non-string values have no mapping and change nothing.
@@ -1055,11 +1084,11 @@ class OssietoOBML:
 
     @staticmethod
     def _extract_obml_extras(ossie_metric: dict) -> dict:
-        """Extract OBML-only properties from Ossie metric custom_extensions."""
-        for ext in ossie_metric.get("custom_extensions", []):
+        """Extract OBML-only properties from Ossie metric nonportable_extensions."""
+        for ext in ossie_metric.get("nonportable_extensions", []):
             if _is_obml_extension(ext):
                 try:
-                    data = json.loads(ext.get("data", "{}"))
+                    data = _ossie_ext_data(ext)
                     # Check for any obml_ prefixed keys
                     if any(k.startswith("obml_") for k in data):
                         return data
@@ -1074,7 +1103,7 @@ class OssietoOBML:
         description: str | None,
         synonyms: list[str],
     ) -> dict:
-        """Reconstruct an OBML cumulative metric from custom_extensions data."""
+        """Reconstruct an OBML cumulative metric from nonportable_extensions data."""
         metric_def: dict[str, Any] = {
             "type": "cumulative",
             "measure": extras["obml_cumulative_measure"],
@@ -1108,7 +1137,7 @@ class OssietoOBML:
         description: str | None,
         synonyms: list[str],
     ) -> dict:
-        """Reconstruct an OBML window metric from custom_extensions data."""
+        """Reconstruct an OBML window metric from nonportable_extensions data."""
         metric_def: dict[str, Any] = {
             "type": "window",
             "windowFunction": extras["obml_window_function"],
@@ -1147,7 +1176,7 @@ class OssietoOBML:
         description: str | None,
         synonyms: list[str],
     ) -> dict:
-        """Reconstruct an OBML period-over-period metric from custom_extensions data."""
+        """Reconstruct an OBML period-over-period metric from nonportable_extensions data."""
         pop_config: dict[str, Any] = {
             "timeDimension": extras["obml_pop_time_dimension"],
             "grain": extras["obml_pop_grain"],

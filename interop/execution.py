@@ -91,8 +91,8 @@ def _diagnostic(converter, message, code=None, **details):
         "foreign_extension": bool(
             re.search(
                 r"foreign.*(?:extension|vendor)|(?:extension|vendor).*foreign|"
-                r"(?:unknown|unsupported|ignor\w*|dropp\w*).*custom_extensions?|"
-                r"custom_extensions?.*(?:unknown|unsupported|ignor\w*|dropp\w*)",
+                r"(?:unknown|unsupported|ignor\w*|dropp\w*).*(?:custom|nonportable)_extensions?|"
+                r"(?:custom|nonportable)_extensions?.*(?:unknown|unsupported|ignor\w*|dropp\w*)",
                 message,
                 re.I,
             )

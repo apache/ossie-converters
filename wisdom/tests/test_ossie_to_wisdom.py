@@ -21,15 +21,17 @@ from pathlib import Path
 import pytest
 
 from ossie import (
+    OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieRelationship,
+    OssieSemanticModel,
 )
 from ossie_wisdom import ConverterIssueType, OssieToWisdomConverter, WisdomToOssieConverter
+from ossie_wisdom.wisdom_to_ossie import RELATIONSHIP_TYPE_NOTES
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_export.json"
 
@@ -124,6 +126,11 @@ def test_metrics_attach_to_referenced_tables(export):
     assert customers_measures == {"customers_total_amount"}
 
 
+def test_wisdom_extensions_are_consumed_on_round_trip(result):
+    assert _issues_of(result, ConverterIssueType.CUSTOM_EXTENSION_DROPPED) == []
+    assert _issues_of(result, ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED) == []
+
+
 def test_relationship_types_restored(export):
     edges = export["domain"]["zsheet_json"]["relationshipGraph"]["relationships"]
     types = [edge["properties"]["relationshipType"] for edge in edges]
@@ -180,7 +187,7 @@ def test_unrepresentable_elements_are_reported():
             OssieField(name="order_id", expression=_snowflake("order_id"), ai_context="the identifier"),
         ],
     )
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="first",
         datasets=[dataset],
         relationships=[
@@ -205,7 +212,7 @@ def test_unrepresentable_elements_are_reported():
 
 
 def test_one_to_one_note_restores_relationship_type():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="a", source="db.s.a"),
@@ -229,7 +236,7 @@ def test_one_to_one_note_restores_relationship_type():
 
 def test_relationship_note_with_surrounding_whitespace_still_matches():
     # A YAML block scalar (`ai_context: |`) loads with a trailing newline.
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="a", source="db.s.a"),
@@ -253,7 +260,7 @@ def test_relationship_note_with_surrounding_whitespace_still_matches():
 
 
 def test_free_text_relationship_note_is_not_read_as_a_type_marker():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -280,7 +287,7 @@ def test_free_text_relationship_note_is_not_read_as_a_type_marker():
 
 
 def test_one_to_many_note_restores_relationship_type_and_direction():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -310,10 +317,264 @@ def test_one_to_many_note_restores_relationship_type_and_direction():
     )
 
 
+def _wisdom_extension(data):
+    return OssieNonportableExtension(vendor_name="WISDOM", data=data)
+
+
+def _orders_customers_export(**relationship_fields):
+    """Exports one orders -> customers relationship with distinct join columns on each side."""
+    document = OssieSemanticModel(
+        name="m",
+        datasets=[
+            OssieDataset(name="orders", source="db.s.orders"),
+            OssieDataset(name="customers", source="db.s.customers"),
+        ],
+        relationships=[
+            OssieRelationship(
+                name="orders_to_customers",
+                from_dataset="orders",
+                to="customers",
+                from_columns=["customer_fk"],
+                to_columns=["id"],
+                **relationship_fields,
+            )
+        ],
+    )
+    result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
+    return result, result.output["domain"]["zsheet_json"]["relationshipGraph"]["relationships"][0]
+
+
+def _join_sides(edge):
+    condition = edge["properties"]["joinCondition"]
+    return (
+        (edge["leftDataSource"]["zsheet"]["name"], condition["leftColumn"]["name"]),
+        (edge["rightDataSource"]["zsheet"]["name"], condition["rightColumn"]["name"]),
+    )
+
+
+@pytest.mark.parametrize("relationship_type", ["ONE_TO_ONE", "MANY_TO_MANY"])
+def test_wisdom_extension_restores_relationship_type(relationship_type):
+    result, edge = _orders_customers_export(
+        nonportable_extensions=[
+            _wisdom_extension(
+                {"relationshipType": relationship_type, "normalizedEndpoints": ["orders", "customers"]}
+            )
+        ],
+    )
+    assert edge["properties"]["relationshipType"] == relationship_type
+    assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
+    assert result.issues == []
+
+
+def test_wisdom_extension_restores_one_to_many_and_swaps_sides_back():
+    result, edge = _orders_customers_export(
+        nonportable_extensions=[
+            _wisdom_extension({"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["orders", "customers"]})
+        ],
+    )
+    assert edge["properties"]["relationshipType"] == "ONE_TO_MANY"
+    assert _join_sides(edge) == (("customers", "id"), ("orders", "customer_fk"))
+    condition = edge["properties"]["joinCondition"]
+    assert condition["leftColumn"]["zsheetRef"]["name"] == "customers"
+    assert condition["rightColumn"]["zsheetRef"]["name"] == "orders"
+    assert result.issues == []
+
+
+@pytest.mark.parametrize("relationship_type", ["ONE_TO_ONE", "MANY_TO_MANY"])
+def test_reversed_symmetric_relationship_keeps_its_type(relationship_type):
+    # Endpoints recorded the other way round, as if `from`/`to` were swapped after import.
+    result, edge = _orders_customers_export(
+        ai_context=RELATIONSHIP_TYPE_NOTES[relationship_type],
+        nonportable_extensions=[
+            _wisdom_extension(
+                {"relationshipType": relationship_type, "normalizedEndpoints": ["customers", "orders"]}
+            )
+        ],
+    )
+    assert edge["properties"]["relationshipType"] == relationship_type
+    assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
+    assert result.issues == []
+
+
+def test_flipped_one_to_many_follows_the_flip():
+    # Imported as customers -> orders, then deliberately flipped to orders -> customers, so orders is
+    # now the many side. The export follows the flip as MANY_TO_ONE instead of swapping it back.
+    result, edge = _orders_customers_export(
+        nonportable_extensions=[
+            _wisdom_extension({"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["customers", "orders"]})
+        ],
+    )
+    assert edge["properties"]["relationshipType"] == "MANY_TO_ONE"
+    assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
+    assert result.issues == []
+
+
+def test_wisdom_extension_with_stale_endpoints_exports_many_to_one():
+    # An endpoint now points at a different dataset, as if the relationship was edited after import.
+    result, edge = _orders_customers_export(
+        nonportable_extensions=[
+            _wisdom_extension({"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["orders", "users"]})
+        ],
+    )
+    assert edge["properties"]["relationshipType"] == "MANY_TO_ONE"
+    assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
+    assert [issue.element_name for issue in _issues_of(result, ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED)] == [
+        "orders_to_customers"
+    ]
+    assert _issues_of(result, ConverterIssueType.CUSTOM_EXTENSION_DROPPED) == []
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"relationshipType": "SIDEWAYS", "normalizedEndpoints": ["orders", "customers"]},
+        {"relationshipType": {"unexpected": "shape"}, "normalizedEndpoints": ["orders", "customers"]},
+        {"relationshipType": "ONE_TO_MANY", "normalizedEndpoints": "orders,customers"},
+        {"relationshipType": "ONE_TO_MANY"},
+        {"_v": 2, "relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["orders", "customers"]},
+        {"_v": "1", "relationshipType": "ONE_TO_MANY", "normalizedEndpoints": ["orders", "customers"]},
+    ],
+)
+def test_malformed_wisdom_extension_exports_many_to_one(data):
+    result, edge = _orders_customers_export(nonportable_extensions=[_wisdom_extension(data)])
+    assert edge["properties"]["relationshipType"] == "MANY_TO_ONE"
+    assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
+    assert [issue.element_name for issue in _issues_of(result, ConverterIssueType.RELATIONSHIP_TYPE_UNRESOLVED)] == [
+        "orders_to_customers"
+    ]
+    assert _issues_of(result, ConverterIssueType.CUSTOM_EXTENSION_DROPPED) == []
+
+
+def test_consumed_wisdom_extension_is_not_reported_as_dropped():
+    document = OssieSemanticModel(
+        name="m",
+        datasets=[
+            OssieDataset(
+                name="orders",
+                source="db.s.orders",
+                nonportable_extensions=[_wisdom_extension({"note": "not read by the converter"})],
+            ),
+            OssieDataset(name="customers", source="db.s.customers"),
+        ],
+        relationships=[
+            OssieRelationship(
+                name="orders_to_customers",
+                from_dataset="orders",
+                to="customers",
+                from_columns=["customer_fk"],
+                to_columns=["id"],
+                nonportable_extensions=[
+                    _wisdom_extension(
+                        {"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["orders", "customers"]}
+                    )
+                ],
+            ),
+            OssieRelationship(
+                name="customers_to_orders",
+                from_dataset="customers",
+                to="orders",
+                from_columns=["id"],
+                to_columns=["customer_fk"],
+                nonportable_extensions=[
+                    _wisdom_extension(
+                        {"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["customers", "orders"]}
+                    ),
+                    OssieNonportableExtension(vendor_name="SIGMA", data={}),
+                ],
+            ),
+        ],
+    )
+    result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
+    edges = result.output["domain"]["zsheet_json"]["relationshipGraph"]["relationships"]
+    assert [edge["properties"]["relationshipType"] for edge in edges] == ["ONE_TO_ONE", "ONE_TO_ONE"]
+    # Only the WISDOM relationship entries are read; the dataset entry and the other vendor's are still dropped.
+    assert [issue.element_name for issue in _issues_of(result, ConverterIssueType.CUSTOM_EXTENSION_DROPPED)] == [
+        "orders",
+        "customers_to_orders",
+    ]
+
+
+@pytest.mark.parametrize("relationship_type", ["ONE_TO_MANY", "ONE_TO_ONE", "MANY_TO_MANY"])
+def test_legacy_note_without_wisdom_extension_restores_relationship_type(relationship_type):
+    # Documents generated before the WISDOM extension only carry the note.
+    result, edge = _orders_customers_export(ai_context=f"  {RELATIONSHIP_TYPE_NOTES[relationship_type]}\n")
+    assert edge["properties"]["relationshipType"] == relationship_type
+    assert result.issues == []
+
+
+def test_wisdom_extension_wins_over_a_conflicting_note():
+    result, edge = _orders_customers_export(
+        ai_context="one-to-many relationship",
+        nonportable_extensions=[
+            _wisdom_extension({"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["orders", "customers"]})
+        ],
+    )
+    assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
+    assert _join_sides(edge) == (("orders", "customer_fk"), ("customers", "id"))
+    assert [issue.element_name for issue in _issues_of(result, ConverterIssueType.AI_CONTEXT_DROPPED)] == [
+        "orders_to_customers"
+    ]
+
+
+def test_note_is_read_when_wisdom_extension_is_stale():
+    result, edge = _orders_customers_export(
+        ai_context="one-to-one relationship",
+        nonportable_extensions=[
+            _wisdom_extension({"relationshipType": "ONE_TO_ONE", "normalizedEndpoints": ["orders", "users"]})
+        ],
+    )
+    assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
+    assert [(issue.issue_type, issue.element_name) for issue in result.issues] == [
+        (ConverterIssueType.CUSTOM_EXTENSION_DROPPED, "orders_to_customers")
+    ]
+
+
+def test_renamed_dataset_keeps_many_to_many_through_its_note():
+    # Imported as orders MANY_TO_MANY tags, then `tags` was renamed to `order_tags` in Ossie, which
+    # updates `to` but not the WISDOM entry. MANY_TO_ONE would tell Wisdom `to` is unique and fan out joins.
+    document = OssieSemanticModel(
+        name="m",
+        datasets=[
+            OssieDataset(name="orders", source="db.s.orders"),
+            OssieDataset(name="order_tags", source="db.s.order_tags"),
+        ],
+        relationships=[
+            OssieRelationship(
+                name="orders_to_tags",
+                from_dataset="orders",
+                to="order_tags",
+                from_columns=["order_id"],
+                to_columns=["order_id"],
+                ai_context=RELATIONSHIP_TYPE_NOTES["MANY_TO_MANY"],
+                nonportable_extensions=[
+                    _wisdom_extension({"relationshipType": "MANY_TO_MANY", "normalizedEndpoints": ["orders", "tags"]})
+                ],
+            )
+        ],
+    )
+    result = OssieToWisdomConverter().convert(document, exported_at="2026-07-10T00:00:00+00:00")
+    edge = result.output["domain"]["zsheet_json"]["relationshipGraph"]["relationships"][0]
+    assert edge["properties"]["relationshipType"] == "MANY_TO_MANY"
+    assert [(issue.issue_type, issue.element_name) for issue in result.issues] == [
+        (ConverterIssueType.CUSTOM_EXTENSION_DROPPED, "orders_to_tags")
+    ]
+
+
+@pytest.mark.parametrize("data", [{}, {"_v": 2, "relationshipType": "ONE_TO_MANY"}])
+def test_unreadable_wisdom_extension_falls_back_to_the_note(data):
+    result, edge = _orders_customers_export(
+        ai_context="one-to-one relationship", nonportable_extensions=[_wisdom_extension(data)]
+    )
+    assert edge["properties"]["relationshipType"] == "ONE_TO_ONE"
+    assert [(issue.issue_type, issue.element_name) for issue in result.issues] == [
+        (ConverterIssueType.CUSTOM_EXTENSION_DROPPED, "orders_to_customers")
+    ]
+
+
 def test_unresolved_metric_attaches_to_first_dataset():
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[OssieDataset(name="a", source="db.s.a"), OssieDataset(name="b", source="db.s.b")],
         metrics=[OssieMetric(name="row_count", expression=_snowflake("COUNT(*)"))],
@@ -329,7 +590,7 @@ def test_unresolved_metric_attaches_to_first_dataset():
 def test_field_only_ossie_sql_2026_is_exported_without_missing_issue():
     """A field expressed only in OSSIE_SQL_2026 is exported, with no spurious
     MISSING_DIALECT_EXPRESSION issue (#442)."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -350,7 +611,7 @@ def test_metric_only_ossie_sql_2026_is_exported_without_missing_issue():
     spurious MISSING_DIALECT_EXPRESSION issue (#442)."""
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[OssieDataset(name="orders", source="analytics.sales.orders")],
         metrics=[
@@ -366,7 +627,7 @@ def test_metric_only_ossie_sql_2026_is_exported_without_missing_issue():
 def test_sql_only_field_and_metric_are_dropped_with_missing_issues():
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -391,7 +652,7 @@ def test_sql_only_field_and_metric_are_dropped_with_missing_issues():
 
 def test_ansi_sql_preferred_over_ossie_sql_2026():
     """ANSI_SQL wins over OSSIE_SQL_2026 when both are present."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -416,7 +677,7 @@ def test_ansi_sql_preferred_over_ossie_sql_2026():
 
 def test_native_dialect_preferred_over_ossie_sql_2026():
     """A native dialect (SNOWFLAKE) wins over OSSIE_SQL_2026 when both are present."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -445,7 +706,7 @@ def test_unusable_dialect_still_reports_missing_expression():
     listed expression. Guards the fallback chain against silently accepting any dialect (#442)."""
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(

@@ -238,7 +238,7 @@ def write_report(report, output):
     if report.get("document_regressions"):
         lines += [
             "",
-            "## Dialect, key, and source regressions",
+            "## Expression, key, and source regressions",
             "",
             "These grades cover the declared assertions; conversion diagnostics remain in evidence.",
             "",

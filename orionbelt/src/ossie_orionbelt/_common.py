@@ -32,7 +32,7 @@ import re
 # Single source of truth for the Ossie spec we emit. Bump when upstream cuts
 # a stable v0.2.0 (drop the ``.dev0`` suffix). All read paths accept both
 # 0.1.x (via the legacy shim) and 0.2.x.
-_OSSIE_VERSION = "0.2.0.dev0"
+_OSSIE_VERSION = "0.3.0.dev0"
 
 # SQL dialects (of the Ossie enum) whose aggregation expressions our regex-based
 # metric parser can read, in preference order. ANSI_SQL first, then
@@ -41,7 +41,7 @@ _OSSIE_VERSION = "0.2.0.dev0"
 # simple/expression aggregations (``SUM(t.c)``, ``SUM(t.a * t.b)``) are
 # syntactically identical to ANSI. Non-SQL languages (MDX, TABLEAU, MAQL, SIGMA,
 # THOUGHTSPOT, DAX) are never parsed as SQL.
-_SQL_PARSEABLE_DIALECTS = ("ANSI_SQL", "OSSIE_SQL_2026", "SNOWFLAKE", "DATABRICKS")
+_SQL_PARSEABLE_DIALECTS = ("ANSI_SQL", "OSSIE_SQL_2026", "SNOWFLAKE", "DATABRICKS", "CLICKHOUSE", "TRINO")
 
 # Ossie SQL-dialect tag -> sqlglot ``read`` dialect. ANSI and the portable
 # OSSIE_SQL_2026 map to sqlglot's default (None).
@@ -50,6 +50,8 @@ _OSSIE_DIALECT_TO_SQLGLOT: dict[str, str | None] = {
     "OSSIE_SQL_2026": None,
     "SNOWFLAKE": "snowflake",
     "DATABRICKS": "databricks",
+    "CLICKHOUSE": "clickhouse",
+    "TRINO": "trino",
 }
 
 # Matches a ``dataset.column`` reference inside a SQL expression, where each
@@ -63,7 +65,7 @@ _COLUMN_REF_RE = re.compile(
     r"\s*\.\s*"
     r'(?P<col>[A-Za-z_]\w*|"[^"]+"|`[^`]+`|\[[^\]]+\])'
 )
-# Vendor identities for custom_extensions.
+# Vendor identities for nonportable_extensions.
 #   ORIONBELT - OrionBelt/OBML-proprietary payloads we author on OBML -> Ossie.
 #   Ossie       - Ossie-native fields OBML can't hold (unique_keys, field label,
 #               ai_context leftovers), stashed into OBML on Ossie -> OBML.

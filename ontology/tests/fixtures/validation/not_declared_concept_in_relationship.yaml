@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: Sample model
 ontology:
   - concept: Person
@@ -25,14 +25,17 @@ ontology:
       - name: ssn
         roles:
           - concept: SocialSecurityNr
+        verbalizes: ['{Person} has {SocialSecurityNr}']
         multiplicity: OneToOne
       - name: earns
         roles:
           - concept: Salary
+        verbalizes: ['{Person} has {Salary}']
         multiplicity: ManyToOne
       - name: live_in
         roles:
           - concept: City
+        verbalizes: ['{Person} has {City}']
         multiplicity: ManyToOne
   - concept: SocialSecurityNr
     type: ValueType

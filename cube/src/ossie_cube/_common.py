@@ -18,12 +18,13 @@
 """Shared helpers for the Apache Ossie <-> Cube converters.
 
 Both directions are pure offline YAML transforms. The cross-cutting concerns
-live here: version constants, the `custom_extensions` stash protocol, Cube
+live here: version constants, the `nonportable_extensions` stash protocol, Cube
 identifier rules, key-spelling normalization, the type/aggregate mapping tables,
 and the member-reference translation between Cube's f-string SQL and the plain
 column references Ossie expressions use.
 """
 
+import copy
 import dataclasses
 import datetime
 import hashlib
@@ -36,9 +37,9 @@ import yaml
 from .converter_issues import IssueType
 
 # Ossie semantic model spec version this converter targets (see core-spec).
-OSSIE_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.3.0.dev0"
 
-# Vendor id used for the `custom_extensions` stash.
+# Vendor id used for the `nonportable_extensions` stash.
 VENDOR = "CUBE"
 
 # The Ossie model name import synthesizes when the Cube model offers none -- no view is
@@ -295,23 +296,18 @@ def read_stash(obj):
 
     The entry is input like any other -- hand-authored, or written by some other
     tool that picked the same vendor id -- so its `data` is validated rather than
-    trusted. It used to be parsed bare, which turned malformed JSON into a
-    `JSONDecodeError` and a valid non-object (a list, a string, `null`) into an
-    `AttributeError` on the next line; neither is caught by the CLI, so both
-    surfaced as a traceback instead of a message.
+    trusted: a non-object (a list, a string) would otherwise raise an
+    `AttributeError` the CLI does not catch, surfacing as a traceback instead of a
+    message.
     """
-    for ext in (obj or {}).get("custom_extensions") or []:
+    for ext in (obj or {}).get("nonportable_extensions") or []:
         if ext.get("vendor_name") == VENDOR:
-            try:
-                data = json.loads(ext.get("data") or "{}")
-            except ValueError as exc:
-                raise ConversionError(
-                    f"custom_extensions entry for vendor '{VENDOR}' has malformed "
-                    f"JSON in 'data': {exc}") from exc
+            data = ext.get("data") or {}
             if not isinstance(data, dict):
                 raise ConversionError(
-                    f"custom_extensions entry for vendor '{VENDOR}' has a "
-                    f"'data' of {type(data).__name__}, expected a JSON object")
+                    f"nonportable_extensions entry for vendor '{VENDOR}' has a "
+                    f"'data' of {type(data).__name__}, expected an object")
+            data = copy.deepcopy(data)
             data.pop("_v", None)
             return data
     return {}
@@ -320,9 +316,9 @@ def read_stash(obj):
 def json_safe(value):
     """Coerce YAML scalars JSON cannot hold into strings, recursively.
 
-    The stash is a JSON blob, and PyYAML resolves an unquoted `2022-01-01` to a
-    `datetime.date` -- which `json.dumps` refuses, so a Cube model with a date in an
-    access policy used to abort the conversion with a raw TypeError. Dates become ISO
+    Stash data must hold JSON values only, and PyYAML resolves an unquoted
+    `2022-01-01` to a `datetime.date` -- which Ossie validation rejects under `data`,
+    and `json.dumps` refuses outright. Dates become ISO
     strings, which is what Cube compares against anyway (every value in a policy
     filter reaches SQL as text).
     """
@@ -343,8 +339,16 @@ def measure_signature(measure):
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def native_expression_signature(member):
+    """Fingerprint the native expression without labels or other presentation keys."""
+    keys = {"sql", "type", "filters", "case", "latitude", "longitude", "sub_query",
+            "multi_stage", "time_shift", "rolling_window", "group_by", "reduce_by",
+            "add_group_by"}
+    return measure_signature({k: v for k, v in member.items() if k in keys})
+
+
 def write_stash(obj, data):
-    """Attach a CUBE `custom_extensions` entry holding `data` (a dict).
+    """Attach a CUBE `nonportable_extensions` entry holding `data` (a dict).
 
     No-op when `data` is empty, so hand-authored Ossie stays clean. Merges into an
     existing CUBE entry if one is already present.
@@ -353,25 +357,24 @@ def write_stash(obj, data):
         return
     payload = {"_v": STASH_VERSION}
     payload.update(json_safe(data))
-    blob = json.dumps(payload)
-    exts = obj.setdefault("custom_extensions", [])
+    exts = obj.setdefault("nonportable_extensions", [])
     for ext in exts:
         if ext.get("vendor_name") == VENDOR:
-            ext["data"] = blob
+            ext["data"] = payload
             return
-    exts.append({"vendor_name": VENDOR, "data": blob})
+    exts.append({"vendor_name": VENDOR, "data": payload})
 
 
 def foreign_vendor_extensions(obj):
-    """Return non-CUBE custom_extensions.
+    """Return non-CUBE nonportable_extensions.
 
     Unlike Omni, Cube has a `meta` field at every level, so export parks these
-    under `meta.ossie.custom_extensions` instead of dropping them -- which keeps
+    under `meta.ossie.nonportable_extensions` instead of dropping them -- which keeps
     `Ossie -> Cube -> Ossie` lossless for models carrying several vendors.
     """
     return [
         ext
-        for ext in (obj or {}).get("custom_extensions") or []
+        for ext in (obj or {}).get("nonportable_extensions") or []
         if ext.get("vendor_name") != VENDOR
     ]
 
@@ -383,8 +386,8 @@ def pick_expression(ossie_expression, preferred=None):
 
     Preference order: the caller-chosen warehouse dialect (Cube passes SQL through to
     the data source, so e.g. SNOWFLAKE SQL is valid on a Snowflake-backed Cube model),
-    then ANSI_SQL, then OSSIE_SQL_2026, then the first dialect on offer that is
-    warehouse SQL.
+    then primary portable SQL, ANSI_SQL, tagged OSSIE_SQL_2026, and the first
+    warehouse SQL alternative.
 
     The last step matters for real interop. Converters commonly emit their own dialect
     and no ANSI: everything from the Databricks converter is `DATABRICKS`. Requiring
@@ -401,11 +404,16 @@ def pick_expression(ossie_expression, preferred=None):
     document order and reporting it keeps the model; the alternatives are parked, so
     nothing is lost on the way back.
     """
+    expression = ossie_expression or {}
     dialects = [(d.get("dialect"), d.get("expression"))
-                for d in (ossie_expression or {}).get("dialects") or []
+                for d in expression.get("dialects") or []
                 if d.get("expression") is not None]
     by_dialect = dict(dialects)
-    for candidate in (preferred, DIALECT_ANSI, DIALECT_OSSIE_SQL):
+    primary = expression.get("sql")
+    if primary is not None:
+        by_dialect[DIALECT_OSSIE_SQL] = primary
+    primary_dialect = DIALECT_OSSIE_SQL if primary is not None else None
+    for candidate in dict.fromkeys((preferred, primary_dialect, DIALECT_ANSI, DIALECT_OSSIE_SQL)):
         if candidate and candidate in by_dialect:
             return _checked_expression(by_dialect[candidate]), candidate
     for dialect, expr in dialects:
@@ -1271,7 +1279,7 @@ DIM_TYPE_TO_DATATYPE = {
 # The datatype each Cube type maps back to by default. Export parks the original in
 # `meta.ossie.datatype` only when it is *not* the default -- Cube cannot hold the
 # distinction, and `meta.ossie` is Cube-side, so this keeps Ossie -> Cube -> Ossie
-# exact without putting anything in `custom_extensions`.
+# exact without putting anything in `nonportable_extensions`.
 DEFAULT_DATATYPE_FOR_CUBE_TYPE = dict(DIM_TYPE_TO_DATATYPE)
 
 # Ossie `datatype` -> Cube dimension `type`, which is required on every

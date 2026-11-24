@@ -65,7 +65,7 @@ public class PolarisImporter {
             SemanticModel sm = importNamespace(namespace);
             if (sm != null && !sm.getDatasets().isEmpty()) {
                 OssieModel model = new OssieModel();
-                model.setVersion("0.2.0.dev0");
+                model.setVersion("0.3.0.dev0");
                 model.setSemanticModel(sm);
                 models.add(model);
             }

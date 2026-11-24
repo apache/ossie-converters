@@ -19,6 +19,8 @@
 
 package org.apache.ossie.converter.polaris;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ossie.converter.polaris.model.OssieModel;
 import org.apache.ossie.converter.polaris.model.OssieModel.*;
 import org.yaml.snakeyaml.Yaml;
@@ -35,6 +37,8 @@ import java.util.Map;
  * Parses an Ossie YAML file into an {@link OssieModel}.
  */
 public class OssieModelParser {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private boolean sawAiContext;
 
@@ -182,17 +186,26 @@ public class OssieModelParser {
     @SuppressWarnings("unchecked")
     private List<CustomExtension> parseCustomExtensions(Map<String, Object> map) {
         List<CustomExtension> extensions = new ArrayList<>();
-        List<Map<String, Object>> extList = (List<Map<String, Object>>) map.get("custom_extensions");
+        List<Map<String, Object>> extList = (List<Map<String, Object>>) map.get("nonportable_extensions");
         if (extList == null) {
             return extensions;
         }
         for (Map<String, Object> extMap : extList) {
             CustomExtension ext = new CustomExtension();
             ext.setVendorName((String) extMap.get("vendor_name"));
-            ext.setData((String) extMap.get("data"));
+            ext.setData(dataJson(extMap.get("data")));
             extensions.add(ext);
         }
         return extensions;
+    }
+
+    /** The extension's object-valued {@code data} as the JSON text the model carries. */
+    private static String dataJson(Object data) {
+        try {
+            return JSON.writeValueAsString(data);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("nonportable_extensions data is not JSON-representable", e);
+        }
     }
 
     @SuppressWarnings("unchecked")

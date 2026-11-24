@@ -83,7 +83,7 @@ def _metric(name, expr, dialect="ANSI_SQL", **extra):
 
 
 def _model(datasets, relationships=None, metrics=None, **extra):
-    model = {"version": "0.2.0.dev0", "name": "test_model", "datasets": datasets}
+    model = {"version": "0.3.0.dev0", "name": "test_model", "datasets": datasets}
     if relationships is not None:
         model["relationships"] = relationships
     if metrics is not None:
@@ -102,7 +102,7 @@ def _minimal_model(**overrides):
 
 
 def _wrap_ossie(model_dict):
-    return yaml.dump({"version": "0.2.0.dev0", **model_dict}, default_flow_style=False)
+    return yaml.dump({"version": "0.3.0.dev0", **model_dict}, default_flow_style=False)
 
 
 def _convert(yaml_str):
@@ -151,12 +151,12 @@ class TestEnvelope:
             convert_ossie_to_lookml("- just\n- a\n- list\n")
 
     def test_rejects_legacy_semantic_model_wrapper(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "semantic_model": [_minimal_model()]})
+        bad = yaml.dump({"version": "0.3.0.dev0", "semantic_model": [_minimal_model()]})
         with pytest.raises(OssieConversionError, match="Legacy 'semantic_model'"):
             convert_ossie_to_lookml(bad)
 
     def test_rejects_root_dialects(self):
-        bad = yaml.dump({"version": "0.2.0.dev0", "dialects": ["ANSI_SQL"], **_minimal_model()})
+        bad = yaml.dump({"version": "0.3.0.dev0", "dialects": ["ANSI_SQL"], **_minimal_model()})
         with pytest.raises(OssieConversionError, match="Root dialects"):
             convert_ossie_to_lookml(bad)
 
@@ -219,6 +219,57 @@ class TestConvertSource:
 # ---------------------------------------------------------------------------
 
 class TestExtractExpression:
+    @pytest.mark.parametrize("tag", [None, "OSSIE_SQL_2026", "ossie_sql_2026"])
+    def test_primary_sql_is_the_authoritative_portable_expression(self, tag):
+        expression = {"sql": "refund_id"}
+        if tag is not None:
+            expression["dialects"] = [{"dialect": tag, "expression": "refund_id + 1"}]
+        assert _extract_expression(expression, "f") == ("refund_id", "OSSIE_SQL_2026")
+
+    @pytest.mark.parametrize("dialect", ["BIGQUERY", "ANSI_SQL"])
+    def test_selected_dialect_precedes_primary_portable_sql(self, dialect):
+        expression = {
+            "sql": "primary_column",
+            "dialects": [
+                {"dialect": dialect, "expression": "preferred_column"},
+                {"dialect": "OSSIE_SQL_2026", "expression": "legacy_column"},
+            ],
+        }
+        assert _extract_expression(expression, "f") == ("preferred_column", dialect)
+
+    @pytest.mark.parametrize("primary", [None, "", "   "])
+    def test_unusable_primary_sql_falls_back_to_tagged_portable_sql(self, primary):
+        expression = {
+            "sql": primary,
+            "dialects": [{"dialect": "OSSIE_SQL_2026", "expression": "legacy_column"}],
+        }
+        assert _extract_expression(expression, "f") == ("legacy_column", "OSSIE_SQL_2026")
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    @pytest.mark.parametrize("dialect", ["BIGQUERY", "ANSI_SQL"])
+    def test_blank_tagged_expression_falls_back_to_primary_sql(self, dialect, blank):
+        expression = {"sql": "amount", "dialects": [{"dialect": dialect, "expression": blank}]}
+        assert _extract_expression(expression, "f") == ("amount", "OSSIE_SQL_2026")
+
+    def test_blank_bigquery_expression_falls_back_to_ansi(self):
+        expression = {
+            "dialects": [
+                {"dialect": "BIGQUERY", "expression": " "},
+                {"dialect": "ANSI_SQL", "expression": "amount"},
+            ]
+        }
+        assert _extract_expression(expression, "f") == ("amount", "ANSI_SQL")
+
+    def test_blank_only_dialects_warn_and_skip(self):
+        expression = {"dialects": [{"dialect": "BIGQUERY", "expression": "  "}]}
+        with pytest.warns(UserWarning, match="no usable BigQuery-compatible expression"):
+            assert _extract_expression(expression, "f") == (None, None)
+
+    @pytest.mark.parametrize("primary", ["", "   "])
+    def test_blank_primary_sql_without_dialects_raises(self, primary):
+        with pytest.raises(OssieConversionError, match="Missing expression for f"):
+            _extract_expression({"sql": primary}, "f")
+
     def test_prefers_bigquery_over_ansi(self):
         expression = {
             "dialects": [
@@ -254,6 +305,52 @@ class TestExtractExpression:
 # ---------------------------------------------------------------------------
 # Fields -> dimensions / dimension_groups
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("with_conflicts", [False, True])
+def test_primary_sql_preserves_fields_and_metric_ownership(with_conflicts):
+    def expression(primary, legacy):
+        value = {"sql": primary}
+        if with_conflicts:
+            value["dialects"] = [{"dialect": "OSSIE_SQL_2026", "expression": legacy}]
+        return value
+
+    model = _model(
+        [
+            _dataset("refunds", [
+                {"name": "refund_id", "expression": expression("refund_id", "refund_id + 1")},
+                {"name": "refund_amount", "expression": expression("amount", "amount * 2")},
+            ]),
+            _dataset("orders", [
+                {"name": "amount", "expression": expression("amount", "amount * 2")},
+                {"name": "net_amount", "expression": expression("amount * 0.9", "amount * 0.8")},
+            ], metrics=[{
+                "name": "local_total",
+                "expression": expression("SUM(amount)", "MAX(amount)"),
+            }]),
+        ],
+        metrics=[{
+            "name": "total_amount",
+            "expression": expression("SUM(orders.amount)", "SUM(refunds.refund_amount)"),
+        }],
+    )
+    views = {view["name"]: view for view in lkml.load(_convert(model))["views"]}
+    refund_fields = {field["name"]: field["sql"] for field in views["refunds"]["dimensions"]}
+    assert refund_fields == {
+        "refund_id": "${TABLE}.refund_id",
+        "refund_amount": "${TABLE}.amount",
+    }
+    order_fields = {field["name"]: field["sql"] for field in views["orders"]["dimensions"]}
+    assert order_fields == {
+        "amount": "${TABLE}.amount",
+        "net_amount": "${TABLE}.amount * 0.9",
+    }
+    assert not views["refunds"].get("measures")
+    measures = {measure["name"]: measure for measure in views["orders"]["measures"]}
+    assert measures["total_amount"]["type"] == "sum"
+    assert measures["total_amount"]["sql"] == "${orders.amount}"
+    assert measures["local_total"]["type"] == "sum"
+    assert measures["local_total"]["sql"] == "${TABLE}.amount"
+
 
 class TestFields:
     def _view(self, *fields, **dataset_kwargs):
@@ -719,11 +816,11 @@ class TestRelationships:
     def test_relationship_extensions_are_reported_as_dropped(self):
         rel = _rel("o2c", "orders", "customers", ["customer_id"], ["id"])
         rel["ai_context"] = {"instructions": "x"}
-        rel["custom_extensions"] = [{"vendor": "X", "attributes": {}}]
+        rel["nonportable_extensions"] = [{"vendor": "X", "attributes": {}}]
         with pytest.warns(UserWarning, match="relationship 'o2c'") as record:
             convert_ossie_to_lookml(_model([ORDERS, CUSTOMERS], [rel]))
         messages = [str(w.message) for w in record if "relationship 'o2c'" in str(w.message)]
-        assert any("ai_context" in m and "custom_extensions" in m for m in messages)
+        assert any("ai_context" in m and "nonportable_extensions" in m for m in messages)
 
 
 class TestExplores:
@@ -837,7 +934,7 @@ class TestInputValidation:
         ],
     )
     def test_wrongly_typed_containers_are_conversion_errors(self, model, message):
-        doc = yaml.dump({"version": "0.2.0.dev0", "name": "m", **model})
+        doc = yaml.dump({"version": "0.3.0.dev0", "name": "m", **model})
         with pytest.raises(OssieConversionError, match=message):
             convert_ossie_to_lookml(doc)
 
@@ -946,6 +1043,117 @@ class TestSourceDialects:
     def test_ansi_date_trunc_is_transpiled(self):
         view = self._view(_field("m", expr="DATE_TRUNC('month', order_date)", dialect="OSSIE_SQL_2026"))
         assert "sql: DATE_TRUNC(${TABLE}.order_date, MONTH) ;;" in view
+
+    @pytest.mark.parametrize("dialect", ["ANSI_SQL", "OSSIE_SQL_2026"])
+    @pytest.mark.parametrize(
+        "expr, sql",
+        [
+            ("DATEADD(day, 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
+            ("DATEADD(month, -1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL -1 MONTH)"),
+            ("DATEADD(year, 1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 1 YEAR)"),
+            ("DATEADD(week, 1, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 1 WEEK)"),
+            ("DATEADD('day', 7, order_date)", "DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY)"),
+            (
+                "DATEADD(month, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 MONTH)",
+            ),
+            (
+                "DATEADD(quarter, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 QUARTER)",
+            ),
+            (
+                "DATEADD(year, 1, DATE '2024-01-31')",
+                "DATE_ADD(CAST('2024-01-31' AS DATE), INTERVAL 1 YEAR)",
+            ),
+            (
+                "DATEDIFF(day, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY)",
+            ),
+            (
+                "DATEDIFF(week, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, WEEK(MONDAY))",
+            ),
+            (
+                "DATEDIFF(month, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, MONTH)",
+            ),
+            (
+                "DATEDIFF(year, start_date, end_date)",
+                "DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, YEAR)",
+            ),
+            (
+                "DATEADD(day, DATEDIFF(day, start_date, end_date), start_date)",
+                "DATE_ADD(${TABLE}.start_date, INTERVAL (DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY)) DAY)",
+            ),
+            (
+                "DATEADD(day, -1, DATEADD(month, 1, order_date))",
+                "DATE_ADD(DATE_ADD(${TABLE}.order_date, INTERVAL 1 MONTH), INTERVAL -1 DAY)",
+            ),
+            (
+                "DATEDIFF(day, start_date, '2024-12-31')",
+                "DATE_DIFF('2024-12-31', ${TABLE}.start_date, DAY)",
+            ),
+            (
+                'DATEDIFF(day, "ORDER_DATE", "SHIP_DATE")',
+                "DATE_DIFF(${TABLE}.`SHIP_DATE`, ${TABLE}.`ORDER_DATE`, DAY)",
+            ),
+        ],
+    )
+    def test_ossie_date_arithmetic_is_transpiled(self, dialect, expr, sql):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(_field("d", expr=expr, dialect=dialect))
+        assert f"sql: {sql} ;;" in view
+
+    def test_primary_sql_date_arithmetic_is_transpiled(self):
+        plus_week = {"name": "plus_week", "expression": {"sql": "DATEADD(day, 7, order_date)"}}
+        span_days = {
+            "name": "span_days",
+            "expression": {"sql": "DATEDIFF(day, start_date, end_date)"},
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(plus_week, span_days)
+        assert "sql: DATE_ADD(${TABLE}.order_date, INTERVAL 7 DAY) ;;" in view
+        assert "sql: DATE_DIFF(${TABLE}.end_date, ${TABLE}.start_date, DAY) ;;" in view
+
+    def test_datediff_metric_keeps_native_sum(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("start_date"), _field("end_date")],
+            primary_key=["id"],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(
+                _model([ds], metrics=[_metric("span", "SUM(DATEDIFF(day, t.start_date, t.end_date))")])
+            )
+        measure = _block(out, "measure: span")
+        assert "type: sum" in measure
+        assert "sql: DATE_DIFF(${t.end_date}, ${t.start_date}, DAY) ;;" in measure
+
+    def test_unknown_function_warns_and_is_emitted(self):
+        model = _model([_dataset("t", [_field("x", expr="FOO(order_date)")])])
+        with pytest.warns(UserWarning, match="Field 't.x'.*FOO was not translated to BigQuery"):
+            out = convert_ossie_to_lookml(model)
+        assert "sql: FOO(${TABLE}.order_date) ;;" in _block(out, "view: t")
+
+    @pytest.mark.parametrize("expr", ["DATEADD(hour, 1, created_at)", "DATEDIFF(hour, start_at, end_at)"])
+    def test_time_unit_dateadd_datediff_warn_and_are_not_date_add(self, expr):
+        model = _model([_dataset("t", [_field("d", expr=expr)])])
+        with pytest.warns(UserWarning, match="HOUR has no BigQuery DATE_ADD/DATE_DIFF spelling"):
+            out = convert_ossie_to_lookml(model)
+        sql = _block(out, "dimension: d")
+        assert "INTERVAL 1 HOUR" not in sql
+        assert "DATE_DIFF(" not in sql or "HOUR" not in sql
+
+    def test_bigquery_date_diff_with_date_part_column_is_not_repaired(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(
+                _field("d", expr="DATE_DIFF(day, first_day, ISOWEEK)", dialect="BIGQUERY")
+            )
+        assert "sql: DATE_DIFF(${TABLE}.day, ${TABLE}.first_day, ISOWEEK) ;;" in view
 
     def test_ansi_count_distinct_of_quoted_identifier(self):
         ds = _dataset("t", [_field("id"), _field("cid", expr='"customer id"')], primary_key=["id"])

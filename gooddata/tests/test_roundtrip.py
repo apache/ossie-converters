@@ -19,8 +19,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from ossie_gooddata.gooddata_to_ossie import gooddata_to_ossie
@@ -73,7 +71,7 @@ def test_roundtrip_preserves_unknown_source_type_through_opaque():
     field = ossie["datasets"][0]["fields"][0]
 
     assert field["datatype"] == "Opaque"
-    assert json.loads(field["custom_extensions"][0]["data"])["source_column_data_type"] == "CUSTOM_TYPE"
+    assert field["nonportable_extensions"][0]["data"]["source_column_data_type"] == "CUSTOM_TYPE"
 
     result = ossie_to_gooddata(ossie)
     assert result.ldm.datasets[0].attributes[0].source_column_data_type == "CUSTOM_TYPE"

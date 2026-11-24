@@ -440,7 +440,7 @@ def _dataset_field(name: str) -> dict:
 # Gadget's `ref` is an ordinary property mapped by a link; Gizmo's `ref` is its
 # identifier. `ref` is a method on every PyRel Concept, so both are skipped.
 _RESERVED_NAME_SPEC = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "Reserved",
     "ontology": [
         {"concept": "GadgetId", "type": "ValueType", "extends": ["Integer"]},
@@ -451,9 +451,12 @@ _RESERVED_NAME_SPEC = {
             "type": "EntityType",
             "identify_by": ["id"],
             "relationships": [
-                {"name": "id", "roles": [{"concept": "GadgetId"}], "multiplicity": "OneToOne"},
-                {"name": "ref", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne"},
-                {"name": "label", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne"},
+                {"name": "id", "roles": [{"concept": "GadgetId"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Gadget} has id {GadgetId}"]},
+                {"name": "ref", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne",
+                 "verbalizes": ["{Gadget} has ref {Label}"]},
+                {"name": "label", "roles": [{"concept": "Label"}], "multiplicity": "ManyToOne",
+                 "verbalizes": ["{Gadget} has label {Label}"]},
             ],
         },
         {
@@ -461,7 +464,8 @@ _RESERVED_NAME_SPEC = {
             "type": "EntityType",
             "identify_by": ["ref"],
             "relationships": [
-                {"name": "ref", "roles": [{"concept": "GizmoId"}], "multiplicity": "OneToOne"},
+                {"name": "ref", "roles": [{"concept": "GizmoId"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Gizmo} has ref {GizmoId}"]},
             ],
         },
     ],
@@ -469,7 +473,7 @@ _RESERVED_NAME_SPEC = {
         {
             "name": "reserved_mapping",
             "semantic_model": {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "Reserved semantic model",
                 "datasets": [
                     {
@@ -545,7 +549,7 @@ def test_mappings_over_a_reserved_relationship_are_skipped_with_a_warning(tmp_pa
 # column. Both mappings use `owner` at the top level and differ only in the
 # nested referent below it.
 _NESTED_REFERENTS_SPEC = {
-    "version": "0.2.0.dev0",
+    "version": "0.3.0.dev0",
     "name": "Nested",
     "ontology": [
         {"concept": "EmpNr", "type": "ValueType", "extends": ["Integer"]},
@@ -554,7 +558,8 @@ _NESTED_REFERENTS_SPEC = {
             "type": "EntityType",
             "identify_by": ["nr"],
             "relationships": [
-                {"name": "nr", "roles": [{"concept": "EmpNr"}], "multiplicity": "OneToOne"},
+                {"name": "nr", "roles": [{"concept": "EmpNr"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Employee} has {EmpNr}"]},
             ],
         },
         {
@@ -562,7 +567,8 @@ _NESTED_REFERENTS_SPEC = {
             "type": "EntityType",
             "identify_by": ["owner"],
             "relationships": [
-                {"name": "owner", "roles": [{"concept": "Employee"}], "multiplicity": "OneToOne"},
+                {"name": "owner", "roles": [{"concept": "Employee"}], "multiplicity": "OneToOne",
+                 "verbalizes": ["{Desk} belongs to {Employee}"]},
             ],
         },
     ],
@@ -570,7 +576,7 @@ _NESTED_REFERENTS_SPEC = {
         {
             "name": "nested_mapping",
             "semantic_model": {
-                "version": "0.2.0.dev0",
+                "version": "0.3.0.dev0",
                 "name": "Nested semantic model",
                 "datasets": [
                     {

@@ -180,7 +180,7 @@ export.
 | Unique identifier         | Dataset / Field / Metric / Relationship `name` | Model / Dimension / Measure / Relation `id`                              |
 | Display metadata          | Field / Metric `description`, Field `label`    | Model / Dimension / Measure / Relation `name`, `description`             |
 | AI context                | `ai_context`                                   | _Not supported._                                                         |
-| Custom extension          | `custom_extensions`                            | _Not supported._                                                         |
+| Custom extension          | `nonportable_extensions`                            | _Not supported._                                                         |
 | Cross-dataset reference   | `dataset.field` qualifier                      | `${relation.dimension}` qualifier                                        |
 | Time role                 | Dimension `is_time`, temporal `datatype`       | Temporal `type`; _Additional time metadata not supported._               |
 | Curated view              | _Not supported._                               | View                                                                     |

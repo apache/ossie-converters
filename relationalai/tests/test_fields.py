@@ -258,7 +258,7 @@ def _single_field_spec(tmp_path: Path, expression: str, datatype: str, columns: 
     }]
     key = "flag" if identify_by_flag else "nr"
     document = {
-        "version": "0.2.0.dev0",
+        "version": "0.3.0.dev0",
         "name": "SingleField",
         "ontology": [{
             "concept": "Item", "type": "EntityType", "identify_by": [key],
@@ -273,16 +273,17 @@ def _single_field_spec(tmp_path: Path, expression: str, datatype: str, columns: 
         "ontology_mappings": [{
             "name": "single_field_mapping",
             "semantic_model": {
-                "version": "0.2.0.dev0", "name": "Single field semantic model",
+                "version": "0.3.0.dev0", "name": "Single field semantic model",
                 "datasets": [{"name": "ITEMS", "source": "DB.SCHEMA.ITEMS", "fields": fields}],
             },
             "concept_mappings": [{
                 "concept": "Item",
                 "object_mappings": [{"referent_mappings": [{"relationship": key, "expression": f"ITEMS.{key}"}]}],
-                "link_mappings": [] if identify_by_flag else [{
+                # The schema gives `link_mappings` minItems 1, so it is left out when empty.
+                **({} if identify_by_flag else {"link_mappings": [{
                     "object_mapping": {"referent_mappings": [{"relationship": "nr", "expression": "ITEMS.nr"}]},
                     "children": [{"object_mapping": {"expression": "ITEMS.flag"}, "relationship": "flag"}],
-                }],
+                }]}),
             }],
         }],
     }

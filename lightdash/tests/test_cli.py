@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from ossie_lightdash.cli import main
 
 from tests.conftest import LIGHTDASH_CLI, TPCDS_PATH, needs_lightdash_cli
@@ -42,9 +42,9 @@ def test_import_writes_a_loadable_document(tmp_path, suffix):
     assert "semantic_model" not in raw
     assert raw["name"] == "lightdash_semantic_model"
     if suffix == ".json":
-        document = OssieDocument.model_validate_json(text)
+        document = OssieSemanticModel.model_validate_json(text)
     else:
-        document = OssieDocument.model_validate(yaml.safe_load(text))
+        document = OssieSemanticModel.model_validate(yaml.safe_load(text))
     assert {dataset.name for dataset in document.datasets} == {
         "store_sales", "date_dim", "customer", "item", "store"
     }
@@ -111,7 +111,7 @@ def test_import_reads_a_whole_dbt_project(tmp_path, capsys):
 
     document_path = tmp_path / "model.yaml"
     assert main(["import", "--input", str(project), "--output", str(document_path), "--schema", "marts"]) == 0
-    document = OssieDocument.model_validate(yaml.safe_load(document_path.read_text()))
+    document = OssieSemanticModel.model_validate(yaml.safe_load(document_path.read_text()))
     assert [d.name for d in document.datasets] == ["customers", "orders", "statuses"]
     err = capsys.readouterr().err
     assert "Skipped" in err and "template.yml" in err
@@ -165,8 +165,8 @@ def test_lightdash_model_files_import_and_round_trip(tmp_path):
     back = tmp_path / "back.yaml"
     # No --database/--schema: the model files name their own sources.
     assert main(["import", "-i", str(project), "-o", str(back), "--dialect", "SNOWFLAKE"]) == 0
-    original = OssieDocument.model_validate(yaml.safe_load(TPCDS_PATH.read_text()))
-    roundtripped = OssieDocument.model_validate(yaml.safe_load(back.read_text()))
+    original = OssieSemanticModel.model_validate(yaml.safe_load(TPCDS_PATH.read_text()))
+    roundtripped = OssieSemanticModel.model_validate(yaml.safe_load(back.read_text()))
     assert {d.name: d.source for d in roundtripped.datasets} == {d.name: d.source for d in original.datasets}
     assert {d.name: d.primary_key for d in roundtripped.datasets} == {d.name: d.primary_key for d in original.datasets}
     assert {(d.name, f.name): f.dimension is not None for d in roundtripped.datasets for f in d.fields} == {
@@ -186,7 +186,7 @@ def test_lightdash_model_files_import_and_round_trip(tmp_path):
 def test_export_collision_fails_before_writing(tmp_path, capsys, output_format, table):
     source = tmp_path / "collision.yaml"
     source.write_text(yaml.safe_dump({
-        "version": "0.2.0.dev0", "name": "collision", "datasets": [
+        "version": "0.3.0.dev0", "name": "collision", "datasets": [
             {"name": "sales_orders", "source": "sales.orders"},
             {"name": "archived_orders", "source": f"archive.{table}"},
         ],

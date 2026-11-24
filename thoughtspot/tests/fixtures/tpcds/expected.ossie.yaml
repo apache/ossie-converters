@@ -25,7 +25,7 @@
 # store_returns_sv_to_store -- a ONE_TO_MANY join declared from store's own
 # side, whose emitted endpoints are swapped so store lands on `to`) joins on
 # s_store_sk.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: tpcds_retail_model
 datasets:
 - name: store_sales
@@ -40,6 +40,7 @@ datasets:
   - name: ss_sold_date_sk
     label: ss_sold_date_sk
     expression:
+      sql: ss_sold_date_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_sold_date_sk]'
@@ -49,6 +50,7 @@ datasets:
   - name: ss_item_sk
     label: ss_item_sk
     expression:
+      sql: ss_item_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_item_sk]'
@@ -58,6 +60,7 @@ datasets:
   - name: ss_customer_sk
     label: ss_customer_sk
     expression:
+      sql: ss_customer_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_customer_sk]'
@@ -67,6 +70,7 @@ datasets:
   - name: ss_store_sk
     label: ss_store_sk
     expression:
+      sql: ss_store_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_store_sk]'
@@ -76,6 +80,7 @@ datasets:
   - name: ss_quantity
     label: ss_quantity
     expression:
+      sql: ss_quantity
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_quantity]'
@@ -85,6 +90,7 @@ datasets:
   - name: ss_sales_price
     label: ss_sales_price
     expression:
+      sql: ss_sales_price
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_sales_price]'
@@ -94,6 +100,7 @@ datasets:
   - name: ss_ext_sales_price
     label: ss_ext_sales_price
     expression:
+      sql: ss_ext_sales_price
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_ext_sales_price]'
@@ -103,18 +110,25 @@ datasets:
   - name: ss_net_profit
     label: ss_net_profit
     expression:
+      sql: ss_net_profit
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_sales::ss_net_profit]'
       - dialect: ANSI_SQL
         expression: ss_net_profit
     datatype: Decimal
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
-      "tml_object_source_witness": "TPCDS.PUBLIC.STORE_SALES", "unsurfaced_columns":
-      [{"db_column_name": "ss_ticket_number", "db_column_properties": {"data_type":
-      "INT64"}, "name": "ss_ticket_number"}]}'
+    data:
+      _v: 1
+      connection_name: TPC-DS Snowflake
+      tml_object: table
+      tml_object_source_witness: TPCDS.PUBLIC.STORE_SALES
+      unsurfaced_columns:
+      - db_column_name: ss_ticket_number
+        db_column_properties:
+          data_type: INT64
+        name: ss_ticket_number
 - name: date_dim
   source: TPCDS.PUBLIC.DATE_DIM
   primary_key:
@@ -125,6 +139,7 @@ datasets:
   - name: d_date_sk
     label: d_date_sk
     expression:
+      sql: d_date_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_date_sk]'
@@ -134,6 +149,7 @@ datasets:
   - name: d_date
     label: d_date
     expression:
+      sql: d_date
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_date]'
@@ -143,6 +159,7 @@ datasets:
   - name: d_year
     label: d_year
     expression:
+      sql: d_year
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_year]'
@@ -152,6 +169,7 @@ datasets:
   - name: d_quarter_name
     label: d_quarter_name
     expression:
+      sql: d_quarter_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_quarter_name]'
@@ -161,16 +179,20 @@ datasets:
   - name: d_moy
     label: d_moy
     expression:
+      sql: d_moy
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[date_dim::d_moy]'
       - dialect: ANSI_SQL
         expression: d_moy
     datatype: Integer
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
-      "tml_object_source_witness": "TPCDS.PUBLIC.DATE_DIM"}'
+    data:
+      _v: 1
+      connection_name: TPC-DS Snowflake
+      tml_object: table
+      tml_object_source_witness: TPCDS.PUBLIC.DATE_DIM
 - name: customer
   source: TPCDS.PUBLIC.CUSTOMER
   primary_key:
@@ -181,6 +203,7 @@ datasets:
   - name: c_customer_sk
     label: c_customer_sk
     expression:
+      sql: c_customer_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_customer_sk]'
@@ -190,6 +213,7 @@ datasets:
   - name: c_customer_id
     label: c_customer_id
     expression:
+      sql: c_customer_id
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_customer_id]'
@@ -199,6 +223,7 @@ datasets:
   - name: c_first_name
     label: c_first_name
     expression:
+      sql: c_first_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_first_name]'
@@ -208,6 +233,7 @@ datasets:
   - name: c_last_name
     label: c_last_name
     expression:
+      sql: c_last_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_last_name]'
@@ -221,12 +247,15 @@ datasets:
       - dialect: THOUGHTSPOT
         expression: concat ( concat ( [customer::c_first_name] , ' ' ) , [customer::c_last_name]
           )
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: THOUGHTSPOT
-      data: '{"_v": 1, "formula_id": "formula_customer_full_name"}'
+      data:
+        _v: 1
+        formula_id: formula_customer_full_name
   - name: c_email_address
     label: c_email_address
     expression:
+      sql: c_email_address
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::c_email_address]'
@@ -236,20 +265,26 @@ datasets:
   - name: c_kana_name
     label: カナ名
     expression:
+      sql: c_kana_name
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[customer::カナ名]'
       - dialect: ANSI_SQL
         expression: c_kana_name
     datatype: String
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: THOUGHTSPOT
-      data: '{"_v": 1, "db_column_name": "c_kana_name", "db_column_name_display_name_witness":
-        "\u30ab\u30ca\u540d"}'
-  custom_extensions:
+      data:
+        _v: 1
+        db_column_name: c_kana_name
+        db_column_name_display_name_witness: カナ名
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
-      "tml_object_source_witness": "TPCDS.PUBLIC.CUSTOMER"}'
+    data:
+      _v: 1
+      connection_name: TPC-DS Snowflake
+      tml_object: table
+      tml_object_source_witness: TPCDS.PUBLIC.CUSTOMER
 - name: item
   source: TPCDS.PUBLIC.ITEM
   primary_key:
@@ -260,6 +295,7 @@ datasets:
   - name: i_item_sk
     label: i_item_sk
     expression:
+      sql: i_item_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_item_sk]'
@@ -269,6 +305,7 @@ datasets:
   - name: i_item_id
     label: i_item_id
     expression:
+      sql: i_item_id
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_item_id]'
@@ -278,6 +315,7 @@ datasets:
   - name: i_item_desc
     label: i_item_desc
     expression:
+      sql: i_item_desc
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_item_desc]'
@@ -287,6 +325,7 @@ datasets:
   - name: i_brand
     label: i_brand
     expression:
+      sql: i_brand
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_brand]'
@@ -296,6 +335,7 @@ datasets:
   - name: i_category
     label: i_category
     expression:
+      sql: i_category
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_category]'
@@ -305,16 +345,20 @@ datasets:
   - name: i_current_price
     label: i_current_price
     expression:
+      sql: i_current_price
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[item::i_current_price]'
       - dialect: ANSI_SQL
         expression: i_current_price
     datatype: Decimal
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
-      "tml_object_source_witness": "TPCDS.PUBLIC.ITEM"}'
+    data:
+      _v: 1
+      connection_name: TPC-DS Snowflake
+      tml_object: table
+      tml_object_source_witness: TPCDS.PUBLIC.ITEM
 - name: store
   source: TPCDS.PUBLIC.STORE
   primary_key:
@@ -325,6 +369,7 @@ datasets:
   - name: s_store_sk
     label: s_store_sk
     expression:
+      sql: s_store_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_store_sk]'
@@ -334,6 +379,7 @@ datasets:
   - name: s_store_id
     label: s_store_id
     expression:
+      sql: s_store_id
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_store_id]'
@@ -343,19 +389,23 @@ datasets:
   - name: s_store_name
     label: s_store_name
     expression:
+      sql: STORE_NM
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_store_name]'
       - dialect: ANSI_SQL
         expression: STORE_NM
     datatype: String
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: THOUGHTSPOT
-      data: '{"_v": 1, "db_column_name": "STORE_NM", "db_column_name_display_name_witness":
-        "s_store_name"}'
+      data:
+        _v: 1
+        db_column_name: STORE_NM
+        db_column_name_display_name_witness: s_store_name
   - name: s_city
     label: s_city
     expression:
+      sql: s_city
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_city]'
@@ -365,6 +415,7 @@ datasets:
   - name: s_state
     label: s_state
     expression:
+      sql: s_state
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_state]'
@@ -374,6 +425,7 @@ datasets:
   - name: s_number_employees
     label: s_number_employees
     expression:
+      sql: s_number_employees
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::s_number_employees]'
@@ -383,6 +435,7 @@ datasets:
   - name: 'on'
     label: 'on'
     expression:
+      sql: '"on"'
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store::on]'
@@ -390,13 +443,19 @@ datasets:
         expression: '"on"'
     datatype: Boolean
     description: Whether the store is currently active and open for business.
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: THOUGHTSPOT
-      data: '{"_v": 1, "data_type": "BOOL", "data_type_ossie_datatype_witness": "Boolean"}'
-  custom_extensions:
+      data:
+        _v: 1
+        data_type: BOOL
+        data_type_ossie_datatype_witness: Boolean
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "tml_object": "table",
-      "tml_object_source_witness": "TPCDS.PUBLIC.STORE"}'
+    data:
+      _v: 1
+      connection_name: TPC-DS Snowflake
+      tml_object: table
+      tml_object_source_witness: TPCDS.PUBLIC.STORE
 - name: store_returns_sv
   source: SELECT sr_item_sk, sr_ticket_number, sr_return_amt AS RETURN_AMT, sr_return_quantity,
     sr_store_sk FROM tpcds.public.store_returns
@@ -404,6 +463,7 @@ datasets:
   - name: sr_item_sk
     label: sr_item_sk
     expression:
+      sql: sr_item_sk
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_returns_sv::sr_item_sk]'
@@ -413,6 +473,7 @@ datasets:
   - name: sr_ticket_number
     label: sr_ticket_number
     expression:
+      sql: sr_ticket_number
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_returns_sv::sr_ticket_number]'
@@ -422,22 +483,34 @@ datasets:
   - name: sr_return_amt
     label: sr_return_amt
     expression:
+      sql: RETURN_AMT
       dialects:
       - dialect: THOUGHTSPOT
         expression: '[store_returns_sv::sr_return_amt]'
       - dialect: ANSI_SQL
         expression: RETURN_AMT
     datatype: Decimal
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "connection_name": "TPC-DS Snowflake", "sql_output_columns":
-      {"sr_item_sk": "sr_item_sk", "sr_return_amt": "RETURN_AMT", "sr_ticket_number":
-      "sr_ticket_number"}, "tml_object": "sql_view", "tml_object_source_witness":
-      "SELECT sr_item_sk, sr_ticket_number, sr_return_amt AS RETURN_AMT, sr_return_quantity,
-      sr_store_sk FROM tpcds.public.store_returns", "unsurfaced_columns": [{"db_column_properties":
-      {"data_type": "INT64"}, "name": "sr_return_quantity", "sql_output_column": "sr_return_quantity"},
-      {"db_column_properties": {"data_type": "INT64"}, "name": "sr_store_sk", "sql_output_column":
-      "sr_store_sk"}]}'
+    data:
+      _v: 1
+      connection_name: TPC-DS Snowflake
+      sql_output_columns:
+        sr_item_sk: sr_item_sk
+        sr_return_amt: RETURN_AMT
+        sr_ticket_number: sr_ticket_number
+      tml_object: sql_view
+      tml_object_source_witness: SELECT sr_item_sk, sr_ticket_number, sr_return_amt
+        AS RETURN_AMT, sr_return_quantity, sr_store_sk FROM tpcds.public.store_returns
+      unsurfaced_columns:
+      - db_column_properties:
+          data_type: INT64
+        name: sr_return_quantity
+        sql_output_column: sr_return_quantity
+      - db_column_properties:
+          data_type: INT64
+        name: sr_store_sk
+        sql_output_column: sr_store_sk
 description: TPC-DS retail semantic model used as a shared test fixture.
 relationships:
 - name: store_sales_to_date
@@ -447,10 +520,14 @@ relationships:
   - ss_sold_date_sk
   to_columns:
   - d_date_sk
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "cardinality": "MANY_TO_ONE", "join_shape": "referencing", "referencing_join":
-      "store_sales_to_date", "type": "INNER"}'
+    data:
+      _v: 1
+      cardinality: MANY_TO_ONE
+      join_shape: referencing
+      referencing_join: store_sales_to_date
+      type: INNER
 - name: store_sales_to_customer
   from: store_sales
   to: customer
@@ -458,10 +535,14 @@ relationships:
   - ss_customer_sk
   to_columns:
   - c_customer_sk
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "cardinality": "MANY_TO_ONE", "join_shape": "referencing", "referencing_join":
-      "store_sales_to_customer", "type": "INNER"}'
+    data:
+      _v: 1
+      cardinality: MANY_TO_ONE
+      join_shape: referencing
+      referencing_join: store_sales_to_customer
+      type: INNER
 - name: store_sales_to_item
   from: store_sales
   to: item
@@ -469,10 +550,14 @@ relationships:
   - ss_item_sk
   to_columns:
   - i_item_sk
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "cardinality": "MANY_TO_ONE", "join_shape": "referencing", "referencing_join":
-      "store_sales_to_item", "type": "INNER"}'
+    data:
+      _v: 1
+      cardinality: MANY_TO_ONE
+      join_shape: referencing
+      referencing_join: store_sales_to_item
+      type: INNER
 - name: store_sales_to_store
   from: store_sales
   to: store
@@ -480,10 +565,14 @@ relationships:
   - ss_store_sk
   to_columns:
   - s_store_sk
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "cardinality": "MANY_TO_ONE", "join_shape": "referencing", "referencing_join":
-      "store_sales_to_store", "type": "INNER"}'
+    data:
+      _v: 1
+      cardinality: MANY_TO_ONE
+      join_shape: referencing
+      referencing_join: store_sales_to_store
+      type: INNER
 - name: store_returns_sv_to_store
   from: store_returns_sv
   to: store
@@ -491,11 +580,19 @@ relationships:
   - sr_store_sk
   to_columns:
   - s_store_sk
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "cardinality": "ONE_TO_MANY", "endpoints_swapped": true, "endpoints_swapped_witness":
-      ["store_returns_sv", "store", ["sr_store_sk"], ["s_store_sk"]], "join_shape":
-      "inline", "type": "INNER"}'
+    data:
+      _v: 1
+      cardinality: ONE_TO_MANY
+      endpoints_swapped: true
+      endpoints_swapped_witness:
+      - store_returns_sv
+      - store
+      - - sr_store_sk
+      - - s_store_sk
+      join_shape: inline
+      type: INNER
 - name: store_returns_sv_to_store_sales
   from: store_returns_sv
   to: store_sales
@@ -505,10 +602,13 @@ relationships:
   to_columns:
   - ss_item_sk
   - ss_ticket_number
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "cardinality": "MANY_TO_ONE", "join_shape": "inline", "type":
-      "INNER"}'
+    data:
+      _v: 1
+      cardinality: MANY_TO_ONE
+      join_shape: inline
+      type: INNER
 - name: store_returns_sv_to_item
   from: store_returns_sv
   to: item
@@ -516,87 +616,121 @@ relationships:
   - sr_item_sk
   to_columns:
   - i_item_sk
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "cardinality": "MANY_TO_ONE", "join_shape": "inline", "on_expression":
-      "[store_returns_sv::sr_item_sk] = [item::i_item_sk] and [store_returns_sv::sr_return_amt]
-      <= [item::i_current_price]", "on_expression_equality_witness": [["sr_item_sk"],
-      ["i_item_sk"]], "type": "INNER"}'
+    data:
+      _v: 1
+      cardinality: MANY_TO_ONE
+      join_shape: inline
+      on_expression: '[store_returns_sv::sr_item_sk] = [item::i_item_sk] and [store_returns_sv::sr_return_amt]
+        <= [item::i_current_price]'
+      on_expression_equality_witness:
+      - - sr_item_sk
+      - - i_item_sk
+      type: INNER
 metrics:
 - name: total_sales
   expression:
+    sql: SUM(store_sales.ss_ext_sales_price)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] )
-  custom_extensions:
+    - dialect: ANSI_SQL
+      expression: SUM(store_sales.ss_ext_sales_price)
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_total_sales"}'
+    data:
+      _v: 1
+      formula_id: formula_total_sales
 - name: total_profit
   expression:
+    sql: SUM(store_sales.ss_net_profit)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_net_profit] )
-  custom_extensions:
+    - dialect: ANSI_SQL
+      expression: SUM(store_sales.ss_net_profit)
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_total_profit"}'
+    data:
+      _v: 1
+      formula_id: formula_total_profit
 - name: customer_lifetime_value
   expression:
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] ) / unique count ( [customer::c_customer_sk]
         )
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_customer_lifetime_value"}'
+    data:
+      _v: 1
+      formula_id: formula_customer_lifetime_value
 - name: sales_by_brand
   expression:
+    sql: SUM(store_sales.ss_ext_sales_price)
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] )
-  custom_extensions:
+    - dialect: ANSI_SQL
+      expression: SUM(store_sales.ss_ext_sales_price)
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_sales_by_brand"}'
+    data:
+      _v: 1
+      formula_id: formula_sales_by_brand
 - name: store_productivity
   expression:
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_sales::ss_ext_sales_price] ) / nullif ( sum ( [store::s_number_employees]
         ) , 0 )
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_store_productivity"}'
+    data:
+      _v: 1
+      formula_id: formula_store_productivity
 - name: total_return_quantity
   expression:
     dialects:
     - dialect: THOUGHTSPOT
       expression: sum ( [store_returns_sv::sr_return_quantity] )
   datatype: Integer
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "shape": "column_aggregation"}'
+    data:
+      _v: 1
+      shape: column_aggregation
 - name: avg_price_adjustment
   expression:
     dialects:
     - dialect: THOUGHTSPOT
       expression: average ( [store_sales::ss_ext_sales_price] - [store_sales::ss_sales_price]
         )
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_avg_price_adjustment", "shape": "scalar_formula_plus_aggregation"}'
+    data:
+      _v: 1
+      formula_id: formula_avg_price_adjustment
+      shape: scalar_formula_plus_aggregation
 - name: profit_margin
   expression:
     dialects:
     - dialect: THOUGHTSPOT
       expression: '[formula_total_profit] / [formula_total_sales]'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_profit_margin"}'
+    data:
+      _v: 1
+      formula_id: formula_profit_margin
 - name: prior_period_profit
   expression:
     dialects:
     - dialect: THOUGHTSPOT
       expression: last_value ( sum ( [store_sales::ss_net_profit] ) , query_groups
         ( ) , { [date_dim::d_date] } )
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: THOUGHTSPOT
-    data: '{"_v": 1, "formula_id": "formula_prior_period_profit"}'
+    data:
+      _v: 1
+      formula_id: formula_prior_period_profit

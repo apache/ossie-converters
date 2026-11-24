@@ -20,7 +20,7 @@
 # schemes -- Contractor and PermanentEmployee extend Employee and are identified
 # by its `nr`. CardPayment carries a concept-level `derived_by`, which is the
 # subtype branch of the formula emitter.
-version: 0.2.0.dev0
+version: 0.3.0.dev0
 name: RETAIL_REFACTORED
 description: Retail ontology with employees, stores, products, transactions, orders, payments, and weekly sales facts.
 ontology:
@@ -95,10 +95,12 @@ ontology:
   - name: firstName
     roles:
     - concept: String
+    verbalizes: ['{Employee} has first name {String}']
     multiplicity: ManyToOne
   - name: lastName
     roles:
     - concept: String
+    verbalizes: ['{Employee} has last name {String}']
     multiplicity: ManyToOne
 - concept: Contractor
   description: Employee with temporary contract.
@@ -133,6 +135,7 @@ ontology:
   - name: description
     roles:
     - concept: String
+    verbalizes: ['{Item} has description {String}']
     multiplicity: ManyToOne
   - name: itemToClass
     roles:
@@ -411,10 +414,12 @@ ontology:
   - name: type
     roles:
     - concept: String
+    verbalizes: ['{Payment} has type {String}']
     multiplicity: ManyToOne
   - name: amount
     roles:
     - concept: Decimal
+    verbalizes: ['{Payment} has amount {Decimal}']
     multiplicity: ManyToOne
 - concept: CardPayment
   description: Payment made by card.
@@ -425,10 +430,12 @@ ontology:
   - name: cardNumber
     roles:
     - concept: String
+    verbalizes: ['{CardPayment} has card number {String}']
     multiplicity: ManyToOne
   - name: cardHolderName
     roles:
     - concept: String
+    verbalizes: ['{CardPayment} has card holder name {String}']
     multiplicity: ManyToOne
 - concept: CashPayment
   description: Payment made in cash.
@@ -439,15 +446,17 @@ ontology:
   - name: cashReceived
     roles:
     - concept: Decimal
+    verbalizes: ['{CashPayment} has cash received {Decimal}']
     multiplicity: ManyToOne
   - name: change
     roles:
     - concept: Decimal
+    verbalizes: ['{CashPayment} has change {Decimal}']
     multiplicity: ManyToOne
 ontology_mappings:
 - name: retail_refactored_mapping
   semantic_model:
-    version: 0.2.0.dev0
+    version: 0.3.0.dev0
     name: Retail refactored semantic model
     datasets:
     - name: EMPLOYEES

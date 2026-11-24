@@ -20,6 +20,7 @@
 import sqlglot
 
 from ._common import (
+    DIALECT_ANSI,
     DIALECT_OSSIE_SQL,
     SQL_DIALECT_READERS,
     ConversionError,
@@ -30,7 +31,7 @@ from ._common import (
     snake,
     unescape_braces_from_cube,
 )
-from .expressions import UnattributableSQL, native_tokens, parse
+from .expressions import UnattributableSQL, ambiguous_column_arguments, native_tokens, parse
 
 
 def local_columns(expr, dialect, fields, scope):
@@ -82,9 +83,12 @@ def local_columns(expr, dialect, fields, scope):
 
 def expression_fields(expression, fields, scope):
     """Resolve fields used by every SQL alternative; other languages are opaque."""
+    entries = expression.get("dialects") or []
+    if expression.get("sql") is not None:
+        entries = [{"dialect": DIALECT_OSSIE_SQL, "expression": expression["sql"]}, *entries]
     return {
         field
-        for entry in expression["dialects"]
+        for entry in entries
         if entry["dialect"] in {*SQL_DIALECT_READERS, DIALECT_OSSIE_SQL}
         for _, field in local_columns(
             entry["expression"].strip(), entry["dialect"], fields, scope
@@ -213,3 +217,41 @@ def model_fields_resolve(expr, dialect, member_names):
         if names is None or resolve_identifier(names, field.name) is None:
             return False
     return True
+
+
+def native_local_expression(text, dialect, cube, *, bare_source=False, fields=None):
+    """Keep member bindings distinct from physical columns in a local expression.
+
+    With ``fields``, the resolver already labels raw columns as ``source.column``
+    and member references as ``cube.field``. Projection has inlined dimensions,
+    so its remaining columns are all physical.
+    """
+    text = text.strip()
+    tree = parse(text, dialect)
+    if tree is None or tree.find(sqlglot.exp.Query, sqlglot.exp.Command):
+        return None
+    if dialect in (None, DIALECT_ANSI, DIALECT_OSSIE_SQL) and ambiguous_column_arguments(tree, text):
+        # A generic parse can call a date unit a column. Keep the already
+        # attributed model expression rather than qualify that argument as SQL.
+        return None
+    names = lookup_map(fields) if fields is not None else None
+    edits = []
+    for column in tree.find_all(sqlglot.exp.Column):
+        parts = column.parts
+        if names is not None and len(parts) == 2 and column.table == "source":
+            continue
+        if len(parts) == 2 and resolve_identifier(lookup_map([cube]), parts[0].name):
+            start = parts[0].meta.get("start")
+            if names is not None and resolve_identifier(names, parts[1].name) is None:
+                return None
+        elif len(parts) == 1 and bare_source:
+            start = None
+        else:
+            return None
+        pos = parts[-1].meta.get("start")
+        if pos is None or (len(parts) == 2 and start is None):
+            return None
+        edits.append((pos if start is None else start, pos, "" if names is not None else "source."))
+    for start, end, qualifier in sorted(set(edits), reverse=True):
+        text = text[:start] + qualifier + text[end:]
+    return {"dialects": [{"dialect": dialect, "expression": text}]}

@@ -22,10 +22,10 @@ from textwrap import dedent
 import pytest
 from _util import by_name, expr_of, model_of, parse
 
+from _util import import_model_scoped as convert_cube_to_ossie
 from ossie_cube import (
     ConversionError,
     IssueType,
-    convert_cube_to_ossie,
     convert_ossie_to_cube,
 )
 from ossie_cube._common import OSSIE_VERSION
@@ -945,9 +945,9 @@ def test_a_stashed_path_may_not_escape_the_output_directory(key, path):
     else:
         stash["cube_files"] = {"orders": path}
     ossie = _ossie(_ORDERS) + (
-        "custom_extensions:\n"
+        "nonportable_extensions:\n"
         "- vendor_name: CUBE\n"
-        f"  data: '{json.dumps(stash)}'\n")
+        f"  data: {json.dumps(stash)}\n")
     with pytest.raises(ConversionError, match="absolute|escapes the output|NUL byte"):
         convert_ossie_to_cube(ossie)
 
@@ -988,15 +988,15 @@ def test_relationship_extensions_are_parked_on_the_declaring_cube():
     extensions have nowhere to go on the join itself. They used to vanish silently."""
     rel = ("  relationships:\n  - name: r\n    from: orders\n    to: users\n"
            "    from_columns: [user_id]\n    to_columns: [id]\n"
-           "    custom_extensions:\n    - vendor_name: DBT\n      data: keep-me\n")
+           "    nonportable_extensions:\n    - vendor_name: DBT\n      data: {note: keep-me}\n")
     files, issues = convert_ossie_to_cube(_ossie(_TWO_DATASETS, rel))
     parked = _cubes(files)["orders"]["meta"]["ossie"]["join_extensions"]
-    assert parked["users"] == [{"vendor_name": "DBT", "data": "keep-me"}]
+    assert parked["users"] == [{"vendor_name": "DBT", "data": {"note": "keep-me"}}]
     assert issues.of_type(IssueType.PARKED_IN_META)
     # And they come back onto the relationship.
     ossie2, _ = convert_cube_to_ossie(files)
-    restored = model_of(ossie2)["relationships"][0]["custom_extensions"]
-    assert {"vendor_name": "DBT", "data": "keep-me"} in restored
+    restored = model_of(ossie2)["relationships"][0]["nonportable_extensions"]
+    assert {"vendor_name": "DBT", "data": {"note": "keep-me"}} in restored
 
 
 # --- review round three ----------------------------------------------------------
@@ -1193,9 +1193,9 @@ def test_mapping_form_stashed_segments_are_reserved_and_checked():
     ds = _TWO_DATASETS.replace(
         "      datatype: Decimal\n",
         "      datatype: Decimal\n"
-        "    custom_extensions:\n"
+        "    nonportable_extensions:\n"
         "    - vendor_name: CUBE\n"
-        f"      data: '{json.dumps(stash)}'\n", 1)
+        f"      data: {json.dumps(stash)}\n", 1)
     files, _ = convert_ossie_to_cube(_ossie(ds, _REL, _metric(
         "ratio", "SUM(orders.amount) / COUNT(DISTINCT users.id)")))
     cube = _cubes(files)["orders"]
@@ -1262,9 +1262,9 @@ def test_a_mapping_form_segment_is_counted_when_disambiguating_a_view():
         "    - name: user_id\n      expression:\n        dialects:\n"
         "        - dialect: ANSI_SQL\n          expression: user_id\n"
         "      datatype: Integer\n"
-        "    custom_extensions:\n"
+        "    nonportable_extensions:\n"
         "    - vendor_name: CUBE\n"
-        f"      data: '{json.dumps(stash)}'\n"
+        f"      data: {json.dumps(stash)}\n"
         "  - name: users\n"
         "    source: shop.public.users\n"
         "    primary_key:\n    - id\n"
@@ -1300,7 +1300,8 @@ def test_a_model_with_only_a_warehouse_dialect_still_converts():
     Cube compiles, so nothing downstream noticed either."""
     files, issues = convert_ossie_to_cube(_databricks_ossie())
     cube = _cubes(files)["orders"]
-    assert [d["name"] for d in cube["dimensions"]] == ["o_orderkey", "o_orderdate"]
+    assert [d["name"] for d in cube["dimensions"]] == [
+        "o_orderkey", "o_custkey", "o_orderdate"]
     assert [m["name"] for m in cube["measures"]] == ["total_revenue", "order_count"]
     # Reported, because Cube will pass that SQL to whatever the data source is.
     assert any("first warehouse dialect on offer" in i.detail
@@ -1406,8 +1407,8 @@ def test_a_non_string_stashed_path_is_rejected():
     import json
     stash = {"_v": 1, "views": {}, "cube_files": {"orders": ["a", "b"]}}
     ossie = _ossie(_ORDERS) + (
-        "custom_extensions:\n"
+        "nonportable_extensions:\n"
         "- vendor_name: CUBE\n"
-        f"  data: '{json.dumps(stash)}'\n")
+        f"  data: {json.dumps(stash)}\n")
     with pytest.raises(ConversionError, match="must be a string"):
         convert_ossie_to_cube(ossie)

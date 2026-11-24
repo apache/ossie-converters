@@ -45,7 +45,6 @@ from ossie_ontology.model import (
     Role,
     SemanticModel,
 )
-from ossie_ontology.spec import OssieSpec
 from ossie_ontology.reasoner import OntologyReasoner
 from ossie_ontology.parser import OssieParser
 from ossie_ontology.expr.factory import FormulaParserFactory, MappingFormulaParserFactory
@@ -79,8 +78,6 @@ __all__ = [
     # Supporting types
     "CustomExtension",
     "FormulaFactory",
-    # Spec DTO
-    "OssieSpec",
     # Reasoner
     "OntologyReasoner",
     # Parsers
