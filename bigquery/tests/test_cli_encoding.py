@@ -17,77 +17,9 @@
 
 """Real CLI file I/O under a non-UTF-8 locale, including Unicode round trips."""
 
-import os
-import subprocess
-import sys
-
 import pytest
-import yaml
 
-TEXT = "주문 매출 😀"
-
-
-def _run(module, *arguments):
-    # Disable Python's UTF-8 mode and locale coercion. Stdio stays UTF-8 so this
-    # exercises model files, independently of the terminal's encoding.
-    environment = {
-        **os.environ,
-        "LC_ALL": "C",
-        "LANG": "C",
-        "PYTHONUTF8": "0",
-        "PYTHONCOERCECLOCALE": "0",
-        "PYTHONIOENCODING": "utf-8",
-    }
-    program = """import codecs, locale, runpy, sys
-if codecs.lookup(locale.getpreferredencoding(False)).name == "utf-8":
-    sys.exit(77)
-sys.argv = sys.argv[1:]
-runpy.run_module(sys.argv[0], run_name="__main__")
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", program, module, *map(str, arguments)],
-        env=environment,
-        capture_output=True,
-        encoding="utf-8",
-        timeout=60,
-    )
-    if result.returncode == 77:
-        pytest.skip("this platform cannot select a non-UTF-8 locale")
-    assert result.returncode == 0, result.stderr
-
-
-def _model():
-    return {
-        "version": "0.3.0.dev0",
-        "name": "shop",
-        "description": TEXT,
-        "datasets": [
-            {
-                "name": "orders",
-                "source": "db.sch.orders",
-                "description": TEXT,
-                "primary_key": ["id"],
-                "fields": [
-                    {
-                        "name": "id",
-                        "datatype": "Integer",
-                        "description": TEXT,
-                        "dimension": {"is_time": False},
-                        "expression": {
-                            "dialects": [{"dialect": "ANSI_SQL", "expression": "id"}]
-                        },
-                    }
-                ],
-            }
-        ],
-    }
-
-
-def _write(path, document, encoding):
-    path.write_text(
-        yaml.safe_dump(document, allow_unicode=encoding != "escaped"),
-        encoding="utf-8" if encoding == "escaped" else encoding,
-    )
+from test_support.cli_encoding import TEXT, _model, _run, _write
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "escaped"])
@@ -98,3 +30,25 @@ def test_cli_preserves_unicode_with_locale_file_io(tmp_path, encoding):
     data = output.read_bytes()
     assert not data.startswith(b"\xef\xbb\xbf")
     assert TEXT in data.decode("utf-8")
+
+
+def test_cli_failure_includes_command_and_both_streams(tmp_path, monkeypatch):
+    module = tmp_path / "encoding_failure.py"
+    module.write_text(
+        'import sys\nprint("stdout detail")\n'
+        'print("stderr detail", file=sys.stderr)\nsys.exit(3)\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(AssertionError) as error:
+        _run("encoding_failure", "--example", "value with spaces")
+    message = str(error.value)
+    for expected in (
+        "exit code 3",
+        "encoding_failure",
+        "--example",
+        "value with spaces",
+        "stdout:\nstdout detail",
+        "stderr:\nstderr detail",
+    ):
+        assert expected in message

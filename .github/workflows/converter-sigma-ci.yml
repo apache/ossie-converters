@@ -24,12 +24,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'sigma/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-sigma-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'sigma/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-sigma-ci.yml'
 

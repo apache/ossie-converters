@@ -24,12 +24,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'omni/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-omni-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'omni/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-omni-ci.yml'
 
