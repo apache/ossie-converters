@@ -38,7 +38,7 @@ keywords = [
     "WisdomAI"
 ]
 dependencies = [
-    "apache-ossie>=0.2.0.dev0",
+    "apache-ossie>=0.3.0.dev0",
     "PyYAML>=6.0",
 ]
 
