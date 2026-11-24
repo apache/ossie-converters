@@ -66,7 +66,7 @@ _DATE_PARTS = {
     "YEAR": "YEAR", "YEARS": "YEAR", "YY": "YEAR", "YYYY": "YEAR",
     "QUARTER": "QUARTER", "QUARTERS": "QUARTER",
     "MONTH": "MONTH", "MONTHS": "MONTH", "MM": "MONTH",
-    "WEEK": "WEEK", "WEEKS": "WEEK",
+    "WEEK": "WEEK", "WEEKS": "WEEK",  # DATE_ADD; DATE_DIFF uses WEEK(MONDAY)
     "DAY": "DAY", "DAYS": "DAY", "DD": "DAY", "D": "DAY",
 }
 _TIMESTAMP_PARTS = {
@@ -792,7 +792,9 @@ def _rewrite_ossie_date_function(node, original, dialect, context):
         if part and not _date_part_name(node.args.get("unit")):
             end = _end_from_unit(node.args.get("unit"), original)
             return exp.DateDiff(
-                this=end, expression=node.expression, unit=exp.var(part)
+                this=end,
+                expression=node.expression,
+                unit=exp.var(_date_diff_unit(part)),
             )
     return node
 
@@ -814,7 +816,9 @@ def _rewrite_date_diff(unit, start, end, original, context):
     part = _date_part_name(unit)
     if not part:
         return None
-    return exp.DateDiff(this=end, expression=start, unit=exp.var(part))
+    return exp.DateDiff(
+        this=end, expression=start, unit=exp.var(_date_diff_unit(part))
+    )
 
 
 def _part_token(node):
@@ -833,6 +837,11 @@ def _date_part_name(node):
     """Canonical BigQuery DATE_ADD/DATE_DIFF part when `node` is a unit."""
     token = _part_token(node)
     return _DATE_PARTS.get(token.upper()) if token else None
+
+
+def _date_diff_unit(part: str) -> str:
+    """BigQuery ``WEEK`` starts Sunday; Ossie ``DATE_TRUNC('week', ...)`` is Monday."""
+    return "WEEK(MONDAY)" if part == "WEEK" else part
 
 
 def _timestamp_part_name(node):
