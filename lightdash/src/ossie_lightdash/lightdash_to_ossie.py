@@ -36,7 +36,7 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
+    OssieSemanticModel,
     OssieExpression,
     OssieField,
     OssieMetric,
@@ -329,7 +329,7 @@ class _ModelContext:
 
 
 class LightdashToOssieConverter:
-    """Converts a dbt ``schema.yml`` dictionary with Lightdash meta into an ``OssieDocument``.
+    """Converts a dbt ``schema.yml`` dictionary with Lightdash meta into an ``OssieSemanticModel``.
 
     Lightdash SQL is written for the project's warehouse, and ``dialect``
     labels the emitted expressions with that warehouse's Ossie dialect. Use
@@ -348,7 +348,7 @@ class LightdashToOssieConverter:
         schema: Optional[str] = None,
         semantic_model_name: str = "lightdash_semantic_model",
         catalog: Optional[Catalog] = None,
-    ) -> ConverterResult[OssieDocument]:
+    ) -> ConverterResult[OssieSemanticModel]:
         issues: List[ConverterIssue] = []
         datasets: List[OssieDataset] = []
         metrics: List[OssieMetric] = []
@@ -414,7 +414,7 @@ class LightdashToOssieConverter:
                 )
             )
 
-        document = OssieDocument(
+        document = OssieSemanticModel(
             version="0.3.0.dev0",
             name=semantic_model_name,
             datasets=datasets,

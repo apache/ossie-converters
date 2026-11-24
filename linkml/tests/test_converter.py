@@ -34,10 +34,10 @@ import ohi_linkml
 import pytest
 import yaml
 
+from ossie.models import OssieOntologyModel
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 from ossie_ontology.expr.formula.model import Formula as ParsedFormula
 from ossie_ontology.model import OssieOntology
-from ossie_ontology.spec import OssieSpec
 
 from ossie_linkml import LinkmlToOssieConverter, OssieToLinkmlConverter
 
@@ -112,7 +112,7 @@ def test_convert_spec_matches_convert(flights_model: OssieOntology, flights_path
     types: building the runtime model reorders concepts, so the two agree on
     content but not on the order classes and types are emitted and ranked in.
     """
-    spec = OssieSpec.load_yaml(flights_path.read_text(encoding="utf-8"))
+    spec = OssieOntologyModel.from_ossie_yaml(flights_path.read_text(encoding="utf-8"))
     assert _without_concept_ranks(OssieToLinkmlConverter.convert_spec(spec)) == _without_concept_ranks(
         OssieToLinkmlConverter.convert(flights_model)
     )
@@ -136,7 +136,7 @@ def test_convert_file_reads_from_disk(flights_linkml: str, tmp_path):
 def test_convert_to_spec_stops_at_the_dto(flights_linkml: str):
     with ohi_linkml.load_string(flights_linkml) as schema:
         spec = LinkmlToOssieConverter().convert_to_spec(schema)
-    assert isinstance(spec, OssieSpec)
+    assert isinstance(spec, OssieOntologyModel)
     assert spec.name == "Flights"
 
 
@@ -361,7 +361,7 @@ def test_full_example_ossie_to_linkml():
     Going via the runtime model gives the same schema except for the ranks of
     classes and types, because building the model reorders concepts.
     """
-    spec = OssieSpec.load_yaml(EXAMPLE_OSSIE)
+    spec = OssieOntologyModel.from_ossie_yaml(EXAMPLE_OSSIE)
     assert yaml.safe_load(OssieToLinkmlConverter.convert_spec(spec)) == yaml.safe_load(EXAMPLE_LINKML)
 
     model = SpecToOssieConverter().convert(spec)
@@ -372,7 +372,7 @@ def test_full_example_linkml_to_ossie():
     """And back: the LinkML schema above converts to exactly the Ossie document."""
     with ohi_linkml.load_string(EXAMPLE_LINKML) as schema:
         spec = LinkmlToOssieConverter().convert_to_spec(schema)
-    assert yaml.safe_load(spec.dump_yaml()) == yaml.safe_load(EXAMPLE_OSSIE)
+    assert yaml.safe_load(spec.to_ossie_yaml()) == yaml.safe_load(EXAMPLE_OSSIE)
 
 
 def test_iris_are_written_in_full_without_a_prefix_to_shorten_them():
@@ -392,7 +392,7 @@ def test_iris_are_written_in_full_without_a_prefix_to_shorten_them():
     with ohi_linkml.load_string(stripped) as schema:
         spec = LinkmlToOssieConverter().convert_to_spec(schema)
 
-    assert spec.prefixes == {}
+    assert spec.prefixes is None
     concepts = {c.concept: c for c in spec.ontology}
     # A class with no class_uri of its own is named by the schema id plus its name.
     assert concepts["Book"].iri == "https://example.org/books/Book"

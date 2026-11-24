@@ -42,12 +42,12 @@ from ossie.models import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieNonportableExtension,
     OssieRelationship,
+    OssieSemanticModel,
 )
 
 
@@ -358,7 +358,7 @@ class Loss:
 
 @dataclass
 class Result:
-    document: OssieDocument | None
+    document: OssieSemanticModel | None
     losses: list[Loss] = field(default_factory=list)
     source_file: str = ""
     datasource: str = ""
@@ -1829,7 +1829,7 @@ def convert_datasource(ds: ET.Element, source_file: str = "", params: list[ET.El
     }
     if raw:
         ext["raw"] = stash.pack("raw_xml", sorted(t.name for t in tables), raw)
-    doc = OssieDocument(
+    doc = OssieSemanticModel(
         name=_ident(ds_name),
         description=f"Converted from Tableau datasource {ds_name}",
         ai_context=_read_ai_context(ds),

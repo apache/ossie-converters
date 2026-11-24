@@ -43,11 +43,11 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieNonportableExtension,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 
@@ -623,7 +623,7 @@ def _flattened_nodes(
     return [node.model_copy(update={"ai_context": _flat_ai_context(node.ai_context)}) for node in nodes]
 
 
-def _flatten_ai_contexts(document: OssieDocument) -> OssieDocument:
+def _flatten_ai_contexts(document: OssieSemanticModel) -> OssieSemanticModel:
     """Return a copy of ``document`` with every ai_context rendered as a plain string."""
     datasets = [
         dataset.model_copy(
@@ -654,7 +654,7 @@ def ataccama_to_ossie(
     dq_ai_warnings: bool = False,
     flat_ai_context: bool = False,
     ossie_version: str | None = None,
-) -> OssieDocument:
+) -> OssieSemanticModel:
     """Convert catalog-item bundles into an Ossie document.
 
     When ``dq_ai_warnings`` is set, datasets that Ataccama flags as below quality (below
@@ -690,7 +690,7 @@ def ataccama_to_ossie(
     if tenant:
         model_ext["tenant"] = tenant
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name=model_name,
         description=model_description,
         datasets=datasets,

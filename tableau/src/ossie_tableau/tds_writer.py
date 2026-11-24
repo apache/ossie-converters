@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 import sqlglot
 from sqlglot import exp
 
-from ossie.models import OssieDataType, OssieDataset, OssieDocument, OssieField
+from ossie.models import OssieDataType, OssieDataset, OssieSemanticModel, OssieField
 
 from . import stash
 from .convert import Loss
@@ -107,7 +107,7 @@ def _ai_context_el(ctx) -> ET.Element | None:
     return _el("user:ossie-ai-context", text=json.dumps(body, sort_keys=True))
 
 
-def _collect_foreign(doc: OssieDocument) -> list[dict]:
+def _collect_foreign(doc: OssieSemanticModel) -> list[dict]:
     out: list[dict] = []
 
     def add(path: str, obj) -> None:
@@ -281,7 +281,7 @@ _SCHEMA_ORDER = {t: n for n, t in enumerate(
     "datasource-dependencies explainability filter object-graph".split())}
 
 
-def write_tds(doc: OssieDocument, conn: Connection) -> TdsResult:
+def write_tds(doc: OssieSemanticModel, conn: Connection) -> TdsResult:
     losses: list[Loss] = []
 
     def restore(ext: dict, key: str, kind: str, witness, label: str):

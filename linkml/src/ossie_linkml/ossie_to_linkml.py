@@ -29,9 +29,9 @@ import warnings
 
 import ohi_linkml
 
+from ossie.models import OssieOntologyModel
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
 from ossie_ontology.model import OssieOntology
-from ossie_ontology.spec import OssieSpec
 
 
 class OssieToLinkmlConverter:
@@ -65,7 +65,7 @@ class OssieToLinkmlConverter:
 
     @staticmethod
     def convert_spec(
-        spec: OssieSpec,
+        spec: OssieOntologyModel,
         schema_id: str | None = None,
         output_format: str = "yaml",
     ) -> str:
@@ -77,11 +77,11 @@ class OssieToLinkmlConverter:
         return OssieToLinkmlConverter._convert_spec(spec, schema_id, output_format)
 
     @staticmethod
-    def _convert_spec(spec: OssieSpec, schema_id: str | None, output_format: str) -> str:
+    def _convert_spec(spec: OssieOntologyModel, schema_id: str | None, output_format: str) -> str:
         # Called straight from both public methods, so stacklevel=3 always points
         # the warnings at the caller's code rather than at this module.
         result = ohi_linkml.from_ossie(
-            spec.dump_yaml(),
+            spec.to_ossie_yaml(),
             schema_id=schema_id,
             format=output_format,
         )

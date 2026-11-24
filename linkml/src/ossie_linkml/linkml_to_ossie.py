@@ -31,9 +31,9 @@ from typing import Mapping
 
 import ohi_linkml
 
+from ossie.models import OssieOntologyModel
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 from ossie_ontology.model import FormulaFactory, MappingFormulaFactory, OssieOntology
-from ossie_ontology.spec import OssieSpec
 
 
 class LinkmlToOssieConverter:
@@ -92,13 +92,13 @@ class LinkmlToOssieConverter:
         pruning_mode: str = "skip",
         tree_root: str | None = None,
         metadata_language: str = "en",
-    ) -> OssieSpec:
+    ) -> OssieOntologyModel:
         """Convert a loaded schema, stopping at the spec DTO.
 
         The shorter path when the caller only wants to write the Ossie document
         out rather than build the runtime model.
         """
-        return OssieSpec.load_yaml(
+        return OssieOntologyModel.from_ossie_yaml(
             schema.ossie(
                 pruning_mode=pruning_mode,
                 tree_root=tree_root,

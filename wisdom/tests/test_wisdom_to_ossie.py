@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ossie import OssieDialect, OssieDocument
+from ossie import OssieDialect, OssieSemanticModel
 from ossie_wisdom import ConverterIssueType, WisdomToOssieConverter
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_export.json"
@@ -214,7 +214,7 @@ def test_output_round_trips_through_ossie_yaml(result):
     assert next(iter(serialized)) == "version"
     assert serialized["name"] == "Sample Sales"
     assert "semantic_model" not in serialized
-    document = OssieDocument.model_validate(serialized)
+    document = OssieSemanticModel.model_validate(serialized)
     assert document == result.output
 
 

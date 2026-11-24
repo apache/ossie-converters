@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Sigma data model spec (JSON) -> Apache Ossie (OssieDocument)."""
+"""Sigma data model spec (JSON) -> Apache Ossie (OssieSemanticModel)."""
 
 from __future__ import annotations
 
@@ -26,11 +26,11 @@ from ossie import (
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 
@@ -189,9 +189,9 @@ class _ElementIndex:
 
 
 class SigmaToOssieConverter:
-    """Converts a Sigma data model spec (as parsed JSON) into an :class:`OssieDocument`."""
+    """Converts a Sigma data model spec (as parsed JSON) into an :class:`OssieSemanticModel`."""
 
-    def convert(self, spec: dict[str, Any]) -> ConverterResult[OssieDocument]:
+    def convert(self, spec: dict[str, Any]) -> ConverterResult[OssieSemanticModel]:
         issues: list[ConverterIssue] = []
 
         elements: list[tuple[dict[str, Any], dict[str, Any]]] = []  # (page, element)
@@ -486,7 +486,7 @@ class SigmaToOssieConverter:
                     )
                 )
 
-        document = OssieDocument(
+        document = OssieSemanticModel(
             name=spec.get("name", "sigma_data_model"),
             description=spec.get("description"),
             datasets=datasets,

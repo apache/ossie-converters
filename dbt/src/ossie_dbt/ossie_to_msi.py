@@ -27,7 +27,6 @@ from ossie import (
     OssieDataType,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieSemanticModel,
@@ -147,7 +146,7 @@ class OssieToMSIConverter:
     def __init__(self, dialect: OssieDialect = OssieDialect.ANSI_SQL) -> None:
         self._dialect = dialect
 
-    def convert(self, document: OssieDocument) -> ConverterResult[PydanticSemanticManifest]:
+    def convert(self, document: OssieSemanticModel) -> ConverterResult[PydanticSemanticManifest]:
         semantic_models: List[PydanticSemanticModel] = []
         issues: List[ConverterIssue] = []
 

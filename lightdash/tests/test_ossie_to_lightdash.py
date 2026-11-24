@@ -25,7 +25,7 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
+    OssieSemanticModel,
     OssieExpression,
     OssieField,
     OssieMetric,
@@ -47,7 +47,7 @@ def _ansi(expression: str) -> OssieExpression:
     )
 
 
-def _document() -> OssieDocument:
+def _document() -> OssieSemanticModel:
     orders = OssieDataset(
         name="orders",
         source="analytics_db.marts.orders",
@@ -132,7 +132,7 @@ def _document() -> OssieDocument:
             }
         )
     ]
-    return OssieDocument(
+    return OssieSemanticModel(
         version="0.3.0.dev0",
         name="sales",
         datasets=[orders, customers],
@@ -829,7 +829,7 @@ class TestReviewFindings:
                 OssieField(name="segment", expression=_ansi("segment"), dimension=OssieDimension()),
             ],
         )
-        document = OssieDocument(
+        document = OssieSemanticModel(
             version="0.3.0.dev0",
             name="sales",
             datasets=[store_sales, customer],
@@ -873,7 +873,7 @@ class TestReviewFindings:
                 ),
             ],
         )
-        document = OssieDocument(
+        document = OssieSemanticModel(
             version="0.3.0.dev0",
             name="hr",
             datasets=[employees],

@@ -29,11 +29,11 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
@@ -149,7 +149,7 @@ class MSIToOssieConverter:
 
     def convert(
         self, manifest: PydanticSemanticManifest, ossie_model_name: str = "semantic_model"
-    ) -> ConverterResult[OssieDocument]:
+    ) -> ConverterResult[OssieSemanticModel]:
         helper_families = unchanged_ratio_helpers(manifest.metrics, manifest.saved_queries)
         manifest = PydanticSemanticManifestTransformer.transform(manifest)
         issues: List[ConverterIssue] = []
@@ -237,7 +237,7 @@ class MSIToOssieConverter:
         ossie_metrics = [metric for metric in ossie_metrics if metric.name not in helpers]
 
         return ConverterResult(
-            output=OssieDocument(
+            output=OssieSemanticModel(
                 version="0.3.0.dev0",
                 name=ossie_model_name,
                 datasets=datasets,
