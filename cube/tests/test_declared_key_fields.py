@@ -851,3 +851,90 @@ def test_native_dataset_metrics_keep_physical_columns_distinct_from_declared_key
         metrics = by_name(ds["metrics"])
         assert expr_of(metrics["rows"]) == f"COUNT(DISTINCT {ds['primary_key'][0]})"
         assert expr_of(metrics["raw_sum"]) == "SUM(source.id)"
+
+
+@pytest.mark.parametrize("scope_native_metrics", [False, True])
+@pytest.mark.parametrize("selected", ["city", "total", "rows"])
+def test_unusable_hidden_key_does_not_block_unrelated_projection(scope_native_metrics, selected):
+    import ossie_cube
+
+    native = {"cubes": [{
+        "name": "orders", "sql_table": "sales.public.orders",
+        "dimensions": [
+            {"name": "id", "sql": "{sub}", "type": "number", "primary_key": True},
+            {"name": "sub", "sql": "{total}", "type": "number", "sub_query": True},
+            {"name": "city", "sql": "city", "type": "string"},
+        ],
+        "measures": [{"name": "rows", "type": "count"},
+                     {"name": "total", "type": "sum", "sql": "amount"}],
+    }], "views": [{"name": "sales", "cubes": [{"join_path": "orders", "includes": [selected]}]}]}
+    files = {"model.yml": yaml.safe_dump(native)}
+    if selected == "rows":
+        with pytest.raises(ossie_cube.ConversionError, match="sub_query"):
+            ossie_cube.convert_cube_view_to_ossie(files, "sales", scope_native_metrics=scope_native_metrics)
+        return
+    out, _, issues = ossie_cube.convert_cube_view_to_ossie(
+        files, "sales", scope_native_metrics=scope_native_metrics
+    )
+    model = yaml.safe_load(out)
+    assert_declared(model)
+    assert_ossie_is_valid(out, "projection with an unusable, unreferenced hidden key")
+    ds = by_name(model["datasets"])["orders"]
+    assert "primary_key" not in ds
+    assert any("primary key" in issue.detail for issue in issues)
+    if selected == "city":
+        assert expr_of(by_name(ds["fields"])["city"]) == "city"
+    else:
+        metrics = ds["metrics"] if scope_native_metrics else model["metrics"]
+        assert "amount" in expr_of(by_name(metrics)["total"])
+
+
+def test_projected_join_keys_follow_native_sql_instead_of_parked_expressions():
+    native = {"cubes": [{
+        "name": "orders", "sql_table": "sales.public.orders",
+        "dimensions": [
+            {"name": "id", "type": "number", "primary_key": True},
+            {"name": "customer_key", "sql": "new_customer_id", "type": "number",
+             "meta": {"ossie": {"expression": expression("old_customer_id")}}},
+            {"name": "status", "type": "string"},
+        ], "joins": [{"name": "customers", "relationship": "many_to_one",
+                      "sql": "{CUBE.customer_key} = {customers.id}"}],
+    }, {"name": "customers", "sql_table": "sales.public.customers", "dimensions": [
+        {"name": "id", "type": "number", "primary_key": True}, {"name": "name", "type": "string"},
+    ]}], "views": [{"name": "shop", "cubes": [
+        {"join_path": "orders", "includes": ["status"]},
+        {"join_path": "orders.customers", "includes": ["name"]},
+    ]}]}
+    files = {"model.yml": yaml.safe_dump(native)}
+    for _ in range(2):
+        out, _, _ = convert_cube_view_to_ossie(files, "shop")
+        model = yaml.safe_load(out)
+        assert_declared(model)
+        assert_ossie_is_valid(out, "current native SQL for projected join fields")
+        rel = model["relationships"][0]
+        fields = by_name(by_name(model["datasets"])["orders"]["fields"])
+        assert expr_of(fields[rel["from_columns"][0]]) == "new_customer_id"
+        files = export(model)
+
+
+@pytest.mark.parametrize("native_name", ["id", "ID"])
+def test_legacy_key_fields_reserve_stored_dataset_metric_names(native_name):
+    view = {"name": "shop", "cubes": [{"join_path": "orders", "includes": [native_name]}]}
+    model = {"version": OSSIE_VERSION, "name": "shop", "datasets": [{
+        "name": "orders", "source": "sales.public.orders", "primary_key": ["id"],
+        "fields": [{"name": "amount", "expression": expression("amount"), "datatype": "Decimal"}],
+        "metrics": [{"name": "row_count", "expression": expression("SUM(amount)"),
+                     "nonportable_extensions": [{"vendor_name": "CUBE", "data": {"_v": 1, "name": native_name}}]}],
+    }], "nonportable_extensions": [{"vendor_name": "CUBE", "data": {
+        "_v": 1, "views": {"shop": view}, "mapped_view": "shop",
+    }}]}
+    for _ in range(2):
+        files = export(model)
+        orders = cubes(files)["orders"]
+        assert native_name in by_name(orders["measures"])
+        assert all(d["name"].lower() != native_name.lower() for d in orders["dimensions"])
+        restored = next(v for doc in parse_files(files).values() for v in doc.get("views", []))
+        assert restored["cubes"][0]["includes"] == [native_name]
+        out, _ = convert_cube_to_ossie(files)
+        model = yaml.safe_load(out)
+        assert_declared(model)

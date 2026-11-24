@@ -282,7 +282,7 @@ def _declare_legacy_columns(datasets, relationships, model_metrics, issues):
         aliases = legacy_fields.setdefault(ds_name, {})
         metrics = ds.get("metrics")
         metrics = metrics if isinstance(metrics, list) else []
-        metric_names = model_metric_names | {
+        metric_names = model_metric_names | _model_metric_measure_names(metrics) | {
             sanitize_name(m["name"], "metric", set()).lower() for m in metrics
             if isinstance(m, dict) and isinstance(m.get("name"), str)}
         for index, name in enumerate(names):

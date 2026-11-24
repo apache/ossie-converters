@@ -872,6 +872,11 @@ def _reduced_cubes(tree, cubes, dimensions, measures, inliner, issues):
                         dim[part]["sql"] = inliner.rewrite(
                             dim[part]["sql"], cname, f"dimension '{cname}.{dname}'")
             elif dname in keys:
+                if not _field_member(cubes, cname, dname):
+                    # Hidden technical keys cannot invalidate unrelated public members.
+                    # Published dimensions and count dependencies were resolved earlier;
+                    # the surface pass reports and drops an unusable local constraint.
+                    continue
                 dim = {**_labels_of(native), "sql": inliner.dimension(cname, dname)}
                 if native.get("primary_key"):
                     dim["primary_key"] = True
@@ -902,8 +907,7 @@ def _reduced_cubes(tree, cubes, dimensions, measures, inliner, issues):
             native = next(d for d in _as_named_list(cubes[owner].get("dimensions"),
                                                    f"cube '{owner}' dimensions")
                           if d.get("name") == member)
-            dim = {**native, "sql": inliner.dimension(owner, member)}
-            dim.pop("case", None)
+            dim = {**_labels_of(native), "sql": inliner.dimension(owner, member)}
             needed[owner, member] = dim
         if needed is not None:
             dimensions.update({k: v for k, v in needed.items() if k not in dimensions})
