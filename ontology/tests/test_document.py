@@ -21,12 +21,14 @@ the runtime model."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import pytest
 from ossie.models import OssieConceptType, OssieOntologyModel
 
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
-from ossie_ontology.model import OssieOntology
+from ossie_ontology.model import Concept, ConceptType, OssieOntology, Relationship
 
 # The embedded mapping is unnamed and its field carries only the portable
 # `sql` form, both of which the schema allows.
@@ -128,3 +130,73 @@ def test_unnamed_ontology_mapping_takes_its_semantic_model_name():
     model = SpecToOssieConverter().convert(_load())
 
     assert [mapping.name for mapping in model.ontology_mappings] == ["sales"]
+
+
+def test_annotations_survive_round_trip_on_every_ontology_node():
+    document = OssieOntologyModel.from_ossie_yaml("""
+version: 0.3.0.dev0
+name: Annotated
+annotations:
+  dc:title: Annotated ontology
+  meta:
+    nested: true
+    empty: null
+ontology:
+- concept: Person
+  type: EntityType
+  annotations:
+    rdfs:label: Person
+  relationships:
+  - name: knows
+    roles:
+    - concept: Person
+      name: acquaintance
+      annotations:
+        custom:role_tag: friend
+    verbalizes: ['{Person} knows {Person:acquaintance}']
+    annotations:
+      vs:term_status: stable
+  - name: nickname
+    roles:
+    - concept: String
+      annotations: {}
+    verbalizes: ['{Person} has nickname {String}']
+    annotations: {}
+""")
+
+    model = SpecToOssieConverter().convert(document)
+    assert model.annotations == {"dc:title": "Annotated ontology", "meta": {"nested": True, "empty": None}}
+    person = model.ontology.lookup_concept("Person")
+    assert person is not None and person.annotations == {"rdfs:label": "Person"}
+    knows = model.ontology.lookup_concept_relationship(person, "knows")
+    assert knows is not None and knows.annotations == {"vs:term_status": "stable"}
+    assert knows.roles[0].annotations is None
+    assert knows.roles[1].annotations == {"custom:role_tag": "friend"}
+    nickname = model.ontology.lookup_concept_relationship(person, "nickname")
+    assert nickname is not None and nickname.annotations == {}
+    assert nickname.roles[1].annotations == {}
+
+    exported = OssieToSpecConverter.convert(model)
+    assert OssieOntologyModel.from_ossie_yaml(exported.to_ossie_yaml()) == document
+
+
+def test_foaf_example_with_annotations_round_trips():
+    example = Path(__file__).resolve().parents[2] / "ossie" / "examples" / "foaf_owl_import.yaml"
+    if not example.is_file():
+        pytest.skip(f"example not present at {example}")
+
+    document = OssieOntologyModel.from_ossie_yaml(example.read_text(encoding="utf-8"))
+    exported = OssieToSpecConverter.convert(SpecToOssieConverter().convert(document))
+
+    assert OssieOntologyModel.from_ossie_yaml(exported.to_ossie_yaml()) == document
+
+
+def test_relationship_rejects_mismatched_role_annotations():
+    person = Concept(name="Person", type=ConceptType.ENTITY_TYPE)
+    with pytest.raises(ValueError, match="role_annotations"):
+        Relationship(
+            name="knows",
+            container=person,
+            relates=[(person, None)],
+            role_annotations=[{"a": 1}, {"b": 2}],
+        )
