@@ -91,6 +91,7 @@ class OssieToSpecConverter:
             requires=[f.raw_expr for f in ont.requires] or None,
             ontology=_convert_ontology_concepts(ont),
             ontology_mappings=ontology_mappings or None,
+            annotations=model.annotations,
             prefixes=model.prefixes or None,
         )
 
@@ -129,13 +130,17 @@ def _convert_concept(concept: Concept, rels: list[Relationship]) -> OssieConcept
         derived_by=[f.raw_expr for f in concept.derived_by] or None,
         requires=[f.raw_expr for f in concept.requires] or None,
         relationships=[_convert_relationship(rel) for rel in rels] or None,
+        annotations=concept.annotations,
         iri=concept.iri,
     )
 
 
 def _convert_relationship(rel: Relationship) -> OssieOntologyRelationship:
     extra_roles = list(rel.roles)[1:]
-    roles = [OssieRole(concept=role.player.name, name=role.explicit_name) for role in extra_roles]
+    roles = [
+        OssieRole(concept=role.player.name, name=role.explicit_name, annotations=role.annotations)
+        for role in extra_roles
+    ]
 
     multiplicity = OssieMultiplicity(rel.multiplicity.value) if rel.multiplicity is not None else None
     # Required by the schema, so written out even when empty.
@@ -149,6 +154,7 @@ def _convert_relationship(rel: Relationship) -> OssieOntologyRelationship:
         multiplicity=multiplicity,
         derived_by=[f.raw_expr for f in rel.derived_by] or None,
         requires=[f.raw_expr for f in rel.requires] or None,
+        annotations=rel.annotations,
         iri=rel.iri,
     )
 
