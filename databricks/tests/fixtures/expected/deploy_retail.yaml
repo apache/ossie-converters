@@ -151,9 +151,3 @@ files:
 warnings:
 - '[METRIC_NOT_PORTABLE] at datasets[orders].metrics[discount]: the portable expression reads source columns,
   which the metric view does not expose; the metric only evaluates the measure'
-- '[NOT_DEPLOYED] at metrics[revenue_per_customer]: model-scoped metric is retained in the Ossie model;
-  no metric-view measure is generated'
-- '[NOT_DEPLOYED] at metrics[average_amount]: model-scoped metric is retained in the Ossie model; no metric-view
-  measure is generated'
-- '[NOT_DEPLOYED] at relationships[orders_to_customers]: relationship is retained in the Ossie model;
-  no metric-view join is generated'

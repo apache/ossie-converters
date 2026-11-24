@@ -168,3 +168,13 @@ def model_metric_reference_problems(model: Mapping[str, Any]) -> list[str]:
             probe = {**model, "metrics": [probe_metric]}
             problems.extend(str(finding) for finding in module.validate_metric_references(probe))
     return problems
+
+
+def key_reference_problems(model: Mapping[str, Any]) -> list[str]:
+    """Missing fields in primary/unique keys or either end of a relationship."""
+    module = _validator()
+    return [
+        str(finding)
+        for finding in module.validate_references(dict(model))
+        if not isinstance(finding, module.ValidationWarning)
+    ]

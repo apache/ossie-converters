@@ -17,6 +17,7 @@
 
 """The command line as the interop harness of apache/ossie-converters calls it."""
 
+import pytest
 import yaml
 from conftest import FIXTURES
 
@@ -69,13 +70,19 @@ def test_error_exit_code(tmp_path, capsys):
     assert capsys.readouterr().err.startswith("error: the input is not a valid Ossie model")
 
 
-def test_deploy_reports_each_omission_on_stderr(tmp_path, capsys):
+def test_deploy_does_not_warn_for_retained_semantic_objects(tmp_path, capsys):
+    source = tmp_path / "model.yaml"
+    model = yaml.safe_load((FIXTURES / "retail.ossie.yaml").read_text())
+    model["datasets"][0]["metrics"] = [
+        m for m in model["datasets"][0]["metrics"] if m["name"] != "discount"
+    ]
+    source.write_text(yaml.safe_dump(model))
     folder = tmp_path / "deployment"
     assert (
         main(
             [
                 "deploy",
-                str(FIXTURES / "retail.ossie.yaml"),
+                str(source),
                 "-o",
                 str(folder),
                 "--catalog",
@@ -86,19 +93,21 @@ def test_deploy_reports_each_omission_on_stderr(tmp_path, capsys):
         )
         == 0
     )
-    stderr = capsys.readouterr().err
-    for path in (
-        "metrics[revenue_per_customer]",
-        "metrics[average_amount]",
-        "relationships[orders_to_customers]",
-    ):
-        assert f"[NOT_DEPLOYED] at {path}:" in stderr
+    assert capsys.readouterr().err == ""
 
 
-def test_deploy_rejects_invalid_rewritten_metric_before_writing_files(tmp_path, capsys):
+@pytest.mark.parametrize("missing", ["metric", "relationship"])
+def test_deploy_rejects_invalid_references_before_writing_files(tmp_path, capsys, missing):
     source = tmp_path / "model.yaml"
     model = yaml.safe_load((FIXTURES / "retail.ossie.yaml").read_text())
-    model["metrics"] = [{"name": "invalid", "expression": {"sql": "SUM(orders.o_totalprice)"}}]
+    if missing == "metric":
+        model["metrics"] = [{"name": "invalid", "expression": {"sql": "SUM(orders.o_totalprice)"}}]
+        expected = ("invalid", "o_totalprice")
+    else:
+        model["metrics"] = []
+        field = next(f for f in model["datasets"][0]["fields"] if f["name"] == "customer_id")
+        field["expression"] = {"dialects": [{"dialect": "DAX", "expression": "1"}]}
+        expected = ("orders_to_customers", "customer_id")
     source.write_text(yaml.safe_dump(model))
     folder = tmp_path / "deployment"
     folder.mkdir()
@@ -123,4 +132,4 @@ def test_deploy_rejects_invalid_rewritten_metric_before_writing_files(tmp_path, 
     assert existing.read_text() == "previous successful deployment"
     assert sorted(p.name for p in folder.iterdir()) == ["retail.ossie.yaml"]
     stderr = capsys.readouterr().err
-    assert "invalid" in stderr and "o_totalprice" in stderr
+    assert all(value in stderr for value in expected)

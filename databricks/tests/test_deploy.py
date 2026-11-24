@@ -22,7 +22,6 @@ import yaml
 from conftest import assert_golden, fixture, warnings_of
 
 from ossie_databricks import ConversionError, deploy_ossie_model_to_databricks
-from ossie_databricks.result import WarningCode
 
 
 def _deploy(model, catalog="main"):
@@ -115,17 +114,14 @@ def test_multi_table_query_source_is_not_a_collision():
     assert "metric_views/joined.yaml" in result.value
 
 
-def test_model_metrics_and_relationships_report_individual_omissions():
+def test_model_metrics_and_relationships_are_semantic_objects_not_omissions():
     model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["datasets"][0]["metrics"] = [
+        m for m in model["datasets"][0]["metrics"] if m["name"] != "discount"
+    ]
     original = copy.deepcopy(model)
     result = _deploy(model)
-    omitted = [w for w in result.warnings if w.code == WarningCode.NOT_DEPLOYED]
-    assert [w.path for w in omitted] == [
-        "metrics[revenue_per_customer]",
-        "metrics[average_amount]",
-        "relationships[orders_to_customers]",
-    ]
-    assert all("retained in the Ossie model" in w.message for w in omitted)
+    assert result.warnings == []
     rewritten = yaml.safe_load(result.value["retail.ossie.yaml"])
     assert rewritten["metrics"] == original["metrics"]
     assert rewritten["relationships"] == original["relationships"]
@@ -198,7 +194,7 @@ def test_model_metric_keeps_qualified_case_insensitive_and_measure_references():
     assert yaml.safe_load(result.value["retail.ossie.yaml"])["metrics"] == model["metrics"]
 
 
-def test_non_sql_model_metric_is_retained_and_reported():
+def test_non_sql_model_metric_is_retained_without_an_omission_warning():
     model = yaml.safe_load(fixture("retail.ossie.yaml"))
     model["metrics"] = [
         {
@@ -209,9 +205,7 @@ def test_non_sql_model_metric_is_retained_and_reported():
         }
     ]
     result = _deploy(model)
-    assert any(
-        w.code == WarningCode.NOT_DEPLOYED and w.path == "metrics[dax]" for w in result.warnings
-    )
+    assert not any(w.path.startswith("metrics[") for w in result.warnings)
     assert yaml.safe_load(result.value["retail.ossie.yaml"])["metrics"] == model["metrics"]
 
 
@@ -234,10 +228,7 @@ def test_native_model_metric_can_evaluate_generated_measures(expression):
     result = _deploy(model)
     rewritten = yaml.safe_load(result.value["databricks_first.ossie.yaml"])
     assert rewritten["metrics"] == model["metrics"]
-    assert any(
-        w.code == WarningCode.NOT_DEPLOYED and w.path == "metrics[revenue_per_customer]"
-        for w in result.warnings
-    )
+    assert not any(w.path.startswith("metrics[") for w in result.warnings)
 
 
 def test_model_metric_reference_check_honors_portable_expression_precedence():
@@ -292,3 +283,54 @@ def test_native_measure_call_does_not_hide_other_missing_columns():
     ]
     with pytest.raises(ConversionError, match="absent"):
         _deploy(model)
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("from", "from_columns"),
+        ("to", "to_columns"),
+        ("primary", "primary_key"),
+        ("unique", "unique_keys"),
+    ],
+)
+def test_relationship_and_dataset_keys_must_remain_exposed(case, expected):
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"] = []
+    dataset = model["datasets"][1 if case == "to" else 0]
+    name = "order_id" if case == "primary" else "customer_id"
+    if case in ("from", "to"):
+        for item in model["datasets"]:
+            item.pop("primary_key", None)
+    else:
+        model["relationships"] = []
+        if case == "unique":
+            dataset["unique_keys"] = [["order_id", "customer_id"]]
+    next(f for f in dataset["fields"] if f["name"] == name)["expression"] = {
+        "dialects": [{"dialect": "DAX", "expression": "1"}]
+    }
+    with pytest.raises(ConversionError, match="cannot be evaluated over the metric views") as error:
+        _deploy(model)
+    assert expected in str(error.value)
+    assert name in str(error.value)
+
+
+def test_exposed_composite_and_case_insensitive_keys_are_preserved():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["datasets"][0]["primary_key"] = ["ORDER_ID", "CUSTOMER_ID"]
+    model["datasets"][0]["unique_keys"] = [["ORDER_ID", "REGION"]]
+    model["relationships"][0]["from_columns"] = ["CUSTOMER_ID"]
+    model["relationships"][0]["to_columns"] = ["CUSTOMER_ID"]
+    original = copy.deepcopy(model)
+    result = _deploy(model)
+    rewritten = yaml.safe_load(result.value["retail.ossie.yaml"])
+    assert rewritten["relationships"] == original["relationships"]
+    for actual, before in zip(rewritten["datasets"], original["datasets"], strict=True):
+        assert actual["primary_key"] == before["primary_key"]
+        assert actual.get("unique_keys") == before.get("unique_keys")
+
+
+def test_unchanged_key_coverage_advisories_do_not_block_deployment():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["relationships"][0]["to_columns"] = ["segment"]
+    assert "retail.ossie.yaml" in _deploy(model).value

@@ -19,8 +19,8 @@
 
 Each dataset becomes the metric view `<catalog>.<schema>.<dataset>`, and the model is rewritten
 so that each dataset reads its metric view. Relationships and model-scoped metrics stay in the
-model unchanged, with a warning for each object not deployed. Model metrics must still
-resolve against the fields and measures exposed by the generated views.
+model unchanged: Ossie remains the semantic model, while metric views back its datasets.
+Model metrics, relationships and keys must still resolve against the exposed view members.
 """
 
 import copy
@@ -76,6 +76,7 @@ def deploy_ossie_model_to_databricks(
                 "name": name,
                 "fields": [{"name": item["name"]} for item in view.get("dimensions") or []],
                 "metrics": [{"name": item["name"]} for item in view.get("measures") or []],
+                **{key: dataset[key] for key in ("primary_key", "unique_keys") if key in dataset},
             }
         )
         for field in dataset.get("fields") or []:
@@ -88,32 +89,22 @@ def deploy_ossie_model_to_databricks(
     # The core validator currently reports many unresolved model-metric references as
     # warnings. Deployment must not ignore them: the rewritten sources expose only the
     # generated dimensions and measures, never the original tables' other columns.
-    problems = _ossie.model_metric_reference_problems(
-        {
-            "name": deployed["name"],
-            "datasets": exposed_datasets,
-            "metrics": deployed.get("metrics") or [],
-        }
-    )
+    exposed_model = {
+        "name": deployed["name"],
+        "datasets": exposed_datasets,
+        "metrics": deployed.get("metrics") or [],
+        "relationships": deployed.get("relationships") or [],
+    }
+    problems = [
+        *_ossie.model_metric_reference_problems(exposed_model),
+        *_ossie.key_reference_problems(exposed_model),
+    ]
     if problems:
         raise ConversionError(
-            "model-scoped metrics cannot be evaluated over the metric views:\n  "
+            "the rewritten model cannot be evaluated over the metric views:\n  "
             + "\n  ".join(problems)
             + "\nExpose the referenced fields and dataset metrics in the metric views "
             "before deploying."
-        )
-    for metric in deployed.get("metrics") or []:
-        result.warn(
-            WarningCode.NOT_DEPLOYED,
-            f"metrics[{metric['name']}]",
-            "model-scoped metric is retained in the Ossie model; "
-            "no metric-view measure is generated",
-        )
-    for relationship in deployed.get("relationships") or []:
-        result.warn(
-            WarningCode.NOT_DEPLOYED,
-            f"relationships[{relationship['name']}]",
-            "relationship is retained in the Ossie model; no metric-view join is generated",
         )
     _ossie.check(deployed, "the deployed model")
     files[f"{model['name']}.ossie.yaml"] = _ossie.dump(deployed)

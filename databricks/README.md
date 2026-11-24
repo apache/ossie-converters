@@ -66,10 +66,10 @@ do; the CLI writes them to the output folder and replaces existing files only wi
   each field is the dimension of the same name, and each dataset-scoped metric evaluates
   `MEASURE(source.<metric>)`. A metric keeps its portable expression when that expression reads
   only fields. Keys, relationships, model-scoped metrics, and metadata are unchanged.
-  Each model-scoped metric and relationship produces a `NOT_DEPLOYED` warning: it remains
-  in the Ossie model but is not a measure or join in any generated metric view. A deployment
-  whose rewritten model metrics reference unavailable view members fails before files are
-  written.
+  Ossie remains the semantic model: metric views are building blocks backing individual
+  datasets. Retaining model-scoped metrics and relationships is intentional and produces no
+  omission warning. Deployment fails before writing files if a retained SQL metric,
+  relationship key, primary key, or unique key refers to unavailable view members.
 - `wrap` keeps every measure through `MEASURE(source.<measure>)`. It also writes a portable
   expression for a measure when each input of the measure is a dimension of the metric view, the
   measure has no window, and no input comes from a `one_to_many` join. Parameters must have
@@ -168,16 +168,19 @@ view when it is created.
 
 - The package does not connect to a workspace. It writes metric view definitions but does not
   create them.
-- `deploy` does not generate metric-view joins or model-scoped measures. Each retained
-  relationship and model-scoped metric is reported with `NOT_DEPLOYED` and its source path.
+- `deploy` keeps model-scoped metrics and relationships in the Ossie semantic model, rather
+  than compiling them into metric-view measures or joins. Model-level query execution,
+  including Layer 3 semantics across those datasets, is outside this converter's scope.
 - A rewritten model metric can read only the generated views' dimensions and evaluate their
   deployed measures. The converter uses the core validator's reference checks and refuses a
   deployment with unresolved SQL references, including source columns not exposed as fields
   and fields or metrics omitted because they have no SQL form. Declare those source columns
   as fields and use the declared field names. Native Databricks measures are evaluated with
   `MEASURE(dataset.metric)`; a measure name is not a dimension column. Non-SQL model metrics
-  stay in the model and are reported as not deployed; the SQL reference check cannot verify
-  them.
+  stay in the model; the SQL reference check cannot verify them.
+- Relationship columns and dataset primary/unique keys must remain available as metric-view
+  dimensions after rewriting the sources. Deployment rejects keys referencing omitted fields,
+  including fields that have no SQL form, before writing any deployment files.
 - A field or metric whose expressions are all in a non-SQL dialect has no dimension or measure.
   `deploy` reports it and keeps it unchanged in the model.
 - The package reads and writes metric view YAML version `1.1` only.
