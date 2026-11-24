@@ -59,9 +59,10 @@ _SQLGLOT_DIALECTS = {"BIGQUERY": "bigquery", "ANSI_SQL": None, "OSSIE_SQL_2026":
 
 # Ossie DATEADD/DATEDIFF take a unit as the first argument. sqlglot's default
 # reader treats that unit as a column, so _qualify would emit ${TABLE}.day and
-# BigQuery has no DATEADD. Canonical names are the BigQuery DATE_ADD /
-# DATE_DIFF date_part values. HOUR/MINUTE/SECOND need TIMESTAMP_ADD /
-# TIMESTAMP_DIFF; they are not rewritten to DATE_ADD/DATE_DIFF.
+# BigQuery has no DATEADD. Canonical names are the BigQuery date_part values.
+# Dispatch DATE_ADD / DATETIME_ADD / TIMESTAMP_ADD from the operand field's
+# Date / DateTime / DateTimeTz datatype. HOUR/MINUTE/SECOND are not DATE_ADD
+# parts; WEEK/MONTH/QUARTER/YEAR are not TIMESTAMP_ADD parts.
 _DATE_PARTS = {
     "YEAR": "YEAR", "YEARS": "YEAR", "YY": "YEAR", "YYYY": "YEAR",
     "QUARTER": "QUARTER", "QUARTERS": "QUARTER",
@@ -73,6 +74,33 @@ _TIMESTAMP_PARTS = {
     "HOUR": "HOUR", "HOURS": "HOUR", "HH": "HOUR",
     "MINUTE": "MINUTE", "MINUTES": "MINUTE", "MI": "MINUTE",
     "SECOND": "SECOND", "SECONDS": "SECOND", "SS": "SECOND",
+}
+_HMS_PARTS = frozenset(_TIMESTAMP_PARTS.values())
+_TIMESTAMP_UNSUPPORTED_PARTS = frozenset({"WEEK", "MONTH", "QUARTER", "YEAR"})
+_ADD_CTOR = {
+    "date": exp.DateAdd,
+    "datetime": exp.DatetimeAdd,
+    "timestamp": exp.TimestampAdd,
+}
+_DIFF_CTOR = {
+    "date": exp.DateDiff,
+    "datetime": exp.DatetimeDiff,
+    "timestamp": exp.TimestampDiff,
+}
+_ADD_SPELLING = {
+    "date": "DATE_ADD",
+    "datetime": "DATETIME_ADD",
+    "timestamp": "TIMESTAMP_ADD",
+}
+_DIFF_SPELLING = {
+    "date": "DATE_DIFF",
+    "datetime": "DATETIME_DIFF",
+    "timestamp": "TIMESTAMP_DIFF",
+}
+_NESTED_ADD_TYPE = {
+    exp.DateAdd: "Date",
+    exp.DatetimeAdd: "DateTime",
+    exp.TimestampAdd: "DateTimeTz",
 }
 _DATE_ADD_NAMES = frozenset({"DATEADD"})
 _DATE_DIFF_NAMES = frozenset({"DATEDIFF"})
@@ -753,33 +781,28 @@ def _parse(expr, dialect, context):
                 warnings.warn(
                     f"{context}: not valid {dialect} ({first_line}); read as BIGQUERY"
                 )
-                return _prepare_tree(tree, expr, "BIGQUERY", context)
+                tree.meta["ossie_read"] = "BIGQUERY"
+                return tree
         warnings.warn(
             f"{context}: could not parse expression ({first_line}); emitted "
             f"verbatim, verify column references in LookML"
         )
         return None
-    return _prepare_tree(tree, expr, dialect, context)
-
-
-def _prepare_tree(tree, expr, dialect, context):
-    """Maps Ossie date functions to BigQuery and warns on leftover calls."""
-    tree = _rewrite_ossie_date_functions(tree, expr, dialect, context)
-    if dialect != "BIGQUERY":
-        _warn_unknown_functions(tree, context)
     return tree
 
 
-def _rewrite_ossie_date_functions(tree, original, dialect, context):
+def _rewrite_ossie_date_functions(tree, original, dialect, context, home, types):
     """Rewrite DATEADD/DATEDIFF bottom-up so nested calls are rewritten too.
 
     sqlglot ``transform`` does not walk children of a replaced node, so a
     DATEADD whose amount is a DATEDIFF would keep the inner call in the
-    default-reader shape.
+    default-reader shape. Runs from ``_qualify`` so field datatypes are known.
     """
     root = tree
     for node in reversed(list(tree.walk())):
-        replacement = _rewrite_ossie_date_function(node, original, dialect, context)
+        replacement = _rewrite_ossie_date_function(
+            node, original, dialect, context, home, types
+        )
         if replacement is node:
             continue
         if node is root:
@@ -789,53 +812,78 @@ def _rewrite_ossie_date_functions(tree, original, dialect, context):
     return root
 
 
-def _rewrite_ossie_date_function(node, original, dialect, context):
-    """DATEADD(part, n, d) -> DATE_ADD(d, INTERVAL n PART);
-    DATEDIFF(part, start, end) -> DATE_DIFF(end, start, PART)."""
+def _rewrite_ossie_date_function(node, original, dialect, context, home, types):
+    """DATEADD/DATEDIFF -> DATE_/DATETIME_/TIMESTAMP_ ADD or DIFF."""
     if isinstance(node, exp.Anonymous):
         name = str(node.this).upper()
         args = list(node.expressions)
         if name in _DATE_ADD_NAMES and len(args) == 3:
-            return _rewrite_date_add(args[0], args[1], args[2], context) or node
+            rewritten = _rewrite_date_add(
+                args[0], args[1], args[2], context, home, types
+            )
+            return rewritten or _anonymous_with_frozen_unit(node, args)
         if name in _DATE_DIFF_NAMES and len(args) == 3:
-            return _rewrite_date_diff(args[0], args[1], args[2], original, context) or node
+            rewritten = _rewrite_date_diff(
+                args[0], args[1], args[2], original, context, home, types
+            )
+            return rewritten or _anonymous_with_frozen_unit(node, args)
         return node
     if isinstance(node, exp.DateDiff) and dialect != "BIGQUERY":
         # Default reader: DATEDIFF(day, start, end) has this=day (a column)
         # and unit=END_DATE (the end date, not a date part). Skip on BIGQUERY
         # so DATE_DIFF(day, first_day, ISOWEEK) stays a column named day.
-        if _timestamp_part_name(node.this):
-            _warn_unmapped_time_unit("DATEDIFF", node.this, context)
-            return node
-        part = _date_part_name(node.this)
+        part = _interval_part_name(node.this)
         if part and not _date_part_name(node.args.get("unit")):
             end = _end_from_unit(node.args.get("unit"), original)
-            return exp.DateDiff(
-                this=end,
-                expression=node.expression,
-                unit=exp.var(_date_diff_unit(part)),
+            rewritten = _make_diff(
+                part, node.expression, end, context, home, types
             )
+            if rewritten is None:
+                return exp.Anonymous(
+                    this="DATEDIFF",
+                    expressions=[
+                        _freeze_date_part(node.this),
+                        node.expression,
+                        end,
+                    ],
+                )
+            return rewritten
     return node
 
 
-def _rewrite_date_add(unit, amount, value, context):
-    if _timestamp_part_name(unit):
-        _warn_unmapped_time_unit("DATEADD", unit, context)
-        return None
-    part = _date_part_name(unit)
+def _rewrite_date_add(unit, amount, value, context, home, types):
+    part = _interval_part_name(unit)
     if not part:
         return None
-    return exp.DateAdd(this=value, expression=amount, unit=exp.var(part))
-
-
-def _rewrite_date_diff(unit, start, end, original, context):
-    if _timestamp_part_name(unit):
-        _warn_unmapped_time_unit("DATEDIFF", unit, context)
+    family = _family_for_part(
+        _bq_family(_operand_type(value, home, types)),
+        part,
+        "DATEADD",
+        context,
+        diff=False,
+    )
+    if family is None:
         return None
-    part = _date_part_name(unit)
+    return _ADD_CTOR[family](this=value, expression=amount, unit=exp.var(part))
+
+
+def _rewrite_date_diff(unit, start, end, original, context, home, types):
+    part = _interval_part_name(unit)
     if not part:
         return None
-    return exp.DateDiff(
+    return _make_diff(part, start, end, context, home, types)
+
+
+def _make_diff(part, start, end, context, home, types):
+    ossie_type = _paired_operand_type(start, end, home, types, context)
+    if ossie_type is False:
+        return None
+    family = _family_for_part(
+        _bq_family(ossie_type), part, "DATEDIFF", context, diff=True
+    )
+    if family is None:
+        return None
+    return _DIFF_CTOR[family](
         this=end, expression=start, unit=exp.var(_date_diff_unit(part))
     )
 
@@ -864,17 +912,104 @@ def _date_diff_unit(part: str) -> str:
 
 
 def _timestamp_part_name(node):
-    """HOUR/MINUTE/SECOND: BigQuery DATE_ADD/DATE_DIFF reject these."""
+    """HOUR/MINUTE/SECOND interval part."""
     token = _part_token(node)
     return _TIMESTAMP_PARTS.get(token.upper()) if token else None
 
 
-def _warn_unmapped_time_unit(func, unit, context):
-    part = _timestamp_part_name(unit)
+def _interval_part_name(node):
+    return _date_part_name(node) or _timestamp_part_name(node)
+
+
+def _temporal_types(plans):
+    """Map (dataset, field) upper-case names to Ossie Date/DateTime/DateTimeTz."""
+    types = {}
+    for plan in (plans or {}).values():
+        for field in getattr(plan, "raw_fields", None) or []:
+            if not isinstance(field, dict):
+                continue
+            name = field.get("name")
+            datatype = field.get("datatype")
+            if isinstance(name, str) and datatype in _TEMPORAL_TYPES:
+                types[(plan.name.upper(), name.upper())] = datatype
+    return types
+
+
+def _operand_type(node, home, types):
+    if node is None:
+        return None
+    nested = _NESTED_ADD_TYPE.get(type(node))
+    if nested:
+        return nested
+    if isinstance(node, exp.Paren):
+        return _operand_type(node.this, home, types)
+    if not isinstance(node, exp.Column):
+        return None
+    table = (node.table or home or "").upper()
+    name = (node.name or "").upper()
+    return types.get((table, name))
+
+
+def _paired_operand_type(start, end, home, types, context):
+    left = _operand_type(start, home, types)
+    right = _operand_type(end, home, types)
+    if left and right and left != right:
+        warnings.warn(
+            f"{context}: DATEDIFF operands have datatypes {left} and {right}; "
+            f"emitted as-is"
+        )
+        return False
+    return left or right
+
+
+def _bq_family(ossie_type):
+    if ossie_type == "Date":
+        return "date"
+    if ossie_type == "DateTime":
+        return "datetime"
+    if ossie_type == "DateTimeTz":
+        return "timestamp"
+    return None
+
+
+def _family_for_part(family, part, func, context, diff):
+    """BigQuery family for *part*, or None to leave the call as-is."""
+    spellings = _DIFF_SPELLING if diff else _ADD_SPELLING
+    if family is None:
+        if part in _HMS_PARTS:
+            _warn_unmapped_interval(func, part, "DATE_ADD/DATE_DIFF", context)
+            return None
+        return "date"
+    if family == "date" and part in _HMS_PARTS:
+        _warn_unmapped_interval(func, part, spellings["date"], context)
+        return None
+    if family == "timestamp" and part in _TIMESTAMP_UNSUPPORTED_PARTS:
+        _warn_unmapped_interval(func, part, spellings["timestamp"], context)
+        return None
+    return family
+
+
+def _warn_unmapped_interval(func, part, spelling, context):
     warnings.warn(
-        f"{context}: {func} {part} has no BigQuery DATE_ADD/DATE_DIFF spelling; "
-        f"emitted as-is until TIMESTAMP_ADD/TIMESTAMP_DIFF is mapped"
+        f"{context}: {func} {part} has no BigQuery {spelling} spelling; "
+        f"emitted as-is"
     )
+
+
+def _freeze_date_part(node):
+    """Keep a date-part token from being qualified as a column."""
+    token = _part_token(node)
+    if token is None:
+        return node
+    return exp.Var(this=token)
+
+
+def _anonymous_with_frozen_unit(node, args):
+    frozen = _freeze_date_part(args[0])
+    if frozen is args[0]:
+        return node
+    node.set("expressions", [frozen, *args[1:]])
+    return node
 
 
 def _end_from_unit(unit, original):
@@ -913,7 +1048,7 @@ def _anonymous_time_unit_call(node):
     return (
         name in _DATE_ADD_NAMES | _DATE_DIFF_NAMES
         and len(args) == 3
-        and _timestamp_part_name(args[0]) is not None
+        and _interval_part_name(args[0]) is not None
     )
 
 
@@ -954,6 +1089,12 @@ def _qualify(expr, dialect, home, plans, context, tree=None, metric=False):
         tree = _parse(expr, dialect, context)
     if tree is None:
         return expr, None, None
+    read = tree.meta.get("ossie_read") or dialect
+    tree = _rewrite_ossie_date_functions(
+        tree, expr, read, context, home, _temporal_types(plans)
+    )
+    if read != "BIGQUERY":
+        _warn_unknown_functions(tree, context)
 
     # Parsing (rather than a regex) tells a column apart from a bare literal
     # or keyword such as NULL or CURRENT_DATE, and keeps identifier quoting.

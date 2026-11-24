@@ -1256,7 +1256,69 @@ class TestSourceDialects:
             out = convert_ossie_to_lookml(model)
         sql = _block(out, "dimension: d")
         assert "INTERVAL 1 HOUR" not in sql
-        assert "DATE_DIFF(" not in sql or "HOUR" not in sql
+        assert "${TABLE}.hour" not in sql
+        assert "DATE_ADD(" not in sql
+        assert "DATE_DIFF(" not in sql
+        assert "TIMESTAMP_DIFF(" not in sql
+        assert "hour" in sql.lower()
+
+    def test_datetime_tz_dateadd_hour_is_timestamp_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(hour, 1, created_at)"),
+        )
+        assert "sql: TIMESTAMP_ADD(${TABLE}.created_at, INTERVAL 1 HOUR) ;;" in view
+
+    def test_datetime_dateadd_hour_is_datetime_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTime"),
+            _field("d", expr="DATEADD(hour, 1, created_at)"),
+        )
+        assert "sql: DATETIME_ADD(${TABLE}.created_at, INTERVAL 1 HOUR) ;;" in view
+
+    def test_date_dateadd_hour_is_left_as_is(self):
+        model = _model([_dataset("t", [
+            _field("order_date", datatype="Date"),
+            _field("d", expr="DATEADD(hour, 1, order_date)"),
+        ])])
+        with pytest.warns(UserWarning, match="HOUR has no BigQuery DATE_ADD spelling"):
+            out = convert_ossie_to_lookml(model)
+        sql = _block(out, "dimension: d")
+        assert "DATE_ADD(" not in sql
+        assert "${TABLE}.hour" not in sql
+
+    def test_datetime_tz_dateadd_day_is_timestamp_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(day, 1, created_at)"),
+        )
+        assert "sql: TIMESTAMP_ADD(${TABLE}.created_at, INTERVAL 1 DAY) ;;" in view
+
+    def test_datetime_tz_dateadd_month_is_left_as_is(self):
+        model = _model([_dataset("t", [
+            _field("created_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(month, 1, created_at)"),
+        ])])
+        with pytest.warns(UserWarning, match="MONTH has no BigQuery TIMESTAMP_ADD spelling"):
+            out = convert_ossie_to_lookml(model)
+        sql = _block(out, "dimension: d")
+        assert "DATE_ADD(" not in sql
+        assert "TIMESTAMP_ADD(" not in sql
+
+    def test_datetime_dateadd_month_is_datetime_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTime"),
+            _field("d", expr="DATEADD(month, 1, created_at)"),
+        )
+        assert "sql: DATETIME_ADD(${TABLE}.created_at, INTERVAL 1 MONTH) ;;" in view
+
+    def test_datetime_tz_datediff_day_is_timestamp_diff(self):
+        view = self._view(
+            _field("start_at", datatype="DateTimeTz"),
+            _field("end_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEDIFF(day, start_at, end_at)"),
+        )
+        assert "sql: TIMESTAMP_DIFF(${TABLE}.end_at, ${TABLE}.start_at, DAY) ;;" in view
 
     def test_bigquery_date_diff_with_date_part_column_is_not_repaired(self):
         with warnings.catch_warnings():
