@@ -128,6 +128,29 @@ because it rounds to a scale (`DECIMAL` and `NUMBER` default to scale 0). `Int(x
 translates to `FLOOR(x)`: Sigma's `Int()` rounds down (`Int(-3.2)` is `-4`), which is not
 what `CAST(x AS INT)` does. Date casts are not mapped yet.
 
+### Median and percentile limits
+
+`Median(x)` emits `PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x)`.
+`PercentileCont(x, k)` and `PercentileDisc(x, k)` emit their continuous and
+discrete SQL counterparts; the existing `Percentile(x, k)` alias remains
+continuous. Continuous and discrete percentiles are kept distinct.
+See Sigma's [Median](https://help.sigmacomputing.com/docs/median),
+[PercentileCont](https://help.sigmacomputing.com/docs/percentilecont), and
+[PercentileDisc](https://help.sigmacomputing.com/docs/percentiledisc) references.
+
+SQL `MEDIAN(x)` reads back as `Median(x)`. A SQL ordered-set percentile reads
+back as `PercentileCont(x, k)` or `PercentileDisc(x, k)`, including `k = 0.5`.
+Portable SQL therefore preserves the operation rather than the original
+`Median` or legacy `Percentile` spelling. The converter still prefers a preserved
+native `SIGMA` expression when one is available.
+
+The reverse mapping requires exactly one ascending `WITHIN GROUP` ordering
+expression. Descending ordering is not mapped: discarding `DESC` would change
+the result. Multiple ordering expressions, standalone/two-argument SQL
+percentile forms, `OVER`/`FILTER` modifiers, `MEDIAN(DISTINCT ...)`, and unsupported
+value expressions remain untranslatable. Incorrect Sigma argument counts are
+also left untranslated. `Count()` / `COUNT(*)` behavior is unchanged.
+
 ## Untranslatable expressions are omitted on export, not approximated
 
 `formula` is required on every Sigma column and metric, and the data model API

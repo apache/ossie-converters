@@ -143,6 +143,27 @@ translation fails, the column or metric is **omitted** and flagged in `Converter
 model API validates the whole document before applying any of it, so emitting a placeholder would
 fail the entire upload rather than degrade one field.
 
+#### Median and percentile aggregates
+
+The translator supports these ordered-set aggregates:
+
+| Sigma formula | Portable SQL |
+| --- | --- |
+| `Median(x)` | `PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x)` |
+| `PercentileCont(x, k)` | `PERCENTILE_CONT(k) WITHIN GROUP (ORDER BY x)` |
+| `PercentileDisc(x, k)` | `PERCENTILE_DISC(k) WITHIN GROUP (ORDER BY x)` |
+| `Percentile(x, k)` (legacy alias) | Same as `PercentileCont(x, k)` |
+
+The reverse direction maps SQL `MEDIAN(x)` to `Median(x)` and ordered-set
+percentiles to `PercentileCont(x, k)` or `PercentileDisc(x, k)`. When only the
+portable SQL remains, a `Median(x)` round trip returns `PercentileCont(x, 0.5)`;
+the original Sigma spelling is retained when its `SIGMA` expression is present.
+
+Only a single ascending ordering expression is translated. Descending or
+multiple ordering expressions, window/filter modifiers, and other unsupported
+forms remain untranslatable. See [Median and percentile limits](LIMITATIONS.md#median-and-percentile-limits)
+for details. `Count()` / `COUNT(*)` behavior is unchanged.
+
 ### Relationship resolution
 
 Sigma relationships (`element.relationships[]`) join two *elements*, not two *Ossie datasets*

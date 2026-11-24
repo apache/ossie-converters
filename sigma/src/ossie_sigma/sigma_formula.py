@@ -429,9 +429,12 @@ def _case(cond: exp.Expression, then: exp.Expression, otherwise: Optional[exp.Ex
     return exp.Case(ifs=[exp.If(this=cond, true=then)], default=otherwise)
 
 
-def _within_group(percentile: exp.Expression, value: exp.Expression) -> exp.Expression:
+def _within_group(
+    percentile: exp.Expression, value: exp.Expression, *, discrete: bool = False
+) -> exp.Expression:
+    aggregate = exp.PercentileDisc if discrete else exp.PercentileCont
     return exp.WithinGroup(
-        this=exp.PercentileCont(this=percentile),
+        this=aggregate(this=percentile),
         expression=exp.Order(expressions=[value]),
     )
 
@@ -528,8 +531,8 @@ def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
         return exp.Count(this=exp.Distinct(expressions=[built[0]]))
     if name == "median" and len(args) == 1:
         return _within_group(exp.Literal.number(0.5), built[0])
-    if name == "percentile" and len(args) == 2:
-        return _within_group(built[1], built[0])
+    if name in ("percentile", "percentilecont", "percentiledisc") and len(args) == 2:
+        return _within_group(built[1], built[0], discrete=name == "percentiledisc")
     if name in ("variance", "var") and len(args) == 1:
         return exp.func("VAR_SAMP", built[0])
     if name in ("stddev", "standarddeviation") and len(args) == 1:
@@ -693,6 +696,29 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
 
     if isinstance(node, exp.Null):
         return "Null()"
+
+    if isinstance(node, exp.Median):
+        if node.this is None or any(value is not None for key, value in node.args.items() if key != "this"):
+            raise _NotTranslatable("MEDIAN requires a single value expression")
+        return f"Median({_render_sql_node(node.this, dataset_alias)})"
+
+    if isinstance(node, exp.WithinGroup):
+        aggregate, order = node.this, node.expression
+        if not isinstance(aggregate, (exp.PercentileCont, exp.PercentileDisc)) or any(
+            value is not None for key, value in aggregate.args.items() if key != "this"
+        ):
+            raise _NotTranslatable("Only single-argument ordered-set percentiles are mapped")
+        if not isinstance(order, exp.Order) or len(order.expressions) != 1:
+            raise _NotTranslatable("A percentile requires exactly one ordering expression")
+        ordered = order.expressions[0]
+        # Sigma's percentile functions always order ascending. Dropping DESC
+        # would change the result, especially for discrete percentiles.
+        if not isinstance(ordered, exp.Ordered) or ordered.args.get("desc"):
+            raise _NotTranslatable("Descending percentile ordering has no Sigma equivalent")
+        name = "PercentileDisc" if isinstance(aggregate, exp.PercentileDisc) else "PercentileCont"
+        value = _render_sql_node(ordered.this, dataset_alias)
+        percentile = _render_sql_node(aggregate.this, dataset_alias)
+        return f"{name}({value}, {percentile})"
 
     if isinstance(node, exp.Count):
         inner = node.this

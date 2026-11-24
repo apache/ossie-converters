@@ -129,6 +129,109 @@ def test_renders_to_a_warehouse_dialect_from_the_same_tree():
 
 
 @pytest.mark.parametrize(
+    ("formula", "expected_sql", "expected_back"),
+    [
+        (
+            "PercentileCont([X], 0.9)",
+            'PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY "X")',
+            "PercentileCont([X], 0.9)",
+        ),
+        (
+            "PercentileDisc([X], 0.9)",
+            'PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY "X")',
+            "PercentileDisc([X], 0.9)",
+        ),
+        (
+            "PercentileCont([X], 0.5)",
+            'PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY "X")',
+            "PercentileCont([X], 0.5)",
+        ),
+        (
+            "PercentileDisc([X], 0.5)",
+            'PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY "X")',
+            "PercentileDisc([X], 0.5)",
+        ),
+        (
+            "PercentileCont([T/Order Amount], 0.75)",
+            'PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "Order Amount")',
+            "PercentileCont([Order Amount], 0.75)",
+        ),
+    ],
+)
+def test_percentile_functions_translate_both_ways(formula, expected_sql, expected_back):
+    assert to_ansi_sql(parse_formula(formula), dataset_alias="T") == expected_sql
+    back = sql_to_sigma_formula(expected_sql, dataset_alias="T")
+    assert back == expected_back
+    assert to_ansi_sql(parse_formula(back), dataset_alias="T") == expected_sql
+
+
+def test_median_round_trips_through_its_portable_sql_form():
+    sql = to_ansi_sql(parse_formula("Median([X])"), dataset_alias="T")
+    assert sql == 'PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY "X")'
+    back = sql_to_sigma_formula(sql, dataset_alias="T")
+    assert back == "PercentileCont([X], 0.5)"
+    assert to_ansi_sql(parse_formula(back), dataset_alias="T") == sql
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        ('MEDIAN("X")', "Median([X])"),
+        ('MEDIAN("T"."X")', "Median([X])"),
+        ('PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY "T"."X" ASC)', "PercentileCont([X], 0.9)"),
+        ('PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY "other"."X")', "PercentileDisc([other/X], 0.9)"),
+        ('PERCENTILE_CONT(0.7) WITHIN GROUP (ORDER BY "X" + 1)', "PercentileCont(([X] + 1), 0.7)"),
+    ],
+)
+def test_reverse_percentiles_preserve_value_and_dataset_scope(sql, expected):
+    result = sql_to_sigma_formula(sql, dataset_alias="T")
+    assert result == expected
+    assert parse_formula(result) is not None
+
+
+def test_legacy_percentile_alias_still_round_trips_as_continuous():
+    sql = to_ansi_sql(parse_formula("Percentile([X], 0.9)"), dataset_alias="T")
+    assert sql == 'PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY "X")'
+    assert sql_to_sigma_formula(sql, dataset_alias="T") == "PercentileCont([X], 0.9)"
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "Median()",
+        "Median([X], 0.5)",
+        "PercentileCont([X])",
+        "PercentileDisc([X], 0.9, 1)",
+    ],
+)
+def test_percentiles_with_unsupported_arity_return_none(formula):
+    assert to_ansi_sql(parse_formula(formula)) is None
+
+
+@pytest.mark.parametrize("aggregate", ["PERCENTILE_CONT", "PERCENTILE_DISC"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        '{aggregate}(0.9)',
+        '{aggregate}("X", 0.9)',
+        '{aggregate}(0.9, 0.1) WITHIN GROUP (ORDER BY "X")',
+        '{aggregate}(0.9) WITHIN GROUP (ORDER BY "X" DESC)',
+        '{aggregate}(0.9) WITHIN GROUP (ORDER BY "X", "Y")',
+        '{aggregate}(0.9) WITHIN GROUP (ORDER BY "X") OVER ()',
+        '{aggregate}(0.9) WITHIN GROUP (ORDER BY "X") FILTER (WHERE "X" > 0)',
+        '{aggregate}(0.9) WITHIN GROUP (ORDER BY SomeUnknownFunction("X"))',
+    ],
+)
+def test_reverse_percentiles_refuse_shapes_with_no_equivalent(aggregate, template):
+    assert sql_to_sigma_formula(template.format(aggregate=aggregate), dataset_alias="T") is None
+
+
+def test_reverse_median_refuses_distinct_and_window_modifiers():
+    assert sql_to_sigma_formula('MEDIAN(DISTINCT "X")') is None
+    assert sql_to_sigma_formula('MEDIAN("X") OVER ()') is None
+
+
+@pytest.mark.parametrize(
     "formula",
     [
         "RunningSum([Amount])",
