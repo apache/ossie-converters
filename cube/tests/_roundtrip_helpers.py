@@ -49,7 +49,9 @@ targeted unit tests, which assert the converter *rejects* or *reports* those.
 import random
 import string
 
-from ossie_cube import convert_cube_to_ossie, convert_ossie_to_cube
+from _util import import_model_scoped as convert_cube_to_ossie
+from _util import parse_files
+from ossie_cube import convert_ossie_to_cube
 from ossie_cube._common import OSSIE_VERSION, dump_yaml, load_yaml
 
 # Aggregates whose value survives duplicate rows, so they are safe on any cube.
@@ -245,18 +247,11 @@ def _build_dimension(rnd, name):
     return dim
 
 
-def _parse_files(files):
-    # Same documented normalization the fixture tests use; see _util.canon_sql.
-    from _util import canon_sql
-    return {name: canon_sql(load_yaml(text, name))
-            for name, text in files.items()}
-
-
 def assert_cube_roundtrip_is_lossless(files):
     """Cube -> Ossie -> Cube reproduces the model structurally."""
     ossie, _ = convert_cube_to_ossie(files)
     files2, _ = convert_ossie_to_cube(ossie)
-    assert _parse_files(files2) == _parse_files(files), (
+    assert parse_files(files2) == parse_files(files), (
         "Cube -> Ossie -> Cube changed the model")
 
 

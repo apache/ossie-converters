@@ -46,7 +46,8 @@ _SEMANTIC_MODEL_SUFFIX = ".semanticmodel"
 
 
 def export_powerbi_project(
-    ossie_yaml_str, output_dir, *, source=None, force=False, assembly_dir=None
+    ossie_yaml_str, output_dir, *, source=None, force=False, assembly_dir=None,
+    source_bindings=None, require_source_bindings=False
 ):
     """Write an Apache Ossie document as ``<output_dir>/<name>.SemanticModel/``.
 
@@ -58,6 +59,9 @@ def export_powerbi_project(
             reads, is written into directly, whatever the model is called.
         source: Optional OneLake location for generated Direct Lake partitions, as for
             :func:`convert_ossie_to_semantic_model`.
+        source_bindings: Optional Snowflake Import targets keyed by dataset name.
+        require_source_bindings: Require a binding for every dataset without preserved
+            Power BI partitions, as for :func:`convert_ossie_to_semantic_model`.
         force: Replace ``definition.pbism`` and ``definition/`` in an existing, non-empty
             folder. Other files there, such as ``.pbi/`` or ``diagramLayout.json``, are
             kept.
@@ -73,7 +77,10 @@ def export_powerbi_project(
             rejects the model.
         TomUnavailableError: if the optional TOM setup is missing.
     """
-    semantic_model = convert_ossie_to_semantic_model(ossie_yaml_str, source=source)
+    semantic_model = convert_ossie_to_semantic_model(
+        ossie_yaml_str, source=source, source_bindings=source_bindings,
+        require_source_bindings=require_source_bindings,
+    )
     output = Path(output_dir)
     # `.` and `..` stand for the folder they resolve to, such as the .SemanticModel
     # folder the command is run in.

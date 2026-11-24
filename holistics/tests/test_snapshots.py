@@ -744,3 +744,13 @@ def test_clickhouse_dialect_parses_and_rewrites_column_references():
         dialect="CLICKHOUSE",
     )
     assert [c.name for c in cols] == ["created_at", "revenue"]
+
+
+def test_trino_dialect_parses_and_rewrites_column_references():
+    from ossie_holistics import sqlrefs
+    assert sqlrefs.SQLGLOT_DIALECT["TRINO"] == "trino"
+    cols = sqlrefs.columns(
+        "DATE_TRUNC('month', created_at) + APPROX_DISTINCT(user_id)",
+        dialect="TRINO",
+    )
+    assert [c.name for c in cols] == ["created_at", "user_id"]

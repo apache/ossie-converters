@@ -191,6 +191,48 @@ Missing input files and invalid TMDL still fail the command. When a conversion p
 warnings, the output file is still written so the result can be inspected. `--strict`, `--quiet`, and
 `--report` are accepted before or after the subcommand.
 
+### Bind datasets to Snowflake Import
+
+Pass `--source-bindings` on export to generate Power Query Import partitions with the
+[Snowflake connector](https://learn.microsoft.com/en-us/power-query/connectors/snowflake).
+Key the YAML file by the Ossie dataset name and give each entry an explicit Snowflake target.
+
+```yaml
+orders:
+  server: my-org-my-account.snowflakecomputing.com
+  warehouse: BI_WH
+  database: RETAIL
+  schema: REPORTING
+  table: SALES_ORDERS
+  kind: table
+  role: BI_READER
+```
+
+```bash
+ossie-microsoft export --strict -i model.yaml --source-bindings bindings.yaml -o model.bim
+# The same bindings can be used when writing a Power BI project:
+ossie-microsoft export --strict -i model.yaml --source-bindings bindings.yaml --pbip out/
+```
+
+`role` and `kind` are optional. Use `kind: view` for a view and put its name in `table`.
+Kind values are case-insensitive. Write binding keys explicitly. Duplicate mapping
+keys and YAML merge keys (`<<`) are rejected.
+Use the identifier spelling returned by the Snowflake Navigator, typically uppercase for
+unquoted names. Each target table or view must expose the source columns expected by the
+model. If a dataset is defined by a query, point the binding at a table or view that
+provides the equivalent result. Configure credentials in Power BI or Fabric.
+On import, a complete static Snowflake Database/Schema/Table or View navigation chain
+restores the qualified source name. Special characters and case-sensitive names remain
+quoted. Incomplete or transformed navigation retains the table-name fallback and the
+original Power BI partition metadata.
+
+An explicit binding replaces the dataset's partitions and removes any incremental
+refresh policy. Datasets with preserved Power BI partitions can omit a binding.
+With a bindings file, every other dataset
+requires an entry in strict mode. A missing entry aborts before writing the model.
+Without strict mode, an unbound dataset uses the converter's default partition and
+emits a warning.
+
 ### Exporting to a Power BI project
 
 `--pbip DIR` writes the model as the semantic model folder of a Power BI project, the
@@ -316,8 +358,8 @@ representation used by the converter.
 
 | Status | Meaning |
 | --- | --- |
-| `translated` | The converter emitted the object in the target model; imported measures have a translated SQL alternative. |
-| `source_dialect` | An imported measure retains DAX only, either because translation was disabled or because it was refused. |
+| `translated` | The converter emitted the object in the target model; imported DAX measures and calculated columns have a translated SQL alternative. |
+| `source_dialect` | An imported DAX measure or calculated column retains DAX only, either because translation was disabled or because it was refused. |
 | `vendor_metadata` | The complete source object is only available in the Power BI extension. |
 | `placeholder` | The converter emitted an annotated `BLANK()` expression, or a generated Direct Lake source uses placeholder ids. |
 | `dropped` | The converter omitted the source object or vendor extension. |
@@ -349,8 +391,8 @@ pointers to `primary_key` or the relevant `unique_keys` entry and include `colum
 | `unsupported_composite_key` | Power BI cannot mark the composite key on the table. |
 | `missing_source_ids` | A shared generated Direct Lake source uses placeholder ids; `missing_ids` identifies them. |
 
-DAX metric entries include `source_dialect` and `target_dialect`. Unsupported model
-and dataset properties appear on their entries as `metadata_properties` on import
+DAX metric and calculated-column field entries include `source_dialect` and `target_dialect`.
+Unsupported model and dataset properties appear on their entries as `metadata_properties` on import
 or `dropped_properties` on export.
 
 Two error-reporting changes apply even without `--report`: conversion failures,

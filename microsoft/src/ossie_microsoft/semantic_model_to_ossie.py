@@ -335,10 +335,16 @@ def _convert_table(table, source_path, translate_dax=False):
                 vendor="POWER_BI", reason="row_number_column", table=table["name"],
             )
             continue
-        field, column_stash = _convert_column(column, scope, table["name"], row_columns)
+        field, column_stash, reason, detail = _convert_column(
+            column, scope, table["name"], row_columns
+        )
+        calculated = column.get("type") == "calculated"
         record(
-            "field", column_path, column, "translated",
+            "field", column_path, column, "source_dialect" if reason else "translated",
             target_name=field["name"], target_dataset=dataset["name"], table=table["name"],
+            source_dialect=DIALECT_DAX if calculated else None,
+            target_dialect=(DIALECT_DAX if reason else DIALECT_OSSIE_SQL) if calculated else None,
+            reason=reason, detail=detail,
             vendor="POWER_BI" if column_stash else None,
             metadata_properties=sorted(column_stash) or None,
         )
@@ -444,11 +450,50 @@ def _qualified_name_from_bigquery_m(expression):
     return ".".join(parts)
 
 
+def _qualified_name_from_snowflake_m(expression):
+    """Read the selected static Database/Schema/Table-or-View navigation chain."""
+    identifier = r'(?:[A-Za-z_]\w*|#"(?:[^\"]|\"\")*")'
+    connection = re.search(
+        rf'({identifier})\s*=\s*Snowflake\.Databases\s*\(', expression
+    )
+    selected = re.search(rf'\bin\s+({identifier})\s*$', expression)
+    if connection is None or selected is None:
+        return None
+
+    def unquote(value):
+        if value.startswith('#"'):
+            value = value[2:-1]
+        return value.replace('""', '"').replace('#(#)(', '#(')
+
+    paths = {unquote(connection.group(1)): ()}
+    steps = re.finditer(
+        rf'({identifier})\s*=\s*({identifier})\s*\{{\s*\['
+        r'((?:[^\]"\[]|"(?:[^\"]|\"\")*")*)\]\s*\}\s*\[Data\]',
+        expression,
+    )
+    for step in steps:
+        parent = paths.get(unquote(step.group(2)))
+        properties = dict(re.findall(r'(Name|Kind)\s*=\s*"((?:[^\"]|\"\")*)"', step.group(3)))
+        kind, name = properties.get("Kind"), properties.get("Name")
+        if parent is None or name is None:
+            continue
+        expected = ({"Database"}, {"Schema"}, {"Table", "View"})
+        if len(parent) < 3 and kind in expected[len(parent)]:
+            paths[unquote(step.group(1))] = (*parent, unquote(name))
+    parts = paths.get(unquote(selected.group(1)), ())
+    if len(parts) != 3:
+        return None
+    # Preserve case and special characters of quoted Snowflake object names.
+    return ".".join(part if re.fullmatch(r"[A-Z_][A-Z0-9_$]*", part)
+                    else '"' + part.replace('"', '""') + '"' for part in parts)
+
+
 # Each parser returns a qualified name, or None when the M expression is not
 # that warehouse. Another warehouse is another function in this tuple.
 _M_SOURCE_PARSERS = (
     _qualified_name_from_sql_server_m,
     _qualified_name_from_bigquery_m,
+    _qualified_name_from_snowflake_m,
 )
 
 
@@ -471,11 +516,12 @@ def _convert_column(column, table_scope, table_name=None, row_columns=None):
 
     warn_unsupported(scope, column, TMSL_UNSUPPORTED_COLUMN, "Apache Ossie", _PRESERVED)
 
+    reason = detail = None
     if column.get("type") == "calculated":
         # A calculated column is DAX. It is carried across as DAX rather than rewritten
         # into SQL, so no expression semantics are invented, unless translation is on
         # and the translation is exact.
-        expression = _calculated_column_expression(
+        expression, reason, detail = _calculated_column_expression(
             text(column.get("expression", "")), scope, table_name, row_columns, name
         )
     else:
@@ -511,7 +557,7 @@ def _convert_column(column, table_scope, table_name=None, row_columns=None):
         # The portable type does not map back to this exact TMSL type, so keep the
         # original rather than let the export guess.
         stash["dataType"] = column.get("dataType")
-    return field, stash
+    return field, stash, reason, detail
 
 
 def _is_reversible_datatype(tmsl_type, datatype):
@@ -643,9 +689,9 @@ def _row_columns(table):
 
 
 def _calculated_column_expression(dax_expression, scope, table_name, row_columns, name):
-    """Build a calculated column's field expression, like ``_measure_expression``."""
+    """Build a field expression and its retained-DAX reason/detail for the report."""
     if row_columns is None:
-        return make_expression(dax_expression, DIALECT_DAX)
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_disabled", None
     declared = row_columns[name].kind
     sql, reason = translate_column(dax_expression, table_name, row_columns, declared)
     if sql is None:
@@ -653,13 +699,13 @@ def _calculated_column_expression(dax_expression, scope, table_name, row_columns
             scope,
             f"DAX calculated column kept as-is; not translated to OSSIE_SQL_2026 ({reason})",
         )
-        return make_expression(dax_expression, DIALECT_DAX)
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_refused", reason
     return {
         "dialects": [
             {"dialect": DIALECT_OSSIE_SQL, "expression": sql},
             {"dialect": DIALECT_DAX, "expression": dax_expression},
         ]
-    }
+    }, None, None
 
 
 def _measure_expression(dax_expression, scope, translate_dax, resolve_field, measures=None):

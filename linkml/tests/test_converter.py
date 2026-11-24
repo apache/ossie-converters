@@ -88,16 +88,32 @@ def test_json_output_format(flights_model: OssieOntology):
     assert schema["name"] == "Flights"
 
 
+def _without_concept_ranks(schema_yaml: str) -> dict:
+    """Parse a LinkML schema and drop the `rank` of its classes, types and enums.
+
+    Building the runtime model reorders concepts, and LinkML records the order
+    concepts come in as each one's rank. Going via the runtime model therefore
+    agrees with going straight from the spec on everything but those ranks.
+    Attribute ranks follow the order of relationships within a concept, which
+    the runtime model keeps, so they stay.
+    """
+    schema = yaml.safe_load(schema_yaml)
+    for section in ("classes", "types", "enums"):
+        for definition in (schema.get(section) or {}).values():
+            definition.pop("rank", None)
+    return schema
+
+
 def test_convert_spec_matches_convert(flights_model: OssieOntology, flights_path):
     """Going straight from the spec DTO describes the same schema as going via
     the runtime model.
 
-    Compared as parsed YAML, not as text: building the runtime model sorts
-    concepts topologically, so the two agree on content but not on the order
-    classes and types are emitted in.
+    Compared as parsed YAML, not as text, and without the ranks of classes and
+    types: building the runtime model reorders concepts, so the two agree on
+    content but not on the order classes and types are emitted and ranked in.
     """
     spec = OssieSpec.load_yaml(flights_path.read_text(encoding="utf-8"))
-    assert yaml.safe_load(OssieToLinkmlConverter.convert_spec(spec)) == yaml.safe_load(
+    assert _without_concept_ranks(OssieToLinkmlConverter.convert_spec(spec)) == _without_concept_ranks(
         OssieToLinkmlConverter.convert(flights_model)
     )
 
@@ -204,7 +220,8 @@ def test_roundtrip_drops_ontology_mappings(flights_model: OssieOntology, flights
 #   a camelCase relationship name       a snake_case slot, alias keeps the
 #                                       original spelling (the slot_uri is
 #                                       built from the snake_case name)
-#   the order relationships are in      rank
+#   the order relationships are in      rank on each attribute
+#   the order concepts are in           rank on each class and each type
 
 EXAMPLE_OSSIE = """\
 version: 0.3.0.dev0
@@ -285,8 +302,22 @@ imports:
 - linkml:types
 default_range: string
 classes:
+  Author:
+    class_uri: ex:Author
+    description: A person who wrote a book.
+    rank: 1
+    attributes:
+      name:
+        slot_uri: ex:name
+        domain: Author
+        title: is identified by
+        identifier: true
+        required: true
+        rank: 1
+        range: string
   Book:
     class_uri: ex:Book
+    rank: 2
     attributes:
       isbn:
         slot_uri: ex:isbn
@@ -310,34 +341,31 @@ classes:
         multivalued: true
         rank: 3
         range: Author
-  Author:
-    class_uri: ex:Author
-    description: A person who wrote a book.
-    attributes:
-      name:
-        slot_uri: ex:name
-        domain: Author
-        title: is identified by
-        identifier: true
-        required: true
-        rank: 1
-        range: string
 types:
-  NrPages:
-    uri: xsd:integer
-    typeof: integer
-    minimum_value: 1
   Isbn:
     uri: xsd:string
     description: The identifier of a book.
     typeof: string
+    rank: 1
+  NrPages:
+    uri: xsd:integer
+    typeof: integer
+    rank: 2
+    minimum_value: 1
 """
 
 
 def test_full_example_ossie_to_linkml():
-    """The Ossie document above converts to exactly the LinkML schema above."""
-    model = SpecToOssieConverter().convert(OssieSpec.load_yaml(EXAMPLE_OSSIE))
-    assert yaml.safe_load(OssieToLinkmlConverter.convert(model)) == yaml.safe_load(EXAMPLE_LINKML)
+    """The Ossie document above converts to exactly the LinkML schema above.
+
+    Going via the runtime model gives the same schema except for the ranks of
+    classes and types, because building the model reorders concepts.
+    """
+    spec = OssieSpec.load_yaml(EXAMPLE_OSSIE)
+    assert yaml.safe_load(OssieToLinkmlConverter.convert_spec(spec)) == yaml.safe_load(EXAMPLE_LINKML)
+
+    model = SpecToOssieConverter().convert(spec)
+    assert _without_concept_ranks(OssieToLinkmlConverter.convert(model)) == _without_concept_ranks(EXAMPLE_LINKML)
 
 
 def test_full_example_linkml_to_ossie():

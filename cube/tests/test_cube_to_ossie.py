@@ -20,7 +20,8 @@
 import pytest
 from _util import by_name, expr_of, load_fixture_dir, model_of, parse, stash_of
 
-from ossie_cube import (ConversionError, IssueType, convert_cube_to_ossie,
+from _util import import_model_scoped as convert_cube_to_ossie
+from ossie_cube import (ConversionError, IssueType,
                         convert_ossie_to_cube)
 from ossie_cube._common import OSSIE_VERSION, cube_sql_to_ossie
 

@@ -471,7 +471,11 @@ def test_pbip_export_finalizes_report_without_writing_stdout(tmp_path, monkeypat
     source.write_text("name: shop")
     target = tmp_path / "project"
 
-    def export_project(text, destination, force=False):
+    def export_project(
+        text, destination, force=False, source_bindings=None, require_source_bindings=False
+    ):
+        assert source_bindings is None
+        assert require_source_bindings is False
         assert destination == str(target)
         record("dataset", "/datasets/0", {"name": "Orders"}, "translated")
         if fails:
@@ -515,3 +519,51 @@ def test_calculated_column_translation_keeps_report_paths_and_metric_outcomes(tm
         assert dialects["OSSIE_SQL_2026"] == "amount * 1.2"
     else:
         assert set(dialects) == {"DAX"}
+
+
+@pytest.mark.parametrize(
+    ("translate", "expression", "nullable", "status", "reason"),
+    [
+        (False, "UPPER([First])", False, "source_dialect", "dax_translation_disabled"),
+        (True, "UPPER([First])", False, "translated", None),
+        (True, "TRIM([First])", False, "source_dialect", "dax_translation_refused"),
+        (True, "UPPER([First])", True, "source_dialect", "dax_translation_refused"),
+    ],
+)
+def test_calculated_column_report_distinguishes_dax_outcomes(
+    tmp_path, translate, expression, nullable, status, reason
+):
+    source, report, output = (tmp_path / name for name in ("source.bim", "report.json", "out.yaml"))
+    source.write_text(json.dumps({"name": "shop", "model": {"tables": [{
+        "name": "People", "columns": [
+            {"name": "First", "sourceColumn": "first_name", "dataType": "string",
+             "isNullable": nullable},
+            {"name": "Display", "type": "calculated", "dataType": "string",
+             "expression": expression},
+        ],
+    }]}}))
+    args = ["import", "-i", str(source), "-o", str(output), "--report", str(report)]
+    if translate:
+        args.append("--translate-dax")
+    assert main(args) == 0
+    recorded = json.loads(report.read_text())
+    entries = {e["source_path"]: e for e in recorded["entries"]}
+    entry = entries["/model/tables/0/columns/1"]
+    assert entry["status"] == status
+    assert entry.get("reason") == reason
+    assert entry["source_dialect"] == "DAX"
+    assert entry["target_dialect"] == ("OSSIE_SQL_2026" if status == "translated" else "DAX")
+    assert entry["table"] == "People"
+    field = yaml.safe_load(output.read_text())["datasets"][0]["fields"][1]
+    dialects = field["expression"]["dialects"]
+    assert {d["dialect"] for d in dialects} == (
+        {"DAX", "OSSIE_SQL_2026"} if status == "translated" else {"DAX"}
+    )
+    assert next(d["expression"] for d in dialects if d["dialect"] == "DAX") == expression
+    if reason == "dax_translation_refused":
+        assert entry["detail"]
+        assert any(entry["detail"] in warning for warning in recorded["warnings"])
+    else:
+        assert "detail" not in entry
+    assert entries["/model/tables/0/columns/0"]["status"] == "translated"
+    assert "source_dialect" not in entries["/model/tables/0/columns/0"]

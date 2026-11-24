@@ -1,0 +1,316 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+import json
+
+import pytest
+import yaml
+
+from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
+from ossie_microsoft._common import OSSIE_VERSION, write_stash
+from ossie_microsoft.cli import main
+
+
+@pytest.fixture
+def model():
+    return {
+        "version": OSSIE_VERSION,
+        "name": "retail",
+        "datasets": [
+            {
+                "name": dataset,
+                "source": f"RETAIL.RAW.{dataset.upper()}",
+                "fields": [{"name": "ID", "datatype": "Integer"}],
+            }
+            for dataset in ("orders", "customers")
+        ],
+    }
+
+
+@pytest.fixture
+def orders_binding():
+    return {
+        "server": "retail-prod.snowflakecomputing.com",
+        "warehouse": "BI_WH",
+        "database": "RETAIL",
+        "schema": "REPORTING",
+        "table": "SALES_ORDERS",
+    }
+
+
+def _export_args(tmp_path, model, bindings_text):
+    input_path = tmp_path / "input.yaml"
+    bindings_path = tmp_path / "bindings.yaml"
+    output_path = tmp_path / "model.bim"
+    input_path.write_text(yaml.safe_dump(model), encoding="utf-8")
+    bindings_path.write_text(bindings_text, encoding="utf-8")
+    return (
+        [
+            "export",
+            "-i", str(input_path),
+            "--source-bindings", str(bindings_path),
+            "-o", str(output_path),
+        ],
+        output_path,
+    )
+
+
+def test_strict_cli_exports_independent_snowflake_partitions(tmp_path, model, orders_binding):
+    bindings = {
+        "orders": {**orders_binding, "kind": "TABLE"},
+        "customers": {
+            **orders_binding,
+            "server": "customer-prod.snowflakecomputing.com",
+            "warehouse": "CUSTOMER_WH",
+            "table": 'Customers "Current" #(',
+            "kind": "View",
+            "role": "BI_READER",
+        },
+    }
+    args, output = _export_args(tmp_path, model, yaml.safe_dump(bindings))
+
+    assert main(["--strict", *args]) == 0
+
+    bim = json.loads(output.read_text(encoding="utf-8"))
+    assert "expressions" not in bim["model"]
+    orders, customers = bim["model"]["tables"]
+    assert orders["partitions"] == [{
+        "name": "orders",
+        "mode": "import",
+        "source": {
+            "type": "m",
+            "expression": [
+                "let",
+                '    Source = Snowflake.Databases("retail-prod.snowflakecomputing.com", '
+                '"BI_WH", [Implementation="2.0"]),',
+                '    Database = Source{[Name="RETAIL", Kind="Database"]}[Data],',
+                '    Schema = Database{[Name="REPORTING", Kind="Schema"]}[Data],',
+                '    Navigation = Schema{[Name="SALES_ORDERS", Kind="Table"]}[Data]',
+                "in",
+                "    Navigation",
+            ],
+        },
+    }]
+    partition = customers["partitions"][0]
+    assert partition["mode"] == "import"
+    expression = partition["source"]["expression"]
+    assert expression[1] == (
+        '    Source = Snowflake.Databases("customer-prod.snowflakecomputing.com", '
+        '"CUSTOMER_WH", [Implementation="2.0", Role="BI_READER"]),'
+    )
+    assert expression[4] == (
+        '    Navigation = Schema{[Name="Customers ""Current"" #(#)(", Kind="View"]}[Data]'
+    )
+
+
+def test_strict_cli_aborts_before_writing_if_a_binding_is_missing(
+    tmp_path, capsys, model, orders_binding
+):
+    args, output = _export_args(tmp_path, model, yaml.safe_dump({"orders": orders_binding}))
+    output.write_text("previous export", encoding="utf-8")
+
+    assert main([*args, "--strict"]) == 1
+
+    assert output.read_text(encoding="utf-8") == "previous export"
+    assert "[dataset 'customers'] missing Snowflake source binding" in capsys.readouterr().err
+
+
+def test_non_strict_cli_warns_and_uses_the_default_for_unbound_datasets(
+    tmp_path, capsys, model, orders_binding
+):
+    args, output = _export_args(tmp_path, model, yaml.safe_dump({"orders": orders_binding}))
+
+    assert main(args) == 0
+
+    orders, customers = json.loads(output.read_text(encoding="utf-8"))["model"]["tables"]
+    assert orders["partitions"][0]["mode"] == "import"
+    assert customers["partitions"][0]["mode"] == "directLake"
+    assert "[dataset 'customers'] missing Snowflake source binding" in capsys.readouterr().err
+
+
+def test_preserved_partitions_satisfy_strict_binding_and_explicit_bindings_override(
+    tmp_path, model, orders_binding
+):
+    for dataset in model["datasets"]:
+        write_stash(dataset, {
+            "partitions": [{
+                "name": "old",
+                "mode": "import",
+                "source": {"type": "m", "expression": "#table({}, {})"},
+            }],
+        })
+    args, output = _export_args(tmp_path, model, yaml.safe_dump({"orders": orders_binding}))
+
+    assert main([*args, "--strict"]) == 0
+
+    orders, customers = json.loads(output.read_text(encoding="utf-8"))["model"]["tables"]
+    assert orders["partitions"][0]["name"] == "orders"
+    assert customers["partitions"][0]["name"] == "old"
+
+
+def test_rebinding_removes_stale_incremental_refresh_policy(model, orders_binding):
+    write_stash(model["datasets"][0], {"refreshPolicy": {"policyType": "basic"}})
+    write_stash(model, {"document": {"compatibilityLevel": 1200}})
+    model["datasets"].pop()
+
+    with pytest.warns(UserWarning, match="removes any incremental refresh policy"):
+        bim = convert_ossie_to_semantic_model(model, source_bindings={"orders": orders_binding})
+
+    assert bim["compatibilityLevel"] == 1400
+    assert "refreshPolicy" not in bim["model"]["tables"][0]
+
+
+@pytest.mark.parametrize("bindings", [{}, None])
+def test_strict_bindings_enforce_compatibility_level_with_preserved_partitions(model, bindings):
+    for dataset in model["datasets"]:
+        write_stash(dataset, {
+            "partitions": [{
+                "name": "preserved",
+                "mode": "import",
+                "source": {"type": "m", "expression": "#table({}, {})"},
+            }],
+        })
+    write_stash(model, {"document": {"compatibilityLevel": 1200}})
+
+    bim = convert_ossie_to_semantic_model(
+        model, source_bindings=bindings, require_source_bindings=True,
+    )
+
+    assert bim["compatibilityLevel"] == 1400
+
+
+@pytest.mark.parametrize(
+    ("bindings_text", "error"),
+    [
+        ("", "mapping keyed by dataset name"),
+        ("[]", "mapping keyed by dataset name"),
+        ("orders: {}\norders: {}", "unique mapping keys"),
+        ("orders: {schema: ONE, schema: TWO}", "unique mapping keys"),
+        ("orders: {<<: {schema: RAW}}", "do not support YAML merge keys"),
+        ("ordres: {}", "unknown dataset 'ordres'"),
+        ("orders: []", "must be a mapping"),
+        ("orders: {password: ignored}", "unknown fields: password"),
+        ("orders: {}", "requires non-empty text for 'database'"),
+    ],
+)
+def test_cli_rejects_invalid_source_bindings(tmp_path, capsys, model, bindings_text, error):
+    args, output = _export_args(tmp_path, model, bindings_text)
+
+    assert main(args) == 1
+
+    assert not output.exists()
+    assert error in capsys.readouterr().err
+
+
+def test_cli_rejects_an_unknown_snowflake_object_kind(tmp_path, capsys, model, orders_binding):
+    bindings = yaml.safe_dump({"orders": {**orders_binding, "kind": "query"}})
+    args, output = _export_args(tmp_path, model, bindings)
+
+    assert main(args) == 1
+
+    assert not output.exists()
+    assert "requires kind 'table' or 'view'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind", ["Table", "View"])
+@pytest.mark.parametrize("name", ["SALES_ORDERS", 'Sales "Current" #('])
+def test_snowflake_binding_roundtrip_preserves_the_source(model, orders_binding, kind, name):
+    binding = {**orders_binding, "kind": kind, "table": name}
+    exported = convert_ossie_to_semantic_model(model, source_bindings={
+        dataset["name"]: binding for dataset in model["datasets"]
+    })
+    returned = yaml.safe_load(convert_semantic_model_to_ossie(exported))
+    quoted = name if name == "SALES_ORDERS" else '"' + name.replace('"', '""') + '"'
+    assert {dataset["source"] for dataset in returned["datasets"]} == {
+        "RETAIL.REPORTING." + quoted
+    }
+
+
+@pytest.mark.parametrize("final", ["Source", "Schema", "Filtered"])
+def test_snowflake_source_requires_a_complete_selected_navigation(model, orders_binding, final):
+    exported = convert_ossie_to_semantic_model(model, source_bindings={
+        dataset["name"]: orders_binding for dataset in model["datasets"]
+    })
+    for table in exported["model"]["tables"]:
+        lines = table["partitions"][0]["source"]["expression"]
+        lines[-1] = "    " + final
+    returned = yaml.safe_load(convert_semantic_model_to_ossie(exported))
+    assert [dataset["source"] for dataset in returned["datasets"]] == ["orders", "customers"]
+
+
+def test_snowflake_navigation_supports_quoted_steps_and_reordered_keys(model, orders_binding):
+    exported = convert_ossie_to_semantic_model(model, source_bindings={
+        dataset["name"]: orders_binding for dataset in model["datasets"]
+    })
+    for table in exported["model"]["tables"]:
+        table["partitions"][0]["source"]["expression"] = [
+            'let Conn = Snowflake.Databases("host", "warehouse"),',
+            ' #"Database Step" = Conn{[Kind="Database", Name="RETAIL"]}[Data],',
+            ' #"Schema Step" = #"Database Step"{[Kind="Schema", Name="REPORTING"]}[Data],',
+            ' #"Selected View" = #"Schema Step"{[Kind="View", Name="SALES_ORDERS"]}[Data]',
+            'in #"Selected View"',
+        ]
+    returned = yaml.safe_load(convert_semantic_model_to_ossie(exported))
+    assert {dataset["source"] for dataset in returned["datasets"]} == {
+        "RETAIL.REPORTING.SALES_ORDERS"
+    }
+
+
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("with_report", [False, True])
+def test_strict_source_bindings_work_with_pbip_export(
+    tmp_path, model, orders_binding, monkeypatch, capsys, missing, with_report,
+):
+    bindings = dict.fromkeys(("orders", "customers"), orders_binding)
+    if missing:
+        bindings.pop("customers")
+    args, output = _export_args(tmp_path, model, yaml.safe_dump(bindings))
+    args = args[:-2] + ["--pbip", str(tmp_path / "project"), "--strict"]
+    report = tmp_path / "report.json"
+    if with_report:
+        args += ["--report", str(report)]
+    written = []
+
+    def serialize(document, path, *, assembly_dir=None):
+        written.append(document)
+        path.mkdir(parents=True)
+        (path / "database.tmdl").write_text("database retail")
+
+    monkeypatch.setattr("ossie_microsoft.pbip_export.serialize_tmdl_folder", serialize)
+    assert main(args) == int(missing)
+    assert capsys.readouterr().out == ""
+    assert not output.exists()
+    if with_report:
+        recorded = json.loads(report.read_text())
+        assert recorded["completed"] is (not missing)
+        if missing:
+            assert "missing Snowflake source binding" in recorded["error"]
+        else:
+            assert {e["name"] for e in recorded["entries"] if e["kind"] == "dataset"} == {
+                "orders", "customers"
+            }
+    if missing:
+        assert not written
+        assert not (tmp_path / "project").exists()
+    else:
+        [bim] = written
+        assert "expressions" not in bim["model"]
+        for table in bim["model"]["tables"]:
+            partition = table["partitions"][0]
+            assert partition["mode"] == "import"
+            assert "Snowflake.Databases" in "\n".join(partition["source"]["expression"])
+        assert (tmp_path / "project/retail.SemanticModel/definition.pbism").is_file()

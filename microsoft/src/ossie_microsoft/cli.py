@@ -19,8 +19,8 @@
 
     ossie-microsoft import -i model.bim   [-o model.yaml]
     ossie-microsoft import -i Report.pbip [-o model.yaml]
-    ossie-microsoft export -i model.yaml  [-o model.bim]
-    ossie-microsoft export -i model.yaml  --pbip out/ [--force]
+    ossie-microsoft export -i model.yaml  [-o model.bim] [--source-bindings bindings.yaml]
+    ossie-microsoft export -i model.yaml --pbip out/ [--force] [--source-bindings bindings.yaml]
 
 With no ``-o``, the result is written to stdout. ``--pbip`` writes the semantic model
 folder of a Power BI project instead, as split TMDL under ``out/<name>.SemanticModel/``,
@@ -39,12 +39,28 @@ import sys
 import warnings
 from pathlib import Path
 
-from ._common import LOGGER
+import yaml
+
+from ._common import LOGGER, ConversionError
 from ._report import collect_entries
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
 from .pbip import import_powerbi_project, reraise_tom_load_failure
 from .pbip_export import export_powerbi_project
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
+
+
+class _SourceBindingsLoader(yaml.SafeLoader):
+    """Prevent one connection definition from silently overwriting another."""
+
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode) and any(
+            key.tag == "tag:yaml.org,2002:merge" for key, _ in node.value
+        ):
+            raise ConversionError("source bindings do not support YAML merge keys (<<)")
+        mapping = super().construct_mapping(node, deep=deep)
+        if len(mapping) != len(node.value):
+            raise ConversionError("source bindings must use unique mapping keys")
+        return mapping
 
 
 class _CountingHandler(logging.Handler):
@@ -156,6 +172,11 @@ def _build_parser():
         default=False,
         help="with --pbip, replace the definition of an existing semantic model folder",
     )
+    exp.add_argument(
+        "--source-bindings",
+        type=Path,
+        help="YAML file mapping Ossie dataset names to Snowflake Import targets",
+    )
     return parser
 
 
@@ -178,17 +199,24 @@ def _run_import(args):
 def _run_export(args):
     with open(args.input, encoding="utf-8-sig") as fh:
         ossie_yaml = fh.read()
+    bindings = None
+    if args.source_bindings is not None:
+        text = args.source_bindings.read_text(encoding="utf-8-sig")
+        bindings = yaml.load(text, Loader=_SourceBindingsLoader)
+        if bindings is None:
+            raise ConversionError("source bindings must be a mapping keyed by dataset name")
+    options = {
+        "source_bindings": bindings,
+        "require_source_bindings": args.strict and args.source_bindings is not None,
+    }
     if args.pbip:
-        # The folder is the output, so there is nothing left for stdout. Its name comes from
-        # the model rather than the command line, so say where it went.
-        folder = export_powerbi_project(ossie_yaml, args.pbip, force=args.force)
+        folder = export_powerbi_project(ossie_yaml, args.pbip, force=args.force, **options)
         if not args.quiet:
             print(f"Wrote {folder}", file=sys.stderr)
         return None
+    bim = convert_ossie_to_semantic_model(ossie_yaml, **options)
     # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
-    return json.dumps(
-        convert_ossie_to_semantic_model(ossie_yaml), indent=2, ensure_ascii=False
-    ) + "\n"
+    return json.dumps(bim, indent=2, ensure_ascii=False) + "\n"
 
 
 def main(argv=None):
