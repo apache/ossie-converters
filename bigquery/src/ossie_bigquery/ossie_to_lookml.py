@@ -84,6 +84,15 @@ _LOOKML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # have no dot inside the braces).
 _VIEW_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\.")
 
+# sqlglot meta key set by _unwrap_filters on a filtered aggregate whose value
+# reads no field (COUNT(*), COUNT(1), SUM(1)).
+_READS_NO_FIELD = "ossie_reads_no_field"
+
+# Expressions that need no parentheses as an operand: a `${...}` reference
+# (a Var after _qualify), a parenthesized expression, IF(...) and CASE ... END.
+# Not every sqlglot Func qualifies: And and Or are Funcs.
+_SELF_DELIMITED = (exp.Var, exp.Paren, exp.If, exp.Case)
+
 # Ossie `datatype` -> LookML dimension `type`.
 _SCALAR_TYPES = {
     "String": "string",
@@ -1123,7 +1132,12 @@ def _plan_metric(metric, plans, scope=None):
 def _aggregated_view(node, home, plans):
     """The view an aggregate rewritten by _qualify reads from: the dataset
     its `${view.field}` references name when they all name one, else `home`
-    (which `${TABLE}.col` and bare `${field}` references point at)."""
+    (which `${TABLE}.col` and bare `${field}` references point at). A filtered
+    aggregate whose value reads no field stays in `home`, like a plain
+    COUNT(*): `COUNT(*) FILTER (WHERE customers.region = 'EU')` counts the
+    metric's rows, not EU customers."""
+    if node.meta.get(_READS_NO_FIELD):
+        return home
     views = set()
     for var in node.find_all(exp.Var):
         if var.name.startswith("${"):
@@ -1150,9 +1164,13 @@ def _measure_name(home, name, context):
 def _unwrap_filters(tree):
     """Rewrites `AGG(x) FILTER (WHERE c)` as `AGG(IF(c, x, NULL))`, the same
     aggregate as a plain one Looker can type and hoist. `COUNT(*) FILTER
-    (WHERE c)` becomes `SUM(IF(c, 1, 0))`, a native sum that symmetric
-    aggregates keep correct across fanning joins (it is NULL rather than 0
-    over no rows at all)."""
+    (WHERE c)` (or `COUNT(1)`) becomes `SUM(IF(c, 1, 0))`, a native sum that
+    symmetric aggregates keep correct across fanning joins (it is NULL rather
+    than 0 over no rows at all).
+
+    An aggregate whose value reads no field (`COUNT(*)`, `COUNT(1)`, `SUM(1)`)
+    is marked _READS_NO_FIELD: it aggregates rows of the metric's view, and
+    the condition only filters them, so _aggregated_view keeps it there."""
     def unwrap(node):
         if not (
             isinstance(node, exp.Filter)
@@ -1167,8 +1185,9 @@ def _unwrap_filters(tree):
             return exp.If(this=condition.copy(), true=value, false=exp.Null())
 
         arg = agg.this
-        if isinstance(agg, exp.Count) and isinstance(arg, exp.Star):
-            return exp.Sum(this=exp.If(
+        reads_field = isinstance(arg, exp.Expression) and arg.find(exp.Column) is not None
+        if isinstance(agg, exp.Count) and isinstance(arg, (exp.Star, exp.Literal)):
+            agg = exp.Sum(this=exp.If(
                 this=condition.copy(), true=exp.Literal.number(1), false=exp.Literal.number(0),
             ))
         elif isinstance(arg, exp.Distinct):
@@ -1179,6 +1198,8 @@ def _unwrap_filters(tree):
             agg.set("this", guarded(arg))
         else:
             return node
+        if not reads_field:
+            agg.meta[_READS_NO_FIELD] = True
         return agg
 
     return tree.transform(unwrap)
@@ -1200,6 +1221,10 @@ def _native_measure(node):
             # COUNT(x) counts non-null values. An inline COUNT would count
             # fanned-out rows; a native sum of 0/1 flags keeps symmetric
             # aggregates, like COUNT(*) FILTER (NULL rather than 0 over no rows).
+            # IS binds tighter than NOT, AND and OR, so an operator expression
+            # is parenthesized: `NOT x IS NOT NULL` would test x, not NOT x.
+            if not isinstance(arg, _SELF_DELIMITED):
+                arg = exp.paren(arg, copy=False)
             return "sum", f"IF({arg.sql(dialect='bigquery')} IS NOT NULL, 1, 0)"
         return None
     lookml_type = _NATIVE_MEASURES.get(type(node))

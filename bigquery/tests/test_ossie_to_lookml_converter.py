@@ -633,6 +633,24 @@ class TestMetrics:
         assert "type: sum" in measure
         assert "sql: IF(${orders.amount} IS NOT NULL, 1, 0) ;;" in measure
 
+    @pytest.mark.parametrize(
+        "arg, sql",
+        [
+            # IS binds tighter than NOT, AND and OR: unparenthesized, NOT x IS
+            # NOT NULL would count the rows where x is NULL.
+            ("NOT orders.flag", "(NOT ${orders.flag})"),
+            ("orders.flag OR orders.done", "(${orders.flag} OR ${orders.done})"),
+            ("orders.amount + 1", "(${orders.amount} + 1)"),
+            ("(orders.amount)", "(${orders.amount})"),
+            ("IF(orders.flag, orders.amount, NULL)", "IF(${orders.flag}, ${orders.amount}, NULL)"),
+        ],
+    )
+    def test_count_of_an_expression_parenthesizes_operators(self, arg, sql):
+        ds = _dataset("orders", [_field("id"), _field("flag"), _field("done"), _field("amount")], primary_key=["id"])
+        measure = _block(_convert(_model([ds], metrics=[_metric("n", f"COUNT({arg})")])), "measure: n")
+        assert "type: sum" in measure
+        assert f"sql: IF({sql} IS NOT NULL, 1, 0) ;;" in measure
+
     def test_count_of_a_literal_is_a_count(self):
         ds = _dataset("orders", [_field("id")], primary_key=["id"], metrics=[_metric("n", "COUNT(1)")])
         measure = _block(_convert(_model([ds])), "measure: n")
@@ -1272,11 +1290,38 @@ class TestFilterClause:
         assert "type: sum" in measure
         assert "sql: IF(${t.status} = 'x', 1, 0) ;;" in measure
 
+    def test_filtered_count_of_a_literal_is_a_native_sum_of_matches(self):
+        measure = self._measure("COUNT(1) FILTER (WHERE t.status = 'x')")
+        assert "type: sum" in measure
+        assert "sql: IF(${t.status} = 'x', 1, 0) ;;" in measure
+
     def test_filtered_aggregate_inside_arithmetic_hoists_the_filter(self):
         out = _convert(_model([self.DS], metrics=[_metric("r", "SUM(t.amount) FILTER (WHERE t.status = 'x') / SUM(t.amount)")]))
         helper = _block(out, "measure: r_sum_1")
         assert "sql: IF(${t.status} = 'x', ${t.amount}, NULL) ;;" in helper
         assert "sql: ${r_sum_1} / ${r_sum_2} ;;" in _block(out, "measure: r")
+
+    @pytest.mark.parametrize("count", ["COUNT(*)", "COUNT(1)"])
+    def test_filtered_row_count_on_another_dataset_stays_in_the_metric_view(self, count):
+        # The condition only filters the metric's rows: this is EU sales per
+        # EU order, so the count must not move to `customers` (which would
+        # count each EU customer once).
+        customers = _dataset("customers", [_field("id"), _field("region")], primary_key=["id"])
+        cond = "FILTER (WHERE customers.region = 'EU')"
+        expr = f"SUM(orders.amount) {cond} / {count} {cond}"
+        out = _convert(_model([ORDERS, customers], metrics=[_metric("eu_avg", expr)]))
+        orders_view = _block(out, "view: orders")
+        assert "sql: ${eu_avg_sum_1} / ${eu_avg_sum_2} ;;" in _block(orders_view, "measure: eu_avg")
+        assert "sql: IF(${customers.region} = 'EU', 1, 0) ;;" in _block(orders_view, "measure: eu_avg_sum_2")
+        assert "measure:" not in _block(out, "view: customers")
+
+    def test_filtered_aggregate_of_another_datasets_field_goes_in_that_view(self):
+        customers = _dataset("customers", [_field("id"), _field("region"), _field("credit")], primary_key=["id"])
+        expr = "SUM(orders.amount) / SUM(customers.credit) FILTER (WHERE customers.region = 'EU')"
+        out = _convert(_model([ORDERS, customers], metrics=[_metric("r", expr)]))
+        assert "sql: ${r_sum_1} / ${customers.r_sum_2} ;;" in _block(out, "measure: r")
+        helper = _block(_block(out, "view: customers"), "measure: r_sum_2")
+        assert "sql: IF(${customers.region} = 'EU', ${customers.credit}, NULL) ;;" in helper
 
 
 class TestUnparseable:
