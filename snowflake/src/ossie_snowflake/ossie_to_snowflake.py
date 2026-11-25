@@ -33,22 +33,18 @@ from sqlglot import exp, parse, parse_one, tokenize
 from sqlglot.errors import ErrorLevel, ParseError, SqlglotError, TokenError
 from sqlglot.tokens import TokenType
 
+from ._common import (
+    OSSIE_VERSION,
+    SNOWFLAKE_DATATYPES,
+    TIME_DATATYPES,
+    require_list,
+    require_mappings,
+)
 
-SUPPORTED_VERSION = "0.3.0.dev0"
 
-_TIME_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
-
-_SNOWFLAKE_DATATYPES = {
-    "String": "VARCHAR",
-    "Integer": "NUMBER(38,0)",
-    "Decimal": "NUMBER",
-    "Float": "FLOAT",
-    "Boolean": "BOOLEAN",
-    "Date": "DATE",
-    "Time": "TIME",
-    "DateTime": "TIMESTAMP_NTZ",
-    "DateTimeTz": "TIMESTAMP_TZ",
-}
+SUPPORTED_VERSION = OSSIE_VERSION
+_TIME_DATATYPES = TIME_DATATYPES
+_SNOWFLAKE_DATATYPES = SNOWFLAKE_DATATYPES
 
 
 class OssieConversionError(Exception):
@@ -151,14 +147,16 @@ def _convert_model(ossie):
         result["description"] = description
 
     # datasets -> tables
-    datasets = ossie.get("datasets")
+    datasets = require_mappings(ossie.get("datasets"), "'datasets'", OssieConversionError)
     if datasets:
         tables = [_convert_dataset(ds) for ds in datasets]
         if tables:
             result["tables"] = tables
 
     # relationships
-    relationships = ossie.get("relationships")
+    relationships = require_mappings(
+        ossie.get("relationships"), "'relationships'", OssieConversionError
+    )
     if relationships:
         converted_rels = [_convert_relationship(rel) for rel in relationships]
         if converted_rels:
@@ -196,6 +194,9 @@ def _convert_dataset(dataset):
     # primary_key: [col,...] -> primary_key: {columns: [col,...]}
     pk = dataset.get("primary_key")
     if pk:
+        pk = require_list(
+            pk, f"Dataset '{name}': 'primary_key'", OssieConversionError
+        )
         result["primary_key"] = {"columns": pk}
 
     # unique_keys: [[...], ...] -> unique_keys: [{columns: [...]}, ...]
@@ -203,6 +204,13 @@ def _convert_dataset(dataset):
     # so a unique key that restates the primary key is not emitted. Keys are
     # column sets: a unique key over the same columns in another order restates it too.
     uks = dataset.get("unique_keys")
+    uks = require_list(
+        uks, f"Dataset '{name}': 'unique_keys'", OssieConversionError
+    )
+    uks = [
+        require_list(uk, f"Dataset '{name}': 'unique_keys' entry", OssieConversionError)
+        for uk in uks
+    ]
     if uks and pk:
         uks = [uk for uk in uks if set(uk) != set(pk)]
     if uks:
@@ -221,7 +229,9 @@ def _convert_dataset(dataset):
         result["synonyms"] = synonyms
 
     # Classify fields into dimensions, time_dimensions, facts
-    fields = dataset.get("fields")
+    fields = require_mappings(
+        dataset.get("fields"), f"Dataset '{name}': 'fields'", OssieConversionError
+    )
     field_exprs = {}
     if fields:
         dimensions = []
@@ -271,7 +281,9 @@ def _convert_metrics(ossie, table_metrics):
     """Model-root Ossie metrics become view-level Snowflake metrics."""
     converted = []
     seen = {}
-    for metric in ossie.get("metrics") or []:
+    for metric in require_mappings(
+        ossie.get("metrics"), "'metrics'", OssieConversionError
+    ):
         item = _convert_named_expr(metric, "metric")
         if item is None:
             continue
@@ -328,7 +340,11 @@ def _convert_dataset_metrics(dataset, field_exprs):
     seen = {}
     dataset_name = dataset.get("name") or "<unnamed>"
     source = dataset.get("source")
-    for metric in dataset.get("metrics") or []:
+    for metric in require_mappings(
+        dataset.get("metrics"),
+        f"Dataset '{dataset_name}': 'metrics'",
+        OssieConversionError,
+    ):
         item = _convert_named_expr(metric, "metric")
         if item is None:
             continue

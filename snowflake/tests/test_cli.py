@@ -73,6 +73,26 @@ class TestConversion:
         cli.main(["--input", str(ossie_file), "--output", str(out)])
         assert out.exists()
 
+    def test_snowflake_to_ossie_subcommand_writes_a_flat_ossie_document(
+        self, tmp_path, capsys
+    ):
+        source = tmp_path / "snowflake.yaml"
+        source.write_text(
+            "name: retail\ntables:\n  - name: orders\n"
+            "    base_table:\n      database: DB\n"
+            "      schema: SCHEMA\n      table: ORDERS\n",
+            encoding="utf-8",
+        )
+        out = tmp_path / "ossie.yaml"
+        cli.main(
+            ["snowflake-to-ossie", "-i", str(source), "-o", str(out)]
+        )
+        document = yaml.safe_load(out.read_text(encoding="utf-8"))
+        assert document["version"] == "0.3.0.dev0"
+        assert document["name"] == "retail"
+        assert document["datasets"][0]["source"] == "DB.SCHEMA.ORDERS"
+        assert f"Converted {source} -> {out}" in capsys.readouterr().out
+
 
 class TestErrors:
     def test_a_conversion_error_exits_non_zero_without_a_traceback(self, tmp_path, capsys):
@@ -90,3 +110,13 @@ class TestErrors:
         with pytest.raises(SystemExit):
             cli.main(["-i", str(bad), "-o", str(out)])
         assert not out.exists()
+
+    def test_malformed_snowflake_yaml_exits_cleanly(self, tmp_path, capsys):
+        bad = tmp_path / "bad-snowflake.yaml"
+        bad.write_text("name: [unterminated", encoding="utf-8")
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main(
+                ["snowflake-to-ossie", "-i", str(bad), "-o", str(tmp_path / "out.yaml")]
+            )
+        assert excinfo.value.code == 1
+        assert "Error: Invalid Snowflake YAML" in capsys.readouterr().err

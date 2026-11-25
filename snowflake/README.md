@@ -17,9 +17,9 @@
   under the License.
 -->
 
-# Apache Ossie to Snowflake Converter
+# Apache Ossie ↔ Snowflake Converter
 
-Converts Ossie YAML semantic models to [Snowflake Cortex Analyst](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst) semantic model YAML. Pure offline conversion — no Snowflake connection required.
+Converts between Ossie YAML semantic models and [Snowflake Cortex Analyst](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst) semantic model YAML. Conversion is offline and does not require a Snowflake connection.
 
 > **Note:** This converter is under active development. It handles common cases but has not been thoroughly tested against all edge cases — use with caution in production.
 
@@ -36,8 +36,14 @@ uv sync
 ## Usage
 
 ```bash
-uv run ossie-snowflake -i input.yaml -o output.yaml
+# Snowflake Cortex Analyst YAML -> Ossie YAML
+uv run ossie-snowflake snowflake-to-ossie -i cortex_analyst.yaml -o semantic_model.yaml
+
+# Ossie YAML -> Snowflake Cortex Analyst YAML
+uv run ossie-snowflake ossie-to-snowflake -i semantic_model.yaml -o cortex_analyst.yaml
 ```
+
+The original bare `-i` / `-o` form remains an alias for `ossie-to-snowflake`.
 
 ## Expression dialects
 
@@ -49,7 +55,7 @@ are skipped with a warning.
 ## Data Type Mapping
 
 The exporter maps the optional logical `datatype` on Ossie fields to Snowflake
-`data_type` as follows:
+`data_type`; the importer uses the same mappings in reverse where possible:
 
 | Ossie | Snowflake |
 |---|---|
@@ -65,6 +71,26 @@ The exporter maps the optional logical `datatype` on Ossie fields to Snowflake
 
 An omitted datatype remains unspecified. `Opaque` has no portable Snowflake
 mapping, so the exporter omits `data_type` and emits a warning.
+
+On import, Snowflake types without an Ossie equivalent become `Opaque`, with the
+concrete Snowflake type retained in a `SNOWFLAKE` `nonportable_extensions` entry.
+The exporter currently warns and drops nonportable extensions, so that concrete
+type is preserved in the Ossie document but is not restored by a round trip.
+
+## Import mapping
+
+Snowflake `tables[].base_table` becomes `datasets[].source`; dimensions,
+time dimensions, and facts become fields; table metrics are lifted to the
+model-level metrics list. Synonyms and custom instructions become `ai_context`,
+and column uniqueness becomes a dataset `unique_keys` entry. Selected
+Snowflake-only properties (`sample_values`, `cortex_search_service`, `is_enum`,
+`filters`, `verified_queries`, and `module_custom_instructions`) are retained in
+`nonportable_extensions`; known unsupported properties such as `tags`, `labels`,
+`access_modifier`, and relationship join types are reported with warnings.
+
+Expressions proven to use standard SQL are labelled `ANSI_SQL`. Expressions
+that cannot be verified as portable retain the `SNOWFLAKE` dialect and produce
+a warning, so other vendor converters do not mistake them for portable SQL.
 
 ## Tests
 
@@ -98,3 +124,8 @@ field or metric. A translation that parses successfully can still change results
 including failed-cast behavior and NULL handling; review the generated SQL before use.
 Existing Snowflake, ANSI_SQL and OSSIE_SQL_2026 alternatives retain their precedence
 and do not produce this translation warning.
+
+On import, table-scoped metrics are lifted to model scope and their column
+references are qualified with the source table name. Metrics with duplicate
+names after lifting produce a warning. Relationship join types and relationship
+types have no core representation and are dropped with a warning.
