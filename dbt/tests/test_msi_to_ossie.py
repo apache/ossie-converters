@@ -1515,6 +1515,72 @@ class TestConverterIssues:
         assert result.issues[0].issue_type == ConverterIssueType.NATURAL_ENTITY_DROPPED
         assert result.issues[0].element_name == "user"
 
+    @pytest.mark.parametrize(
+        ("kwargs", "label"),
+        [({"fill_nulls_with": 0}, "fill_nulls_with"), ({"join_to_timespine": True}, "join_to_timespine")],
+    )
+    def test_timespine_null_filling_is_preserved_with_an_issue(self, kwargs, label) -> None:
+        """Null filling is unrepresentable, but it does not change the aggregation.
+
+        Dropping these metrics loses a convertible SUM over a real column; the
+        CUMULATIVE path already sets the precedent of keeping the base
+        aggregation and reporting the loss.
+        """
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        metric = PydanticMetric(
+            name="revenue",
+            description=None,
+            type=MetricType.SIMPLE,
+            type_params=PydanticMetricTypeParams(
+                measure=PydanticMetricInputMeasure(name="revenue"), **kwargs
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric]))
+
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue"}
+        assert [i.element_name for i in result.issues] == ["revenue"]
+        assert result.issues[0].issue_type is ConverterIssueType.TIMESPINE_SEMANTICS_LOSS
+
+    def test_derived_metric_over_a_null_filled_input_is_preserved(self) -> None:
+        sm = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("revenue", agg=AggregationType.SUM, expr="amount")],
+        )
+        filled = PydanticMetric(
+            name="revenue",
+            description=None,
+            type=MetricType.SIMPLE,
+            type_params=PydanticMetricTypeParams(
+                measure=PydanticMetricInputMeasure(name="revenue"), fill_nulls_with=0
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+        doubled = PydanticMetric(
+            name="double_revenue",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="revenue * 2", metrics=[PydanticMetricInput(name="revenue")]
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[filled, doubled]))
+
+        assert {m.name for m in _ossie_metrics(result.output)} == {"revenue", "double_revenue"}
+        assert {i.issue_type for i in result.issues} == {ConverterIssueType.TIMESPINE_SEMANTICS_LOSS}
+
     def test_cumulative_metric_emits_issue(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",

@@ -103,8 +103,6 @@ def _has_nonportable_semantics(
     params = metric.type_params
     if params.window is not None or params.grain_to_date is not None:
         return True
-    if params.join_to_timespine or params.fill_nulls_with is not None:
-        return True
 
     inputs = list(params.metrics or [])
     if params.numerator is not None:
@@ -117,6 +115,41 @@ def _has_nonportable_semantics(
             return True
         dependency = metric_index.get(input_metric.name)
         if dependency is not None and _has_nonportable_semantics(dependency, metric_index, visiting):
+            return True
+    return False
+
+
+def _has_timespine_semantics(
+    metric: Metric,
+    metric_index: Dict[str, Metric],
+    visiting: Optional[set[str]] = None,
+) -> bool:
+    """Return whether a metric relies on time-spine null filling.
+
+    ``join_to_timespine`` and ``fill_nulls_with`` change which rows appear and
+    what an empty group reads as, and neither is expressible in an Ossie
+    expression. Neither changes the aggregation itself, though, so the base
+    expression stays faithful -- the same situation as a CUMULATIVE metric,
+    which is preserved with an issue rather than dropped.
+    """
+    visiting = visiting or set()
+    if metric.name in visiting:
+        return False
+    visiting.add(metric.name)
+
+    params = metric.type_params
+    if params.join_to_timespine or params.fill_nulls_with is not None:
+        return True
+
+    inputs = list(params.metrics or [])
+    if params.numerator is not None:
+        inputs.append(params.numerator)
+    if params.denominator is not None:
+        inputs.append(params.denominator)
+
+    for input_metric in inputs:
+        dependency = metric_index.get(input_metric.name)
+        if dependency is not None and _has_timespine_semantics(dependency, metric_index, visiting):
             return True
     return False
 
@@ -191,6 +224,15 @@ class MSIToOssieConverter:
                     )
                 )
                 continue
+            elif _has_timespine_semantics(metric, metric_index):
+                # Null filling is lost; the aggregation is not. Preserve the
+                # expression and report the loss, as CUMULATIVE above does.
+                issues.append(
+                    ConverterIssue(
+                        issue_type=ConverterIssueType.TIMESPINE_SEMANTICS_LOSS,
+                        element_name=metric.name,
+                    )
+                )
             try:
                 expr = self._resolve_metric_expression(metric, metric_index, expression_cache)
             except AmbiguousDerivedReferenceError:
