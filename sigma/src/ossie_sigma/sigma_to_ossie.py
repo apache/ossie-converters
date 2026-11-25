@@ -243,13 +243,22 @@ class SigmaToOssieConverter:
                 )
 
             fields: list[OssieField] = []
+            field_sources = {
+                _column_display_name(column): column.get("formula", "")
+                for column in element.get("columns") or []
+                if column.get("id")
+            } if source_kind == "warehouse-table" else None
             for column in element.get("columns") or []:
                 column_id = _require_id(column, "column", dataset_name, issues)
                 if column_id is None:
                     continue
                 formula = column.get("formula", "")
                 field_name = _column_display_name(column)
-                expression = build_expression(formula, dataset_alias=dataset_name)
+                expression = build_expression(
+                    formula, dataset_alias=dataset_name, field_sources=field_sources,
+                    field_name=field_name,
+                    source_alias=(source.get("path") or [None])[-1] if source_kind == "warehouse-table" else None,
+                )
                 if not any(d.dialect == OssieDialect.ANSI_SQL for d in expression.dialects):
                     issues.append(
                         ConverterIssue(

@@ -317,6 +317,15 @@ def is_plain_column_ref(formula: str) -> Optional[ColumnRef]:
     return node if isinstance(node, ColumnRef) else None
 
 
+def column_references(formula: str) -> list[ColumnRef]:
+    """Read bracket references without recursively parsing a whole calculation.
+
+    Tokenizing keeps bracket-like text inside string literals out of the result.
+    """
+    return [reference for token in _tokenize(formula) if token.kind == "column"
+            if (reference := is_plain_column_ref(token.text)) is not None]
+
+
 # --------------------------------------------------------------------------
 # SQL rendering (Sigma AST -> sqlglot AST -> SQL text)
 # --------------------------------------------------------------------------
@@ -651,7 +660,9 @@ _REVERSE_EXTRACT_PARTS = {v: k.capitalize() for k, v in _EXTRACT_PARTS.items()}
 
 def sql_to_sigma_formula(
     sql: str, dataset_alias: Optional[str] = None, *, dialect: str | type[Dialect] | None = Dialect,
-    source_alias: Optional[str] = None
+    source_alias: Optional[str] = None,
+    modeled_fields: Optional[set[str]] = None,
+    modeled_dependencies: Optional[set[str]] = None,
 ) -> Optional[str]:
     """Best-effort translation from the given SQL dialect into Sigma formula syntax.
 
@@ -665,6 +676,22 @@ def sql_to_sigma_formula(
     except Exception:  # noqa: BLE001 - sqlglot raises several internal error types
         return None
 
+    if source_alias and modeled_fields:
+        # Explicit dataset.field dependencies name modeled siblings. Bare field
+        # expressions remain source-column reads per Ossie's namespace contract.
+        for column in list(tree.find_all(exp.Column)):
+            if (len(column.parts) != 2 or column.table != dataset_alias
+                    or column.table.casefold() == "source"):
+                continue
+            identifier = column.this
+            matches = [name for name in modeled_fields if (
+                name == identifier.name if identifier.args.get("quoted")
+                else name.casefold() == identifier.name.casefold()
+            )]
+            if len(matches) == 1:
+                column.meta["sigma_modeled_field"] = matches[0]
+                if modeled_dependencies is not None:
+                    modeled_dependencies.add(matches[0])
     try:
         return _render_sql_node(tree, dataset_alias, source_alias)
     except _NotTranslatable:
@@ -675,6 +702,8 @@ def _render_sql_node(
     node: exp.Expression, dataset_alias: Optional[str], source_alias: Optional[str] = None,
 ) -> str:
     if isinstance(node, exp.Column):
+        if modeled_name := node.meta.get("sigma_modeled_field"):
+            return f"[{modeled_name}]"
         parts = [p.name for p in node.parts]
         if len(parts) == 2:
             table, column = parts

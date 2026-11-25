@@ -39,7 +39,9 @@ from ossie_sigma.expression_utils import (
     preferred_sql_expression,
     sigma_dialect_text,
 )
-from ossie_sigma.sigma_formula import is_plain_column_ref, sql_to_sigma_formula
+from ossie_sigma.sigma_formula import (
+    FormulaParseError, column_references, is_plain_column_ref, sql_to_sigma_formula,
+)
 from ossie_sigma.spec_keys import MODEL_LEVEL_SPEC_KEYS
 
 # Objects a `SIGMA` nonportable_extensions vendor entry can be attached to.
@@ -102,7 +104,8 @@ def _emit_name(name: Optional[str], ext: dict[str, Any]) -> bool:
 
 def _resolve_formula(
     expression, dataset_alias: str, element_name: str, issues: list[ConverterIssue],
-    *, source_alias: Optional[str] = None,
+    *, source_alias: Optional[str] = None, modeled_fields: Optional[set[str]] = None,
+    modeled_dependencies: Optional[set[str]] = None,
 ) -> Optional[str]:
     """Prefer native Sigma formula text, then translate the preferred SQL dialect.
 
@@ -120,7 +123,8 @@ def _resolve_formula(
     if sql is not None:
         translated = sql_to_sigma_formula(
             sql.expression, dataset_alias=dataset_alias, dialect=SQL_DIALECT_READERS[sql.dialect],
-            source_alias=source_alias,
+            source_alias=source_alias, modeled_fields=modeled_fields,
+            modeled_dependencies=modeled_dependencies,
         )
         if translated is not None:
             return translated
@@ -270,17 +274,64 @@ class OssieToSigmaConverter:
 
         field_ids: dict[str, str] = field_ids_by_dataset.setdefault(dataset.name, {})
         columns = []
+        dependencies_by_field: dict[str, set[str]] = {}
+        columns_by_field: dict[str, dict[str, Any]] = {}
         for field in dataset.fields or []:
+            dependencies: set[str] = set()
             field_ext = _sigma_ext(field) or {}
             col_id = field_ext.get("id") or _stable_id("column", dataset.name, field.name)
             column = self._build_column(
                 dataset, field, col_id, field_ext, issues,
                 source_alias=source["path"][-1] if source.get("kind") == "warehouse-table" else None,
+                modeled_fields={sibling.name for sibling in dataset.fields or [] if sibling.name != field.name},
+                modeled_dependencies=dependencies,
             )
             if column is None:
                 continue
+            if (sigma_dialect_text(field.expression) is not None
+                    or "formula" in (field_ext.get("native") or {})):
+                # Native formulas can close a dependency cycle through a newly
+                # translated field. Inspect only bracket tokens, never reparse
+                # an entire potentially deep calculation.
+                try:
+                    native_refs = column_references(column["formula"])
+                except FormulaParseError:
+                    native_refs = []  # Unsupported native syntax remains opaque.
+                plain = is_plain_column_ref(column["formula"]) if re.fullmatch(
+                    r"\[[^\[\]]+\]", column["formula"].strip(),
+                ) else None
+                for ref in native_refs:
+                    if source.get("kind") == "warehouse-table" and ref.table == source["path"][-1]:
+                        continue
+                    if ref.table not in (None, dataset.name):
+                        continue
+                    for sibling in dataset.fields or []:
+                        if sibling.name.casefold() == ref.column.casefold():
+                            if sibling.name == field.name and plain is not None:
+                                continue  # Legacy bare passthrough columns.
+                            dependencies.add(sibling.name)
             field_ids[field.name] = col_id
             columns.append(column)
+            columns_by_field[field.name] = column
+            dependencies_by_field[field.name] = dependencies
+
+        # Resolve explicit modeled dependencies independent of declaration order.
+        # Anything left cannot reach emitted inputs (missing members or a cycle).
+        remaining, resolved = set(columns_by_field), set()
+        while remaining:
+            ready = {name for name in remaining if dependencies_by_field[name] <= resolved}
+            if not ready:
+                break
+            resolved.update(ready)
+            remaining.difference_update(ready)
+        for name in sorted(remaining):
+            columns.remove(columns_by_field[name])
+            field_ids.pop(name, None)
+            issues.append(ConverterIssue(
+                ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE,
+                f"{dataset.name}.{name}",
+                "Modeled sibling dependencies are missing or cyclic; the column was omitted.",
+            ))
 
         element: dict[str, Any] = {
             "id": element_id,
@@ -305,6 +356,27 @@ class OssieToSigmaConverter:
 
         metrics = [self._build_metric(m, dataset.name, issues) for m in metrics_by_element.get(element_id, [])]
         metrics = [m for m in metrics if m is not None]
+        if remaining:
+            valid_metrics = []
+            for metric in metrics:
+                try:
+                    references = column_references(metric["formula"])
+                    missing = any(
+                        ref.table in (None, dataset.name)
+                        and ref.column.casefold() in {name.casefold() for name in remaining}
+                        for ref in references
+                    )
+                except FormulaParseError:
+                    missing = True  # Cannot verify it after removing modeled columns.
+                if missing:
+                    issues.append(ConverterIssue(
+                        ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE,
+                        f"{dataset.name}.{metric.get('name', metric['id'])}",
+                        "Metric depends on an omitted column or cannot be checked after pruning; omitted.",
+                    ))
+                else:
+                    valid_metrics.append(metric)
+            metrics = valid_metrics
         if metrics:
             element["metrics"] = metrics
 
@@ -319,10 +391,13 @@ class OssieToSigmaConverter:
         issues: list[ConverterIssue],
         *,
         source_alias: Optional[str] = None,
+        modeled_fields: Optional[set[str]] = None,
+        modeled_dependencies: Optional[set[str]] = None,
     ) -> Optional[dict[str, Any]]:
         formula = _resolve_formula(
             field.expression, dataset.name, f"{dataset.name}.{field.name}", issues,
-            source_alias=source_alias,
+            source_alias=source_alias, modeled_fields=modeled_fields,
+            modeled_dependencies=modeled_dependencies,
         )
         if formula is None:
             return None
@@ -357,6 +432,9 @@ class OssieToSigmaConverter:
                 )
             )
         column.update(field_ext.get("native") or {})
+        if "formula" in (field_ext.get("native") or {}) and modeled_dependencies is not None:
+            # The effective native formula supersedes the SQL-derived dependencies.
+            modeled_dependencies.clear()
         return column
 
     def _build_metric(

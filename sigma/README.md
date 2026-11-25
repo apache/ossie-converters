@@ -152,6 +152,19 @@ Metrics continue to reference modeled columns, so `COUNT(calendar_alias.calendar
 becomes `Count([calendar_date])`. Native Sigma formulas and column overrides keep
 precedence. Other source kinds retain their existing formula context.
 
+Explicit `dataset.sibling` dependencies in legacy field expressions remain
+modeled Sigma references (`[sibling]`) when that sibling can be emitted. Missing
+or cyclic dependencies are reported and omitted. Bare names in Ossie field
+expressions continue to read source columns, including when a modeled sibling
+has the same name.
+
+For warehouse-table imports, portable field SQL expands references to renamed or
+calculated Sigma siblings into their source-column expressions. This keeps a
+portable-only round trip meaningful after the native formulas and extensions are
+removed. Native Sigma text stays unchanged; cyclic or excessively expanding
+calculations retain only that native form and produce a translation issue. Metrics
+that read omitted modeled columns are also reported and omitted.
+
 ### Relationship resolution
 
 Sigma relationships (`element.relationships[]`) join two *elements*, not two *Ossie datasets*
