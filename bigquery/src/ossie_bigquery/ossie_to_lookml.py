@@ -782,13 +782,58 @@ def _parse(expr, dialect, context):
                     f"{context}: not valid {dialect} ({first_line}); read as BIGQUERY"
                 )
                 tree.meta["ossie_read"] = "BIGQUERY"
-                return tree
+                return _normalize_ossie_date_functions(tree, expr, "BIGQUERY")
         warnings.warn(
             f"{context}: could not parse expression ({first_line}); emitted "
             f"verbatim, verify column references in LookML"
         )
         return None
-    return tree
+    return _normalize_ossie_date_functions(tree, expr, dialect)
+
+
+def _normalize_ossie_date_functions(tree, original, dialect):
+    """Freeze DATEADD/DATEDIFF units and rebuild DATEDIFF's end argument.
+
+    sqlglot's default reader treats the unit as a column, so ``_metric_home``
+    and the dataset-scope check would see ``day`` / ``hour`` as columns, and
+    DATEDIFF's end date sits in ``unit`` as a Var. Datatype dispatch stays in
+    ``_qualify``.
+    """
+    root = tree
+    for node in reversed(list(tree.walk())):
+        replacement = _normalize_ossie_date_function(node, original, dialect)
+        if replacement is node:
+            continue
+        if node is root:
+            root = replacement
+        else:
+            node.replace(replacement)
+    return root
+
+
+def _normalize_ossie_date_function(node, original, dialect):
+    if isinstance(node, exp.Anonymous):
+        name = str(node.this).upper()
+        args = list(node.expressions)
+        if name in _DATE_ADD_NAMES | _DATE_DIFF_NAMES and len(args) == 3:
+            return _anonymous_with_frozen_unit(node, args)
+        return node
+    if isinstance(node, exp.DateDiff) and dialect != "BIGQUERY":
+        # Default reader: DATEDIFF(day, start, end) has this=day (a column)
+        # and unit=END_DATE. Skip on BIGQUERY so DATE_DIFF(day, first_day,
+        # ISOWEEK) stays a column named day.
+        part = _interval_part_name(node.this)
+        if part and not _date_part_name(node.args.get("unit")):
+            end = _end_from_unit(node.args.get("unit"), original)
+            return exp.Anonymous(
+                this="DATEDIFF",
+                expressions=[
+                    _freeze_date_part(node.this),
+                    node.expression,
+                    end,
+                ],
+            )
+    return node
 
 
 def _rewrite_ossie_date_functions(tree, original, dialect, context, home, types):
@@ -796,7 +841,8 @@ def _rewrite_ossie_date_functions(tree, original, dialect, context, home, types)
 
     sqlglot ``transform`` does not walk children of a replaced node, so a
     DATEADD whose amount is a DATEDIFF would keep the inner call in the
-    default-reader shape. Runs from ``_qualify`` so field datatypes are known.
+    default-reader shape. Unit/end structure is normalized in ``_parse``;
+    this runs from ``_qualify`` once field datatypes are known.
     """
     root = tree
     for node in reversed(list(tree.walk())):
@@ -922,16 +968,28 @@ def _interval_part_name(node):
 
 
 def _temporal_types(plans):
-    """Map (dataset, field) upper-case names to Ossie Date/DateTime/DateTimeTz."""
+    """Map (dataset, field-or-column) names to Ossie Date/DateTime/DateTimeTz.
+
+    Metrics name fields. Field expressions name source columns, so a
+    pass-through that renames a column is keyed by planned.column as well.
+    """
     types = {}
     for plan in (plans or {}).values():
+        by_name = {}
+        ds = plan.name.upper()
         for field in getattr(plan, "raw_fields", None) or []:
             if not isinstance(field, dict):
                 continue
             name = field.get("name")
             datatype = field.get("datatype")
             if isinstance(name, str) and datatype in _TEMPORAL_TYPES:
-                types[(plan.name.upper(), name.upper())] = datatype
+                types[(ds, name.upper())] = datatype
+                by_name[name.upper()] = datatype
+        for field in getattr(plan, "fields", None) or []:
+            ossie_type = by_name.get(field.name.upper())
+            column = field.column
+            if ossie_type and column:
+                types.setdefault((ds, str(column).upper()), ossie_type)
     return types
 
 

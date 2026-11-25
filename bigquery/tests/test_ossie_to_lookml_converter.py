@@ -1243,6 +1243,24 @@ class TestSourceDialects:
         assert "type: sum" in measure
         assert "sql: DATE_DIFF(${t.end_date}, ${t.start_date}, DAY) ;;" in measure
 
+    def test_datediff_metric_home_ignores_the_unit_token(self):
+        other = _dataset("other", [_field("id")], primary_key=["id"])
+        t = _dataset(
+            "t",
+            [_field("id"), _field("start_date"), _field("end_date")],
+            primary_key=["id"],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(
+                _model(
+                    [other, t],
+                    metrics=[_metric("span", "SUM(DATEDIFF(day, start_date, end_date))")],
+                )
+            )
+        assert "measure: span" in _block(out, "view: t")
+        assert "measure: span" not in _block(out, "view: other")
+
     def test_unknown_function_warns_and_is_emitted(self):
         model = _model([_dataset("t", [_field("x", expr="FOO(order_date)")])])
         with pytest.warns(UserWarning, match="Field 't.x'.*FOO was not translated to BigQuery"):
@@ -1268,6 +1286,13 @@ class TestSourceDialects:
             _field("d", expr="DATEADD(hour, 1, created_at)"),
         )
         assert "sql: TIMESTAMP_ADD(${TABLE}.created_at, INTERVAL 1 HOUR) ;;" in view
+
+    def test_pass_through_column_drives_dateadd_family(self):
+        view = self._view(
+            _field("created_at", expr="created_ts", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(hour, 1, created_ts)"),
+        )
+        assert "sql: TIMESTAMP_ADD(${TABLE}.created_ts, INTERVAL 1 HOUR) ;;" in view
 
     def test_datetime_dateadd_hour_is_datetime_add(self):
         view = self._view(
@@ -1460,6 +1485,30 @@ class TestDatasetMetrics:
         measure = _block(_block(out, "view: orders"), "measure: total")
         assert "type: sum" in measure
         assert "sql: ${TABLE}.amount ;;" in measure
+
+    def test_dataset_metric_dateadd_does_not_treat_unit_as_a_field(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("created_at", datatype="DateTimeTz")],
+            primary_key=["id"],
+            metrics=[_metric("later", "SUM(DATEADD(hour, 1, created_at))")],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(_model([ds]))
+        measure = _block(_block(out, "view: t"), "measure: later")
+        assert "TIMESTAMP_ADD" in measure
+        assert "${TABLE}.hour" not in measure
+
+    def test_dataset_metric_datediff_checks_the_end_argument(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("start_date")],
+            primary_key=["id"],
+            metrics=[_metric("span", "SUM(DATEDIFF(day, start_date, end_date))")],
+        )
+        with pytest.warns(UserWarning, match="Metric 't.span'.*'end_date' matches no field"):
+            convert_ossie_to_lookml(_model([ds]))
 
     def test_dataset_metric_is_placed_in_its_dataset_even_when_another_exposes_the_field(self):
         a = _dataset("a", [_field("id"), _field("amount")], primary_key=["id"])
