@@ -19,9 +19,17 @@
 
 # Apache Ossie converter for Databricks metric views
 
-Databricks metric views map directly to Ossie datasets, preserving the distinction between
-reusable metric definitions and multi-dataset semantic models. Ossie models can be deployed onto
-Unity Catalog metric views, so that their measures can be queried through Databricks SQL.
+The Ossie model is the semantic model. Databricks Unity Catalog metric views provide composable,
+governed building blocks for its individual datasets, with measures queried through Databricks SQL.
+
+Deployment creates dataset-level metric view definitions and rewrites the dataset sources to read
+those views. Model-scoped metrics and relationships stay in Ossie, preserving the semantics of the
+complete model. Keeping them in Ossie is intentional; conversion warnings identify semantics that
+could not be represented in the generated assets.
+
+A future implementation of Ossie's Layer 3 query interface could use this model for multi-fact
+analysis across datasets backed by metric views, tables, and views. Layer 3 query execution is
+outside this converter's scope.
 
 Databricks reads Ossie models as they are, so the conversion verbs are light: converting to
 Databricks changes nothing, and converting from Databricks only fills in portable expressions.
