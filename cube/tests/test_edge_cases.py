@@ -542,7 +542,6 @@ def test_a_sql_defined_cube_is_not_reported_as_unqualified():
      '"Main.DB"."Sales.Reporting"."Order""Items"', False),
     ("`Order.Items`", "`Main.DB`", "`Sales``Ops`",
      "`Main.DB`.`Sales``Ops`.`Order.Items`", False),
-    ('"{CUBE}.orders"', "main", "sales", '"{CUBE}.orders"', True),
     ("orders AS o", "main", "sales", "orders AS o", True),
     ("server.db.schema.orders", "main", "sales", "server.db.schema.orders", False),
 ])

@@ -65,7 +65,6 @@ from ._common import (
     native_expression_signature,
     resolve_identifier,
     referenced_datasets,
-    join_source,
     load_yaml,
     primary_key_count_expression,
     primary_key_operand,
@@ -94,6 +93,7 @@ from .expressions import (
     UnattributableSQL,
 )
 from .import_dialect import validate_imported_expressions, validate_source_dialect
+from .source_sql import SourceResolver
 
 # Cube keys the converter maps natively at the cube level; everything else is
 # stashed verbatim in the dataset's `cube_extras` and restored on export.
@@ -173,7 +173,8 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
 
 def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
                  view, issues, source_dialect=None, *, restore_dataset_metrics=True,
-                 default_catalog=None, default_schema=None, scope_native_metrics=True):
+                 default_catalog=None, default_schema=None, scope_native_metrics=True,
+                 source_cubes=None):
     """The Ossie model (a dict, without `version`) for the collected Cube model.
 
     Split from `convert_cube_to_ossie` so view projection can run the same import over
@@ -232,10 +233,13 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
         source_dialect, restore_dataset_metrics=restore_dataset_metrics,
         scope_native_metrics=scope_native_metrics)
 
+    sources = SourceResolver(cubes if source_cubes is None else source_cubes,
+                             default_catalog=default_catalog, default_schema=default_schema,
+                             source_dialect=source_dialect)
     model["datasets"] = [
         _convert_cube(cname, cube, plain_by_cube[cname], extra_joins.get(cname),
                       extra_measures.get(cname), issues, source_dialect,
-                      default_catalog=default_catalog, default_schema=default_schema)
+                      sources=sources)
         for cname, cube in cubes.items()
     ]
     for ds in model["datasets"]:
@@ -765,14 +769,15 @@ def _column_datatype(cubes, cname, column):
 
 
 def _convert_cube(cname, cube, plain, extra_joins, extra_measures, issues,
-                  source_dialect=None, *, default_catalog=None, default_schema=None):
+                  source_dialect=None, *, sources):
     """Build one Ossie dataset from a Cube cube."""
     scope = f"cube '{cname}'"
     ds = {"name": cname}
     stash = {}
 
-    ds["source"] = join_source(cube, cname, default_catalog=default_catalog,
-                               default_schema=default_schema, source_dialect=source_dialect)
+    ds["source"] = sources.resolve(cname)
+    if cname in sources.templates:
+        stash["source_template"] = sources.templates[cname]
     parts = (source_part_count(ds["source"], source_dialect)
              if cube.get("sql_table") is not None else None)
     if parts is not None and parts < 3:
