@@ -21,9 +21,10 @@
 
 Converters between Ossie and Spec ontology formats.
 
-The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)) and the
+The Palantir → Ossie converter ([`palantir/`](../palantir/README.md)), the
 Ossie → RelationalAI converter ([`relationalai/`](../relationalai/README.md))
-are built on this package but live in their own directories.
+and the LinkML ↔ Ossie converters ([`linkml/`](../linkml/README.md)) are built
+on this package but live in their own directories.
 
 | Converter               | Direction |
 |-------------------------|-----------|
@@ -68,6 +69,20 @@ The package is importable as `ossie_ontology` after installation:
 from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
 from ossie_ontology.converter.spec_to_ossie.converter import SpecToOssieConverter
 ```
+
+The Spec side is the shared `ossie.models.OssieOntologyModel` from the
+`apache-ossie` package (resolved from the `ossie/` submodule). Read and write
+it with its own `OssieOntologyModel.from_ossie_yaml(text)` and
+`document.to_ossie_yaml()` (or the `_json` variants).
+
+`ossie_ontology.spec`, which held the converter's own copy of these models, is
+deprecated. It still re-exports the shared models under their old names
+(`OssieSpec` is `OssieOntologyModel`, `ConceptComponent` is
+`OssieConceptComponent`, and so on), and each name raises a
+`DeprecationWarning` naming its `ossie.models` replacement. Only the names carry
+over: `load_yaml` / `dump_yaml` are now `from_ossie_yaml` / `to_ossie_yaml`, and
+the models follow `ossie.models` (frozen, absent lists are `None`). The module
+will be removed once nothing in progress imports it.
 
 `OssieParser` parses and validates `derived_by` and `requires` expressions into
 an AST by default. To keep formulas as raw text instead, pass the plain

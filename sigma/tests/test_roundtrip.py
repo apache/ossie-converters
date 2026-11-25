@@ -16,11 +16,11 @@
 # under the License.
 
 """End-to-end round trips through the same serialization boundary the CLI uses
-(OssieDocument -> YAML text -> re-parsed OssieDocument), for every fixture."""
+(OssieSemanticModel -> YAML text -> re-parsed OssieSemanticModel), for every fixture."""
 
 import pytest
 import yaml
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 
 from ossie_sigma.ossie_to_sigma import OssieToSigmaConverter
 from ossie_sigma.sigma_to_ossie import SigmaToOssieConverter
@@ -44,7 +44,7 @@ def test_sigma_osi_sigma_roundtrip_through_yaml_serialization(fixture_name):
     assert "semantic_model" not in serialized
     assert "dialects" not in serialized
     assert "vendors" not in serialized
-    reparsed_document = OssieDocument.model_validate(serialized)
+    reparsed_document = OssieSemanticModel.model_validate(serialized)
     reconstructed_spec = OssieToSigmaConverter().convert(reparsed_document).output
 
     assert normalize(reconstructed_spec) == normalize(spec)
@@ -53,7 +53,7 @@ def test_sigma_osi_sigma_roundtrip_through_yaml_serialization(fixture_name):
 @pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_osi_sigma_osi_roundtrip_preserves_portable_fields(fixture_name):
     """Sigma -> Ossie -> Sigma -> Ossie: the second Ossie document's portable
-    (non-custom_extensions) content must match the first, even though the Sigma
+    (non-nonportable_extensions) content must match the first, even though the Sigma
     spec in between round-trips through JSON."""
     spec = load_fixture(fixture_name)
 

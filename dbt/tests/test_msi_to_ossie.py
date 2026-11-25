@@ -25,7 +25,7 @@ from syrupy.assertion import SnapshotAssertion
 
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType
 from ossie_dbt.filter_utils import _render_filter_template
-from ossie import OssieDataType, OssieDialect, OssieDocument
+from ossie import OssieDataType, OssieDialect, OssieSemanticModel
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
 from metricflow_semantic_interfaces.implementations.element_config import PydanticSemanticLayerElementConfig
@@ -67,19 +67,19 @@ from tests.helpers import (
 # ---------------------------------------------------------------------------
 
 
-def _fields(result: OssieDocument, dataset_idx: int = 0) -> list:
+def _fields(result: OssieSemanticModel, dataset_idx: int = 0) -> list:
     """Return fields for a dataset, asserting they exist."""
     fields = result.datasets[dataset_idx].fields
     assert fields is not None
     return fields
 
 
-def _field_expr(result: OssieDocument, field_idx: int = 0) -> str:
+def _field_expr(result: OssieSemanticModel, field_idx: int = 0) -> str:
     """Return the ANSI SQL expression for a field by index."""
     return _fields(result)[field_idx].expression.dialects[0].expression
 
 
-def _ossie_metrics(result: OssieDocument) -> list:
+def _ossie_metrics(result: OssieSemanticModel) -> list:
     """Return the document's Ossie metrics, asserting they exist."""
     metrics = result.metrics
     assert metrics is not None
@@ -294,11 +294,11 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
         assert len(extensions) == 1
         assert extensions[0].vendor_name == "DBT"
-        assert json.loads(extensions[0].data) == {"meta": {"looker_group_label": "Order Info"}}
+        assert extensions[0].data == {"meta": {"looker_group_label": "Order Info"}}
 
     def test_entity_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -313,9 +313,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"hidden": True}}
+        assert extensions[0].data == {"meta": {"hidden": True}}
 
     def test_measure_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -329,9 +329,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"value_format": "$#,##0.00"}}
+        assert extensions[0].data == {"meta": {"value_format": "$#,##0.00"}}
 
     def test_metric_config_meta_becomes_custom_extension(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -345,9 +345,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[revenue])).output
 
-        extensions = _ossie_metrics(result)[0].custom_extensions
+        extensions = _ossie_metrics(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"group_label": "Revenue"}}
+        assert extensions[0].data == {"meta": {"group_label": "Revenue"}}
 
     def test_semantic_model_config_meta_becomes_dataset_custom_extension(self) -> None:
         sm = PydanticSemanticModel(
@@ -361,9 +361,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = result.datasets[0].custom_extensions
+        extensions = result.datasets[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"view_label": "Orders"}}
+        assert extensions[0].data == {"meta": {"view_label": "Orders"}}
 
     def test_no_config_meta_omits_custom_extensions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -372,7 +372,7 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        assert _fields(result)[0].custom_extensions is None
+        assert _fields(result)[0].nonportable_extensions is None
 
     def test_empty_config_meta_omits_custom_extensions(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -381,7 +381,7 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        assert _fields(result)[0].custom_extensions is None
+        assert _fields(result)[0].nonportable_extensions is None
 
     def test_non_json_meta_value_is_stringified(self) -> None:
         sm = semantic_model_with_guaranteed_meta(
@@ -395,9 +395,9 @@ class TestConfigMetaCustomExtensions:
         )
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm])).output
 
-        extensions = _fields(result)[0].custom_extensions
+        extensions = _fields(result)[0].nonportable_extensions
         assert extensions is not None
-        assert json.loads(extensions[0].data) == {"meta": {"launched": "2024-01-01"}}
+        assert extensions[0].data == {"meta": {"launched": "2024-01-01"}}
 
 
 class TestEntityKeyExtraction:
@@ -2043,7 +2043,7 @@ class TestDatatypeMetadata:
     @staticmethod
     def _convert(
         config: Optional[dict], legacy_measure: bool = False, native_datatype: Optional[DataType] = None
-    ) -> OssieDocument:
+    ) -> OssieSemanticModel:
         sm = semantic_model_with_guaranteed_meta(
             name="orders",
             dimensions=[_dimension("status")],

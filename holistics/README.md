@@ -77,15 +77,15 @@ Options:
 
 - `-o`, required in both directions. A file for `to-ossie`, a directory for `to-aml`.
 - `--sql-dialect DIALECT`, required in both directions. The choices are `ANSI_SQL`, `OSSIE_SQL_2026`,
-  `BIGQUERY`, `CLICKHOUSE`, `DATABRICKS`, `POSTGRES`, `REDSHIFT` and `SNOWFLAKE`, the Ossie dialects sqlglot
-  can parse.
+  `BIGQUERY`, `CLICKHOUSE`, `DATABRICKS`, `POSTGRES`, `REDSHIFT`, `SNOWFLAKE` and `TRINO`, the Ossie
+  dialects sqlglot can parse.
   - On `to-ossie` it tags every `@sql` body. AML does not record which warehouse a body was written for.
   - On `to-aml` it names the warehouse the Holistics connection reads. An expression already in that dialect
     is written as it stands. One in `ANSI_SQL` or `OSSIE_SQL_2026` is rendered into it, with a WARNING
     showing both texts. An expression offering neither gets an ERROR, and its body is written unchanged.
 - `--data-source-name NAME`, on `to-aml`. The Holistics connection the models read from. AML requires it on a
   dataset and Ossie has no field for it. Required when the Ossie document carries no `HOLISTICS` entry in
-  `custom_extensions`.
+  `nonportable_extensions`.
 - `--issues FILE`. Where to write the issue log, a YAML sequence. Defaults to stderr. Never mixed into the
   document output. A message runs to a paragraph, so YAML folds it rather than putting it on one line.
 - `--force`. Overwrite existing output files. Without it, an existing target stops the run before anything is
@@ -113,7 +113,7 @@ aml/
 | [Ossie to AML](docs/reverse.md) | The generated file layout, and what AML cannot express |
 | [Ossie SQL to AQL](docs/aql.md) | How a cross-dataset metric's Ossie SQL becomes AQL, and what is not translated |
 | [Measures](docs/measures.md) | How `aggregation_type` and a definition body compose into one Ossie metric expression |
-| [The HOLISTICS payload](docs/vendor-payload.md) | Everything carried in `custom_extensions` |
+| [The HOLISTICS payload](docs/vendor-payload.md) | Everything carried in `nonportable_extensions` |
 | [Limitations](docs/limitations.md) | The coverage matrix, and what is known not to work |
 
 ## Fixtures

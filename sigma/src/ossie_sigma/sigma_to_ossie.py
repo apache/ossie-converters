@@ -15,23 +15,22 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Sigma data model spec (JSON) -> Apache Ossie (OssieDocument)."""
+"""Sigma data model spec (JSON) -> Apache Ossie (OssieSemanticModel)."""
 
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
 
 from ossie import (
-    OssieCustomExtension,
+    OssieNonportableExtension,
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 
@@ -46,7 +45,7 @@ _MODEL_LEVEL_SPEC_KEYS = MODEL_LEVEL_SPEC_KEYS
 # element/column/metric/relationship is Sigma-native presentation or governance state
 # (`filters`, `folders`, `order`, `sort`, `summary`, `groupings`, `columnSecurities`,
 # `visibleAsSource`, `hidden`, `isHighlighted`, `timeline`, `relationshipType`, ...)
-# and is preserved verbatim under a `native` key in `custom_extensions`. Capturing the
+# and is preserved verbatim under a `native` key in `nonportable_extensions`. Capturing the
 # residue by subtraction rather than by an allow-list means a future `schemaVersion`
 # that adds a field still round-trips losslessly instead of silently dropping it.
 _MAPPED_MODEL_KEYS = frozenset({"name", "description", "pages"})
@@ -78,7 +77,7 @@ def _native_residue(obj: dict[str, Any], mapped: frozenset) -> dict[str, Any]:
 def _derived_source_marker(source: dict[str, Any], element_id: str) -> str:
     """A readable ``OssieDataset.source`` stand-in for a non-warehouse-table source.
 
-    The authoritative copy is the full native `source` block in `custom_extensions`;
+    The authoritative copy is the full native `source` block in `nonportable_extensions`;
     this only has to be human-readable and stable.
     """
     kind = source.get("kind") or "unknown"
@@ -91,8 +90,8 @@ def _derived_source_marker(source: dict[str, Any], element_id: str) -> str:
     return f"{kind}:{element_id}"
 
 
-def _vendor_ext(data: dict[str, Any]) -> OssieCustomExtension:
-    return OssieCustomExtension(vendor_name=OssieVendor.SIGMA.value, data=json.dumps(data, sort_keys=True))
+def _vendor_ext(data: dict[str, Any]) -> OssieNonportableExtension:
+    return OssieNonportableExtension(vendor_name=OssieVendor.SIGMA.value, data=data)
 
 
 def _require_id(obj: dict[str, Any], kind: str, dataset_name: str, issues: list[ConverterIssue]) -> Optional[str]:
@@ -190,9 +189,9 @@ class _ElementIndex:
 
 
 class SigmaToOssieConverter:
-    """Converts a Sigma data model spec (as parsed JSON) into an :class:`OssieDocument`."""
+    """Converts a Sigma data model spec (as parsed JSON) into an :class:`OssieSemanticModel`."""
 
-    def convert(self, spec: dict[str, Any]) -> ConverterResult[OssieDocument]:
+    def convert(self, spec: dict[str, Any]) -> ConverterResult[OssieSemanticModel]:
         issues: list[ConverterIssue] = []
 
         elements: list[tuple[dict[str, Any], dict[str, Any]]] = []  # (page, element)
@@ -239,7 +238,7 @@ class SigmaToOssieConverter:
                         f"Element source kind {source_kind!r} is not a warehouse table; Ossie's "
                         "OssieDataset.source is a physical location string and Ossie has no "
                         "first-class 'derived dataset' concept, so the full native source block "
-                        "is carried in custom_extensions and `source` holds a marker only.",
+                        "is carried in nonportable_extensions and `source` holds a marker only.",
                     )
                 )
 
@@ -294,7 +293,7 @@ class SigmaToOssieConverter:
                         expression=expression,
                         description=column.get("description"),
                         datatype=datatype,
-                        custom_extensions=[_vendor_ext(ext_data)],
+                        nonportable_extensions=[_vendor_ext(ext_data)],
                     )
                 )
 
@@ -316,7 +315,7 @@ class SigmaToOssieConverter:
                         "Sigma element filters (`number-range`, `date-range`, `top-n`, `list`, "
                         "`text-match`, `hierarchy`) restrict which rows an element shows; Ossie "
                         "models the shape of a dataset, not a saved row restriction on it, so "
-                        "they are preserved verbatim in custom_extensions only.",
+                        "they are preserved verbatim in nonportable_extensions only.",
                     )
                 )
 
@@ -332,7 +331,7 @@ class SigmaToOssieConverter:
                             dataset_name,
                             f"Could not resolve uniqueKeys entry {key!r} to a modeled Ossie field "
                             "name; dropped from Ossie's primary_key, though the raw Sigma "
-                            "uniqueKeys list is preserved in custom_extensions for exact "
+                            "uniqueKeys list is preserved in nonportable_extensions for exact "
                             "round-trip reconstruction.",
                         )
                     )
@@ -353,7 +352,7 @@ class SigmaToOssieConverter:
                     primary_key=unique_keys or None,
                     description=element.get("description"),
                     fields=fields or None,
-                    custom_extensions=[_vendor_ext(dataset_ext)],
+                    nonportable_extensions=[_vendor_ext(dataset_ext)],
                 )
             )
 
@@ -393,7 +392,7 @@ class SigmaToOssieConverter:
                         name=metric_name,
                         expression=OssieExpression(dialects=dialect_exprs),
                         description=metric.get("description"),
-                        custom_extensions=[_vendor_ext(metric_ext)],
+                        nonportable_extensions=[_vendor_ext(metric_ext)],
                     )
                 )
 
@@ -428,7 +427,7 @@ class SigmaToOssieConverter:
                                 rel.get("name") or rel_id,
                                 "Could not resolve one or both join key columns to a modeled Ossie "
                                 "field name; the raw Sigma column reference is preserved in "
-                                "custom_extensions for exact round-trip reconstruction.",
+                                "nonportable_extensions for exact round-trip reconstruction.",
                             )
                         )
 
@@ -463,7 +462,7 @@ class SigmaToOssieConverter:
                         to=target_name,
                         from_columns=from_columns,
                         to_columns=to_columns,
-                        custom_extensions=[_vendor_ext(rel_ext)],
+                        nonportable_extensions=[_vendor_ext(rel_ext)],
                     )
                 )
 
@@ -483,17 +482,17 @@ class SigmaToOssieConverter:
                         element.get("name") or element.get("id") or "<unnamed>",
                         f"Sigma element kind {element.get('kind')!r} is not a table and has no "
                         "equivalent in the Ossie semantic model; preserved verbatim in "
-                        "custom_extensions only. See LIMITATIONS.md.",
+                        "nonportable_extensions only. See LIMITATIONS.md.",
                     )
                 )
 
-        document = OssieDocument(
+        document = OssieSemanticModel(
             name=spec.get("name", "sigma_data_model"),
             description=spec.get("description"),
             datasets=datasets,
             relationships=relationships or None,
             metrics=metrics or None,
-            custom_extensions=[_vendor_ext(model_ext)] if model_ext else None,
+            nonportable_extensions=[_vendor_ext(model_ext)] if model_ext else None,
         )
 
         return ConverterResult(output=document, issues=issues)

@@ -71,6 +71,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 from . import datatypes, formula, identifiers, stash
 from .constants import (
+    EXTENSIONS_FIELD,
+    EXTENSIONS_FIELD_RENAMED,
     FIELD_STASH_FORMULA_ID,
     FIELD_STASH_FORMULA_NAME,
     MODEL_STASH_OBJ_ID,
@@ -3009,8 +3011,10 @@ def _report_foreign_extensions(ossie_document: dict, log: IssueLog) -> None:
             continue
         seen.add(id(node))
         if isinstance(node, dict):
-            extensions = node.get("custom_extensions")
-            if isinstance(extensions, list):
+            for field in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED):
+                extensions = node.get(field)
+                if not isinstance(extensions, list):
+                    continue
                 for entry in extensions:
                     if not isinstance(entry, dict):
                         continue
@@ -3019,10 +3023,11 @@ def _report_foreign_extensions(ossie_document: dict, log: IssueLog) -> None:
                         vendors[vendor] = None
             for key, value in node.items():
                 # Skipping the extensions list is an optimisation, not a
-                # rule: an entry is `{vendor_name, data}` with `data` a JSON
-                # *string*, so descending into it can never find a nested
-                # custom_extensions.
-                if key != "custom_extensions" and isinstance(value, (dict, list)):
+                # rule: `data` is vendor state, so an extensions field nested
+                # under it is not one this document declares.
+                if key not in (EXTENSIONS_FIELD, EXTENSIONS_FIELD_RENAMED) and isinstance(
+                    value, (dict, list)
+                ):
                     stack.append(value)
         elif isinstance(node, list):
             stack.extend(item for item in node if isinstance(item, (dict, list)))

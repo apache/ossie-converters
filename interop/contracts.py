@@ -38,6 +38,7 @@ _DIALECTS = {
     "CLICKHOUSE": "clickhouse",
     "POSTGRES": "postgres",
     "REDSHIFT": "redshift",
+    "TRINO": "trino",
 }
 
 

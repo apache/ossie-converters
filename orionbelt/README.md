@@ -146,7 +146,7 @@ is required.
 
 ## Vendor extensions
 
-Ossie `custom_extensions` carry vendor-tagged payloads. This converter:
+Ossie `nonportable_extensions` carry vendor-tagged payloads. This converter:
 
 - emits OrionBelt/OBML-proprietary data under the **`ORIONBELT`** vendor on OBML
   to Ossie (OBML-only filters, settings, owner, refresh, type info, etc.);
@@ -167,7 +167,7 @@ a third-party vendor.
 ## Limitations / unsupported constructs
 
 Some OBML constructs have no native Ossie equivalent and are carried in vendor
-`custom_extensions` (`obml_*` payloads) so they round-trip without loss back to
+`nonportable_extensions` (`obml_*` payloads) so they round-trip without loss back to
 OBML, but are not interpreted by other Ossie consumers:
 
 - **Many-to-many joins** - represented in OBML join cardinality; flagged on
@@ -183,8 +183,8 @@ OBML, but are not interpreted by other Ossie consumers:
   (`obml_unconverted_metrics`) and re-emitted on OBML to Ossie, so the Ossie to OBML
   to Ossie roundtrip stays lossless. A `LOSSY:` warning is raised for each such
   metric because it is **not queryable through OBML**. SQL expressions in the
-  `ANSI_SQL`, `OSSIE_SQL_2026`, `SNOWFLAKE`, `DATABRICKS`, `CLICKHOUSE`, `POSTGRES`, and `REDSHIFT` dialects are all
-  read on import.
+  `ANSI_SQL`, `OSSIE_SQL_2026`, `SNOWFLAKE`, `DATABRICKS`, `CLICKHOUSE`, `POSTGRES`, `REDSHIFT`, and `TRINO`
+  dialects are all read on import.
 
 Ossie v0.1.x inputs are accepted on read via a legacy normalization shim; output
 targets Ossie **v0.2.0.dev0**.

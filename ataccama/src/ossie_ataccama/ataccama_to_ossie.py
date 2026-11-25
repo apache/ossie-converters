@@ -21,9 +21,9 @@ Scope: the caller supplies one or more catalog items (as :class:`CatalogItemBund
 each becomes an Ossie dataset, and the collection becomes a single Ossie semantic model.
 
 Mapping summary (see README for the full table and known limitations):
-  CatalogItem            -> dataset (name, source, description, ai_context, custom_extensions)
+  CatalogItem            -> dataset (name, source, description, ai_context, nonportable_extensions)
   CatalogAttribute       -> field (name, ANSI_SQL identifier expression, dimension.is_time,
-                                    description, ai_context, custom_extensions)
+                                    description, ai_context, nonportable_extensions)
   Term / termAssignments -> ai_context.synonyms + ATACCAMA custom_extension
 """
 
@@ -38,16 +38,16 @@ from typing import Any, NamedTuple
 from ossie import (
     OssieAIContext,
     OssieAIContextObject,
-    OssieCustomExtension,
     OssieDataset,
     OssieDataType,
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
+    OssieNonportableExtension,
     OssieRelationship,
+    OssieSemanticModel,
     OssieVendor,
 )
 
@@ -58,7 +58,7 @@ TIME_DATA_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIME"}
 
 # Ataccama semantic data types, mapped to Ossie's portable vocabulary. Ataccama has no
 # exact-decimal type, so FLOAT becomes the approximate Ossie Float even for columns the
-# source stores as NUMERIC; columnType is preserved in custom_extensions for consumers
+# source stores as NUMERIC; columnType is preserved in nonportable_extensions for consumers
 # that need the exact/approximate distinction back.
 OSSIE_DATA_TYPES = {
     "STRING": OssieDataType.STRING,
@@ -185,7 +185,7 @@ def build_source(item: CatalogItem) -> str:
     The Catalog API does not expose ``database.schema.table``; it only gives a
     folder-name hierarchy (``locations``, leaf-first) plus the item name. We build a
     dotted namespace from the reversed locations followed by the item name. The
-    authoritative connection/source URNs are preserved in custom_extensions.
+    authoritative connection/source URNs are preserved in nonportable_extensions.
     """
     parts = [loc.name for loc in reversed(item.locations) if loc.name]
     parts.append(item.name)
@@ -213,9 +213,9 @@ def _terms_ai_context(term_urns: list[str], terms: dict[str, Term]) -> OssieAICo
     )
 
 
-def _ataccama_extension(data: dict[str, Any]) -> OssieCustomExtension:
-    """Wrap Ataccama-specific metadata as an Ossie custom_extension entry."""
-    return OssieCustomExtension(vendor_name=OssieVendor.ATACCAMA.value, data=json.dumps(data, sort_keys=True))
+def _ataccama_extension(data: dict[str, Any]) -> OssieNonportableExtension:
+    """Wrap Ataccama-specific metadata as an Ossie nonportable_extensions entry."""
+    return OssieNonportableExtension(vendor_name=OssieVendor.ATACCAMA.value, data=data)
 
 
 # --- data quality ---
@@ -387,7 +387,7 @@ def attribute_to_field(
         datatype=_ossie_datatype(attr.data_type, name),
         description=flatten_richtext(attr.description) or flatten_richtext(attr.comment),
         ai_context=_terms_ai_context([ta.term_urn for ta in attr.term_assignments], terms),
-        custom_extensions=[_ataccama_extension(ext_data)],
+        nonportable_extensions=[_ataccama_extension(ext_data)],
     )
 
 
@@ -494,7 +494,7 @@ def bundle_to_dataset(
         description=flatten_richtext(item.description),
         ai_context=ai_context,
         fields=fields or None,
-        custom_extensions=[_ataccama_extension(ext_data)],
+        nonportable_extensions=[_ataccama_extension(ext_data)],
     )
 
 
@@ -623,7 +623,7 @@ def _flattened_nodes(
     return [node.model_copy(update={"ai_context": _flat_ai_context(node.ai_context)}) for node in nodes]
 
 
-def _flatten_ai_contexts(document: OssieDocument) -> OssieDocument:
+def _flatten_ai_contexts(document: OssieSemanticModel) -> OssieSemanticModel:
     """Return a copy of ``document`` with every ai_context rendered as a plain string."""
     datasets = [
         dataset.model_copy(
@@ -654,7 +654,7 @@ def ataccama_to_ossie(
     dq_ai_warnings: bool = False,
     flat_ai_context: bool = False,
     ossie_version: str | None = None,
-) -> OssieDocument:
+) -> OssieSemanticModel:
     """Convert catalog-item bundles into an Ossie document.
 
     When ``dq_ai_warnings`` is set, datasets that Ataccama flags as below quality (below
@@ -690,12 +690,12 @@ def ataccama_to_ossie(
     if tenant:
         model_ext["tenant"] = tenant
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name=model_name,
         description=model_description,
         datasets=datasets,
         relationships=_build_relationships(converted) or None,
-        custom_extensions=[_ataccama_extension(model_ext)],
+        nonportable_extensions=[_ataccama_extension(model_ext)],
     )
     if ossie_version and ossie_version != document.version:
         warnings.warn(

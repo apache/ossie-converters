@@ -29,10 +29,10 @@ import pytest
 import yaml
 from _util import by_name, expr_of, model_of, parse, parse_files, stash_of
 
+from _util import import_model_scoped as convert_cube_to_ossie
 from ossie_cube import (
     ConversionError,
     IssueType,
-    convert_cube_to_ossie,
     convert_ossie_to_cube,
 )
 from ossie_cube._common import dump_yaml
@@ -455,9 +455,9 @@ def test_field_and_metric_foreign_extensions_survive_the_round_trip():
         "      - dialect: ANSI_SQL\n"
         "        expression: status\n"
         "    datatype: String\n"
-        "    custom_extensions:\n"
+        "    nonportable_extensions:\n"
         "    - vendor_name: SNOWFLAKE\n"
-        "      data: '{\"collation\": \"en\"}'\n"
+        "      data: {\"collation\": \"en\"}\n"
         "  - name: amount\n"
         "    expression:\n"
         "      dialects:\n"
@@ -470,24 +470,24 @@ def test_field_and_metric_foreign_extensions_survive_the_round_trip():
         "    dialects:\n"
         "    - dialect: ANSI_SQL\n"
         "      expression: SUM(orders.amount)\n"
-        "  custom_extensions:\n"
+        "  nonportable_extensions:\n"
         "  - vendor_name: DBT\n"
-        "    data: '{\"model\": \"fct_orders\"}'\n"
+        "    data: {\"model\": \"fct_orders\"}\n"
     )
     files, _ = convert_ossie_to_cube(ossie)
     ossie2, _ = convert_cube_to_ossie(files)
     model = model_of(ossie2)
 
     field = by_name(by_name(model["datasets"])["orders"]["fields"])["status"]
-    exts = {e["vendor_name"]: e["data"] for e in field["custom_extensions"]}
-    assert exts["SNOWFLAKE"] == '{"collation": "en"}'
+    exts = {e["vendor_name"]: e["data"] for e in field["nonportable_extensions"]}
+    assert exts["SNOWFLAKE"] == {"collation": "en"}
     # A plain scalar field needs no CUBE stash at all any more, so the foreign
     # extension is the only entry -- which is the point of the reduction.
     assert list(exts) == ["SNOWFLAKE"]
 
     metric = by_name(model["metrics"])["total"]
-    mexts = {e["vendor_name"]: e["data"] for e in metric["custom_extensions"]}
-    assert mexts["DBT"] == '{"model": "fct_orders"}'
+    mexts = {e["vendor_name"]: e["data"] for e in metric["nonportable_extensions"]}
+    assert mexts["DBT"] == {"model": "fct_orders"}
     # A single-dataset aggregate needs no CUBE stash at all -- the owning cube is
     # derivable from the expression -- so the foreign extension is the only entry.
     assert list(mexts) == ["DBT"]
@@ -1207,20 +1207,20 @@ _GEO_MODEL = (
     "      - dialect: ANSI_SQL\n"
     "        expression: lat\n"
     "    datatype: Float\n"
-    "    custom_extensions:\n"
+    "    nonportable_extensions:\n"
     "    - vendor_name: CUBE\n"
-    "      data: '{\"_v\": 1, \"geo\": {\"of\": \"home\", \"part\": \"latitude\","
-    " \"sql\": \"{CUBE}.lat\"}}'\n"
+    "      data: {\"_v\": 1, \"geo\": {\"of\": \"home\", \"part\": \"latitude\","
+    " \"sql\": \"{CUBE}.lat\"}}\n"
     "  - name: home_longitude\n"
     "    expression:\n"
     "      dialects:\n"
     "      - dialect: ANSI_SQL\n"
     "        expression: lon\n"
     "    datatype: Float\n"
-    "    custom_extensions:\n"
+    "    nonportable_extensions:\n"
     "    - vendor_name: CUBE\n"
-    "      data: '{\"_v\": 1, \"geo\": {\"of\": \"home\", \"part\": \"longitude\","
-    " \"sql\": \"{CUBE}.lon\"}}'\n"
+    "      data: {\"_v\": 1, \"geo\": {\"of\": \"home\", \"part\": \"longitude\","
+    " \"sql\": \"{CUBE}.lon\"}}\n"
     "metrics:\n"
     "- name: avg_lat\n"
     "  expression:\n"
@@ -1325,9 +1325,9 @@ def _ossie_fields(*specs):
                 f"          expression: {expr}\n"
                 "      datatype: String\n")
         if part:
-            out += ("      custom_extensions:\n"
+            out += ("      nonportable_extensions:\n"
                     "      - vendor_name: CUBE\n"
-                    f"        data: '{_geo_stash(part)}'\n")
+                    f"        data: {_geo_stash(part)}\n")
     return out
 
 
@@ -1350,9 +1350,9 @@ def _ossie_pk(primary_key, *specs):
                 f"        expression: {expr}\n"
                 "    datatype: String\n")
         if part:
-            out += ("    custom_extensions:\n"
+            out += ("    nonportable_extensions:\n"
                     "    - vendor_name: CUBE\n"
-                    f"      data: '{_geo_stash(part, of=fname.rsplit('_', 1)[0])}'\n")
+                    f"      data: {_geo_stash(part, of=fname.rsplit('_', 1)[0])}\n")
     return out
 
 
@@ -1589,8 +1589,8 @@ def test_foreign_extensions_with_no_mapped_view_are_refused_not_dropped():
     extensions are read back. So this is refused rather than silently losing them."""
     ossie, _ = convert_cube_to_ossie(_TWO_VIEWS)
     doc = parse(ossie)
-    doc.setdefault("custom_extensions", []).append(
-        {"vendor_name": "SNOWFLAKE", "data": '{"warehouse": "ANALYTICS_WH"}'})
+    doc.setdefault("nonportable_extensions", []).append(
+        {"vendor_name": "SNOWFLAKE", "data": {"warehouse": "ANALYTICS_WH"}})
     with pytest.raises(ConversionError, match="SNOWFLAKE"):
         convert_ossie_to_cube(dump_yaml(doc))
 
@@ -1600,14 +1600,14 @@ def test_foreign_extensions_survive_once_a_view_is_mapped():
     the extensions have a home again."""
     ossie, _ = convert_cube_to_ossie(_TWO_VIEWS, view="b")
     doc = parse(ossie)
-    doc.setdefault("custom_extensions", []).append(
-        {"vendor_name": "SNOWFLAKE", "data": '{"warehouse": "ANALYTICS_WH"}'})
+    doc.setdefault("nonportable_extensions", []).append(
+        {"vendor_name": "SNOWFLAKE", "data": {"warehouse": "ANALYTICS_WH"}})
     files, _ = convert_ossie_to_cube(dump_yaml(doc))
     parked = parse(files["model/views/b.yml"])["views"][0]["meta"]["ossie"]
-    assert parked["custom_extensions"][0]["vendor_name"] == "SNOWFLAKE"
+    assert parked["nonportable_extensions"][0]["vendor_name"] == "SNOWFLAKE"
     # And they come back as Ossie extensions, not just stashed text.
     ossie2, _ = convert_cube_to_ossie(files, view="b")
-    vendors = {e["vendor_name"] for e in model_of(ossie2)["custom_extensions"]}
+    vendors = {e["vendor_name"] for e in model_of(ossie2)["nonportable_extensions"]}
     assert "SNOWFLAKE" in vendors
 
 
@@ -2116,8 +2116,8 @@ def test_a_brace_in_free_text_is_escaped():
 
 
 def test_a_parked_foreign_extension_is_escaped_and_restored():
-    """The headline multi-vendor case: a foreign vendor's `data` is JSON, so it always
-    contains braces. Parking it unescaped made every such model fail to compile."""
+    """The headline multi-vendor case: a foreign vendor's `data` can carry braces in its
+    strings. Parking it unescaped made every such model fail to compile."""
     ossie = (
         "version: 0.3.0.dev0\n"
         "name: shop\n"
@@ -2131,17 +2131,17 @@ def test_a_parked_foreign_extension_is_escaped_and_restored():
         "      - dialect: ANSI_SQL\n"
         "        expression: id\n"
         "    datatype: Integer\n"
-        "  custom_extensions:\n"
+        "  nonportable_extensions:\n"
         "  - vendor_name: DBT\n"
-        "    data: '{\"project\": \"x\"}'\n"
+        "    data: {project: \"{x}\"}\n"
     )
     files, _ = convert_ossie_to_cube(ossie)
     parked = parse(files["model/cubes/orders.yml"])["cubes"][0][
-        "meta"]["ossie"]["custom_extensions"]
-    assert parked[0]["data"] == '\\{"project": "x"\\}'
+        "meta"]["ossie"]["nonportable_extensions"]
+    assert parked[0]["data"] == {"project": "\\{x\\}"}
     ossie2, _ = convert_cube_to_ossie(files)
-    restored = by_name(model_of(ossie2)["datasets"])["orders"]["custom_extensions"]
-    assert {"vendor_name": "DBT", "data": '{"project": "x"}'} in restored
+    restored = by_name(model_of(ossie2)["datasets"])["orders"]["nonportable_extensions"]
+    assert {"vendor_name": "DBT", "data": {"project": "{x}"}} in restored
 
 
 def test_a_case_label_is_unescaped_on_the_way_into_an_expression():
@@ -2331,9 +2331,9 @@ def test_a_stashed_extra_file_may_not_overwrite_generated_output():
         "  - name: id\n    expression:\n      dialects:\n"
         "      - dialect: ANSI_SQL\n        expression: id\n"
         "    datatype: Integer\n"
-        "custom_extensions:\n"
+        "nonportable_extensions:\n"
         "- vendor_name: CUBE\n"
-        f"  data: '{json.dumps(stash)}'\n"
+        f"  data: {json.dumps(stash)}\n"
     )
     with pytest.raises(ConversionError, match="would overwrite the generated"):
         convert_ossie_to_cube(ossie)
@@ -2553,9 +2553,9 @@ def test_a_generated_part_name_avoids_a_stashed_member():
         "  - name: amount\n    expression:\n      dialects:\n"
         "      - dialect: ANSI_SQL\n        expression: amount\n"
         "    datatype: Decimal\n"
-        "  custom_extensions:\n"
+        "  nonportable_extensions:\n"
         "  - vendor_name: CUBE\n"
-        f"    data: '{json.dumps(stash)}'\n"
+        f"    data: {json.dumps(stash)}\n"
         "- name: users\n"
         "  source: a.b.users\n"
         "  primary_key:\n  - id\n"
@@ -2985,9 +2985,9 @@ def test_a_falsy_stashed_measure_sql_is_restored_verbatim():
         "    dialects:\n"
         "    - dialect: ANSI_SQL\n"
         "      expression: '0'\n"
-        "  custom_extensions:\n"
+        "  nonportable_extensions:\n"
         "  - vendor_name: CUBE\n"
-        "    data: '{\"_v\": 1, \"sql\": 0, \"type\": \"number\"}'\n"
+        "    data: {\"_v\": 1, \"sql\": 0, \"type\": \"number\"}\n"
     )
     files, _ = convert_ossie_to_cube(ossie)
     measure = parse(files["model/cubes/orders.yml"])["cubes"][0]["measures"][0]
@@ -3098,18 +3098,16 @@ def test_a_join_declared_on_a_renamed_cube_does_not_keep_its_cardinality():
 
 
 @pytest.mark.parametrize("data,expected", [
-    ("not json at all", "malformed JSON"),
-    ("[1, 2, 3]", "'data' of list"),
-    ('"a string"', "'data' of str"),
-    ("null", "'data' of NoneType"),
+    ([1, 2, 3], "'data' of list"),
+    ("a string", "'data' of str"),
 ])
 def test_a_malformed_cube_stash_is_an_error_not_a_traceback(data, expected):
     """The stash is input like any other -- hand-authored, or written by a tool that
-    picked the same vendor id. Parsing it bare turned malformed JSON into a
-    JSONDecodeError and a valid non-object into an AttributeError, neither of which
-    the CLI catches, so both reached the user as a traceback."""
+    picked the same vendor id. Reading it bare turned a non-object into an
+    AttributeError, which the CLI does not catch, so it reached the user as a
+    traceback."""
     from ossie_cube._common import read_stash
-    obj = {"custom_extensions": [{"vendor_name": "CUBE", "data": data}]}
+    obj = {"nonportable_extensions": [{"vendor_name": "CUBE", "data": data}]}
     with pytest.raises(ConversionError, match=expected):
         read_stash(obj)
 

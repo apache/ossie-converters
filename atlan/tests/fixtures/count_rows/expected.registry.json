@@ -1,0 +1,31 @@
+{
+ "store_sales_count": {
+  "name": "store_sales_count",
+  "description": "Count all rows in the store sales fact table",
+  "definition": {
+   "spec_version": "1.0-draft.4",
+   "version": 1,
+   "dialect": "snowflake",
+   "formula": "COUNT(m.*)",
+   "aggregation": {
+    "type": "custom"
+   },
+   "output": {
+    "alias": "store_sales_count",
+    "datatype": "integer"
+   },
+   "source": {
+    "entity": "TPCDS.PUBLIC.STORE_SALES",
+    "alias": "m",
+    "table": "TPCDS.PUBLIC.STORE_SALES",
+    "sql": null,
+    "parameters": []
+   },
+   "joins": [],
+   "dimensions": [],
+   "examples": [],
+   "grain": "table-level",
+   "population": "All rows in TPCDS.PUBLIC.STORE_SALES"
+  }
+ }
+}

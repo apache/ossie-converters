@@ -19,9 +19,12 @@
 
     ossie-microsoft import -i model.bim   [-o model.yaml]
     ossie-microsoft import -i Report.pbip [-o model.yaml]
-    ossie-microsoft export -i model.yaml  [-o model.bim]
+    ossie-microsoft export -i model.yaml  [-o model.bim] [--source-bindings bindings.yaml]
+    ossie-microsoft export -i model.yaml --pbip out/ [--force] [--source-bindings bindings.yaml]
 
-With no ``-o``, the result is written to stdout.
+With no ``-o``, the result is written to stdout. ``--pbip`` writes the semantic model
+folder of a Power BI project instead, as split TMDL under ``out/<name>.SemanticModel/``,
+or into ``out/`` itself when it is a ``.SemanticModel`` folder.
 
 Every construct the converter cannot carry across faithfully is reported on stderr, so
 the log is a complete account of what a conversion changed, skipped or could not
@@ -39,9 +42,25 @@ from pathlib import Path
 import yaml
 
 from ._common import LOGGER, ConversionError
+from ._report import collect_entries, source_document
 from .ossie_to_semantic_model import convert_ossie_to_semantic_model
 from .pbip import import_powerbi_project, reraise_tom_load_failure
+from .pbip_export import export_powerbi_project
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
+
+
+class _SourceBindingsLoader(yaml.SafeLoader):
+    """Prevent one connection definition from silently overwriting another."""
+
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode) and any(
+            key.tag == "tag:yaml.org,2002:merge" for key, _ in node.value
+        ):
+            raise ConversionError("source bindings do not support YAML merge keys (<<)")
+        mapping = super().construct_mapping(node, deep=deep)
+        if len(mapping) != len(node.value):
+            raise ConversionError("source bindings must use unique mapping keys")
+        return mapping
 
 
 class _CountingHandler(logging.Handler):
@@ -52,15 +71,21 @@ class _CountingHandler(logging.Handler):
     package logger is set to DEBUG; they are not issues, so the handler's level skips
     them and a clean conversion still passes --strict."""
 
-    def __init__(self, quiet):
+    def __init__(self, quiet, report):
         super().__init__(level=logging.WARNING)
         self.count = 0
         self.quiet = quiet
+        self.report = report
 
     def emit(self, record):
+        if record.levelno < logging.WARNING:
+            return
         self.count += 1
+        message = record.getMessage()
+        if self.report is not None:
+            self.report["warnings"].append(message)
         if not self.quiet:
-            print(record.getMessage(), file=sys.stderr)
+            print(message, file=sys.stderr)
 
 
 def _add_common_flags(parser, suppress):
@@ -83,6 +108,10 @@ def _add_common_flags(parser, suppress):
         action="store_true",
         default=default,
         help="suppress the report of constructs that could not be converted",
+    )
+    parser.add_argument(
+        "--report", type=Path, default=argparse.SUPPRESS if suppress else None,
+        help="write a JSON conversion report to this file",
     )
 
 
@@ -117,7 +146,8 @@ def _build_parser():
         "--translate-dax",
         action="store_true",
         default=False,
-        help="translate DAX measures to OSSIE_SQL_2026 where the translation is exact "
+        help="translate DAX measures and calculated columns to OSSIE_SQL_2026 where the "
+        "translation is exact "
         "(see _dax_to_sql), keeping the original DAX as a fallback (default: off, keep DAX only)",
     )
 
@@ -127,7 +157,26 @@ def _build_parser():
         help="Apache Ossie semantic model -> Power BI semantic model (TMSL model.bim)",
     )
     exp.add_argument("-i", "--input", required=True, help="Apache Ossie YAML file")
-    exp.add_argument("-o", "--output", help="output model.bim (default: stdout)")
+    target = exp.add_mutually_exclusive_group()
+    target.add_argument("-o", "--output", help="output model.bim (default: stdout)")
+    target.add_argument(
+        "--pbip",
+        metavar="DIR",
+        help="write a Power BI project semantic model folder, DIR/<name>.SemanticModel/, "
+        "as split TMDL, or write into DIR itself when it is a .SemanticModel folder "
+        "(requires the optional TOM setup)",
+    )
+    exp.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="with --pbip, replace the definition of an existing semantic model folder",
+    )
+    exp.add_argument(
+        "--source-bindings",
+        type=Path,
+        help="YAML file mapping Ossie dataset names to Snowflake Import targets",
+    )
     return parser
 
 
@@ -150,37 +199,85 @@ def _run_import(args):
 def _run_export(args):
     with open(args.input, encoding="utf-8-sig") as fh:
         ossie_yaml = fh.read()
+    bindings = None
+    if args.source_bindings is not None:
+        text = args.source_bindings.read_text(encoding="utf-8-sig")
+        bindings = yaml.load(text, Loader=_SourceBindingsLoader)
+        if bindings is None:
+            raise ConversionError("source bindings must be a mapping keyed by dataset name")
+    options = {
+        "source_bindings": bindings,
+        "require_source_bindings": args.strict and args.source_bindings is not None,
+    }
+    original = yaml.safe_load(ossie_yaml) if args.report is not None else None
+    with source_document(original):
+        if args.pbip:
+            folder = export_powerbi_project(ossie_yaml, args.pbip, force=args.force, **options)
+            if not args.quiet:
+                print(f"Wrote {folder}", file=sys.stderr)
+            return None
+        bim = convert_ossie_to_semantic_model(ossie_yaml, **options)
     # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
-    return json.dumps(
-        convert_ossie_to_semantic_model(ossie_yaml), indent=2, ensure_ascii=False
-    ) + "\n"
+    return json.dumps(bim, indent=2, ensure_ascii=False) + "\n"
 
 
 def main(argv=None):
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "export" and args.pbip == "":
+        # Path("") is the current directory, which is rarely what an empty value meant.
+        parser.error("--pbip requires a folder")
+    if args.command == "export" and args.force and not args.pbip:
+        parser.error("--force requires --pbip")
     handler = _run_import if args.command == "import" else _run_export
+    report = None
+    if args.report is not None:
+        try:
+            _check_report_path(args)
+        except (OSError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        report = {"version": 1, "direction": args.command, "entries": [], "warnings": []}
 
     # Each lossy step is reported through both `warnings` and the logger. For a command
     # line the log is the better channel -- it is ordered with respect to the rest of the
     # output and carries no file/line noise -- so the warning channel is silenced here to
     # stop every message being printed twice.
-    counter = _CountingHandler(args.quiet)
+    counter = _CountingHandler(args.quiet, report)
     LOGGER.addHandler(counter)
+    error = None
+    completed = False
+    report_written = True
+    entries = report["entries"] if report is not None else None
     try:
-        with warnings.catch_warnings():
+        with collect_entries(entries), warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             out = handler(args)
-    except (ConversionError, TypeError, ValueError, OSError, yaml.YAMLError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as fh:
+                fh.write(out)
+        elif out is not None:
+            sys.stdout.write(out)
+        completed = True
+    except Exception as e:
+        error = str(e) or type(e).__name__
     finally:
         LOGGER.removeHandler(counter)
+        if report is not None:
+            report["completed"] = completed
+            interrupted = sys.exc_info()[1] if not completed else None
+            if error is not None or interrupted is not None:
+                report["error"] = error or str(interrupted) or type(interrupted).__name__
+            try:
+                args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            except OSError as e:
+                print(f"Error writing conversion report: {e}", file=sys.stderr)
+                report_written = False
 
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as fh:
-            fh.write(out)
-    else:
-        sys.stdout.write(out)
+    if error is not None:
+        print(f"Error: {error}", file=sys.stderr)
+    if error is not None or not report_written:
+        return 1
 
     if counter.count and not args.quiet:
         print(
@@ -189,6 +286,35 @@ def main(argv=None):
             file=sys.stderr,
         )
     return 1 if args.strict and counter.count else 0
+
+
+def _check_report_path(args):
+    report = args.report
+    protected = [args.input, args.output, getattr(args, "source_bindings", None)]
+    source = Path(args.input)
+    if args.command == "import" and (source.is_dir() or source.suffix.lower() == ".pbip"):
+        root = source if source.is_dir() else source.parent
+        protected.extend(_project_artifacts(root))
+    destination = getattr(args, "pbip", None)
+    if destination is not None:
+        root = Path(destination)
+        if report.resolve().is_relative_to(root.resolve()):
+            raise ValueError("--report must be outside the --pbip output folder")
+        protected.extend(_project_artifacts(root))
+    for path in protected:
+        if path is None:
+            continue
+        other = Path(path)
+        if report.resolve() == other.resolve() or (
+            report.exists() and other.exists() and report.samefile(other)
+        ):
+            raise ValueError("--report must be separate from conversion inputs and outputs")
+
+
+def _project_artifacts(folder):
+    for path in folder.rglob("*"):
+        if path.suffix.lower() in {".bim", ".tmdl", ".pbip", ".pbir", ".pbism"} and path.is_file():
+            yield path
 
 
 if __name__ == "__main__":

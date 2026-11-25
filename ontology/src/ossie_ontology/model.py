@@ -20,9 +20,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, get_args
+from typing import Any, Protocol, Sequence, get_args
 
-from ossie_ontology.spec import CoreVersion
+from ossie.models import OssieAIContext, OssieDialect, OssieVersion
+
+
+def _copy_annotations(annotations: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a shallow copy of an open `annotations` mapping, preserving `{}` vs `None`."""
+    return dict(annotations) if annotations is not None else None
 
 # ---------------------------------------------------------------------------
 # Builtin concept names.
@@ -64,16 +69,16 @@ class DataType(str, Enum):
         return self.value
 
 # ---------------------------------------------------------------------------
-# Free-form metadata mirroring spec
+# Free-form metadata, carried as the shared `ossie.models` type
 # ---------------------------------------------------------------------------
 
-AiContext = str | dict[str, Any]
+AiContext = OssieAIContext
 
 
 @dataclass
 class CustomExtension:
     vendor_name: str
-    data: str
+    data: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +137,7 @@ class Concept:
     _requires: list[Formula]
     _is_component: bool
     _iri: str | None
+    _annotations: dict[str, Any] | None
 
     def __init__(
         self,
@@ -145,6 +151,7 @@ class Concept:
         requires: list[Formula] | None = None,
         is_component: bool = True,
         iri: str | None = None,
+        annotations: dict[str, Any] | None = None,
     ):
         self._name = name
         self._type = type
@@ -156,6 +163,7 @@ class Concept:
         self._requires = requires if requires else []
         self._is_component = is_component
         self._iri = iri
+        self._annotations = _copy_annotations(annotations)
 
     def add_require(self, require: Formula) -> None:
         self._requires.append(require)
@@ -184,6 +192,10 @@ class Concept:
     @property
     def iri(self) -> str | None:
         return self._iri
+
+    @property
+    def annotations(self) -> dict[str, Any] | None:
+        return _copy_annotations(self._annotations)
 
     @property
     def is_builtin(self) -> bool:
@@ -259,6 +271,7 @@ class Relationship:
     _derived_by: list[Formula]
     _requires: list[Formula]
     _iri: str | None
+    _annotations: dict[str, Any] | None
 
     def __init__(
         self,
@@ -269,11 +282,27 @@ class Relationship:
         verbalizes: list[str] | None = None,
         multiplicity: RelationshipMultiplicity | None = None,
         iri: str | None = None,
+        annotations: dict[str, Any] | None = None,
+        role_annotations: Sequence[dict[str, Any] | None] | None = None,
     ):
+        if role_annotations is not None and len(role_annotations) != len(relates):
+            raise ValueError(
+                f"Relationship '{container.name}.{name}' received {len(role_annotations)} role_annotations "
+                f"for {len(relates)} additional role(s)."
+            )
         self._name = name
         self._container = container
         container_role = Role(self, container, 0, None)
-        additional = [Role(self, concept, idx + 1, role_name) for idx, (concept, role_name) in enumerate(relates)]
+        additional = [
+            Role(
+                self,
+                concept,
+                idx + 1,
+                role_name,
+                role_annotations[idx] if role_annotations is not None else None,
+            )
+            for idx, (concept, role_name) in enumerate(relates)
+        ]
         self._roles = tuple([container_role] + additional)
         self._description = description
         self._multiplicity = multiplicity
@@ -282,6 +311,7 @@ class Relationship:
         self._derived_by = []
         self._requires = []
         self._iri = iri
+        self._annotations = _copy_annotations(annotations)
 
     @property
     def name(self) -> str:
@@ -302,6 +332,10 @@ class Relationship:
     @property
     def iri(self) -> str | None:
         return self._iri
+
+    @property
+    def annotations(self) -> dict[str, Any] | None:
+        return _copy_annotations(self._annotations)
 
     @property
     def signature(self) -> list[Concept]:
@@ -388,13 +422,22 @@ class Role:
     _name: str | None
     _sibling: Role | None
     _idx: int
+    _annotations: dict[str, Any] | None
 
-    def __init__(self, part_of: Relationship, player: Concept, idx: int, name: str | None = None):
+    def __init__(
+        self,
+        part_of: Relationship,
+        player: Concept,
+        idx: int,
+        name: str | None = None,
+        annotations: dict[str, Any] | None = None,
+    ):
         self._part_of = part_of
         self._player = player
         self._idx = idx
         self._name = name
         self._sibling = None
+        self._annotations = _copy_annotations(annotations)
 
     @property
     def player(self) -> Concept:
@@ -411,6 +454,10 @@ class Role:
     @property
     def explicit_name(self) -> str | None:
         return self._name
+
+    @property
+    def annotations(self) -> dict[str, Any] | None:
+        return _copy_annotations(self._annotations)
 
     @property
     def part_of(self) -> Relationship:
@@ -510,11 +557,16 @@ class DialectExpression:
 
 @dataclass
 class DialectExpressionSet:
-    """Runtime equivalent of spec.Expression — same logical expression rendered
-    in one or more dialects."""
+    """Runtime equivalent of `ossie.models.OssieExpression` — the portable `sql`
+    form (OSSIE_SQL_2026) and/or the same logical expression rendered in one or
+    more dialects."""
     dialects: list[DialectExpression] = field(default_factory=list)
+    sql: str | None = None
 
     def by_dialect(self, dialect: str) -> DialectExpression | None:
+        # The portable form wins over an OSSIE_SQL_2026 entry in `dialects`.
+        if dialect == OssieDialect.OSSIE_SQL_2026.value and self.sql is not None:
+            return DialectExpression(dialect=dialect, expression=self.sql)
         for d in self.dialects:
             if d.dialect == dialect:
                 return d
@@ -522,6 +574,8 @@ class DialectExpressionSet:
 
     @property
     def primary(self) -> DialectExpression | None:
+        if self.sql is not None:
+            return DialectExpression(dialect=OssieDialect.OSSIE_SQL_2026.value, expression=self.sql)
         return self.dialects[0] if self.dialects else None
 
 
@@ -539,7 +593,7 @@ class DatasetField:
     label: str | None = None
     description: str | None = None
     ai_context: AiContext | None = None
-    custom_extensions: list[CustomExtension] = field(default_factory=list)
+    nonportable_extensions: list[CustomExtension] = field(default_factory=list)
     # Back-reference to the owning Dataset, wired by Dataset.__init__. Used by
     # mapping-expression rendering to reconstruct `<dataset>.<field>` strings
     # for round-trip output. Not in the spec — purely runtime metadata.
@@ -561,7 +615,7 @@ class Dataset:
     _description: str | None
     _ai_context: AiContext | None
     _fields: list[DatasetField]
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
     _field_name_map: dict[str, DatasetField]
 
     def __init__(
@@ -573,7 +627,7 @@ class Dataset:
         unique_keys: list[list[str]] | None = None,
         description: str | None = None,
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
+        nonportable_extensions: list[CustomExtension] | None = None,
     ):
         self._name = name
         self._source = source
@@ -582,7 +636,7 @@ class Dataset:
         self._unique_keys = unique_keys
         self._description = description
         self._ai_context = ai_context
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
         self._field_name_map = {fl.name: fl for fl in fields}
         # Wire the back-reference so each field knows its owning Dataset —
         # the mapping-expression renderer needs it to reconstruct
@@ -622,8 +676,8 @@ class Dataset:
         return list(self._fields)
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
     @property
     def schema(self) -> dict[str, DataType | None]:
@@ -642,7 +696,7 @@ class JoinPath:
     _from_columns: list[DatasetField]
     _to_columns: list[DatasetField]
     _ai_context: AiContext | None
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
 
     def __init__(
         self,
@@ -652,7 +706,7 @@ class JoinPath:
         from_columns: list[DatasetField],
         to_columns: list[DatasetField],
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
+        nonportable_extensions: list[CustomExtension] | None = None,
     ):
         if len(from_columns) != len(to_columns):
             raise ValueError(
@@ -665,7 +719,7 @@ class JoinPath:
         self._from_columns = from_columns
         self._to_columns = to_columns
         self._ai_context = ai_context
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
 
     @property
     def name(self) -> str:
@@ -692,8 +746,8 @@ class JoinPath:
         return self._ai_context
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
     def __str__(self) -> str:
         return self._name
@@ -705,7 +759,7 @@ class Metric:
     _expression: DialectExpressionSet
     _description: str | None
     _ai_context: AiContext | None
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
     _datatype: DataType | None
 
     def __init__(
@@ -714,14 +768,14 @@ class Metric:
         expression: DialectExpressionSet,
         description: str | None = None,
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
+        nonportable_extensions: list[CustomExtension] | None = None,
         datatype: DataType | None = None,
     ):
         self._name = name
         self._expression = expression
         self._description = description
         self._ai_context = ai_context
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
         self._datatype = datatype
 
     @property
@@ -745,20 +799,20 @@ class Metric:
         return self._ai_context
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
 
 class SemanticModel:
     """Versioned core semantic model embedded in a single OntologyMapping."""
-    _version: CoreVersion
+    _version: OssieVersion
     _name: str
     _description: str | None
     _ai_context: AiContext | None
     _datasets: list[Dataset]
     _join_paths: list[JoinPath]
     _metrics: list[Metric]
-    _custom_extensions: list[CustomExtension]
+    _nonportable_extensions: list[CustomExtension]
     _dataset_name_map: dict[str, Dataset]
     _join_path_name_map: dict[str, JoinPath]
     _metric_name_map: dict[str, Metric]
@@ -768,11 +822,11 @@ class SemanticModel:
         name: str,
         description: str | None = None,
         ai_context: AiContext | None = None,
-        custom_extensions: list[CustomExtension] | None = None,
-        version: CoreVersion = "0.3.0.dev0",
+        nonportable_extensions: list[CustomExtension] | None = None,
+        version: OssieVersion = "0.3.0.dev0",
     ):
         # Checked at runtime too: callers outside a type checker pass any string.
-        (supported,) = get_args(CoreVersion)
+        (supported,) = get_args(OssieVersion)
         if version != supported:
             raise ValueError(
                 f"Unsupported semantic model version {version!r}; expected {supported!r}"
@@ -784,13 +838,13 @@ class SemanticModel:
         self._datasets = []
         self._join_paths = []
         self._metrics = []
-        self._custom_extensions = custom_extensions or []
+        self._nonportable_extensions = nonportable_extensions or []
         self._dataset_name_map = {}
         self._join_path_name_map = {}
         self._metric_name_map = {}
 
     @property
-    def version(self) -> CoreVersion:
+    def version(self) -> OssieVersion:
         return self._version
 
     @property
@@ -818,8 +872,8 @@ class SemanticModel:
         return list(self._metrics)
 
     @property
-    def custom_extensions(self) -> list[CustomExtension]:
-        return list(self._custom_extensions)
+    def nonportable_extensions(self) -> list[CustomExtension]:
+        return list(self._nonportable_extensions)
 
     def add_dataset(self, dataset: Dataset) -> None:
         if dataset.name in self._dataset_name_map:
@@ -1072,7 +1126,7 @@ class OntologyComponent:
 
 
 # ---------------------------------------------------------------------------
-# Root semantic model (per OssieSpec)
+# Root semantic model (per ossie.models.OssieOntologyModel)
 # ---------------------------------------------------------------------------
 
 class OssieOntology:
@@ -1084,6 +1138,7 @@ class OssieOntology:
     _ontology_mappings: list[OntologyMapping]
     _ontology_mapping_index: dict[str, OntologyMapping]
     _prefixes: dict[str, str]
+    _annotations: dict[str, Any] | None
 
     def __init__(
         self,
@@ -1093,6 +1148,7 @@ class OssieOntology:
         ai_context: AiContext | None = None,
         version: str | None = None,
         prefixes: dict[str, str] | None = None,
+        annotations: dict[str, Any] | None = None,
     ):
         self._name = name
         self._description = description
@@ -1102,6 +1158,7 @@ class OssieOntology:
         self._ontology_mappings = []
         self._ontology_mapping_index = {}
         self._prefixes = dict(prefixes) if prefixes else {}
+        self._annotations = _copy_annotations(annotations)
 
     @property
     def name(self) -> str:
@@ -1137,6 +1194,10 @@ class OssieOntology:
     def prefixes(self) -> dict[str, str]:
         """Namespace prefixes the document's QName `iri` values resolve against."""
         return dict(self._prefixes)
+
+    @property
+    def annotations(self) -> dict[str, Any] | None:
+        return _copy_annotations(self._annotations)
 
 
 # ---------------------------------------------------------------------------

@@ -267,7 +267,7 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
     def test_a_bool_column_keeps_its_connection_specific_spelling(self, dataset):
         store = next(d for d in dataset["datasets"] if d["name"] == "store")
         field = next(f for f in store["fields"] if f["name"] == "on")
-        extensions = {e["vendor_name"]: json.loads(e["data"]) for e in field["custom_extensions"]}
+        extensions = {e["vendor_name"]: e["data"] for e in field["nonportable_extensions"]}
         assert extensions[VENDOR_KEY][FIELD_STASH_DATA_TYPE] == "BOOL"
 
     def test_a_sql_view_is_present_with_a_differing_output_alias(self, dataset):
@@ -279,7 +279,7 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
     def test_a_physical_column_the_model_does_not_surface_is_stashed(self, dataset):
         store_sales = next(d for d in dataset["datasets"] if d["name"] == "store_sales")
         extensions = {
-            e["vendor_name"]: json.loads(e["data"]) for e in store_sales["custom_extensions"]
+            e["vendor_name"]: e["data"] for e in store_sales["nonportable_extensions"]
         }
         unsurfaced = {
             c["name"] for c in extensions[VENDOR_KEY][DATASET_STASH_UNSURFACED_COLUMNS]
@@ -299,7 +299,7 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
             r for r in dataset["relationships"] if r["name"] == "store_returns_sv_to_item"
         )
         extensions = {
-            e["vendor_name"]: json.loads(e["data"]) for e in relationship["custom_extensions"]
+            e["vendor_name"]: e["data"] for e in relationship["nonportable_extensions"]
         }
         assert extensions[VENDOR_KEY][RELATIONSHIP_STASH_ON_EXPRESSION] == (
             "[store_returns_sv::sr_item_sk] = [item::i_item_sk] and "
@@ -317,16 +317,16 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
         # no stash", and broke the moment an unrelated key was added.
         bare_aggregate = metrics_by_name["total_sales"]
         bare_extensions = {
-            e["vendor_name"]: json.loads(e["data"])
-            for e in bare_aggregate.get("custom_extensions") or []
+            e["vendor_name"]: e["data"]
+            for e in bare_aggregate.get("nonportable_extensions") or []
         }
         assert METRIC_STASH_SHAPE not in bare_extensions.get(VENDOR_KEY, {})
 
         # A physical column plus a load-bearing aggregation.
         column_aggregation = metrics_by_name["total_return_quantity"]
         extensions = {
-            e["vendor_name"]: json.loads(e["data"])
-            for e in column_aggregation["custom_extensions"]
+            e["vendor_name"]: e["data"]
+            for e in column_aggregation["nonportable_extensions"]
         }
         assert extensions[VENDOR_KEY][METRIC_STASH_SHAPE] == METRIC_SHAPE_COLUMN_AGGREGATION
 
@@ -334,7 +334,7 @@ class TestTpcdsFixtureCoversItsRequiredConstructs:
         # one expression.
         scalar_plus_agg = metrics_by_name["avg_price_adjustment"]
         extensions = {
-            e["vendor_name"]: json.loads(e["data"]) for e in scalar_plus_agg["custom_extensions"]
+            e["vendor_name"]: e["data"] for e in scalar_plus_agg["nonportable_extensions"]
         }
         assert (
             extensions[VENDOR_KEY][METRIC_STASH_SHAPE]

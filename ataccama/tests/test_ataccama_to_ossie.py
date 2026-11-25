@@ -36,8 +36,8 @@ from ossie import (
     OssieDataType,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieField,
+    OssieSemanticModel,
 )
 
 from ossie_ataccama.ataccama_to_ossie import (
@@ -62,11 +62,11 @@ def bundles() -> list[CatalogItemBundle]:
 
 
 @pytest.fixture
-def document(bundles: list[CatalogItemBundle]) -> OssieDocument:
+def document(bundles: list[CatalogItemBundle]) -> OssieSemanticModel:
     return ataccama_to_ossie(bundles, model_name="test_model", tenant="example-tenant")
 
 
-def _dataset(document: OssieDocument, name: str) -> OssieDataset:
+def _dataset(document: OssieSemanticModel, name: str) -> OssieDataset:
     return next(d for d in document.datasets if d.name == name)
 
 
@@ -74,11 +74,11 @@ def _field(dataset: OssieDataset, name: str) -> OssieField:
     return next(f for f in dataset.fields or [] if f.name == name)
 
 
-def _ext(obj: OssieDataset | OssieField | OssieDocument) -> dict[str, Any]:
-    return json.loads((obj.custom_extensions or [])[0].data)
+def _ext(obj: OssieDataset | OssieField | OssieSemanticModel) -> dict[str, Any]:
+    return (obj.nonportable_extensions or [])[0].data
 
 
-def _schema_errors(document: OssieDocument) -> list[str]:
+def _schema_errors(document: OssieSemanticModel) -> list[str]:
     schema = json.loads(SCHEMA.read_text())
     payload = json.loads(document.to_ossie_json())
     return [e.message for e in Draft202012Validator(schema).iter_errors(payload)]
@@ -91,16 +91,16 @@ def _instructions(obj: OssieDataset | OssieField) -> str:
 # --- structure & core mapping ---
 
 
-def test_document_is_schema_valid(document: OssieDocument) -> None:
+def test_document_is_schema_valid(document: OssieSemanticModel) -> None:
     assert not _schema_errors(document)
 
 
-def test_model_structure(document: OssieDocument) -> None:
+def test_model_structure(document: OssieSemanticModel) -> None:
     assert document.name == "test_model"
     assert {d.name for d in document.datasets} == {"BANK_TRANSACTIONS", "aggregation"}
 
 
-def test_attribute_becomes_quoted_ansi_field(document: OssieDocument) -> None:
+def test_attribute_becomes_quoted_ansi_field(document: OssieSemanticModel) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
     assert len(ds.fields) == 13
     field = _field(ds, "TRANSACTION_ID")
@@ -110,21 +110,21 @@ def test_attribute_becomes_quoted_ansi_field(document: OssieDocument) -> None:
     assert _ext(field)["data_type"] == "STRING"
 
 
-def test_date_columns_are_time_dimensions(document: OssieDocument) -> None:
+def test_date_columns_are_time_dimensions(document: OssieSemanticModel) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
     assert _field(ds, "BIRTH_DATE").dimension.is_time is True
     assert _field(ds, "TRANSACTION_DATE").dimension.is_time is True
     assert _field(ds, "ACCOUNT_BALANCE").dimension is None
 
 
-def test_source_from_locations_and_limitation(document: OssieDocument) -> None:
+def test_source_from_locations_and_limitation(document: OssieSemanticModel) -> None:
     # DB-backed item: reversed locations + name form a qualified path
     assert _dataset(document, "BANK_TRANSACTIONS").source == "DEMO_ENV.CLOUD_DEMO.BANK_TRANSACTIONS"
     # derived item with no locations: source degrades to the bare name
     assert _dataset(document, "aggregation").source == "aggregation"
 
 
-def test_terms_become_ai_context(document: OssieDocument) -> None:
+def test_terms_become_ai_context(document: OssieSemanticModel) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
     assert set(ds.ai_context.synonyms) >= {"Personal Data", "Finance"}
     email = _field(ds, "EMAIL")
@@ -132,7 +132,7 @@ def test_terms_become_ai_context(document: OssieDocument) -> None:
     assert "email" in email.ai_context.instructions.lower()
 
 
-def test_ai_context_is_an_object_by_default(document: OssieDocument) -> None:
+def test_ai_context_is_an_object_by_default(document: OssieSemanticModel) -> None:
     assert isinstance(_dataset(document, "BANK_TRANSACTIONS").ai_context, OssieAIContextObject)
 
 
@@ -155,7 +155,7 @@ def test_flat_ai_context_keeps_absent_context_absent(bundles: list[CatalogItemBu
     assert untermed.ai_context is None
 
 
-def test_document_stamps_the_converters_ossie_version(document: OssieDocument) -> None:
+def test_document_stamps_the_converters_ossie_version(document: OssieSemanticModel) -> None:
     assert document.version == "0.3.0.dev0"
     assert not _schema_errors(document)
 
@@ -179,7 +179,7 @@ def test_ossie_version_matching_the_default_is_not_a_warning(bundles: list[Catal
     assert document.version == "0.3.0.dev0"
 
 
-def test_governance_metadata_preserved(document: OssieDocument) -> None:
+def test_governance_metadata_preserved(document: OssieSemanticModel) -> None:
     ext = _ext(_dataset(document, "BANK_TRANSACTIONS"))
     assert ext["catalog_item_urn"].startswith("urn:ata:")
     assert "connection_urn" in ext and "stewardship_group_urn" in ext
@@ -188,7 +188,7 @@ def test_governance_metadata_preserved(document: OssieDocument) -> None:
 # --- data quality enrichment ---
 
 
-def test_dataset_dq_overall_and_dimensions(document: OssieDocument) -> None:
+def test_dataset_dq_overall_and_dimensions(document: OssieSemanticModel) -> None:
     dq = _ext(_dataset(document, "BANK_TRANSACTIONS"))["dq"]
     assert dq["passed"] == 1784 and dq["failed"] == 472
     assert dq["pass_rate_pct"] == 79.1
@@ -202,26 +202,26 @@ def test_dataset_dq_overall_and_dimensions(document: OssieDocument) -> None:
     assert dq["active_findings"] == 0
 
 
-def test_dataset_dq_threshold(document: OssieDocument) -> None:
+def test_dataset_dq_threshold(document: OssieSemanticModel) -> None:
     # BANK_TRANSACTIONS has a configured overall bar of 75%; 79.1% is above it.
     dq = _ext(_dataset(document, "BANK_TRANSACTIONS"))["dq"]
     assert dq["threshold_pct"] == 75
     assert dq["below_threshold"] is False
 
 
-def test_no_threshold_when_monitor_has_none(document: OssieDocument) -> None:
+def test_no_threshold_when_monitor_has_none(document: OssieSemanticModel) -> None:
     # aggregation's monitor has no overall threshold configured.
     dq = _ext(_dataset(document, "aggregation"))["dq"]
     assert "threshold_pct" not in dq and "below_threshold" not in dq
 
 
-def test_field_level_dq(document: OssieDocument) -> None:
+def test_field_level_dq(document: OssieSemanticModel) -> None:
     ds = _dataset(document, "BANK_TRANSACTIONS")
     dq = _ext(_field(ds, "TRANSACTION_ID"))["dq"]
     assert dq == {"passed": 2251, "failed": 5, "pass_rate_pct": 99.8}
 
 
-def test_zero_pass_rate_case(document: OssieDocument) -> None:
+def test_zero_pass_rate_case(document: OssieSemanticModel) -> None:
     dq = _ext(_dataset(document, "aggregation"))["dq"]
     assert dq["passed"] == 0 and dq["failed"] == 4
     assert dq["pass_rate_pct"] == 0.0
@@ -238,7 +238,7 @@ def test_no_dq_keys_when_dq_absent(bundles: list[CatalogItemBundle]) -> None:
 # --- opt-in DQ AI warnings ---
 
 
-def test_ai_warnings_off_by_default(document: OssieDocument) -> None:
+def test_ai_warnings_off_by_default(document: OssieSemanticModel) -> None:
     # Default conversion must not inject warnings into ai_context.
     ds = _dataset(document, "BANK_TRANSACTIONS")
     assert "Data-quality warning" not in _instructions(ds)
@@ -510,7 +510,7 @@ def test_duplicate_dataset_names_are_deduplicated_in_one_pass() -> None:
     assert [d.name for d in ataccama_to_ossie(iter([first, second])).datasets] == ["orders", "orders_2"]
 
 
-def test_fixture_items_have_no_keys(document: OssieDocument) -> None:
+def test_fixture_items_have_no_keys(document: OssieSemanticModel) -> None:
     # BANK_TRANSACTIONS / aggregation have no PK/FK, so no key or relationship output.
     for ds in document.datasets:
         assert ds.primary_key is None and ds.unique_keys is None

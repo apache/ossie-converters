@@ -798,6 +798,6 @@ metrics:
     - dialect: ANSI_SQL
       expression: SUM(sales.sales_amount) / COUNT(DISTINCT sales.sales_id)
   description: Average Sale
-custom_extensions:
+nonportable_extensions:
 - vendor_name: COMMON
-  data: '{"source_format": "OBML", "source_version": "1.0", "converter": "ossie-orionbelt"}'
+  data: {"source_format": "OBML", "source_version": "1.0", "converter": "ossie-orionbelt"}

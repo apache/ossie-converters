@@ -36,7 +36,8 @@ from _cube_gate import (
 from _util import (REPO_ROOT, canon, load_fixture, load_fixture_dir, parse,
                    parse_files)
 
-from ossie_cube import IssueType, convert_cube_to_ossie, convert_ossie_to_cube
+from _util import import_model_scoped as convert_cube_to_ossie
+from ossie_cube import IssueType, convert_ossie_to_cube
 from ossie_cube._common import OSSIE_VERSION
 
 FIXTURES = ["fixtureA_cube", "tpcds_cube"]
@@ -70,8 +71,8 @@ def test_joined_sum_grain_comes_from_the_cube_that_owns_the_aggregate():
     metrics = {metric["name"]: metric for metric in yaml.safe_load(ossie)["metrics"]}
 
     def grain(name):
-        return next((json.loads(ext["data"]).get("integer_sum_grain")
-                     for ext in metrics[name].get("custom_extensions", [])
+        return next((ext["data"].get("integer_sum_grain")
+                     for ext in metrics[name].get("nonportable_extensions", [])
                      if ext["vendor_name"] == "CUBE"), None)
 
     assert grain("store_productivity") == ["store"]
@@ -169,7 +170,7 @@ _INLINE_COMPOSITE = {
 
 
 def test_an_inline_composite_measure_travels_with_no_extension():
-    """Both composite shapes carry nothing in custom_extensions: the expression is
+    """Both composite shapes carry nothing in nonportable_extensions: the expression is
     the whole record. This is the review principle -- everything parseable from
     the expression stays out of the stash -- applied to the last measure shape
     that used to keep a rendered copy of its own SQL."""
@@ -177,8 +178,8 @@ def test_an_inline_composite_measure_travels_with_no_extension():
 
     ossie, _ = convert_cube_to_ossie(_INLINE_COMPOSITE)
     metrics = by_name(model_of(ossie)["metrics"])
-    assert "custom_extensions" not in metrics["spread"]
-    assert "custom_extensions" not in metrics["value_per_user"]
+    assert "nonportable_extensions" not in metrics["spread"]
+    assert "nonportable_extensions" not in metrics["value_per_user"]
 
 
 def test_a_single_cube_composite_round_trips_verbatim():
@@ -309,12 +310,12 @@ def test_ossie_only_constructs_are_parked_not_dropped():
     orders = parse(files["model/cubes/orders.yml"])["cubes"][0]
     parked = orders["meta"]["ossie"]
     assert parked["unique_keys"] == [["order_number"]]
-    assert parked["custom_extensions"][0]["vendor_name"] == "SNOWFLAKE"
+    assert parked["nonportable_extensions"][0]["vendor_name"] == "SNOWFLAKE"
 
     ossie2, _ = convert_cube_to_ossie(files)
     ds = {d["name"]: d for d in parse(ossie2)["datasets"]}
     assert ds["orders"]["unique_keys"] == [["order_number"]]
-    vendors = {e["vendor_name"] for e in ds["orders"]["custom_extensions"]}
+    vendors = {e["vendor_name"] for e in ds["orders"]["nonportable_extensions"]}
     assert "SNOWFLAKE" in vendors
 
 
@@ -649,3 +650,31 @@ def test_the_second_export_cycle_still_compiles():
     """The half of the above that genuinely needs Cube."""
     _, second = _two_export_cycles(_SHADOWED_KEY_COLUMN)
     assert_cube_compiles(second, "second export cycle")
+
+
+def test_default_dataset_scope_roundtrip_keeps_native_metadata_and_documents_normalization():
+    from ossie_cube import convert_cube_to_ossie as import_default
+
+    files = load_fixture_dir("fixtureA_cube")
+    original = parse_files(files)
+    for content in original.values():
+        for cube in content.get("cubes", []):
+            for measure in cube.get("measures", []):
+                if measure["name"] == "total_amount":
+                    measure["drill_members"] = ["id"]
+                    measure["meta"] = {"custom": {"owner": "finance"}}
+    files = {path: yaml.safe_dump(content) for path, content in original.items()}
+    imported, _ = import_default(files)
+    exported, _ = convert_ossie_to_cube(imported)
+    actual = parse_files(exported)
+    measures = {m["name"]: m for c in actual.values() for cube in c.get("cubes", [])
+                for m in cube.get("measures", [])}
+    assert measures["total_amount"]["format"] == "currency"
+    assert measures["total_amount"]["drill_members"] == ["id"]
+    assert measures["total_amount"]["meta"]["custom"] == {"owner": "finance"}
+    assert "dataset_metric" in measures["total_amount"]["meta"]["ossie"]
+    assert measures["avg_order_value"]["sql"].replace("{CUBE}.", "") == "SUM(amount) / COUNT(DISTINCT id)"
+    # Confirm the normalized default representation stabilizes after one round trip.
+    imported_again, _ = import_default(exported)
+    exported_again, _ = convert_ossie_to_cube(imported_again)
+    assert parse_files(exported_again) == actual

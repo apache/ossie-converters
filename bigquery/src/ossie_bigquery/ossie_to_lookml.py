@@ -53,12 +53,45 @@ _DIALECT_PREFERENCE = ("BIGQUERY", "ANSI_SQL", "OSSIE_SQL_2026")
 # How sqlglot reads each dialect. ANSI_SQL and OSSIE_SQL_2026 use sqlglot's
 # default (ANSI-style) dialect and are transpiled to BigQuery on output, since
 # the two disagree on quoting ("x" is an identifier in ANSI, a string literal
-# in BigQuery) and on argument order (DATE_TRUNC). Same mapping as
-# interop/contracts.py and the orionbelt converter.
+# in BigQuery) and on argument order (DATE_TRUNC, DATEADD, DATEDIFF). Same
+# mapping as interop/contracts.py and the orionbelt converter.
 _SQLGLOT_DIALECTS = {"BIGQUERY": "bigquery", "ANSI_SQL": None, "OSSIE_SQL_2026": None}
+
+# Ossie DATEADD/DATEDIFF take a unit as the first argument. sqlglot's default
+# reader treats that unit as a column, so _qualify would emit ${TABLE}.day and
+# BigQuery has no DATEADD. Canonical names are the BigQuery DATE_ADD /
+# DATE_DIFF date_part values. HOUR/MINUTE/SECOND need TIMESTAMP_ADD /
+# TIMESTAMP_DIFF; they are not rewritten to DATE_ADD/DATE_DIFF.
+_DATE_PARTS = {
+    "YEAR": "YEAR", "YEARS": "YEAR", "YY": "YEAR", "YYYY": "YEAR",
+    "QUARTER": "QUARTER", "QUARTERS": "QUARTER",
+    "MONTH": "MONTH", "MONTHS": "MONTH", "MM": "MONTH",
+    "WEEK": "WEEK", "WEEKS": "WEEK",  # DATE_ADD; DATE_DIFF uses WEEK(MONDAY)
+    "DAY": "DAY", "DAYS": "DAY", "DD": "DAY", "D": "DAY",
+}
+_TIMESTAMP_PARTS = {
+    "HOUR": "HOUR", "HOURS": "HOUR", "HH": "HOUR",
+    "MINUTE": "MINUTE", "MINUTES": "MINUTE", "MI": "MINUTE",
+    "SECOND": "SECOND", "SECONDS": "SECOND", "SS": "SECOND",
+}
+_DATE_ADD_NAMES = frozenset({"DATEADD"})
+_DATE_DIFF_NAMES = frozenset({"DATEDIFF"})
 
 # A valid LookML object name (view, field, join); also a bare SQL identifier.
 _LOOKML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# A `${view.field}` reference, capturing the view (`${TABLE}` and `${field}`
+# have no dot inside the braces).
+_VIEW_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\.")
+
+# sqlglot meta key set by _unwrap_filters on a filtered aggregate whose value
+# reads no field (COUNT(*), COUNT(1), SUM(1)).
+_READS_NO_FIELD = "ossie_reads_no_field"
+
+# Expressions that need no parentheses as an operand: a `${...}` reference
+# (a Var after _qualify), a parenthesized expression, IF(...) and CASE ... END.
+# Not every sqlglot Func qualifies: And and Or are Funcs.
+_SELF_DELIMITED = (exp.Var, exp.Paren, exp.If, exp.Case)
 
 # Ossie `datatype` -> LookML dimension `type`.
 _SCALAR_TYPES = {
@@ -216,7 +249,7 @@ def _convert_model(ossie):
 def _model_description(ossie):
     """Combines `description` and a string `ai_context.instructions` into a
     human-readable description for the model header."""
-    description = ossie.get("description") or ""
+    description = _description(ossie, "Model")
     ai_context = ossie.get("ai_context")
     if isinstance(ai_context, str) and ai_context:
         description = f"{description}\n{ai_context}".strip()
@@ -294,7 +327,7 @@ class _Dataset:
         self.reserved_names = set()    # every metric name a measure here may need
         for index, metric in enumerate(self.raw_metrics, 1):
             _require_mapping(metric, f"{context}: metric #{index}")
-        self.description = _entity_description(dataset)
+        self.description = _entity_description(dataset, context)
         self.fields = []
         self.pk_dimension = None
         self.measures = []
@@ -434,20 +467,20 @@ def _plan_dataset(dataset):
             # Ossie DateTime (BigQuery DATETIME) is civil time with no zone;
             # Looker's default timezone conversion would shift it.
             planned.convert_tz = lookml_datatype == "datetime"
-            if datatype is None:
-                warnings.warn(
-                    f"{context}: is_time without a datatype; emitted as a time "
-                    f"dimension_group (Looker assumes TIMESTAMP). Set datatype to "
-                    f"Date, DateTime or DateTimeTz if the column is temporal, or "
-                    f"to its scalar type if it is not"
-                )
             planned.timeframes = timeframes
         else:
+            if _is_time(field) is True and field.get("datatype") is None:
+                warnings.warn(
+                    f"{context}: is_time without a datatype; emitted as a string "
+                    f"dimension (a time dimension_group would make Looker treat "
+                    f"the column as a TIMESTAMP). Set datatype to Date, DateTime "
+                    f"or DateTimeTz to get timeframes"
+                )
             planned = _Field(name, name, "dimension", sql, column)
             planned.type = _dimension_type(field.get("datatype"), context)
 
         planned.label = field.get("label")
-        planned.description = _entity_description(field)
+        planned.description = _entity_description(field, context)
         plan.register(planned)
         _warn_dropped_fields(field, context, skip=("label",))
 
@@ -461,19 +494,25 @@ def _plan_dataset(dataset):
 
 
 def _is_temporal(field):
-    """A field becomes a dimension_group when its datatype is temporal, or when
-    it is marked is_time without a datatype. An is_time field with a scalar
-    datatype (e.g. an integer year) stays a dimension."""
-    datatype = field.get("datatype")
-    if datatype in _TEMPORAL_TYPES:
-        return True
+    """A field becomes a dimension_group when its datatype is temporal, unless
+    it sets is_time: false (explicit is_time always wins, Ossie spec). is_time
+    is a role, not a type: is_time: true alone does not make a group, since
+    Looker would treat a string or integer column as a TIMESTAMP."""
+    return field.get("datatype") in _TEMPORAL_TYPES and _is_time(field) is not False
+
+
+def _is_time(field):
+    """The field's explicit dimension.is_time, or None when it is not set."""
     dimension = field.get("dimension")
-    is_time = isinstance(dimension, dict) and dimension.get("is_time") is True
-    return is_time and datatype is None
+    return dimension.get("is_time") if isinstance(dimension, dict) else None
 
 
 def _dimension_type(datatype, context):
     if datatype is None:
+        return "string"
+    if datatype in _TEMPORAL_TYPES:
+        # A temporal field with is_time: false: kept off the time axis as a
+        # plain value, like Time, without Looker's date casts and conversion.
         return "string"
     if datatype == "Opaque":
         warnings.warn(
@@ -699,7 +738,7 @@ def _parse(expr, dialect, context):
     text verbatim. SqlglotError covers tokenizer errors (an unterminated
     string) as well as parse errors."""
     try:
-        return sqlglot.parse_one(expr, read=_SQLGLOT_DIALECTS[dialect])
+        tree = sqlglot.parse_one(expr, read=_SQLGLOT_DIALECTS[dialect])
     except sqlglot.errors.SqlglotError as e:
         first_line = str(e).splitlines()[0]
         if dialect != "BIGQUERY":
@@ -714,12 +753,185 @@ def _parse(expr, dialect, context):
                 warnings.warn(
                     f"{context}: not valid {dialect} ({first_line}); read as BIGQUERY"
                 )
-                return tree
+                return _prepare_tree(tree, expr, "BIGQUERY", context)
         warnings.warn(
             f"{context}: could not parse expression ({first_line}); emitted "
             f"verbatim, verify column references in LookML"
         )
         return None
+    return _prepare_tree(tree, expr, dialect, context)
+
+
+def _prepare_tree(tree, expr, dialect, context):
+    """Maps Ossie date functions to BigQuery and warns on leftover calls."""
+    tree = _rewrite_ossie_date_functions(tree, expr, dialect, context)
+    if dialect != "BIGQUERY":
+        _warn_unknown_functions(tree, context)
+    return tree
+
+
+def _rewrite_ossie_date_functions(tree, original, dialect, context):
+    """Rewrite DATEADD/DATEDIFF bottom-up so nested calls are rewritten too.
+
+    sqlglot ``transform`` does not walk children of a replaced node, so a
+    DATEADD whose amount is a DATEDIFF would keep the inner call in the
+    default-reader shape.
+    """
+    root = tree
+    for node in reversed(list(tree.walk())):
+        replacement = _rewrite_ossie_date_function(node, original, dialect, context)
+        if replacement is node:
+            continue
+        if node is root:
+            root = replacement
+        else:
+            node.replace(replacement)
+    return root
+
+
+def _rewrite_ossie_date_function(node, original, dialect, context):
+    """DATEADD(part, n, d) -> DATE_ADD(d, INTERVAL n PART);
+    DATEDIFF(part, start, end) -> DATE_DIFF(end, start, PART)."""
+    if isinstance(node, exp.Anonymous):
+        name = str(node.this).upper()
+        args = list(node.expressions)
+        if name in _DATE_ADD_NAMES and len(args) == 3:
+            return _rewrite_date_add(args[0], args[1], args[2], context) or node
+        if name in _DATE_DIFF_NAMES and len(args) == 3:
+            return _rewrite_date_diff(args[0], args[1], args[2], original, context) or node
+        return node
+    if isinstance(node, exp.DateDiff) and dialect != "BIGQUERY":
+        # Default reader: DATEDIFF(day, start, end) has this=day (a column)
+        # and unit=END_DATE (the end date, not a date part). Skip on BIGQUERY
+        # so DATE_DIFF(day, first_day, ISOWEEK) stays a column named day.
+        if _timestamp_part_name(node.this):
+            _warn_unmapped_time_unit("DATEDIFF", node.this, context)
+            return node
+        part = _date_part_name(node.this)
+        if part and not _date_part_name(node.args.get("unit")):
+            end = _end_from_unit(node.args.get("unit"), original)
+            return exp.DateDiff(
+                this=end,
+                expression=node.expression,
+                unit=exp.var(_date_diff_unit(part)),
+            )
+    return node
+
+
+def _rewrite_date_add(unit, amount, value, context):
+    if _timestamp_part_name(unit):
+        _warn_unmapped_time_unit("DATEADD", unit, context)
+        return None
+    part = _date_part_name(unit)
+    if not part:
+        return None
+    return exp.DateAdd(this=value, expression=amount, unit=exp.var(part))
+
+
+def _rewrite_date_diff(unit, start, end, original, context):
+    if _timestamp_part_name(unit):
+        _warn_unmapped_time_unit("DATEDIFF", unit, context)
+        return None
+    part = _date_part_name(unit)
+    if not part:
+        return None
+    return exp.DateDiff(
+        this=end, expression=start, unit=exp.var(_date_diff_unit(part))
+    )
+
+
+def _part_token(node):
+    if node is None:
+        return None
+    if isinstance(node, exp.Literal) and node.is_string:
+        return str(node.this)
+    if isinstance(node, exp.Column) and not node.table:
+        return node.name
+    if isinstance(node, (exp.Var, exp.Identifier)):
+        return node.name
+    return None
+
+
+def _date_part_name(node):
+    """Canonical BigQuery DATE_ADD/DATE_DIFF part when `node` is a unit."""
+    token = _part_token(node)
+    return _DATE_PARTS.get(token.upper()) if token else None
+
+
+def _date_diff_unit(part: str) -> str:
+    """BigQuery ``WEEK`` starts Sunday; Ossie ``DATE_TRUNC('week', ...)`` is Monday."""
+    return "WEEK(MONDAY)" if part == "WEEK" else part
+
+
+def _timestamp_part_name(node):
+    """HOUR/MINUTE/SECOND: BigQuery DATE_ADD/DATE_DIFF reject these."""
+    token = _part_token(node)
+    return _TIMESTAMP_PARTS.get(token.upper()) if token else None
+
+
+def _warn_unmapped_time_unit(func, unit, context):
+    part = _timestamp_part_name(unit)
+    warnings.warn(
+        f"{context}: {func} {part} has no BigQuery DATE_ADD/DATE_DIFF spelling; "
+        f"emitted as-is until TIMESTAMP_ADD/TIMESTAMP_DIFF is mapped"
+    )
+
+
+def _end_from_unit(unit, original):
+    """Rebuilds the DATEDIFF end date sqlglot stored as a date-part unit."""
+    if isinstance(unit, (exp.Literal, exp.Column)):
+        return unit
+    if isinstance(unit, exp.Var):
+        name = unit.name
+    elif isinstance(unit, exp.Identifier):
+        name = unit.name
+    elif isinstance(unit, str):
+        name = unit
+    else:
+        return unit
+    if _is_date_literal(name, original):
+        return exp.Literal.string(name)
+    if original and re.search('"' + re.escape(name) + '"', original):
+        return exp.column(name, quoted=True)
+    match = re.search(r"(?i)\b" + re.escape(name) + r"\b", original or "")
+    return exp.column(match.group(0) if match else name)
+
+
+def _is_date_literal(name, original):
+    """True when *name* was a single-quoted string in *original*.
+
+    Double quotes delimit an identifier in ANSI_SQL and OSSIE_SQL_2026.
+    """
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T].*)?", name):
+        return True
+    return bool(original and re.search("'" + re.escape(name) + "'", original))
+
+
+def _anonymous_time_unit_call(node):
+    name = str(node.this).upper()
+    args = list(node.expressions)
+    return (
+        name in _DATE_ADD_NAMES | _DATE_DIFF_NAMES
+        and len(args) == 3
+        and _timestamp_part_name(args[0]) is not None
+    )
+
+
+def _warn_unknown_functions(tree, context):
+    """Warns when a portable call was not given a BigQuery spelling.
+
+    Typed nodes (SUM, DATE_TRUNC, the rewritten DATE_ADD / DATE_DIFF) already
+    have a BigQuery spelling. sqlglot leaves everything else as Anonymous.
+    """
+    names = sorted({
+        str(node.this).upper()
+        for node in tree.find_all(exp.Anonymous)
+        if node.this and not _anonymous_time_unit_call(node)
+    })
+    for name in names:
+        warnings.warn(
+            f"{context}: {name} was not translated to BigQuery; emitted as-is"
+        )
 
 
 def _qualify(expr, dialect, home, plans, context, tree=None, metric=False):
@@ -825,7 +1037,7 @@ def _plan_metric(metric, plans, scope=None):
         warnings.warn(f"{context}: model has no datasets to hold the measure; skipped")
         return
 
-    description = _entity_description(metric)
+    description = _entity_description(metric, context)
     _warn_ai_context(metric, context, used=("synonyms", "instructions"))
     _warn_dropped_fields(
         metric, context, extra=["datatype"] if metric.get("datatype") else None,
@@ -886,22 +1098,28 @@ def _plan_metric(metric, plans, scope=None):
 
     # Otherwise hoist each native aggregate into a hidden typed measure and
     # express the metric as arithmetic over them, so Looker's symmetric
-    # aggregates still protect the aggregates across joins.
+    # aggregates still protect the aggregates across joins. Looker counts each
+    # row of the measure's own view once, so a helper over another dataset's
+    # field goes in that dataset's view (SUM(store.employees) per store, not
+    # per sales row).
     helpers = []
-    taken = set(home.used_names) | home.reserved_names | {measure_name}
+    taken = {measure_name}
 
     def hoist(node):
         native = _native_measure(node)
         if native is None:
             return node
         lookml_type, agg_sql = native
+        view = _aggregated_view(node, home, plans)
+        used = taken | view.used_names | view.reserved_names
         n = len(helpers) + 1
-        while f"{name}_{lookml_type}_{n}" in taken:
+        while f"{name}_{lookml_type}_{n}" in used:
             n += 1
         helper_name = f"{name}_{lookml_type}_{n}"
         taken.add(helper_name)
-        helpers.append(_Measure(helper_name, lookml_type, agg_sql, hidden=True))
-        return exp.Var(this=f"${{{helper_name}}}")
+        helpers.append((view, _Measure(helper_name, lookml_type, agg_sql, hidden=True)))
+        ref = helper_name if view is home else f"{view.name}.{helper_name}"
+        return exp.Var(this=f"${{{ref}}}")
 
     composite = rewritten.transform(hoist)
     if composite.find(exp.AggFunc) is not None:
@@ -913,11 +1131,30 @@ def _plan_metric(metric, plans, scope=None):
         home.add_measure(_Measure(measure_name, "number", sql, description=description))
         return
 
-    for helper in helpers:
-        home.add_measure(helper)
+    for view, helper in helpers:
+        view.add_measure(helper)
     home.add_measure(
         _Measure(measure_name, "number", composite.sql(dialect="bigquery"), description=description)
     )
+
+
+def _aggregated_view(node, home, plans):
+    """The view an aggregate rewritten by _qualify reads from: the dataset
+    its `${view.field}` references name when they all name one, else `home`
+    (which `${TABLE}.col` and bare `${field}` references point at). A filtered
+    aggregate whose value reads no field stays in `home`, like a plain
+    COUNT(*): `COUNT(*) FILTER (WHERE customers.region = 'EU')` counts the
+    metric's rows, not EU customers."""
+    if node.meta.get(_READS_NO_FIELD):
+        return home
+    views = set()
+    for var in node.find_all(exp.Var):
+        if var.name.startswith("${"):
+            match = _VIEW_REF.match(var.name)
+            views.add(match.group(1) if match else home.name)
+    if len(views) == 1:
+        return plans.get(views.pop(), home)
+    return home
 
 
 def _measure_name(home, name, context):
@@ -936,9 +1173,13 @@ def _measure_name(home, name, context):
 def _unwrap_filters(tree):
     """Rewrites `AGG(x) FILTER (WHERE c)` as `AGG(IF(c, x, NULL))`, the same
     aggregate as a plain one Looker can type and hoist. `COUNT(*) FILTER
-    (WHERE c)` becomes `SUM(IF(c, 1, 0))`, a native sum that symmetric
-    aggregates keep correct across fanning joins (it is NULL rather than 0
-    over no rows at all)."""
+    (WHERE c)` (or `COUNT(1)`) becomes `SUM(IF(c, 1, 0))`, a native sum that
+    symmetric aggregates keep correct across fanning joins (it is NULL rather
+    than 0 over no rows at all).
+
+    An aggregate whose value reads no field (`COUNT(*)`, `COUNT(1)`, `SUM(1)`)
+    is marked _READS_NO_FIELD: it aggregates rows of the metric's view, and
+    the condition only filters them, so _aggregated_view keeps it there."""
     def unwrap(node):
         if not (
             isinstance(node, exp.Filter)
@@ -953,8 +1194,9 @@ def _unwrap_filters(tree):
             return exp.If(this=condition.copy(), true=value, false=exp.Null())
 
         arg = agg.this
-        if isinstance(agg, exp.Count) and isinstance(arg, exp.Star):
-            return exp.Sum(this=exp.If(
+        reads_field = isinstance(arg, exp.Expression) and arg.find(exp.Column) is not None
+        if isinstance(agg, exp.Count) and isinstance(arg, (exp.Star, exp.Literal)):
+            agg = exp.Sum(this=exp.If(
                 this=condition.copy(), true=exp.Literal.number(1), false=exp.Literal.number(0),
             ))
         elif isinstance(arg, exp.Distinct):
@@ -965,6 +1207,8 @@ def _unwrap_filters(tree):
             agg.set("this", guarded(arg))
         else:
             return node
+        if not reads_field:
+            agg.meta[_READS_NO_FIELD] = True
         return agg
 
     return tree.transform(unwrap)
@@ -973,15 +1217,24 @@ def _unwrap_filters(tree):
 def _native_measure(node):
     """Returns (lookml_type, sql) when `node` is an aggregate Looker can type
     natively: SUM/AVG/MIN/MAX over a row-level expression, COUNT(DISTINCT x),
-    or COUNT(*). Returns None otherwise."""
+    COUNT(*), COUNT(<literal>) or COUNT(x). Returns None otherwise."""
     if isinstance(node, exp.Count):
         arg = node.this
-        if isinstance(arg, exp.Star):
+        if isinstance(arg, (exp.Star, exp.Literal)):
             return "count", None
-        if isinstance(arg, exp.Distinct) and len(arg.expressions) == 1:
-            inner = arg.expressions[0]
-            if inner.find(exp.AggFunc) is None:
-                return "count_distinct", inner.sql(dialect="bigquery")
+        if isinstance(arg, exp.Distinct):
+            if len(arg.expressions) == 1 and arg.expressions[0].find(exp.AggFunc) is None:
+                return "count_distinct", arg.expressions[0].sql(dialect="bigquery")
+            return None
+        if isinstance(arg, exp.Expression) and arg.find(exp.AggFunc) is None:
+            # COUNT(x) counts non-null values. An inline COUNT would count
+            # fanned-out rows; a native sum of 0/1 flags keeps symmetric
+            # aggregates, like COUNT(*) FILTER (NULL rather than 0 over no rows).
+            # IS binds tighter than NOT, AND and OR, so an operator expression
+            # is parenthesized: `NOT x IS NOT NULL` would test x, not NOT x.
+            if not isinstance(arg, _SELF_DELIMITED):
+                arg = exp.paren(arg, copy=False)
+            return "sum", f"IF({arg.sql(dialect='bigquery')} IS NOT NULL, 1, 0)"
         return None
     lookml_type = _NATIVE_MEASURES.get(type(node))
     if lookml_type is None or node.args.get("distinct"):
@@ -994,7 +1247,7 @@ def _native_measure(node):
 
 def _metric_home(tree, plans, context):
     """Picks the view that holds a metric's measure: the first dataset it
-    qualifies a column with, else the only dataset exposing its bare columns,
+    qualifies a column with, else the first dataset exposing its bare columns,
     else the first dataset in the model."""
     order = list(plans)
     qualified = []
@@ -1023,12 +1276,13 @@ def _metric_home(tree, plans, context):
         if len(owners) == 1:
             return plans[owners[0]]
         reason = "no dataset exposes" if not owners else "several datasets expose"
+        fallback = owners[0] if owners else order[0]
         warnings.warn(
             f"{context}: {reason} column(s) {', '.join(repr(b) for b in bare)}; "
-            f"emitted in view '{order[0]}'. Qualify columns as dataset.field to "
+            f"emitted in view '{fallback}'. Qualify columns as dataset.field to "
             f"place the measure"
         )
-        return plans[order[0]]
+        return plans[fallback]
 
     warnings.warn(
         f"{context}: references no dataset columns; emitted in view '{order[0]}'"
@@ -1219,10 +1473,21 @@ def _strip_time_suffix(name):
     return name
 
 
-def _entity_description(entity):
+def _description(entity, context):
+    """The entity's `description`, checked to be a string (YAML reads `2024`
+    as an int and `yes` / `on` as booleans)."""
+    description = entity.get("description")
+    if description is None:
+        return ""
+    if not isinstance(description, str):
+        raise OssieConversionError(f"{context}: 'description' must be a string")
+    return description
+
+
+def _entity_description(entity, context):
     """Builds a description string from `description` plus any `ai_context`
     synonyms, mirroring the Snowflake converter's behavior."""
-    description = entity.get("description") or ""
+    description = _description(entity, context)
     ai_context = entity.get("ai_context")
     if isinstance(ai_context, str) and ai_context:
         description = f"{description} {ai_context}".strip()
@@ -1300,7 +1565,7 @@ def _indent(text, levels):
 def _warn_dropped_fields(source, context, extra=None, skip=()):
     """Warns about Ossie properties that have no LookML counterpart."""
     dropped = list(extra or [])
-    for key in ("custom_extensions", "version", "label"):
+    for key in ("nonportable_extensions", "version", "label"):
         if key not in skip and source.get(key):
             dropped.append(key)
     if dropped:

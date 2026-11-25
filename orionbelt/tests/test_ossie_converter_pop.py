@@ -26,7 +26,6 @@ per-metric ``obml_pop_*`` keys, which still import.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import ossie_orionbelt.converter as conv
@@ -161,9 +160,9 @@ class TestOBMLtoOssiePoP:
 
     @staticmethod
     def _unexported(ossie: dict) -> dict:
-        for ext in ossie["custom_extensions"]:
+        for ext in ossie["nonportable_extensions"]:
             if ext["vendor_name"] == "ORIONBELT":
-                return json.loads(ext["data"]).get("obml_unexported", {})
+                return ext["data"].get("obml_unexported", {})
         return {}
 
     def test_pop_metrics_are_not_ossie_metrics(self) -> None:
@@ -196,7 +195,7 @@ class TestOBMLtoOssiePoP:
 
 
 class TestOssietoOBMLPoP:
-    """Ossie → OBML: PoP metrics are reconstructed from custom_extensions."""
+    """Ossie → OBML: PoP metrics are reconstructed from nonportable_extensions."""
 
     def _roundtrip_ossie(self) -> dict:
         """OBML → Ossie → OBML roundtrip."""
@@ -235,7 +234,7 @@ class TestOssietoOBMLPoP:
                         {"dialect": "ANSI_SQL", "expression": "SUM(Orders.AMOUNT) - prev.value"}
                     ]
                 },
-                "custom_extensions": [{"vendor_name": "ORIONBELT", "data": json.dumps(legacy)}],
+                "nonportable_extensions": [{"vendor_name": "ORIONBELT", "data": legacy}],
             }
         )
         m = conv.OssietoOBML(ossie).convert()["metrics"]["Legacy YoY"]

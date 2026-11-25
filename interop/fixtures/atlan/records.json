@@ -1,0 +1,738 @@
+{
+ "artifacts": [
+  {
+   "id": "metric_synth_resolved_returns",
+   "kind": "metric",
+   "app": "metric",
+   "name": "Resolved Returns",
+   "display_name": "Resolved Returns",
+   "description": "Returns resolved for one store in a window",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "metric:builder:0003",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "count",
+      "reaggregation": "sum"
+     },
+     "output": {
+      "alias": "Resolved Returns",
+      "datatype": "integer",
+      "unit": "returns"
+     },
+     "joins": [],
+     "dimensions": [
+      {
+       "name": "Store",
+       "kind": "categorical",
+       "sql": "TPCDS.PUBLIC.STORE_RETURNS.SR_STORE_SK",
+       "datatype": "string",
+       "required_join": null,
+       "description": "The store the return is attributed to."
+      },
+      {
+       "name": "Return Date",
+       "kind": "time",
+       "sql": "TPCDS.PUBLIC.STORE_RETURNS.SR_RETURNED_DATE",
+       "datatype": "date",
+       "required_join": null,
+       "description": "When the return was filed."
+      }
+     ],
+     "filters": [
+      "TPCDS.PUBLIC.STORE_RETURNS.SR_STORE_SK = {{store_sk}}",
+      "COALESCE(TPCDS.PUBLIC.STORE_RETURNS.SR_RESOLVED_AT, TPCDS.PUBLIC.STORE_RETURNS.SR_RETURNED_DATE) >= DATEADD(day, -{{window_days}}, CURRENT_TIMESTAMP)"
+     ],
+     "mandatory_filters": [
+      "(TPCDS.PUBLIC.STORE_RETURNS.SR_RESOLVED_AT IS NOT NULL OR LOWER(TPCDS.PUBLIC.STORE_RETURNS.SR_RETURN_STATUS) IN ('resolved', 'closed'))"
+     ],
+     "examples": [
+      {
+       "question": "How many returns did store 42 resolve in the last 30 days?",
+       "sql": "SELECT COUNT(*) FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_STORE_SK = 42 AND SR_RESOLVED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)",
+       "source": "metric_builder"
+      }
+     ],
+     "exclusions": [],
+     "grain": "TPCDS.PUBLIC.STORE_RETURNS.SR_TICKET_NUMBER",
+     "population": "Returns that reached a resolved or closed state",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "COUNT_IF((TPCDS.PUBLIC.STORE_RETURNS.SR_RESOLVED_AT IS NOT NULL OR LOWER(TPCDS.PUBLIC.STORE_RETURNS.SR_RETURN_STATUS) IN ('resolved', 'closed')))",
+     "source": {
+      "sql": null,
+      "table": "TPCDS.PUBLIC.STORE_RETURNS",
+      "alias": "Store Returns",
+      "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+      "parameters": [
+       {
+        "name": "store_sk",
+        "datatype": "string",
+        "default": null
+       },
+       {
+        "name": "window_days",
+        "datatype": "integer",
+        "default": 30
+       }
+      ]
+     }
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_active_shoppers_change_vs_60-90_days_ago",
+   "kind": "metric",
+   "app": "metric",
+   "name": "Active shoppers change vs 60-90 days ago",
+   "display_name": "Active Shoppers Change Vs 60-90 Days Ago",
+   "description": "Percentage change in active shoppers against the value 60 to 90 days ago",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "warehouse-tables/active_shoppers_change",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "ratio",
+      "reaggregation": "none",
+      "null_handling": "ignore",
+      "zero_denominator": "null"
+     },
+     "output": {
+      "alias": "active_shoppers_change_pct",
+      "datatype": "decimal",
+      "unit": "percent"
+     },
+     "joins": [],
+     "dimensions": [
+      {
+       "name": "store_name",
+       "kind": "categorical",
+       "sql": "store_name",
+       "datatype": "string",
+       "description": "Store name."
+      },
+      {
+       "name": "division",
+       "kind": "categorical",
+       "sql": "division",
+       "datatype": "string",
+       "description": "Sales division."
+      },
+      {
+       "name": "state",
+       "kind": "categorical",
+       "sql": "state",
+       "datatype": "string",
+       "description": "Store state."
+      },
+      {
+       "name": "segment",
+       "kind": "categorical",
+       "sql": "segment",
+       "datatype": "string",
+       "description": "Store size segment."
+      },
+      {
+       "name": "lifecycle_stage",
+       "kind": "categorical",
+       "sql": "lifecycle_stage",
+       "datatype": "string",
+       "description": "Opened, mature or closing."
+      },
+      {
+       "name": "milestone",
+       "kind": "categorical",
+       "sql": "milestone",
+       "datatype": "string",
+       "description": "Latest milestone reached."
+      }
+     ],
+     "filters": [],
+     "mandatory_filters": [],
+     "examples": [],
+     "exclusions": [],
+     "grain": "store",
+     "population": "Stores with a monthly snapshot",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "100.0 * (SUM(active_shoppers) - SUM(shoppers_90d)) / NULLIF(SUM(shoppers_90d), 0)",
+     "source": {
+      "sql": null,
+      "table": "TPCDS.PUBLIC.STORE_MONTHLY_SNAPSHOT",
+      "alias": "store_monthly_snapshot",
+      "entity": "TPCDS.PUBLIC.STORE_MONTHLY_SNAPSHOT",
+      "parameters": []
+     }
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_csat",
+   "kind": "metric",
+   "app": "metric",
+   "name": "CSAT",
+   "display_name": "CSAT",
+   "description": "Share of good scores among all good or bad survey answers",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "metric:builder:0002",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "ratio",
+      "reaggregation": "none",
+      "zero_denominator": "null"
+     },
+     "output": {
+      "alias": "CSAT",
+      "datatype": "decimal",
+      "unit": "percent"
+     },
+     "joins": [],
+     "dimensions": [
+      {
+       "name": "Answer Date",
+       "kind": "time",
+       "sql": "TPCDS.PUBLIC.CUSTOMER_SURVEY.ANSWERED_AT",
+       "datatype": "date",
+       "required_join": null,
+       "description": "When the survey was answered."
+      }
+     ],
+     "filters": [
+      "TPCDS.PUBLIC.CUSTOMER_SURVEY.ANSWERED_AT >= DATEADD(day, -{{window_days}}, CURRENT_TIMESTAMP)",
+      "TPCDS.PUBLIC.CUSTOMER_SURVEY.CHANNEL = 'store'"
+     ],
+     "mandatory_filters": [
+      "TPCDS.PUBLIC.CUSTOMER_SURVEY.SCORE IN ('good', 'bad')"
+     ],
+     "examples": [
+      {
+       "question": "What is the CSAT for store surveys over the last 30 days?",
+       "sql": "SELECT ROUND(COUNT(CASE WHEN SCORE = 'good' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) FROM TPCDS.PUBLIC.CUSTOMER_SURVEY WHERE SCORE IN ('good','bad') AND CHANNEL = 'store' AND ANSWERED_AT >= DATEADD(day, -30, CURRENT_TIMESTAMP)",
+       "source": "metric_builder"
+      }
+     ],
+     "exclusions": [],
+     "grain": "TPCDS.PUBLIC.CUSTOMER_SURVEY.SURVEY_ID",
+     "population": "Survey answers with a good or bad score",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "ROUND(COUNT(CASE WHEN TPCDS.PUBLIC.CUSTOMER_SURVEY.SCORE = 'good' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN TPCDS.PUBLIC.CUSTOMER_SURVEY.SCORE IN ('good', 'bad') THEN 1 END), 0), 1)",
+     "source": {
+      "sql": null,
+      "table": "TPCDS.PUBLIC.CUSTOMER_SURVEY",
+      "alias": "Survey Answers",
+      "entity": "TPCDS.PUBLIC.CUSTOMER_SURVEY",
+      "parameters": [
+       {
+        "name": "window_days",
+        "datatype": "integer",
+        "default": 30
+       }
+      ]
+     },
+     "depends_on": [
+      "CSAT Responses"
+     ]
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_book_manufacturer_count",
+   "kind": "metric",
+   "app": "metric",
+   "name": "book_manufacturer_count",
+   "display_name": "Book Manufacturer Count",
+   "description": "Distinct manufacturers of items in the Books category, excluding one brand family",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "synthetic:book_manufacturer_count",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "count_distinct"
+     },
+     "output": {
+      "alias": "book_manufacturer_count",
+      "datatype": "integer"
+     },
+     "joins": [],
+     "dimensions": [],
+     "filters": [],
+     "mandatory_filters": [],
+     "examples": [],
+     "exclusions": [
+      "brands containing 'importo'"
+     ],
+     "grain": "one row per distinct manufacturer",
+     "population": "Items in the Books category",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "COUNT(DISTINCT I_MANUFACT_ID)",
+     "source": {
+      "sql": "SELECT * FROM TPCDS.PUBLIC.ITEM WHERE I_CATEGORY = 'Books' AND NOT I_BRAND LIKE '%importo%'",
+      "table": null,
+      "alias": "m",
+      "entity": "TPCDS.PUBLIC.ITEM",
+      "parameters": []
+     }
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_preferred_customer_count",
+   "kind": "metric",
+   "app": "metric",
+   "name": "preferred_customer_count",
+   "display_name": "Preferred Customer Count",
+   "description": "Count of customers whose preferred flag is set",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "synthetic:preferred_customer_count",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "count"
+     },
+     "output": {
+      "alias": "preferred_customer_count",
+      "datatype": "integer"
+     },
+     "joins": [],
+     "dimensions": [],
+     "filters": [],
+     "mandatory_filters": [],
+     "examples": [],
+     "exclusions": [],
+     "grain": "customer",
+     "population": "Customers flagged as preferred",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "COUNT(*)",
+     "source": {
+      "sql": "SELECT * FROM TPCDS.PUBLIC.CUSTOMER WHERE C_PREFERRED_CUST_FLAG = 'Y'",
+      "table": null,
+      "alias": "m",
+      "entity": "TPCDS.PUBLIC.CUSTOMER",
+      "parameters": []
+     }
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_store_sales_count",
+   "kind": "metric",
+   "app": "metric",
+   "name": "store_sales_count",
+   "display_name": "Store Sales Count",
+   "description": "Count all rows in the store sales fact table",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "synthetic:store_sales_count",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "count"
+     },
+     "output": {
+      "alias": "store_sales_count",
+      "datatype": "integer"
+     },
+     "joins": [],
+     "dimensions": [],
+     "filters": [],
+     "mandatory_filters": [],
+     "examples": [],
+     "exclusions": [],
+     "grain": "table-level",
+     "population": "All rows in TPCDS.PUBLIC.STORE_SALES",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "COUNT(*)",
+     "source": {
+      "sql": "SELECT * FROM TPCDS.PUBLIC.STORE_SALES",
+      "table": null,
+      "alias": "m",
+      "entity": "TPCDS.PUBLIC.STORE_SALES",
+      "parameters": []
+     }
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_open_returns",
+   "kind": "metric",
+   "app": "metric",
+   "name": "Open returns",
+   "display_name": "Open Returns",
+   "description": "Number of distinct return tickets, excluding voided returns",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "warehouse-tables/open_returns",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "count_distinct",
+      "reaggregation": "none"
+     },
+     "output": {
+      "alias": "open_returns",
+      "datatype": "integer",
+      "unit": "returns"
+     },
+     "joins": [],
+     "dimensions": [
+      {
+       "name": "sr_returned_date",
+       "kind": "time",
+       "sql": "sr_returned_date",
+       "datatype": "date",
+       "description": "Day the return was filed."
+      },
+      {
+       "name": "store_name",
+       "kind": "categorical",
+       "sql": "store_name",
+       "datatype": "string",
+       "description": "Store the return belongs to."
+      },
+      {
+       "name": "sr_return_status",
+       "kind": "categorical",
+       "sql": "sr_return_status",
+       "datatype": "string",
+       "description": "open, closed or void."
+      }
+     ],
+     "filters": [],
+     "mandatory_filters": [
+      "sr_return_status <> 'void'"
+     ],
+     "examples": [],
+     "exclusions": [],
+     "grain": "return ticket",
+     "population": "Store returns that are not void",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "COUNT(DISTINCT sr_ticket_number)",
+     "source": {
+      "sql": null,
+      "table": "TPCDS.PUBLIC.STORE_RETURNS",
+      "alias": "store_returns",
+      "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+      "parameters": [],
+      "timeframe_column": "sr_returned_date"
+     }
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_last_store_sale_at",
+   "kind": "metric",
+   "app": "metric",
+   "name": "last_store_sale_at",
+   "display_name": "Last Store Sale At",
+   "description": "Timestamp of the most recent store sale",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "synthetic:last_store_sale_at",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "max"
+     },
+     "output": {
+      "alias": "last_store_sale_at",
+      "datatype": "timestamp"
+     },
+     "joins": [],
+     "dimensions": [],
+     "filters": [],
+     "mandatory_filters": [],
+     "examples": [],
+     "exclusions": [],
+     "grain": "table-level",
+     "population": "All store sales",
+     "provenance": {
+      "source": "synthetic"
+     },
+     "extensions": {},
+     "formula": "MAX(SS_SOLD_TIMESTAMP)",
+     "source": {
+      "sql": "SELECT * FROM TPCDS.PUBLIC.STORE_SALES",
+      "table": null,
+      "alias": "m",
+      "entity": "TPCDS.PUBLIC.STORE_SALES",
+      "parameters": []
+     }
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_sales_per_shopper",
+   "kind": "metric",
+   "app": "metric",
+   "name": "sales_per_shopper",
+   "display_name": "Sales Per Shopper",
+   "description": "Average store sales per active shopper, by store and state, for active Majors customers.",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "synthetic:sales_per_shopper",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "ratio",
+      "zero_denominator": "null",
+      "null_handling": "shoppers with no sales are not counted",
+      "reaggregation": "not additive: recompute sales and distinct shoppers, then divide"
+     },
+     "output": {
+      "alias": "sales_per_shopper",
+      "datatype": "decimal",
+      "unit": "sales per shopper"
+     },
+     "joins": [
+      {
+       "name": "a",
+       "to": "TPCDS.PUBLIC.CUSTOMER",
+       "sql": "LEFT(m.SS_CUSTOMER_ID, 15) = LEFT(a.C_CUSTOMER_ID, 15)",
+       "cardinality": "many_to_one",
+       "origin": "observed in analyst query (LEFT JOIN)"
+      },
+      {
+       "name": "u",
+       "to": "TPCDS.PUBLIC.CUSTOMER_ADDRESS",
+       "sql": "a.C_CURRENT_ADDR_SK = u.CA_ADDRESS_SK",
+       "cardinality": "many_to_one",
+       "origin": "observed in analyst query (LEFT JOIN)"
+      }
+     ],
+     "dimensions": [
+      {
+       "name": "store_sk",
+       "kind": "categorical",
+       "sql": "m.SS_STORE_SK",
+       "datatype": "string",
+       "description": "The store."
+      },
+      {
+       "name": "state",
+       "kind": "categorical",
+       "sql": "COALESCE(NULLIF(u.CA_STATE, ''), '(unknown)')",
+       "datatype": "string",
+       "required_join": "u",
+       "description": "Customer state, '(unknown)' when missing."
+      },
+      {
+       "name": "sale_date",
+       "kind": "time",
+       "sql": "DATE_TRUNC('day', m.SS_SOLD_TIMESTAMP)",
+       "datatype": "date",
+       "description": "Day of sale."
+      },
+      {
+       "name": "segment",
+       "kind": "categorical",
+       "sql": "a.C_SEGMENT",
+       "datatype": "string",
+       "values": [
+        "Majors",
+        "Growth"
+       ],
+       "values_truncated": true,
+       "value_map": {
+        "Majors": "large accounts",
+        "Growth": "mid-size accounts"
+       },
+       "filter_form": "a.C_SEGMENT = :value",
+       "description": "Customer segment."
+      }
+     ],
+     "filters": [
+      "a.C_SEGMENT = 'Majors'",
+      "a.C_IS_ACTIVE = TRUE",
+      "m.SS_SOLD_TIMESTAMP >= :start_date AND m.SS_SOLD_TIMESTAMP < DATEADD(day, 1, :end_date)"
+     ],
+     "mandatory_filters": [
+      "m.SS_CHANNEL = 'store'",
+      "m.SS_CUSTOMER_EMAIL NOT ILIKE '%@example.com%'"
+     ],
+     "examples": [
+      {
+       "question": "Which stores have the most sales per shopper this quarter?",
+       "sql": "SELECT m.SS_STORE_SK, COALESCE(NULLIF(u.CA_STATE,''),'(unknown)') AS STATE, COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) LEFT JOIN TPCDS.PUBLIC.CUSTOMER_ADDRESS u ON a.C_CURRENT_ADDR_SK = u.CA_ADDRESS_SK WHERE a.C_SEGMENT = 'Majors' AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = 'store' AND m.SS_CUSTOMER_EMAIL NOT ILIKE '%@example.com%' AND m.SS_SOLD_TIMESTAMP >= '2026-03-18' AND m.SS_SOLD_TIMESTAMP < DATEADD(day,1,'2026-06-16') GROUP BY 1, 2 ORDER BY SALES_PER_SHOPPER DESC",
+       "source": "analyst"
+      },
+      {
+       "question": "What is the sales-per-shopper ratio for the Majors segment?",
+       "sql": "SELECT a.C_SEGMENT AS SEGMENT, COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0) AS SALES_PER_SHOPPER FROM TPCDS.PUBLIC.STORE_SALES m LEFT JOIN TPCDS.PUBLIC.CUSTOMER a ON LEFT(m.SS_CUSTOMER_ID,15)=LEFT(a.C_CUSTOMER_ID,15) WHERE a.C_SEGMENT = 'Majors' AND a.C_IS_ACTIVE = TRUE AND m.SS_CHANNEL = 'store' AND m.SS_SOLD_TIMESTAMP >= '2026-03-18' GROUP BY 1",
+       "source": "analyst"
+      }
+     ],
+     "exclusions": [
+      "online channel (SS_CHANNEL != 'store')",
+      "test accounts (email ILIKE '%@example.com%')"
+     ],
+     "grain": "store_sk, state",
+     "population": "Store-channel sales to active Majors customers, excluding test emails",
+     "provenance": {
+      "source": "analyst",
+      "trust_score": 8.0,
+      "observed_sql": null
+     },
+     "extensions": {},
+     "formula": "COUNT(*) / NULLIF(COUNT(DISTINCT m.SS_CUSTOMER_SK), 0)",
+     "source": {
+      "sql": null,
+      "table": "TPCDS.PUBLIC.STORE_SALES",
+      "alias": "m",
+      "entity": "TPCDS.PUBLIC.STORE_SALES",
+      "parameters": [
+       {
+        "name": "start_date",
+        "datatype": "date",
+        "default": "2026-03-18"
+       },
+       {
+        "name": "end_date",
+        "datatype": "date",
+        "default": "2026-06-16"
+       }
+      ],
+      "timeframe_column": "SS_SOLD_TIMESTAMP"
+     },
+     "depends_on": [
+      "store_sales_count"
+     ]
+    },
+    "validation_warnings": []
+   }
+  },
+  {
+   "id": "metric_synth_defective_return_pct",
+   "kind": "metric",
+   "app": "metric",
+   "name": "defective_return_pct",
+   "display_name": "Defective Return Pct",
+   "description": "Share of defective returns among classified returns, and the count of classified returns",
+   "artifact_status": "active",
+   "workspace_id": "workspace_synthetic_tpcds",
+   "version_ordinal": 1,
+   "source_type": "external",
+   "source_id": "synthetic:defective_return_pct",
+   "metadata": {
+    "definition": {
+     "spec_version": "1.0-draft.4",
+     "version": 1,
+     "dialect": "snowflake",
+     "aggregation": {
+      "type": "custom"
+     },
+     "output": {
+      "alias": "defective_return_pct",
+      "datatype": "integer"
+     },
+     "joins": [],
+     "dimensions": [],
+     "filters": [],
+     "mandatory_filters": [],
+     "examples": [
+      {
+       "sql": "SELECT ROUND(COUNT(CASE WHEN SR_RETURN_REASON='defective' THEN 1 END)*100.0/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END),0),1) AS defective_pct FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_RETURNED_DATE >= '2026-04-01' AND SR_RETURNED_DATE < '2026-07-01'",
+       "source": "query_log"
+      }
+     ],
+     "exclusions": [
+      "returns with other reasons are excluded from the denominator"
+     ],
+     "grain": "aggregate over entire filtered date range",
+     "population": "Store returns with a reason of 'defective' or 'changed_mind'",
+     "provenance": {
+      "source": "query_log",
+      "trust_score": 7.5
+     },
+     "extensions": {},
+     "formula": "SELECT ROUND(COUNT(CASE WHEN SR_RETURN_REASON='defective' THEN 1 END)*100.0/ NULLIF(COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END),0),1) AS defective_pct, COUNT(CASE WHEN SR_RETURN_REASON IN ('defective','changed_mind') THEN 1 END) AS classified_returns FROM TPCDS.PUBLIC.STORE_RETURNS WHERE SR_RETURNED_DATE >= '2026-04-01' AND SR_RETURNED_DATE < '2026-07-01'",
+     "source": {
+      "sql": null,
+      "table": "TPCDS.PUBLIC.STORE_RETURNS",
+      "alias": "m",
+      "entity": "TPCDS.PUBLIC.STORE_RETURNS",
+      "parameters": []
+     }
+    },
+    "validation_warnings": []
+   }
+  }
+ ]
+}

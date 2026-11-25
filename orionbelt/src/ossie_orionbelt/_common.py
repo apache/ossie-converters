@@ -39,8 +39,8 @@ _OSSIE_VERSION = "0.3.0.dev0"
 # OSSIE_SQL_2026 (the spec's portable, ANSI-compatible expression language);
 # SNOWFLAKE and DATABRICKS are SQL engines OrionBelt also targets, and their
 # simple/expression aggregations (``SUM(t.c)``, ``SUM(t.a * t.b)``) are
-# syntactically identical to ANSI. CLICKHOUSE, POSTGRES and REDSHIFT are read on
-# the same ground. Non-SQL languages (MDX, TABLEAU, MAQL, SIGMA, THOUGHTSPOT,
+# syntactically identical to ANSI. CLICKHOUSE, POSTGRES, REDSHIFT and TRINO are read
+# on the same ground. Non-SQL languages (MDX, TABLEAU, MAQL, SIGMA, THOUGHTSPOT,
 # DAX) are never parsed as SQL.
 _SQL_PARSEABLE_DIALECTS = (
     "ANSI_SQL",
@@ -50,6 +50,7 @@ _SQL_PARSEABLE_DIALECTS = (
     "CLICKHOUSE",
     "POSTGRES",
     "REDSHIFT",
+    "TRINO",
 )
 
 # Ossie SQL-dialect tag -> sqlglot ``read`` dialect. ANSI and the portable
@@ -62,6 +63,7 @@ _OSSIE_DIALECT_TO_SQLGLOT: dict[str, str | None] = {
     "CLICKHOUSE": "clickhouse",
     "POSTGRES": "postgres",
     "REDSHIFT": "redshift",
+    "TRINO": "trino",
 }
 
 # Matches a ``dataset.column`` reference inside a SQL expression, where each
@@ -75,7 +77,7 @@ _COLUMN_REF_RE = re.compile(
     r"\s*\.\s*"
     r'(?P<col>[A-Za-z_]\w*|"[^"]+"|`[^`]+`|\[[^\]]+\])'
 )
-# Vendor identities for custom_extensions.
+# Vendor identities for nonportable_extensions.
 #   ORIONBELT - OrionBelt/OBML-proprietary payloads we author on OBML -> Ossie.
 #   Ossie       - Ossie-native fields OBML can't hold (unique_keys, field label,
 #               ai_context leftovers), stashed into OBML on Ossie -> OBML.

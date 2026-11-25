@@ -88,8 +88,8 @@ def convert_ossie_relationship(
             if ossie_relationship.ai_context is not None:
                 ctx.warn("Not supported", code="ai-context")
 
-        with ctx.problem_scope("custom_extensions"):
-            if ossie_relationship.custom_extensions is not None:
+        with ctx.problem_scope("nonportable_extensions"):
+            if ossie_relationship.nonportable_extensions is not None:
                 ctx.warn("Not supported", code="custom-extensions")
 
         if not hex_relation_id:

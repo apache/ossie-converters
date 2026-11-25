@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 
 from ..hex import HexProject
 from .context import ExportContext
@@ -23,7 +23,7 @@ from .convert_ossie_semantic_model import convert_ossie_semantic_model
 
 
 def convert_ossie_document(
-    ossie_document: OssieDocument | None,
+    ossie_document: OssieSemanticModel | None,
     *,
     ctx: ExportContext,
 ) -> HexProject | None:

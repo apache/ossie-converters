@@ -78,9 +78,9 @@ def inventory(data):
 
 def _extensions(value):
     if isinstance(value, dict):
-        yield from value.get("custom_extensions") or []
+        yield from value.get("nonportable_extensions") or []
         for key, child in value.items():
-            if key != "custom_extensions":
+            if key != "nonportable_extensions":
                 yield from _extensions(child)
     elif isinstance(value, list):
         for child in value:
@@ -143,7 +143,7 @@ def native_content(path, native_format, output_shape):
             data = (
                 json.loads(item.read_text(encoding="utf-8"))
                 if native_format
-                in ("dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
+                in ("atlan", "dbt", "gooddata", "microsoft", "sigma", "wisdom", "salesforce")
                 else yaml.safe_load(item.read_text(encoding="utf-8"))
             )
             if not isinstance(data, dict):
@@ -205,6 +205,13 @@ def _additional_members(data, native_format):
     """
     if native_format == "omni":
         return len(data.get("dimensions") or {}) + len(data.get("measures") or {})
+    if native_format == "atlan":
+        # A registry export lists metric records; each carries its definition's formula.
+        return sum(
+            1
+            for record in data.get("artifacts") or []
+            if (record.get("metadata") or {}).get("definition", {}).get("formula")
+        )
     if native_format == "hex":
         # Hex resource files wrap a model, dimension, measure or relation.
         return sum(len(data.get(key) or []) for key in ("dimensions", "measures"))
@@ -254,8 +261,16 @@ def _additional_members(data, native_format):
             for page in data.get("pages") or []
             for element in page.get("elements") or []
         )
-    if native_format == "snowflake":
+    if native_format == "solid":
+        # A Solid export holds one model under `semantic_model`: table columns are its
+        # dimensions and facts, and metrics are one model-level list.
+        model = data.get("semantic_model") or {}
         return sum(
+            len(table.get("dimensions") or []) + len(table.get("facts") or [])
+            for table in model.get("tables") or []
+        ) + len(model.get("metrics") or [])
+    if native_format in ("snowflake", "semantic-view"):
+        return len(data.get("metrics") or []) + sum(
             sum(
                 len(table.get(key) or [])
                 for key in (
@@ -268,8 +283,6 @@ def _additional_members(data, native_format):
             )
             for table in data.get("tables") or []
         )
-    if native_format == "semantic-view":
-        return _additional_members(data, "snowflake") + len(data.get("metrics") or [])
     if native_format == "thoughtspot":
         return len(
             (data.get("table") or data.get("sql_view") or {}).get("columns") or []
@@ -302,10 +315,9 @@ def compare_inventory(before, after):
         result = Counter()
 
         def extensions(node, *owner):
-            for extension in node.get("custom_extensions") or []:
-                result[
-                    ("extension", *owner, extension["vendor_name"], extension["data"])
-                ] += 1
+            for extension in node.get("nonportable_extensions") or []:
+                data = json.dumps(extension["data"], sort_keys=True)
+                result[("extension", *owner, extension["vendor_name"], data)] += 1
 
         extensions(data, "model")
         for ds in data.get("datasets") or []:

@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize(
     "name",
     [
+        "atlan",
         "gooddata",
         "honeydew",
         "lightdash",
@@ -46,6 +47,7 @@ ROOT = Path(__file__).resolve().parents[2]
         "orionbelt",
         "salesforce",
         "sigma",
+        "solid",
         "thoughtspot",
         "wisdom",
         "wisdom-semantic-view",
@@ -63,6 +65,7 @@ def test_registered_native_sources_have_real_members(name):
 @pytest.mark.parametrize(
     "fmt",
     [
+        "atlan",
         "gooddata",
         "hex",
         "honeydew",
@@ -75,6 +78,7 @@ def test_registered_native_sources_have_real_members(name):
         "salesforce",
         "sigma",
         "snowflake",
+        "solid",
         "thoughtspot",
         "wisdom",
         "semantic-view",
@@ -279,6 +283,12 @@ def test_wisdom_counts_computed_fields_and_measures_without_physical_columns(
         json.dumps({"tables": [{"zsheet_json": {key: [{"name": "amount"}]}}]})
     )
     assert native_content(output, "wisdom", "file")["members"] == 1
+
+
+def test_snowflake_counts_top_level_metrics(tmp_path):
+    output = tmp_path / "native.yaml"
+    output.write_text("metrics:\n- name: revenue\n  expr: SUM(amount)\n")
+    assert native_content(output, "snowflake", "file")["members"] == 1
 
 
 def test_sigma_counts_metrics_without_physical_columns(tmp_path):

@@ -18,7 +18,7 @@
 """Shared helpers for the Ossie <-> Omni converters.
 
 Both directions are pure offline YAML transforms. The cross-cutting concerns live
-here: version constants, the dialect preference order, the `custom_extensions`
+here: version constants, the dialect preference order, the `nonportable_extensions`
 stash protocol, Omni file-name conventions, identifier sanitization, and the
 `${...}` reference translation between Omni SQL and the plain column references
 Ossie expressions use.
@@ -38,7 +38,7 @@ import yaml
 # Ossie semantic model spec version this converter targets (see core-spec).
 OSSIE_VERSION = "0.3.0.dev0"
 
-# Vendor id used for the `custom_extensions` stash.
+# Vendor id used for the `nonportable_extensions` stash.
 VENDOR = "OMNI"
 
 # Omni SQL is the SQL of the model's database connection, so there is no OMNI
@@ -302,9 +302,9 @@ def read_stash(obj):
 
     The `_v` version marker is stripped from the returned dict.
     """
-    for ext in (obj or {}).get("custom_extensions") or []:
+    for ext in (obj or {}).get("nonportable_extensions") or []:
         if ext.get("vendor_name") == VENDOR:
-            data = json.loads(ext.get("data") or "{}",
+            data = json.loads(json.dumps(ext.get("data") or {}),
                               object_hook=_json_object_hook)
             data.pop("_v", None)
             return data
@@ -312,7 +312,7 @@ def read_stash(obj):
 
 
 def write_stash(obj, data):
-    """Attach an OMNI `custom_extensions` entry holding `data` (a dict).
+    """Attach an OMNI `nonportable_extensions` entry holding `data` (a dict).
 
     No-op when `data` is empty, so hand-authored Ossie stays clean. Merges into an
     existing OMNI entry if one is already present.
@@ -321,20 +321,20 @@ def write_stash(obj, data):
         return
     payload = {"_v": STASH_VERSION}
     payload.update(data)
-    blob = json.dumps(payload, default=_json_default)
-    exts = obj.setdefault("custom_extensions", [])
+    stashed = json.loads(json.dumps(payload, default=_json_default))
+    exts = obj.setdefault("nonportable_extensions", [])
     for ext in exts:
         if ext.get("vendor_name") == VENDOR:
-            ext["data"] = blob
+            ext["data"] = stashed
             return
-    exts.append({"vendor_name": VENDOR, "data": blob})
+    exts.append({"vendor_name": VENDOR, "data": stashed})
 
 
 def foreign_vendor_extensions(obj):
-    """Return non-OMNI custom_extensions (dropped on export, with a warning)."""
+    """Return non-OMNI nonportable_extensions (dropped on export, with a warning)."""
     return [
         ext
-        for ext in (obj or {}).get("custom_extensions") or []
+        for ext in (obj or {}).get("nonportable_extensions") or []
         if ext.get("vendor_name") != VENDOR
     ]
 
@@ -384,7 +384,7 @@ def pick_expression(ossie_expression, preferred=None, *, scope="expression"):
             if tree.find(exp.Anonymous, exp.Query, exp.Command, exp.DDL, exp.DML):
                 continue
             rendered = tree.sql(dialect=writer, unsupported_level=ErrorLevel.RAISE)
-            if not preferred and dialect in _WAREHOUSE_SQL_DIALECTS:
+            if writer is Dialect and dialect in _WAREHOUSE_SQL_DIALECTS:
                 warnings.warn(
                     f"[{scope}] translated {dialect} to generic SQL without a target "
                     "warehouse. Pass --dialect for the Omni connection before using "

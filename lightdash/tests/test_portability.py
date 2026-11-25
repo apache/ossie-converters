@@ -26,11 +26,9 @@ tool can read: ``ANSI_SQL`` by default, or ``OSSIE_SQL_2026`` when the
 import is told that is what the Lightdash SQL is written in.
 """
 
-import json
-
 import pytest
 
-from ossie import OssieDialect, OssieDocument
+from ossie import OssieDialect, OssieSemanticModel
 
 from ossie_lightdash import LightdashToOssieConverter, OssieToLightdashConverter
 from ossie_lightdash.datatype_utils import datatype_to_lightdash_type
@@ -50,7 +48,7 @@ def _metric(name: str, sql: str, dialect: str = "OSSIE_SQL_2026"):
 
 
 def _model(fields, metrics):
-    return OssieDocument.model_validate(
+    return OssieSemanticModel.model_validate(
         {
             "version": "0.3.0.dev0",
             "name": "portability",
@@ -91,7 +89,7 @@ M3 = _model(
 FIXTURES = {"M0": M0_QUALIFIED, "M0-ansi": M0_ANSI, "M1": M1, "M2": M2, "M3": M3}
 
 
-def _round_trip(document: OssieDocument, import_dialect=OssieDialect.ANSI_SQL):
+def _round_trip(document: OssieSemanticModel, import_dialect=OssieDialect.ANSI_SQL):
     exported = OssieToLightdashConverter().convert_models(document)
     assert exported.issues == [], exported.issues
     reimported = LightdashToOssieConverter(import_dialect).convert(
@@ -103,9 +101,9 @@ def _round_trip(document: OssieDocument, import_dialect=OssieDialect.ANSI_SQL):
 
 
 def _lightdash_name(metric) -> str:
-    for extension in metric.custom_extensions or []:
+    for extension in metric.nonportable_extensions or []:
         if extension.vendor_name.upper() == "LIGHTDASH":
-            return json.loads(extension.data)["name"]
+            return extension.data["name"]
     return metric.name
 
 

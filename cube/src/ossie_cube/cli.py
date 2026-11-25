@@ -82,6 +82,8 @@ def _build_parser():
                      help="catalog (Snowflake database) to add to short table sources")
     imp.add_argument("--default-schema", metavar="NAME",
                      help="schema to add to one-part table sources; requires --default-catalog")
+    imp.add_argument("--model-scoped-metrics", action="store_true",
+                     help="keep native measures at model scope")
     imp.add_argument("--strict-fanout", dest="strict_fanout",
                      action=argparse.BooleanOptionalAction, default=None,
                      help="refuse the conversion when a metric is fan-out-unsafe, "
@@ -206,6 +208,7 @@ def main(argv=None):
             out, source, issues = convert_cube_view_to_ossie(
                 files, args.view, source=args.source,
                 strict_fanout=args.strict_fanout is not False,
+                scope_native_metrics=not args.model_scoped_metrics,
                 source_dialect=args.source_dialect, default_catalog=args.default_catalog,
                 default_schema=args.default_schema)
             print(f"Projected view '{args.view}', rooted at dataset '{source}'",
@@ -214,6 +217,7 @@ def main(argv=None):
             out, issues = convert_cube_to_ossie(
                 files, model_name=args.name, view=args.view,
                 strict_fanout=bool(args.strict_fanout),
+                scope_native_metrics=not args.model_scoped_metrics,
                 source_dialect=args.source_dialect, default_catalog=args.default_catalog,
                 default_schema=args.default_schema)
         if args.output:

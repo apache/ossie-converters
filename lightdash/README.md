@@ -41,7 +41,7 @@ Ossie input and output use the flat document format: `version`, `name`,
 rejects the legacy `semantic_model` wrapper. Migrate each wrapped model into
 its own document before exporting.
 
-Lightdash-only attributes are stored in `custom_extensions` under the vendor
+Lightdash-only attributes are stored in `nonportable_extensions` under the vendor
 name `LIGHTDASH`. A Lightdash to Ossie to Lightdash round trip restores the
 project exactly, and every other consumer reads the core vocabulary only.
 
@@ -114,7 +114,7 @@ from ossie_lightdash import LightdashToOssieConverter, OssieToLightdashConverter
 result = LightdashToOssieConverter(OssieDialect.BIGQUERY).convert(
     schema_yml, database="analytics_db", schema="marts"
 )
-result.output   # OssieDocument
+result.output   # OssieSemanticModel
 result.issues   # [ConverterIssue(issue_type, element_name), ...]
 
 models = OssieToLightdashConverter(OssieDialect.BIGQUERY).convert_models(document)
@@ -156,7 +156,7 @@ format stores in the extension (`sql_filter`, `group_details`,
 | Model meta without Ossie vocabulary (`label`, `hidden`, `sql_filter`, `group_details`, `default_time_dimension`, `required_filters`, `order_fields_by`) and column meta outside `dimension` and `metrics` (`additional_dimensions`) | Stored in the dataset's or field's `LIGHTDASH` extension (column meta under `column_meta`) and restored on export. Other consumers don't read them. |
 | Bare column names in Lightdash SQL (`SUM(budget_use)`) | Qualified with the dataset when they name one of the model's columns, outside string literals and function names. The extension also records the model under `model`, so an expression that names no dataset can be placed on export. |
 | `${TABLE}.col`, `${col}`, and `${other_model.col}` in Lightdash SQL | `dataset.col` and `other_model.col`. `${alias.col}` is rewritten to the aliased model. `${metric}` is replaced by that metric's expression. |
-| Lightdash presentation attributes (`label`, `format`, `round`, `compact`, `group_label`, `hidden`) | `custom_extensions` with `vendor_name: LIGHTDASH`. The lowercase name from earlier documents is still read. On export, the extension data is merged into the generated definition. Structural keys are protected and can't be overridden: `sql` and `label` on dimensions, `sql` and `description` on metrics, `type` and `percentile` on metrics whose expression is a recognized aggregation, and `join` and `sql_on` on joins. |
+| Lightdash presentation attributes (`label`, `format`, `round`, `compact`, `group_label`, `hidden`) | `nonportable_extensions` with `vendor_name: LIGHTDASH`. The lowercase name from earlier documents is still read. On export, the extension data is merged into the generated definition. Structural keys are protected and can't be overridden: `sql` and `label` on dimensions, `sql` and `description` on metrics, `type` and `percentile` on metrics whose expression is a recognized aggregation, and `join` and `sql_on` on joins. |
 
 ## Dialects
 
@@ -339,8 +339,8 @@ only), `JOIN_TARGET_UNKNOWN`, `METRIC_FILTER_NOT_PORTABLE`,
 On export: `CROSS_DATASET_METRIC_DROPPED`, `FIELD_REFERENCE_UNJOINED`,
 `TIME_ROLE_NOT_REPRESENTABLE`, `DIMENSION_TYPE_DEFAULTED`,
 `COLUMN_META_NOT_REPRESENTABLE`, `CATALOG_MODEL_MISSING`, `DIALECT_UNAVAILABLE`,
-`RELATIONSHIP_COLUMNS_MISMATCHED`, `EXTENSION_DATA_INVALID`,
-`FOREIGN_EXTENSION_IGNORED`, `METRIC_NAME_COLLISION`.
+`RELATIONSHIP_COLUMNS_MISMATCHED`, `FOREIGN_EXTENSION_IGNORED`,
+`METRIC_NAME_COLLISION`.
 
 ## Development
 

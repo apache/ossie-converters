@@ -14,24 +14,3 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
-"""Backwards-compatible import path.
-
-The converter lives in `ossie_to_lookml` (named by direction, like the other
-converters) and the command line entry point in `cli`. The pre-Ossie names are
-kept as aliases.
-"""
-
-from .cli import main
-from .ossie_to_lookml import OssieConversionError, convert_ossie_to_lookml
-
-OsiConversionError = OssieConversionError
-convert_osi_to_lookml = convert_ossie_to_lookml
-
-__all__ = [
-    "OsiConversionError",
-    "OssieConversionError",
-    "convert_osi_to_lookml",
-    "convert_ossie_to_lookml",
-    "main",
-]
