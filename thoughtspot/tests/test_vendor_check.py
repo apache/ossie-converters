@@ -42,7 +42,7 @@ def test_a_payload_this_converter_wrote_has_nothing_to_report():
     # The whole-pipeline version of this is the fixture test below; this is
     # the unit form, so a failure says which half is wrong.
     obj = stash.write_stash({"name": "orders"}, {"alias": "O", "db_column_name": "amt"})
-    payload = json.loads(obj["custom_extensions"][0]["data"])
+    payload = obj["nonportable_extensions"][0]["data"]
     assert vendor_check.check(payload, _Site()) == []
 
 
@@ -189,14 +189,14 @@ def test_every_payload_in_the_shipped_fixtures_passes_its_own_checker():
     def walk(node, where):
         nonlocal seen
         if isinstance(node, dict):
-            for entry in node.get("custom_extensions") or []:
+            for entry in node.get("nonportable_extensions") or []:
                 if entry.get("vendor_name") != VENDOR_KEY:
                     continue
                 seen += 1
-                found = vendor_check.check(json.loads(entry["data"]))
+                found = vendor_check.check(entry["data"])
                 assert found == [], f"{where}: {found}"
             for key, value in node.items():
-                if key != "custom_extensions":
+                if key != "nonportable_extensions":
                     walk(value, where)
         elif isinstance(node, list):
             for item in node:

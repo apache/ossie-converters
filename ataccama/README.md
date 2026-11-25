@@ -28,7 +28,7 @@ Given one or more Ataccama **catalog items** (selected by URN), the converter pr
 a single Ossie semantic model: each catalog item becomes a dataset, each catalog attribute
 becomes a field, business terms are carried across as `ai_context`, and
 **data-quality scores** plus other governance metadata are attached as `ATACCAMA`
-custom extensions.
+non-portable extensions.
 
 ## Scope & direction
 
@@ -110,7 +110,7 @@ ataccama-to-ossie --env-file .ataccama.env --urn <urn> \
 ```
 
 ```python
-# Library — returns an ossie.OssieDocument from the apache-ossie package
+# Library — returns an ossie.OssieSemanticModel from the apache-ossie package
 from ossie_ataccama import AtaccamaClient, ataccama_to_ossie
 
 client = AtaccamaClient(base_url="https://<host>", client_id="...", client_secret="...", tenant="<tenant>")
@@ -155,9 +155,9 @@ Tests run fully offline against a recorded catalog fixture
 | `primaryKey` / `primaryKeyColumn` (Metadata Entities API) | `dataset.primary_key`, `dataset.unique_keys` |
 | unique `index` / `indexColumn` (Metadata Entities API) | `dataset.unique_keys` |
 | `foreignKey` / `foreignKeyColumn` (Metadata Entities API) | `relationships` (`from`/`to` + `from_columns`/`to_columns`) |
-| DQ `overallQuality` + `dimensionResults` + findings + monitor threshold | dataset `custom_extensions` (`vendor_name: ATACCAMA`) → `data.dq` (`passed`, `failed`, `pass_rate_pct`, `threshold_pct`, `below_threshold`, `active_findings`, `dimensions[]`, `results_link`) |
-| DQ per-attribute `overallQuality` | field `custom_extensions` (`vendor_name: ATACCAMA`) → `data.dq` (`passed`, `failed`, `pass_rate_pct`) |
-| URNs, `dataType`, `columnType`, connection/source/stewardship/monitor | `custom_extensions` (`vendor_name: ATACCAMA`) → `data` |
+| DQ `overallQuality` + `dimensionResults` + findings + monitor threshold | dataset `nonportable_extensions` (`vendor_name: ATACCAMA`) → `data.dq` (`passed`, `failed`, `pass_rate_pct`, `threshold_pct`, `below_threshold`, `active_findings`, `dimensions[]`, `results_link`) |
+| DQ per-attribute `overallQuality` | field `nonportable_extensions` (`vendor_name: ATACCAMA`) → `data.dq` (`passed`, `failed`, `pass_rate_pct`) |
+| URNs, `dataType`, `columnType`, connection/source/stewardship/monitor | `nonportable_extensions` (`vendor_name: ATACCAMA`) → `data` |
 
 ### Data quality
 
@@ -238,7 +238,7 @@ is an **analytics semantic model**. Some Ossie constructs therefore have no sour
   *value* is retrievable, so none is emitted.
 - **`source` string** — the API exposes only a folder hierarchy (`locations`) and
   `originPath`, not `database.schema.table`. `source` is a best-effort dotted namespace;
-  the authoritative connection/source URNs are preserved in `custom_extensions`.
+  the authoritative connection/source URNs are preserved in `nonportable_extensions`.
 - **Expressions are physical** — attributes map to plain quoted column identifiers
   (`ANSI_SQL` only); there are no computed/multi-dialect expressions.
 - **Export (Ossie → Ataccama)** is not provided: the public Catalog API can only `PATCH`

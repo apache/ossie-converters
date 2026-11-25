@@ -20,7 +20,7 @@
 # Cross-converter interoperability
 
 Repository-owned acceptance and pairwise checks for [issue #41](https://github.com/apache/ossie-converters/issues/41).
-The registry includes **all 25 converter projects**, with explicit capability skips.
+The registry includes **all 29 converter projects**, with explicit capability skips.
 The agreed design and remaining milestones are in [the implementation plan](../docs/plans/issue-41-interop-matrix.md).
 
 ## Run
@@ -33,8 +33,11 @@ uv sync --project interop --locked --python 3.12
 uv run --project interop --locked python -m interop
 ```
 
-The runner needs Python 3.11+ and uv. Salesforce additionally needs Maven and
-Java 21+ on `PATH` (and a matching `JAVA_HOME` for Maven). Missing prerequisites
+The runner needs Python 3.11+ and uv. A uv older than a converter's
+`tool.uv.required-version` is reported as a `SKIP` naming the resolved executable, its
+version and the requirement, because uv refuses both `uv sync` and `uv run` in that case
+and every converter would otherwise fail identically. Salesforce additionally needs Maven
+and Java 21+ on `PATH` (and a matching `JAVA_HOME` for Maven). Missing prerequisites
 appear as `SKIP`; a preparation command that actually fails appears as `FAIL`.
 Dependencies are prepared once per converter: `uv sync --locked --no-dev` for
 Python converters with lockfiles and `mvn -B -DskipTests package` for Java converters.
@@ -75,7 +78,7 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 | Cube, dbt | Existing CLI runners; focused semantic regressions retained |
 | Databricks | Ossie-native: `from-databricks` / `to-databricks` read and write an Ossie model (`native_format: ossie`); `to-databricks` is a pass-through |
 | GoodData | API adapter for declarative LDM JSON, using the converter's serialization helpers |
-| Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
+| Atlan, Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |

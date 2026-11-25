@@ -39,6 +39,7 @@ updates:
   - package-ecosystem: "uv"
     directories:
       - "/ataccama"
+      - "/atlan"
       - "/bigquery"
       - "/cube"
       - "/databricks"
@@ -47,6 +48,7 @@ updates:
       - "/honeydew"
       - "/interop"
       - "/lightdash"
+      - "/linkml"
       - "/microsoft"
       - "/nvidia"
       - "/omni"
@@ -57,6 +59,8 @@ updates:
       - "/palantir"
       - "/sigma"
       - "/snowflake"
+      - "/solid"
+      - "/tableau"
       - "/thoughtspot"
       - "/wisdom"
     schedule:

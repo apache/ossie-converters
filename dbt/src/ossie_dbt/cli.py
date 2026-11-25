@@ -29,7 +29,7 @@ from typing import Sequence
 
 import yaml
 
-from ossie import OssieDocument
+from ossie import OssieSemanticModel
 from ossie_dbt.converter_issues import ConverterIssue, ConverterIssueType
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from ossie_dbt.ossie_to_msi import OssieToMSIConverter
@@ -63,11 +63,11 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
         "owned by exactly one semantic model"
     ),
     ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION: (
-        "its DBT custom_extensions data is not a JSON object, or its meta is not an object, "
+        "its DBT nonportable_extensions data is not a JSON object, or its meta is not an object, "
         "so config.meta could not be restored"
     ),
     ConverterIssueType.DUPLICATE_DBT_CUSTOM_EXTENSION: (
-        "more than one DBT custom_extensions entry carried meta, so only the first "
+        "more than one DBT nonportable_extensions entry carried meta, so only the first "
         "was restored to config.meta"
     ),
 }
@@ -108,7 +108,7 @@ def _cmd_ossie_to_msi(args: argparse.Namespace) -> None:
     output_path = Path(args.output)
 
     raw = yaml.safe_load(input_path.read_text())
-    document = OssieDocument.model_validate(raw)
+    document = OssieSemanticModel.model_validate(raw)
     result = OssieToMSIConverter().convert(document)
     _print_issues(result.issues)
 

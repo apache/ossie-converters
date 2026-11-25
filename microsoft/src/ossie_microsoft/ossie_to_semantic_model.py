@@ -27,8 +27,8 @@ Power BI evaluates DAX. An expression that cannot be translated is emitted as
 ``BLANK()`` so its calculated column or measure remains in the model, while its original
 dialect and expression are stored as annotations on that object.
 
-The semantic model is created in Direct Lake mode. The ``source`` argument generates
-the shared M expression for all Direct Lake partitions.
+The ``source`` argument configures generated Direct Lake partitions. Per-dataset
+``source_bindings`` generate Snowflake Import partitions instead.
 
 The ``ai_context`` values are saved as annotations on the semantic model object. Relationships which
 depend on multiple columns are not supported in Power BI and are skipped. The ``primary_key`` and
@@ -67,6 +67,7 @@ from ._common import (
     warn,
     warn_unsupported,
 )
+from ._report import record, record_dropped_extensions, record_items
 
 # What happens to an Apache Ossie construct Power BI has nowhere to put: unlike the
 # import direction, there is no stash on a TMSL document, so it is genuinely dropped.
@@ -103,15 +104,23 @@ def _untranslatable(scope, kind, dialect, reason=None):
         f"Supply a '{DIALECT_DAX}' expression to convert it.",
     )
 
-# Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
-# every temporal value as `dateTime`, so a time-of-day type gains a date part and a
-# timezone-aware type loses its offset.
-_LOSSY_TEMPORAL = {
+# Apache Ossie types that Power BI cannot represent faithfully. Power BI stores every
+# temporal value as `dateTime`, so a time-of-day type gains a date part and a
+# timezone-aware type loses its offset. Its fixed-decimal type is limited to 4 digits
+# after the point, while the Ossie `Decimal` leaves precision and scale unspecified, so
+# the converter cannot prove a column fits.
+_LOSSY_DATATYPE = {
     "Time": "Power BI has no time-only data type; stored as dateTime with a date part",
     "DateTimeTz": "Power BI has no timezone-aware data type; the UTC offset is lost",
+    "Decimal": (
+        "Power BI 'Fixed Decimal Number' keeps only 4 decimal places (19 significant "
+        "digits) and the Apache Ossie 'Decimal' leaves precision and scale "
+        "unspecified; values with more decimal places are not kept"
+    ),
 }
 
 DIRECT_LAKE_COMPATIBILITY_LEVEL = 1702
+M_PARTITION_COMPATIBILITY_LEVEL = 1400
 DIRECT_LAKE_EXPRESSION = "DatabaseQuery"
 ONELAKE_ENDPOINT = "https://onelake.dfs.fabric.microsoft.com"
 PLACEHOLDER_DATABASE = "database"
@@ -123,6 +132,9 @@ DEFAULT_SCHEMA = "dbo"
 _TABLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$@#]*$")
 _DELIMITED_RE = re.compile(r'^\[([^\]]+)\]$|^"([^"]+)"$|^`([^`]+)`$')
 _QUERY_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+
+_SNOWFLAKE_BINDING_REQUIRED = {"server", "warehouse", "database", "schema", "table"}
+_SNOWFLAKE_BINDING_FIELDS = _SNOWFLAKE_BINDING_REQUIRED | {"kind", "role"}
 
 
 def _unwrap_ossie_0_1_1(document):
@@ -186,6 +198,9 @@ def convert_ossie_to_semantic_model(
     ossie_yaml_str,
     source: dict = None,
     output_format: Literal["TMSL", "TMDL"] = "TMSL",
+    *,
+    source_bindings: dict | None = None,
+    require_source_bindings: bool = False,
 ) -> dict | str:
     """Convert an Apache Ossie document into a Power BI semantic model.
 
@@ -196,6 +211,11 @@ def convert_ossie_to_semantic_model(
             ``{"workspaceId": ..., "itemId": ...}``.
         output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
             ``"TMDL"`` for a single TMDL document as text.
+        source_bindings: Optional mapping from dataset names to Snowflake Import
+            targets. Each target supplies server, warehouse, database, schema, and
+            table, with optional kind ("table" or "view") and role.
+        require_source_bindings: Fail when a dataset has neither a Snowflake
+            binding nor preserved Power BI partitions.
 
     Returns:
         The TMSL model mapping or the TMDL text selected by ``output_format``.
@@ -230,6 +250,10 @@ def convert_ossie_to_semantic_model(
         or any(not isinstance(dataset, dict) or not dataset.get("name") for dataset in datasets)
     ):
         raise ValueError("document 'datasets' must be a non-empty list of named objects")
+    if require_source_bindings and source_bindings is None:
+        source_bindings = {}
+    if source_bindings is not None:
+        _validate_source_bindings(source_bindings, datasets)
 
     version = document.get("version")
     if version and version != OSSIE_VERSION:
@@ -242,9 +266,14 @@ def convert_ossie_to_semantic_model(
 
     stash = read_stash(semantic_model)
     _warn_foreign_extensions("model", semantic_model)
-    warn_unsupported("model", semantic_model, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    dropped_properties = warn_unsupported(
+        "model", semantic_model, OSSIE_UNSUPPORTED, "Power BI", _DROPPED
+    )
+    record("model", "", semantic_model, "translated", dropped_properties=dropped_properties or None)
 
-    tables, table_columns, generated_partitions = _convert_datasets(datasets)
+    tables, table_columns, generated_partitions = _convert_datasets(
+        datasets, source_bindings, require_source_bindings
+    )
     # Restore excluded hosts before placing model-level metrics so a metric whose
     # home table was a calculated table retains its original table placement.
     tables.extend(stash.get("excludedTables") or [])
@@ -284,17 +313,19 @@ def convert_ossie_to_semantic_model(
         bim["description"] = description
     bim.update(document_properties)
     bim.setdefault("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL)
-    if generated_partitions:
+    if generated_partitions or source_bindings is not None:
+        minimum_level = (
+            DIRECT_LAKE_COMPATIBILITY_LEVEL if generated_partitions
+            else M_PARTITION_COMPATIBILITY_LEVEL
+        )
         compatibility_level = bim["compatibilityLevel"]
         if not isinstance(compatibility_level, int) or isinstance(compatibility_level, bool):
             raise ConversionError(
                 "POWER_BI nonportable_extensions document 'compatibilityLevel' must be "
-                "an integer when generating Direct Lake partitions, got "
+                "an integer when generating Power BI partitions, got "
                 f"{compatibility_level!r}"
             )
-        bim["compatibilityLevel"] = max(
-            compatibility_level, DIRECT_LAKE_COMPATIBILITY_LEVEL
-        )
+        bim["compatibilityLevel"] = max(compatibility_level, minimum_level)
     bim["model"] = model
     if normalized_format == "TMSL":
         return bim
@@ -309,15 +340,46 @@ def convert_ossie_to_semantic_model(
 # ---------------------------------------------------------------------------
 
 
-def _convert_datasets(datasets):
+def _validate_source_bindings(bindings, datasets):
+    if not isinstance(bindings, dict):
+        raise ConversionError("source bindings must be a mapping keyed by dataset name")
+    dataset_names = {dataset["name"] for dataset in datasets}
+    for name, binding in bindings.items():
+        if name not in dataset_names:
+            raise ConversionError(f"source binding refers to unknown dataset {name!r}")
+        if not isinstance(binding, dict):
+            raise ConversionError(f"Snowflake source binding for {name!r} must be a mapping")
+        unknown_fields = binding.keys() - _SNOWFLAKE_BINDING_FIELDS
+        if unknown_fields:
+            fields = ", ".join(sorted(map(str, unknown_fields)))
+            raise ConversionError(
+                f"Snowflake source binding for {name!r} has unknown fields: {fields}"
+            )
+        text_fields = _SNOWFLAKE_BINDING_REQUIRED | (binding.keys() & {"role"})
+        for field in sorted(text_fields):
+            value = binding.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ConversionError(
+                    f"Snowflake source binding for {name!r} requires non-empty text for '{field}'"
+                )
+        kind = binding.get("kind", "table")
+        if not isinstance(kind, str) or kind.lower() not in ("table", "view"):
+            raise ConversionError(
+                f"Snowflake source binding for {name!r} requires kind 'table' or 'view'"
+            )
+
+
+def _convert_datasets(datasets, source_bindings, require_source_bindings):
     tables = []
     generated_partitions = []
     # Maps a table name to the set of its column names, used to validate relationships.
     table_columns = {}
-    for dataset in datasets:
+    for index, dataset in enumerate(datasets):
         if not isinstance(dataset, dict) or not dataset.get("name"):
             continue
-        table, generated_partition = _convert_dataset(dataset)
+        table, generated_partition = _convert_dataset(
+            dataset, f"/datasets/{index}", source_bindings, require_source_bindings
+        )
         if generated_partition is not None:
             generated_partitions.append(generated_partition)
         tables.append(table)
@@ -325,22 +387,40 @@ def _convert_datasets(datasets):
     return tables, table_columns, generated_partitions
 
 
-def _convert_dataset(dataset):
+def _convert_dataset(dataset, source_path, source_bindings, require_source_bindings):
     name = dataset["name"]
     scope = f"dataset '{name}'"
     stash = read_stash(dataset)
-    _warn_foreign_extensions(scope, dataset)
-    warn_unsupported(scope, dataset, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    partitions = stash.get("partitions")
+    binding = source_bindings.get(name) if source_bindings is not None else None
+    if source_bindings is not None and binding is None and not partitions:
+        message = "missing Snowflake source binding; add this dataset to --source-bindings"
+        if require_source_bindings:
+            raise ConversionError(f"[{scope}] {message}")
+        warn(scope, f"{message}. Using the default partition")
+    _warn_foreign_extensions(scope, dataset, source_path)
+    dropped_properties = warn_unsupported(scope, dataset, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    record("dataset", source_path, dataset, "translated", target_name=name,
+           dropped_properties=dropped_properties or None)
+    record_items(
+        "metric", f"{source_path}/metrics", dataset.get("metrics"), "dropped",
+        reason="unsupported_dataset_metric",
+    )
+    for metric in dataset.get("metrics") or []:
+        metric_name = metric.get("name", "<unnamed>") if isinstance(metric, dict) else "<unnamed>"
+        warn(scope, f"dataset-scoped metric '{metric_name}' is not supported; skipped")
 
-    key_columns = _key_columns(dataset, scope)
-    unique_columns = _unique_columns(dataset, scope)
+    key_columns = _key_columns(dataset, scope, source_path)
+    unique_columns = _unique_columns(dataset, scope, source_path)
     column_index = _dataset_column_index(dataset)
 
     columns = []
-    for field in dataset.get("fields") or []:
+    for index, field in enumerate(dataset.get("fields") or []):
+        field_path = f"{source_path}/fields/{index}"
         if not isinstance(field, dict) or not field.get("name"):
+            record("field", field_path, field, "dropped", reason="invalid_field")
             continue
-        column = _convert_field(field, scope, column_index.get)
+        column = _convert_field(field, scope, column_index.get, field_path, name)
         if column is None:
             continue
         if column["name"] in key_columns:
@@ -357,9 +437,17 @@ def _convert_dataset(dataset):
     for column in stash.get("excludedColumns") or []:
         columns.insert(0, column)
 
-    partitions = stash.get("partitions")
     generated_partition = None
-    if not partitions:
+    if binding is not None:
+        if "refreshPolicy" in stash or (partitions and len(partitions) > 1):
+            warn(
+                scope,
+                "the Snowflake source binding replaces the existing partition layout "
+                "and removes any incremental refresh policy",
+            )
+        stash.pop("refreshPolicy", None)
+        partitions = [_snowflake_import_partition(name, binding)]
+    elif not partitions:
         generated_partition = _convert_partition(name, dataset.get("source") or name)
         partitions = [generated_partition]
         if generated_partition["mode"] != "directLake":
@@ -371,6 +459,32 @@ def _convert_dataset(dataset):
             table.setdefault(key, value)
     _apply_ai_context(table, dataset.get("ai_context"))
     return table, generated_partition
+
+
+def _snowflake_import_partition(table_name, binding):
+    options = ['Implementation="2.0"']
+    if "role" in binding:
+        options.append(f"Role={_m_string(binding['role'])}")
+    server, warehouse, database, schema, table = (
+        _m_string(binding[key]) for key in ("server", "warehouse", "database", "schema", "table")
+    )
+    kind = binding.get("kind", "table").title()
+    return {
+        "name": table_name,
+        "mode": "import",
+        "source": {
+            "type": "m",
+            "expression": [
+                "let",
+                f"    Source = Snowflake.Databases({server}, {warehouse}, [{', '.join(options)}]),",
+                f'    Database = Source{{[Name={database}, Kind="Database"]}}[Data],',
+                f'    Schema = Database{{[Name={schema}, Kind="Schema"]}}[Data],',
+                f'    Navigation = Schema{{[Name={table}, Kind="{kind}"]}}[Data]',
+                "in",
+                "    Navigation",
+            ],
+        },
+    }
 
 
 def _convert_partition(table_name, source):
@@ -402,6 +516,9 @@ def _direct_lake_expression(source):
     workspace_id = source.get("workspaceId") or PLACEHOLDER_WORKSPACE_ID
     item_id = source.get("itemId") or PLACEHOLDER_ITEM_ID
     if not source.get("workspaceId") or not source.get("itemId"):
+        record("source", "", {"name": DIRECT_LAKE_EXPRESSION}, "placeholder",
+               reason="missing_source_ids",
+               missing_ids=[key for key in ("workspaceId", "itemId") if not source.get(key)])
         warn(
             DIRECT_LAKE_EXPRESSION,
             "no workspaceId/itemId given; the Direct Lake source uses placeholder ids",
@@ -560,10 +677,12 @@ def _unquote(value):
 
 
 def _m_string(value):
-    return '"' + value.replace('"', '""') + '"'
+    escaped = value.replace("#(", "#(#)(").replace('"', '""')
+    escaped = escaped.replace("\r", "#(cr)").replace("\n", "#(lf)").replace("\t", "#(tab)")
+    return f'"{escaped}"'
 
 
-def _key_columns(dataset, scope):
+def _key_columns(dataset, scope, source_path):
     primary_key = dataset.get("primary_key") or []
     if len(primary_key) > 1:
         # TMSL marks a single column per table with `isKey`; there is no composite form.
@@ -572,13 +691,15 @@ def _key_columns(dataset, scope):
             f"Power BI has no composite key; primary key ({', '.join(primary_key)}) "
             "is not marked on the table",
         )
+        record("key", f"{source_path}/primary_key", dataset, "dropped",
+               columns=primary_key, reason="unsupported_composite_key")
         return set()
     return set(primary_key)
 
 
-def _unique_columns(dataset, scope):
+def _unique_columns(dataset, scope, source_path):
     columns = set()
-    for unique_key in dataset.get("unique_keys") or []:
+    for index, unique_key in enumerate(dataset.get("unique_keys") or []):
         if not isinstance(unique_key, list):
             continue
         if len(unique_key) > 1:
@@ -587,6 +708,8 @@ def _unique_columns(dataset, scope):
                 f"Power BI has no composite unique constraint; unique key "
                 f"({', '.join(unique_key)}) is not marked on the table",
             )
+            record("key", f"{source_path}/unique_keys/{index}", dataset, "dropped",
+                   columns=unique_key, reason="unsupported_composite_key")
             continue
         columns.update(unique_key)
     return columns
@@ -597,15 +720,17 @@ def _unique_columns(dataset, scope):
 # ---------------------------------------------------------------------------
 
 
-def _convert_field(field, dataset_scope, resolve_column):
+def _convert_field(field, dataset_scope, resolve_column, source_path, dataset_name):
     name = field["name"]
     scope = f"{dataset_scope} field '{name}'"
     stash = read_stash(field)
-    _warn_foreign_extensions(scope, field)
-    warn_unsupported(scope, field, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+    _warn_foreign_extensions(scope, field, source_path)
+    dropped_properties = warn_unsupported(scope, field, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
     column = {"name": name}
     expressions = dialect_expressions(field.get("expression"))
+    placeholder = False
+    metadata_properties = None
 
     source_column = _source_column(expressions, name, stash)
     if source_column is not None:
@@ -622,9 +747,11 @@ def _convert_field(field, dataset_scope, resolve_column):
             if dax is None:
                 _untranslatable(scope, "calculated column", dialect, reason)
                 column["expression"] = "BLANK()"
+                placeholder = True
             else:
                 column["expression"] = dax
             _apply_expression_annotations(column, dialect, expression)
+            metadata_properties = [EXPRESSION_DIALECT_ANNOTATION, EXPRESSION_ANNOTATION]
         else:
             column["type"] = "calculated"
             column["expression"] = _tmsl_text(expression)
@@ -632,6 +759,8 @@ def _convert_field(field, dataset_scope, resolve_column):
     datatype = _column_datatype(field, stash, scope)
     if datatype:
         column["dataType"] = datatype
+    elif field.get("datatype"):
+        dropped_properties.append("datatype")
     if field.get("description"):
         column["description"] = field["description"]
     if field.get("datatype") == "Date" and "formatString" not in stash:
@@ -646,6 +775,13 @@ def _convert_field(field, dataset_scope, resolve_column):
         if key not in _COLUMN_CONTROL_KEYS:
             column.setdefault(key, value)
     _apply_ai_context(column, field.get("ai_context"))
+    record(
+        "field", source_path, field, "placeholder" if placeholder else "translated",
+        target_name=column["name"], target_dataset=dataset_name,
+        reason="unsupported_expression" if placeholder else None,
+        vendor="POWER_BI" if metadata_properties else None,
+        metadata_properties=metadata_properties, dropped_properties=dropped_properties or None,
+    )
     return column
 
 
@@ -741,8 +877,8 @@ def _map_datatype(datatype, scope):
     if tmsl_type is None:
         warn(scope, f"unrecognized Apache Ossie data type '{datatype}'; left unspecified")
         return None
-    if datatype in _LOSSY_TEMPORAL:
-        warn(scope, _LOSSY_TEMPORAL[datatype])
+    if datatype in _LOSSY_DATATYPE:
+        warn(scope, _LOSSY_DATATYPE[datatype])
     return tmsl_type
 
 
@@ -789,25 +925,32 @@ def _translate_metric_expression(expression, dialect, tables, scope):
 def _apply_measures(tables, metrics):
     """Attach Apache Ossie metrics to their home Power BI table as measures."""
     by_name = {table["name"]: table for table in tables}
-    for metric in metrics:
+    for index, metric in enumerate(metrics):
+        source_path = f"/metrics/{index}"
         if not isinstance(metric, dict) or not metric.get("name"):
+            record("metric", source_path, metric, "dropped", reason="invalid_metric")
             continue
         scope = f"metric '{metric['name']}'"
         stash = read_stash(metric)
-        _warn_foreign_extensions(scope, metric)
-        warn_unsupported(scope, metric, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+        _warn_foreign_extensions(scope, metric, source_path)
+        dropped_properties = warn_unsupported(
+            scope, metric, OSSIE_UNSUPPORTED, "Power BI", _DROPPED
+        )
 
         expressions = dialect_expressions(metric.get("expression"))
         if not expressions:
             warn(scope, "metric has no expression; skipped")
+            record("metric", source_path, metric, "dropped", reason="missing_expression")
             continue
         dialect, expression = _preferred_expression(expressions)
+        placeholder = False
         if dialect == DIALECT_DAX:
             dax = _tmsl_text(expression)
         else:
             dax = _translate_metric_expression(expression, dialect, tables, scope)
             if dax is None:
                 dax = "BLANK()"
+                placeholder = True
 
         table = by_name.get(stash.get("table"))
         if table is None:
@@ -831,13 +974,23 @@ def _apply_measures(tables, metrics):
                 f"Power BI infers a measure's data type from its DAX expression, so "
                 f"datatype '{metric['datatype']}' is not applied",
             )
+            dropped_properties.append("datatype")
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
                 measure.setdefault(key, value)
+        metadata_properties = None
         if dialect != DIALECT_DAX:
             _apply_expression_annotations(measure, dialect, expression)
+            metadata_properties = [EXPRESSION_DIALECT_ANNOTATION, EXPRESSION_ANNOTATION]
         _apply_ai_context(measure, metric.get("ai_context"))
         table.setdefault("measures", []).append(measure)
+        record(
+            "metric", source_path, metric, "placeholder" if placeholder else "translated",
+            target_name=measure["name"], target_dataset=table["name"],
+            reason="unsupported_expression" if placeholder else None,
+            vendor="POWER_BI" if metadata_properties else None,
+            metadata_properties=metadata_properties, dropped_properties=dropped_properties or None,
+        )
 
 
 def _restore_excluded_measures(tables, excluded_measures):
@@ -892,13 +1045,19 @@ def _restore_excluded_measures(tables, excluded_measures):
 
 def _convert_relationships(relationships, table_columns):
     converted = []
-    for relationship in relationships:
+    for index, relationship in enumerate(relationships):
+        source_path = f"/relationships/{index}"
         if not isinstance(relationship, dict):
+            record(
+                "relationship", source_path, relationship, "dropped", reason="invalid_relationship",
+            )
             continue
         scope = f"relationship '{relationship.get('name', '<unnamed>')}'"
         stash = read_stash(relationship)
-        _warn_foreign_extensions(scope, relationship)
-        warn_unsupported(scope, relationship, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
+        _warn_foreign_extensions(scope, relationship, source_path)
+        dropped_properties = warn_unsupported(
+            scope, relationship, OSSIE_UNSUPPORTED, "Power BI", _DROPPED
+        )
 
         from_columns = relationship.get("from_columns") or []
         to_columns = relationship.get("to_columns") or []
@@ -909,6 +1068,10 @@ def _convert_relationships(relationships, table_columns):
                 "Power BI relationships join a single column pair; composite "
                 "relationships have no equivalent and are skipped",
             )
+            record(
+                "relationship", source_path, relationship, "dropped",
+                reason="unsupported_column_pairs",
+            )
             continue
 
         from_table = relationship.get("from")
@@ -916,6 +1079,7 @@ def _convert_relationships(relationships, table_columns):
         from_column, to_column = from_columns[0], to_columns[0]
         if not _endpoints_exist(scope, table_columns, from_table, from_column,
                                 to_table, to_column):
+            record("relationship", source_path, relationship, "dropped", reason="missing_endpoint")
             continue
 
         endpoints = [from_table, from_column, to_table, to_column]
@@ -946,6 +1110,10 @@ def _convert_relationships(relationships, table_columns):
                 tmsl.setdefault(key, value)
         _apply_ai_context(tmsl, relationship.get("ai_context"))
         converted.append(prune(tmsl))
+        record(
+            "relationship", source_path, relationship, "translated",
+            target_name=tmsl["name"], dropped_properties=dropped_properties or None,
+        )
     return converted
 
 
@@ -1026,7 +1194,8 @@ def _tmsl_text(value):
     return value.replace("\r\n", "\n").split("\n")
 
 
-def _warn_foreign_extensions(scope, obj):
+def _warn_foreign_extensions(scope, obj, source_path=""):
+    record_dropped_extensions(obj, source_path)
     for ext in foreign_vendor_extensions(obj):
         vendor = ext.get("vendor_name") or "<unknown>"
         warn(

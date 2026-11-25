@@ -24,12 +24,11 @@ model metrics cannot reference other tables, so the export direction drops
 them with a CROSS_DATASET_METRIC_DROPPED issue.
 """
 
-import json
 from pathlib import Path
 
 import yaml
 
-from ossie import OssieDataType, OssieDocument
+from ossie import OssieDataType, OssieSemanticModel
 
 from ossie_lightdash import (
     ConverterIssueType,
@@ -42,9 +41,9 @@ from tests.conftest import TPCDS_PATH
 
 
 def _lightdash_name(metric) -> str:
-    for extension in metric.custom_extensions or []:
+    for extension in metric.nonportable_extensions or []:
         if extension.vendor_name.upper() == "LIGHTDASH":
-            return json.loads(extension.data)["name"]
+            return extension.data["name"]
     return metric.name
 
 
@@ -56,8 +55,8 @@ def _expression_text(expression) -> str:
     return expression.sql
 
 
-def _load_tpcds() -> OssieDocument:
-    return OssieDocument.model_validate(yaml.safe_load(TPCDS_PATH.read_text()))
+def _load_tpcds() -> OssieSemanticModel:
+    return OssieSemanticModel.model_validate(yaml.safe_load(TPCDS_PATH.read_text()))
 
 
 def _roundtrip():

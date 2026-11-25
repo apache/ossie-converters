@@ -82,6 +82,7 @@ TO_DATABRICKS = [
     ("DATE_PART('month', x)", "DATE_PART('month', x)"),
     ("DATE_TRUNC('month', x)", "DATE_TRUNC('MONTH', x)"),
     ("DATEADD(day, 3, x)", "DATEADD(DAY, 3, x)"),
+    ("DATEDIFF(day, a, b)", "DATEDIFF(DAY, a, b)"),
     ("TO_DATE(s)", "TO_DATE(s)"),
     ("CURRENT_DATE", "CURRENT_DATE()"),
     ("CURRENT_TIMESTAMP", "CURRENT_TIMESTAMP()"),
@@ -114,7 +115,7 @@ FROM_DATABRICKS = [
     ("`Order Date` || 'it\\'s'", "\"Order Date\" || 'it''s'"),
     # A backtick name that is a regular identifier prints unquoted (case-insensitive match);
     # a reserved name keeps its quotes.
-    ("date_trunc('week', `o_orderdate`)", "DATE_TRUNC('WEEK', o_orderdate)"),
+    ("date_trunc('week', `o_orderdate`)", "DATE_TRUNC('week', o_orderdate)"),
     ("`order`", '"order"'),
     # Databricks integer division becomes Ossie's TRUNC(x / y, 0), operands translated too.
     ("qty DIV 2", "TRUNC(qty / 2, 0)"),
@@ -126,11 +127,15 @@ FROM_DATABRICKS = [
     ("locate('a', s)", "POSITION('a' IN s)"),
     ("dateadd(day, 3, x)", "DATEADD(DAY, 3, x)"),
     ("date_add(x, 3)", "DATEADD(DAY, 3, x)"),
-    ("date_trunc('month', x)", "DATE_TRUNC('MONTH', x)"),
+    ("date_trunc('month', x)", "DATE_TRUNC('month', x)"),
+    ("datediff(DAY, a, b)", "DATEDIFF(day, a, b)"),
+    ("datediff(b, a)", "DATEDIFF(day, a, b)"),
     ("extract(DOY FROM x)", "EXTRACT(DAYOFYEAR FROM x)"),
     ("regexp_extract(s, 'a', 0)", "REGEXP_EXTRACT(s, 'a')"),
     ("current_date()", "CURRENT_DATE"),
     ("to_date(s)", "TO_DATE(s)"),
+    ("year(x) + month(x) + day(x)", "YEAR(x) + MONTH(x) + DAY(x)"),
+    ("year(to_date(s))", "YEAR(TO_DATE(s))"),
     ("iff(c, 1, 2)", "IF(c, 1, 2)"),
     ("nvl(x, 0)", "COALESCE(x, 0)"),
     ("SUM(x) FILTER (WHERE c)", "SUM(x) FILTER(WHERE c)"),
@@ -142,6 +147,9 @@ UNTRANSLATABLE = [
     ("PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x)", OSSIE),
     ("MY_UDF(x)", OSSIE),
     ("TO_CHAR(d, 'Q')", OSSIE),
+    # Ossie does not say whether DATEDIFF counts month boundaries or whole months.
+    ("DATEDIFF(month, a, b)", OSSIE),
+    ("datediff(MONTH, a, b)", DATABRICKS),
     ("count_if(x > 1)", DATABRICKS),
     ("try_divide(a, b)", DATABRICKS),
     ("regexp_extract(s, 'a(b)')", DATABRICKS),

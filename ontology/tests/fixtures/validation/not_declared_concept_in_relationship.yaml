@@ -25,14 +25,17 @@ ontology:
       - name: ssn
         roles:
           - concept: SocialSecurityNr
+        verbalizes: ['{Person} has {SocialSecurityNr}']
         multiplicity: OneToOne
       - name: earns
         roles:
           - concept: Salary
+        verbalizes: ['{Person} has {Salary}']
         multiplicity: ManyToOne
       - name: live_in
         roles:
           - concept: City
+        verbalizes: ['{Person} has {City}']
         multiplicity: ManyToOne
   - concept: SocialSecurityNr
     type: ValueType

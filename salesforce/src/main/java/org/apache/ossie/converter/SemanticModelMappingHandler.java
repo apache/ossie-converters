@@ -41,8 +41,8 @@ import static org.apache.ossie.converter.ConverterConstants.LABEL;
  *
  * <p>Supports both conversion directions:
  * <ul>
- *   <li>Ossie → Salesforce: name → apiName, apply SF defaults, restore custom_extensions</li>
- *   <li>Salesforce → Ossie: apiName → name, strip SF defaults, store custom_extensions</li>
+ *   <li>Ossie → Salesforce: name → apiName, apply SF defaults, restore nonportable_extensions</li>
+ *   <li>Salesforce → Ossie: apiName → name, strip SF defaults, store nonportable_extensions</li>
  * </ul>
  *
  * <p>Handles only top-level scalar properties (not arrays).

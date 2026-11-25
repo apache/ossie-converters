@@ -25,10 +25,12 @@ ontology:
       - name: ssn
         roles:
           - concept: SocialSecurityNr
+        verbalizes: ['{Person} has {SocialSecurityNr}']
         multiplicity: OneToOne
       - name: earns
         roles:
           - concept: Salary
+        verbalizes: ['{Person} has {Salary}']
         multiplicity: ManyToOne
         derived_by: ['Person.earns(Salary(sal))']
   - concept: SocialSecurityNr

@@ -142,7 +142,7 @@ Warnings (52)
    1× `Dataset.primary_key` — Composite primary keys are not supported in Hex and were dropped.
    1× `Dataset.unique_keys` — Composite unique keys are not supported in Hex and were dropped.
    1× `description` — Project descriptions are not supported in Hex and were dropped.
-   1× `custom_extensions` — Custom extensions are not preserved in Hex and were dropped.
+   1× `nonportable_extensions` — Custom extensions are not preserved in Hex and were dropped.
 """)
 
 

@@ -1,0 +1,12 @@
+[
+  {
+    "detail": "source qualified with the connection database 'd'",
+    "kind": "source_qualified",
+    "name": "v"
+  },
+  {
+    "detail": "connection class(es) postgres are not registered warehouses; translated as generic ANSI SQL",
+    "kind": "unknown_warehouse",
+    "name": "pg3"
+  }
+]

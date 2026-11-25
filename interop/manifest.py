@@ -118,6 +118,7 @@ NATIVE_SHAPES = {
     ),
     **dict.fromkeys(
         (
+            "atlan",
             "dbt",
             "databricks",
             # The Databricks converter's native artifact is an Ossie model: Databricks
@@ -131,6 +132,7 @@ NATIVE_SHAPES = {
             "orionbelt",
             "sigma",
             "snowflake",
+            "solid",
             "wisdom",
             "semantic-view",
             "salesforce",

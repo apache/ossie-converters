@@ -20,9 +20,9 @@
 # Apache Ossie Microsoft Converter
 
 Converts between a Microsoft Power BI / Fabric semantic model and an Apache Ossie (OSI)
-semantic model. Power BI output is available as either a TMSL `model.bim` mapping or a
-TMDL document. The conversion is offline and requires no Power BI or Fabric
-connection.
+semantic model. Power BI output is available as a TMSL `model.bim` mapping, a TMDL
+document, or the split TMDL semantic model folder of a Power BI project (PBIP). The
+conversion is offline and requires no Power BI or Fabric connection.
 
 The converter targets Ossie `0.3.0.dev0`. Vendor-specific state is stored in
 `nonportable_extensions` entries whose `data` values are structured objects, not
@@ -181,14 +181,106 @@ in the Power BI stash for round trip, but not represented in the Apache Ossie do
 | Flag | Effect |
 | --- | --- |
 | `--strict` | exit non-zero if anything could not be converted faithfully |
-| `-q`, `--quiet` | suppress the report |
-| `--translate-dax` | `import` only: also translate DAX measures to `OSSIE_SQL_2026` where the translation is exact (off by default) |
+| `-q`, `--quiet` | suppress conversion warnings on stderr |
+| `--report FILE` | write a JSON conversion report |
+| `--translate-dax` | `import` only: also translate DAX measures and calculated columns to `OSSIE_SQL_2026` where the translation is exact (off by default) |
 
 `--strict` exits non-zero when the converter reports a construct it could not represent.
 It does not check that every TMDL `ref` has a definition, or validate DAX expressions.
 Missing input files and invalid TMDL still fail the command. When a conversion produces
-warnings, the output file is still written so the result can be inspected. Both flags
-are accepted before or after the subcommand.
+warnings, the output file is still written so the result can be inspected. `--strict`, `--quiet`, and
+`--report` are accepted before or after the subcommand.
+
+### Bind datasets to Snowflake Import
+
+Pass `--source-bindings` on export to generate Power Query Import partitions with the
+[Snowflake connector](https://learn.microsoft.com/en-us/power-query/connectors/snowflake).
+Key the YAML file by the Ossie dataset name and give each entry an explicit Snowflake target.
+
+```yaml
+orders:
+  server: my-org-my-account.snowflakecomputing.com
+  warehouse: BI_WH
+  database: RETAIL
+  schema: REPORTING
+  table: SALES_ORDERS
+  kind: table
+  role: BI_READER
+```
+
+```bash
+ossie-microsoft export --strict -i model.yaml --source-bindings bindings.yaml -o model.bim
+# The same bindings can be used when writing a Power BI project:
+ossie-microsoft export --strict -i model.yaml --source-bindings bindings.yaml --pbip out/
+```
+
+`role` and `kind` are optional. Use `kind: view` for a view and put its name in `table`.
+Kind values are case-insensitive. Write binding keys explicitly. Duplicate mapping
+keys and YAML merge keys (`<<`) are rejected.
+Use the identifier spelling returned by the Snowflake Navigator, typically uppercase for
+unquoted names. Each target table or view must expose the source columns expected by the
+model. If a dataset is defined by a query, point the binding at a table or view that
+provides the equivalent result. Configure credentials in Power BI or Fabric.
+On import, a complete static Snowflake Database/Schema/Table or View navigation chain
+restores the qualified source name. Special characters and case-sensitive names remain
+quoted. Incomplete or transformed navigation retains the table-name fallback and the
+original Power BI partition metadata.
+
+An explicit binding replaces the dataset's partitions and removes any incremental
+refresh policy. Datasets with preserved Power BI partitions can omit a binding.
+With a bindings file, every other dataset
+requires an entry in strict mode. A missing entry aborts before writing the model.
+Without strict mode, an unbound dataset uses the converter's default partition and
+emits a warning.
+
+### Exporting to a Power BI project
+
+`--pbip DIR` writes the model as the semantic model folder of a Power BI project, the
+split TMDL layout that Power BI Desktop, Fabric Git integration and `fabric-cicd` read:
+
+```bash
+ossie-microsoft export -i model.yaml --pbip out/
+```
+
+```
+out/<name>.SemanticModel/
+  definition.pbism
+  definition/
+    database.tmdl
+    model.tmdl
+    relationships.tmdl
+    expressions.tmdl
+    tables/<table>.tmdl
+    roles/  cultures/  perspectives/
+```
+
+To update the model of an existing project, pass its `.SemanticModel` folder, the same
+folder `import` reads. It is written into directly, whatever the model is called, so the
+report's `byPath` keeps pointing at it:
+
+```bash
+ossie-microsoft export -i model.yaml --pbip "Sales.SemanticModel" --force
+```
+
+A `.pbip` file or a `definition` folder is refused, because neither can hold the model.
+So is any folder with `database.tmdl` at its top level, such as a renamed `definition`
+folder, because import would read it as the definition itself.
+
+`<name>` is the Apache Ossie model name, and the written folder is reported on stderr
+(`Wrote out/<name>.SemanticModel`) unless `-q` is given. A name Windows cannot use for a
+folder, including a device name such as `CON` or `NUL`, is rejected so the project can
+be cloned anywhere, both as the model name and as the name of a `.SemanticModel` folder
+given to `--pbip`. TOM writes `definition/`, so the documents are
+the ones Power BI itself produces, and `definition.pbism` is version `4.0`, the first
+that reads TMDL. It needs the
+[optional TOM setup](#optional-tom-validation-and-tmdl-serialization).
+
+An existing, non-empty folder is refused. `--force` replaces `definition.pbism` and
+`definition/`, removing the documents of tables, roles and other objects that are no
+longer in the model, and keeps everything else in the folder, such as `.pbi/` and
+`diagramLayout.json`. A folder that stores its model as TMSL (`model.bim`) is never
+switched to TMDL. The `.pbip` file, the report, and the `.platform` file that Fabric
+Git integration generates are not written.
 
 ### Library
 
@@ -200,6 +292,7 @@ import yaml
 from ossie_microsoft import (
     convert_ossie_to_semantic_model,
     convert_semantic_model_to_ossie,
+    export_powerbi_project,
     import_powerbi_project,
 )
 
@@ -221,14 +314,17 @@ ossie_yaml = convert_semantic_model_to_ossie(tmdl)
 ossie_yaml = import_powerbi_project("Report.pbip")
 # Optionally translate supported DAX measures to SQL, keeping DAX as a fallback.
 ossie_yaml = import_powerbi_project("Report.pbip", translate_dax=True)
+
+# Write a Power BI project semantic model folder; returns out/<name>.SemanticModel.
+folder = export_powerbi_project(ossie_yaml, "out/")
 ```
 
 `output_format` accepts `"TMSL"` (the default) or `"TMDL"`, case-insensitively.
 `convert_semantic_model_to_ossie` accepts a parsed `model.bim` mapping, `model.bim`
-JSON text, or a single TMDL document as text. TMDL input and output require the
-optional TOM setup described above.
+JSON text, or a single TMDL document as text. TMDL input and output, and
+`export_powerbi_project`, require the optional TOM setup described above.
 
-Each report is emitted twice, because the two channels answer different questions:
+Conversion warnings are available through two channels:
 
 - a `UserWarning`, so `warnings.simplefilter("error")` gives a hard, programmatic
   guarantee that a conversion was lossless;
@@ -240,6 +336,76 @@ import logging
 
 logging.getLogger("ossie_microsoft").addHandler(logging.StreamHandler())
 ```
+
+## JSON conversion report
+
+```bash
+ossie-microsoft export -i model.yaml -o model.bim --report report.json
+ossie-microsoft import -i model.bim -o model.yaml --report report.json
+```
+
+Reports are collected only by the CLI with `--report`; ordinary library calls do
+not collect entries. The report has a schema `version` of `1`, a `direction` of
+`import` or `export`,
+an `entries` array, and the text of conversion `warnings`. Each entry names the
+source object when available and includes its `kind`, `source_path`, and `status`.
+The `kind` values are `model`, `dataset`, `field`, `metric`, `relationship`, `key`,
+`source`, and `extension`. Import field and metric entries also identify their
+source `table`, including objects kept only in excluded-table metadata.
+The path is a JSON Pointer into the Ossie model on export or the parsed TMSL
+document on import. For TMDL and PBIP input, the pointers refer to the TMSL
+representation used by the converter.
+
+| Status | Meaning |
+| --- | --- |
+| `translated` | The converter emitted the object in the target model; imported DAX measures and calculated columns have a translated SQL alternative. |
+| `source_dialect` | An imported DAX measure or calculated column retains DAX only, either because translation was disabled or because it was refused. |
+| `vendor_metadata` | The complete source object is only available in the Power BI extension. |
+| `placeholder` | The converter emitted an annotated `BLANK()` expression, or a generated Direct Lake source uses placeholder ids. |
+| `dropped` | The converter omitted the source object or vendor extension. |
+
+Entries may also contain target names, a reason code, metadata property names, or
+dropped property names. For a metric inside a Snowflake extension, `source_path`
+points to the extension and `payload_path` points into its decoded JSON payload.
+A completed conversion sets `completed: true`. The report is written in quiet mode and when strict mode returns nonzero. If
+conversion aborts, it includes `completed: false`, the `error`, and any entries
+recorded before the error. This also replaces a report from an earlier successful
+run when an unexpected conversion error or an interrupt aborts the current run
+(provided the report path remains safe and writable). The empty JSON Pointer `""`
+identifies a flat root model, including its shared generated Direct Lake source.
+For wrapped Ossie 0.1.1 inputs, pointers include `/semantic_model/0` and retain
+original `custom_extensions` paths. Keys point to `primary_key` or the relevant
+`unique_keys` entry and include `columns`.
+
+The report must be separate from all conversion inputs and outputs, including
+source-binding files and project artifacts (also through symlinks or hard links).
+With `--pbip`, keep the report outside the output folder. Unsafe report paths are
+rejected before conversion writes any files.
+
+| Reason code | Meaning |
+| --- | --- |
+| `invalid_column`, `invalid_field`, `invalid_measure`, `invalid_metric`, `invalid_relationship` | The source object is malformed or missing its name. |
+| `missing_expression` | A metric has no expression. |
+| `unsupported_expression` | The expression could not be represented; an annotated placeholder was emitted. |
+| `dax_translation_disabled` | DAX translation was not requested. |
+| `dax_translation_refused` | Translation was requested but was unsafe; `detail` contains the translator's refusal reason. |
+| `excluded_table` | The source table is excluded from portable datasets. |
+| `row_number_column` | The storage-engine column is retained only as vendor metadata. |
+| `inactive_relationship`, `duplicate_relationship`, `unsupported_cardinality` | The relationship remains vendor metadata on import. |
+| `missing_endpoint`, `unsupported_column_pairs` | Relationship endpoints are missing or unsupported. |
+| `unsupported_dataset_metric` | Dataset-scoped metrics are omitted on export. |
+| `unsupported_vendor` | A foreign vendor extension is omitted. |
+| `unsupported_composite_key` | Power BI cannot mark the composite key on the table. |
+| `missing_source_ids` | A shared generated Direct Lake source uses placeholder ids; `missing_ids` identifies them. |
+
+DAX metric and calculated-column field entries include `source_dialect` and `target_dialect`.
+Unsupported model and dataset properties appear on their entries as `metadata_properties` on import
+or `dropped_properties` on export.
+
+Two error-reporting changes apply even without `--report`: conversion failures,
+including failed output writes, produce an `Error: ...` diagnostic and exit 1,
+and omitted dataset-scoped metrics
+warn individually, so `--strict` returns 1 for those omissions.
 
 ## Mapping
 
@@ -268,8 +434,8 @@ expressions and retains their original dialect and text in annotations.
 Concretely:
 
 - A Power BI measure becomes a metric with a `DAX` dialect expression, not a SQL one.
-  With the opt-in `--translate-dax`, a measure whose translation is exact also gets an
-  `OSSIE_SQL_2026` expression, with the DAX kept beside it (see below).
+  With the opt-in `--translate-dax`, a measure or calculated column whose translation is
+  exact also gets an `OSSIE_SQL_2026` expression, with the DAX kept beside it (see below).
 - On export, a metric becomes a measure from `DAX` or a supported SQL-to-DAX
   translation. Untranslatable SQL gets a warning and an annotated `BLANK()` measure.
 - A field expression becomes a TMSL `sourceColumn` only when it is a plain column
@@ -328,7 +494,7 @@ date-only, time-only or timezone-aware member: every temporal value is stored as
 |------|--------------|------|
 | `string` | `String` | |
 | `int64` | `Integer` | 64-bit in the model, but report visuals are only exact to 2^53 − 1 |
-| `decimal` | `Decimal` | "Fixed Decimal Number": exact, 19 digits, 4 after the point |
+| `decimal` | `Decimal` | "Fixed Decimal Number": exact, 19 digits, 4 after the point; narrowed, and reported unless the column was imported from Power BI |
 | `double` | `Float` | "Decimal Number": 64-bit floating point, approximate |
 | `boolean` | `Boolean` | |
 | `dateTime` | `DateTime`, or `Date` when the format string has no time part | |
@@ -345,6 +511,11 @@ Consequences worth knowing:
   follows an hour token, which is why minutes are written `n`.
 - **`Time` and `DateTimeTz` do not survive export.** They collapse onto `dateTime`,
   gaining a date part or losing a UTC offset respectively. Both cases are reported.
+- **`Decimal` does not survive export beyond 4 decimal places.** Power BI's "Fixed
+  Decimal Number" is exact to 19 digits with exactly 4 after the point, while an Apache
+  Ossie `Decimal` leaves precision and scale unspecified, so the converter cannot prove a
+  column fits. The export is reported. A column that was itself imported from Power BI
+  already fits, and the import stashes its TMSL type, so that round trip stays silent.
 - **`double` is not `Decimal`.** Mapping Power BI's approximate "Decimal Number" onto an
   exact decimal type would overstate its precision.
 - Values outside years 1900–9999 are outside the Power BI `dateTime` range, and time is
@@ -460,7 +631,7 @@ unambiguous string concatenation. Other expressions become annotated `BLANK()`
 columns. These placeholders are **not correct computed values**: review converter
 warnings and supply a DAX expression before using the exported model for analysis.
 
-### DAX measures (opt-in `--translate-dax`)
+### DAX measures and calculated columns (opt-in `--translate-dax`)
 
 By default an imported measure keeps only its DAX. With `--translate-dax`, the import
 also translates a measure to `OSSIE_SQL_2026` when the translation is exact, and keeps
@@ -476,17 +647,47 @@ other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESC
 compares a BLANK number as 0, so `BLANK = 0` is TRUE; strict `==` does not); and math
 functions (`ABS`, `SQRT`, `POWER`, `LOG`, `INT`, `TRUNC`, `MOD`, `QUOTIENT`, trigonometry,
 ...) when their argument can never be BLANK, for example `ABS(COALESCE([Sales], 0))`,
-since what they return for BLANK is not documented. Arithmetic, comparisons and conditions
-take only numbers: `SUM`, `AVERAGE`, `MIN` and `MAX` count as numbers when their column's
-`datatype` is numeric, so `MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate])` (dates) or a
-column without a datatype stays DAX. `ROUND` is not translated: DAX
-rounds ties half away from zero, which the spec's `ROUND` does not guarantee. Every other
-DAX function is refused with a reason from a per-function registry, for example:
+since what they return for BLANK is not documented; and the text functions `LEFT`, `RIGHT`,
+`MID`, `LEN`, `UPPER`, `LOWER` and `CONCATENATE` / `&`, again only for values that can
+never be BLANK: a literal, `COALESCE(x, "")`, or, in a calculated column, a column the
+model declares `isNullable: false` (`UPPER(COALESCE(MAX('Customer'[Country]), ""))`).
+Arithmetic, comparisons and conditions take only numbers: `SUM`, `AVERAGE`, `MIN` and
+`MAX` count as numbers when their column's `datatype` is numeric, so
+`MAX('Sales'[ShipDate]) > MAX('Sales'[OrderDate])` (dates) or a column without a datatype
+stays DAX. `ROUND` is not translated: DAX rounds ties half away from zero, which the
+spec's `ROUND` does not guarantee. `SUBSTITUTE` and `EXACT` are not translated either:
+both are case-sensitive in DAX, and whether `REPLACE` or a text comparison is depends on
+the engine's collation, which the spec does not fix.
+Every other DAX function is refused with a reason, most of them from a per-function
+registry, for example:
 
 ```
 [table 'Sales' measure 'YTD'] DAX measure kept as-is; not translated to OSSIE_SQL_2026
 (TOTALYTD needs window measures (time intelligence), which the Apache Ossie
 specification does not define yet)
+```
+
+The same rules apply to a calculated column, which DAX evaluates once per row of its own
+table. A column reference becomes the referenced column's *source column*, because the
+spec's field expressions refer to source columns, not to other fields; a referenced
+calculated column is expanded inline. A calculated column stores its value converted to
+its declared `dataType`, so a column whose expression is of another kind than that type
+(a number in a column declared as text) stays DAX. A calculated column declared `int64`
+or `decimal` always stays DAX, because DAX converts its value to a whole number or to a
+fixed decimal and the translator does not type numbers that finely yet; `double`,
+`string` and `boolean` columns are translated, and `automatic` or `unknown` declare
+nothing. An aggregate (which in a calculated
+column ranges over the whole table), a measure, a column of another table (`RELATED`), a
+date column, and `TRIM`, `SUBSTITUTE`, `EXACT`, `VALUE`, `FIND`, `SEARCH` and
+`CONTAINSSTRING` are refused with a reason:
+
+```
+LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
+[First] & " " & [Last]      ->  refused: & of a value that may be BLANK
+[SalesKey]                  ->  refused in a column declared as text: the column is
+                                declared as text and its expression is a number value
+[Amount] / 3                ->  refused in a column declared as int64: DAX stores a
+                                whole number there, amount / 3 is not one
 ```
 
 `_dax_to_sql.py` documents each rule and each refusal.
