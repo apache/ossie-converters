@@ -98,3 +98,30 @@ def test_a_quoted_keyword_is_preserved_as_a_computed_member():
 ])
 def test_niladic_values_use_the_requested_warehouse_dialect(literal, dialect):
     _assert_parked(_files("{users}.active = " + literal), source_dialect=dialect)
+
+
+@pytest.mark.parametrize("keyword", ["true", "NULL", "CURRENT_DATE"])
+@pytest.mark.parametrize("reference", ["{%s}", "{CUBE.%s}", "{orders.%s}"])
+def test_explicit_keyword_named_member_chains_remain_columns(keyword, reference):
+    model = parse(_files("{flag} = {users}.id", member_sql=reference % keyword)["model.yml"])
+    model["cubes"][0]["dimensions"].append({
+        "name": keyword, "sql": "{CUBE}.user_id", "type": "number"})
+    files = {"model.yml": dump_yaml(model)}
+    ossie, _ = convert_cube_to_ossie(files)
+    assert model_of(ossie)["relationships"][0]["from_columns"] == ["user_id"]
+    back, _ = convert_ossie_to_cube(ossie)
+    assert parse(back["model.yml"])["cubes"][0]["joins"] == model["cubes"][0]["joins"]
+
+
+@pytest.mark.parametrize("keyword", ["true", "NULL", "CURRENT_DATE"])
+def test_bare_sql_literals_do_not_read_same_named_members(keyword):
+    model = parse(_files("{flag} = {users}.id", member_sql=keyword)["model.yml"])
+    model["cubes"][0]["dimensions"].append({
+        "name": keyword, "sql": "{CUBE}.user_id", "type": "number"})
+    ossie, issues = convert_cube_to_ossie({"model.yml": dump_yaml(model)})
+    assert not model_of(ossie).get("relationships")
+    assert issues.of_type(IssueType.PARKED_IN_META)
+
+
+def test_explicit_self_referencing_join_member_is_parked():
+    _assert_parked(_files("{flag} = {users}.id", member_sql="{flag}"))

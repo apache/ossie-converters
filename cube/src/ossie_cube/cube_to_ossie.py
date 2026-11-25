@@ -1341,6 +1341,18 @@ def _column_of(cubes, cname, member, seen=(), source_dialect=None):
             if alias.group(1) in ("CUBE", "TABLE", cname):
                 return alias.group(2)
             return None
+        reference = _JOIN_SIDE_RE.fullmatch(str(sql).strip())
+        if reference:
+            # Braced names are Cube members even when their spelling is a SQL
+            # keyword. Resolve before interpreting terminal SQL as a column or
+            # literal; bare `sql: TRUE` must still mean the boolean value.
+            body = reference.group(1).strip()
+            head, dot, rest = body.partition(".")
+            aliases = {"CUBE", "TABLE", cname}
+            if reference.group(2) or (dot and head not in aliases) or body in aliases:
+                return None
+            return _column_of(cubes, cname, rest if dot else body,
+                              seen + ((cname, member),), source_dialect)
         translated, _ = cube_sql_to_ossie(sql, cname)
         translated = translated.strip()
         if not _is_bare_join_column(translated, source_dialect):
