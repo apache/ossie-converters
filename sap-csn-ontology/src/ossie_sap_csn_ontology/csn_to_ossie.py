@@ -180,8 +180,7 @@ def length_constraint(concept: str, length: int) -> str:
 def length_warning(concept: str) -> str:
     return (
         f"value type {concept}: `LENGTH` is an `OSSIE_SQL_2026` function, but the reference ontology "
-        "parser does not accept it in `requires` (apache/ossie-converters#<§41>); the length is also "
-        "recorded in the description"
+        "parser does not accept it in `requires`; the length is also recorded in the description"
     )
 
 
@@ -557,18 +556,19 @@ def _collect_value_types(conversion: Conversion) -> None:
             register(derived, element.builtin, description, requires)
 
 
-#: The one CSN annotation the ontology layer has a home for (as ``description``).
+#: The one CSN annotation this converter carries (as ``description``).
 CARRIED_ANNOTATIONS = frozenset({"@EndUserText.label"})
 
 
 def _report_dropped_annotations(conversion: Conversion) -> None:
     """Every annotation other than the label is dropped, and said so.
 
-    ``OntologyComponent``, ``Relationship`` and ``Role`` accept no
-    ``custom_extensions`` and no per-concept ``ai_context``, so there is nowhere
-    to carry ``@ODM.entityName``, ``@Semantics.*`` or ``@ObjectModel.*``. Until
-    the ontology schema gains an annotations construct they are reported as
-    dropped rather than lost silently.
+    The pinned ontology schema accepts an open ``annotations`` object on the
+    document, concepts, relationships and roles (apache/ossie#146). This
+    converter does not map CSN annotations such as ``@ODM.entityName``,
+    ``@Semantics.*`` or ``@ObjectModel.*`` into it yet: a schema that accepts a
+    key does not say what it means, so mapping them is a separate change with
+    its own tests. Until then they are reported as dropped, never lost silently.
     """
     for definition in conversion.model.definitions.values():
         for key in sorted(set(definition.annotations) - CARRIED_ANNOTATIONS):
@@ -578,8 +578,9 @@ def _report_dropped_annotations(conversion: Conversion) -> None:
                 conversion.dropped_annotations.append(f"{definition.name}.{element.name}: {key}")
     if conversion.dropped_annotations:
         conversion.warnings.append(
-            f"{len(conversion.dropped_annotations)} CSN annotation(s) have no home in the ontology "
-            "layer and were dropped: " + "; ".join(conversion.dropped_annotations)
+            f"{len(conversion.dropped_annotations)} CSN annotation(s) were dropped; the ontology schema "
+            "accepts `annotations`, but this converter does not map them yet: "
+            + "; ".join(conversion.dropped_annotations)
         )
 
 

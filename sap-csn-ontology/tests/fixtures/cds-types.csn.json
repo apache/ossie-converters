@@ -1,6 +1,5 @@
 {
   "$comment": "CDS scalar types fixture: one element per type the converter maps; see TestTypeFidelity.",
-  "csnInteropEffective": "1.0",
   "definitions": {
     "sap.types.Document": {
       "kind": "entity",

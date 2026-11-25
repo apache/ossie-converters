@@ -26,6 +26,8 @@ pair is the executable form of everything stated here.
 
 **Source format.** CAP-style CSN (Core Schema Notation) — the JSON
 representation behind CDS views, CAP applications, and data-product metadata.
+Conformance to SAP's CSN Interop Effective specification is not checked, and the
+fixtures are not CSN Interop Effective documents.
 **Target format.** The ontology layer of the Apache Ossie specification
 (`ontology/ontology.json`, v0.3.0.dev0, as pinned by the `ossie` submodule of this repository).
 
@@ -82,8 +84,7 @@ Rules:
 - `length` becomes `requires: LENGTH(x) <= n`, the form the merged SAP Business
   Partner example in apache/ossie uses, and is also appended to the value type's
   description (`CSN length 10.`). `LENGTH` is an `OSSIE_SQL_2026` function; the
-  reference ontology parser does not accept it yet (apache/ossie-converters#<§41>),
-  so each emitted length is reported as a warning. An overlay `requires: []`
+  reference ontology parser does not accept it yet, so each emitted length is reported as a warning. An overlay `requires: []`
   clears it for a value type whose length is not a business rule.
 - `cds.*` scalar types map to Ossie built-ins (`String`, `Integer`, `Decimal`,
   `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`).

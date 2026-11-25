@@ -24,6 +24,11 @@ CAP applications and data-product metadata) and writes an Apache Ossie
 **ontology document**: concepts, identity, relationships, derivations,
 verbalizations, and `ontology_mappings` to datasets. It works offline on files.
 
+The input is CAP-style CSN. The converter does not check conformance to SAP's
+CSN Interop Effective specification, and its test fixtures are not CSN Interop
+Effective documents: they have no `$version` and carry a root `$comment`, which
+that schema rejects.
+
 ```
 ossie-sap-csn-ontology model.csn.json [-c curation.yaml] [-o model.ossie.yaml] [--name NAME] [--strict]
 ```
@@ -120,7 +125,7 @@ data-product binding. Nothing in it changes structure.
 | CSN construct | Why it does not convert | Where it belongs |
 |---|---|---|
 | `precision`/`scale` on decimals | no constraint form in the ontology layer | recorded in `description`, reported as a warning; a spec question |
-| Annotations other than `@EndUserText.label` (`@ODM.entityName`, `@Semantics.*`, `@ObjectModel.*`, …) | `OntologyComponent`, `Relationship`, `Role` are `additionalProperties: false`, with no `custom_extensions` and no per-concept `ai_context` | reported as dropped, one line per annotation; apache/ossie#146 / ossie-converters#111 (`annotations`, both open) |
+| Annotations other than `@EndUserText.label` (`@ODM.entityName`, `@Semantics.*`, `@ObjectModel.*`, …) | dropped today. The pinned ontology schema accepts `annotations` on concepts, relationships and roles (apache/ossie#146), but this converter does not map CSN annotations into it; accepting a key is not the same as preserving its meaning | reported as dropped, one line per annotation; mapping them is a separate change |
 | Association `ON` predicates | read for their shape only; a relationship carries no join predicate | open |
 | `cds.Composition` containment | emitted as an association | open |
 | Cardinality `min` | `Multiplicity` offers `ManyToOne` and `OneToOne` only | open |
@@ -152,9 +157,8 @@ both concept mappings.
 apache/ossie uses. `LENGTH` is an `OSSIE_SQL_2026` function, but the reference
 parser rejects it ("Unresolved reference 'LENGTH'"), and `ontology.md` does not say
 which expression language `requires` uses. Each emitted length is reported as a
-warning and kept in the description too. Parser side: #<§41>; spec side:
-apache/ossie#<§40>. Same rule as #129: keep the project's own form and report the
-parser's limit.
+warning and kept in the description too. Same rule as #129: keep the project's
+own form and report the parser's limit.
 
 Two earlier parser findings (`datatype` on dataset fields; reverse-direction
 verbalizations) are fixed on the current `ontology` converter.

@@ -88,7 +88,7 @@ def test_emitted_yaml_uses_no_anchors(generated):
 def test_every_warning_is_a_declared_known_loss(slice_conversion):
     """Emitted lengths and non-label annotations are reported, and nothing else is."""
     lengths = [w for w in slice_conversion.warnings if "reference ontology parser does not accept it" in w]
-    annotations = [w for w in slice_conversion.warnings if "annotation(s) have no home" in w]
+    annotations = [w for w in slice_conversion.warnings if "annotation(s) were dropped" in w]
     assert len(lengths) + len(annotations) == len(slice_conversion.warnings)
     assert slice_conversion.dropped_annotations == [
         "sap.slice.BusinessPartner: @ODM.entityName",
@@ -100,6 +100,21 @@ def test_every_warning_is_a_declared_known_loss(slice_conversion):
         "BusinessPartnerNumber", "CountryCode", "CustomerNumber",
         "SalesOrganization", "DistributionChannel", "Division",
     }
+
+
+def test_no_annotations_are_emitted_yet(generated):
+    """The schema accepts ``annotations``; this converter does not map CSN annotations into them yet."""
+
+    def keys(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                yield key
+                yield from keys(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from keys(item)
+
+    assert "annotations" not in set(keys(generated))
 
 
 def test_curation_overlay_has_no_stale_entries():

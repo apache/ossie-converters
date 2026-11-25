@@ -30,7 +30,7 @@ from ossie_sap_csn_ontology.naming import pascal_case, relationship_name, snake_
 
 
 def build(definitions: dict, curation: dict | None = None) -> dict:
-    document = {"csnInteropEffective": "1.0", "definitions": definitions}
+    document = {"definitions": definitions}
     return csn_to_ossie(document, curation, name="test_model")
 
 
@@ -1022,7 +1022,7 @@ class TestCurationIntegrity:
 
 class TestKnownLosses:
     def test_annotations_other_than_the_label_are_reported_dropped(self):
-        """Nothing in the ontology layer carries them, so they are named, not lost."""
+        """The converter does not map them into ``annotations`` yet, so they are named, not lost."""
         from ossie_sap_csn_ontology import convert, parse_csn
 
         conversion = convert(
@@ -1047,7 +1047,7 @@ class TestKnownLosses:
             )
         )
         assert conversion.dropped_annotations == ["s.E: @ODM.entityName", "s.E.Id: @Semantics.businessPartner.id"]
-        assert any("dropped" in w for w in conversion.warnings)
+        assert any("dropped" in w and "does not map them yet" in w for w in conversion.warnings)
 
     def test_the_label_is_not_reported_dropped(self):
         from ossie_sap_csn_ontology import convert, parse_csn

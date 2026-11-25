@@ -1,6 +1,5 @@
 {
-  "$comment": "SAP Business Partner slice — CSN source fixture. Pairs with sap-bp-slice.ossie.yaml (which validates against ontology/ontology.json). Together they form the fixture pair of the sap-csn-ontology converter; the same CSN is the input of the SAP Business Partner example in apache/ossie. CAP-style CSN, trimmed to the slice's scope.",
-  "csnInteropEffective": "1.0",
+  "$comment": "SAP Business Partner slice — CSN source fixture. Pairs with sap-bp-slice.ossie.yaml (which validates against ontology/ontology.json). Together they form the fixture pair of the sap-csn-ontology converter; the SAP Business Partner example in apache/ossie models the same slice. CAP-style CSN, not CSN Interop Effective, trimmed to the slice's scope.",
   "definitions": {
 
     "sap.slice.BusinessPartnerCategory": {
