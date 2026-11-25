@@ -62,7 +62,8 @@ Two converters read SAP CSN; they target different layers of the spec.
 | An association | a relationship with `from_columns`/`to_columns` | a relationship whose shape depends on which side's key the `ON` references |
 | A role view (I_Customer) | a dataset | a derived subtype: `extends` + `derived_by: EXISTS(...)` |
 | `@EndUserText.label` | `label` | `description`, and the raw material for `verbalizes` |
-| Other annotations, `precision`/`scale` | kept in the `SAP_CSN` extension | reported as dropped (see known losses) |
+| Other annotations | kept in the `SAP_CSN` extension | reported as dropped (see known losses) |
+| `precision`/`scale` on decimals | kept in the `SAP_CSN` extension | dropped without a warning (see known losses) |
 | `length` on strings | kept in the `SAP_CSN` extension | `requires: LENGTH(x) <= n`, also recorded in `description` (see known parser findings) |
 
 On the shared fixture `sap-bp-slice.csn.json`, `sap-csn` emits 3 datasets with
@@ -107,7 +108,7 @@ data-product binding. Nothing in it changes structure.
 | `kind: type`, scalar element with a domain | `ValueType` `extends` a built-in |
 | `enum` (fixed values) | `requires: x == 'a' OR x == 'b' …` — closed world |
 | `length` on strings | `requires: LENGTH(x) <= n`, as in the merged apache/ossie SAP example; also in `description` |
-| `precision`, `scale` | recorded in `description`; reported as dropped |
+| `precision`, `scale` | dropped without a warning; the value type only `extends: [ Decimal ]` |
 | Check-table domain | description provenance only; population arrives via `ontology_mappings` |
 | Single `key` | `identify_by` + one `OneToOne` identifying relationship |
 | Compound `key` | one `ManyToOne` identifying relationship per part + a `requires` per part |
@@ -124,7 +125,7 @@ data-product binding. Nothing in it changes structure.
 
 | CSN construct | Why it does not convert | Where it belongs |
 |---|---|---|
-| `precision`/`scale` on decimals | no constraint form in the ontology layer | recorded in `description`, reported as a warning; a spec question |
+| `precision`/`scale` on decimals | no constraint form in the ontology layer, and the converter does not record them | **dropped silently today**: not in `description`, no warning; a spec question |
 | Annotations other than `@EndUserText.label` (`@ODM.entityName`, `@Semantics.*`, `@ObjectModel.*`, …) | dropped today. The pinned ontology schema accepts `annotations` on concepts, relationships and roles (apache/ossie#146), but this converter does not map CSN annotations into it; accepting a key is not the same as preserving its meaning | reported as dropped, one line per annotation; mapping them is a separate change |
 | Association `ON` predicates | read for their shape only; a relationship carries no join predicate | open |
 | `cds.Composition` containment | emitted as an association | open |
@@ -135,22 +136,27 @@ data-product binding. Nothing in it changes structure.
 | Conversion routines (ALPHA) | representation, not meaning | `description`, by design |
 | Aspects, `kind: context`, services | not read in v1 | future work |
 
-Every dropped construct is **reported**: `Conversion.warnings` lists them and
-`Conversion.dropped_annotations` names each annotation. Nothing is lost
-silently; `tests/test_mapping_rules.py::TestKnownLosses` asserts this.
+Every dropped construct is **reported**, with one exception: decimal `precision`
+and `scale` are dropped without a warning. `Conversion.warnings` lists the
+reported losses and `Conversion.dropped_annotations` names each annotation;
+`tests/test_mapping_rules.py::TestKnownLosses` asserts this.
 
 ## Parser acceptance
 
 The output is checked against `ontology/ontology.json` from the pinned `ossie`
 submodule, and was run through the reference parser in [`../ontology`](../ontology)
-(`OssieParser`). On the shipped fixture the parser accepts everything except one
-construct: the **concept-qualified nested referent** `BusinessPartner.nr`, which
-the spec's own `CustOrder.nr` example uses, is rejected because
-`lookup_concept_relationship` prefixes the container name onto an already
-qualified name (#129). This converter keeps the spec form. With that one reference
-written bare, the parser resolves all 11 concepts, 10 relationships,
+(`OssieParser`). On the shipped fixture the parser rejects two constructs, both
+kept in the project's own form:
+
+- the **concept-qualified nested referent** `BusinessPartner.nr`, which the spec's
+  own `CustOrder.nr` example uses: `lookup_concept_relationship` prefixes the
+  container name onto an already qualified name (#129);
+- the six **`LENGTH(x) <= n`** constraints in `requires` (see below).
+
+With that one reference written bare **and** the six `LENGTH` constraints removed,
+the parser resolves all 11 concepts, 10 relationships,
 `Customer.identify_by == ['BusinessPartner.nr']`, the `EXISTS` derivation, and
-both concept mappings.
+both concept mappings. Either change alone is not enough.
 
 **Known parser finding: `LENGTH`.** String lengths are emitted as
 `requires: LENGTH(x) <= n`, the form the merged SAP Business Partner example in

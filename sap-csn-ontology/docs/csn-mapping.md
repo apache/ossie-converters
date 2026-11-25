@@ -190,7 +190,7 @@ partner number.
         - relationship: customer
           referent_mappings:
             - relationship: BusinessPartner.nr
-              expression: "CUSTOMER_SALES_AREA.CUSTOMER_ID"
+              expression: "CUSTOMER_SALES_AREA.BUSINESS_PARTNER"
         - relationship: sales_org
           expression: "CUSTOMER_SALES_AREA.SALES_ORG"
 ```
@@ -279,11 +279,11 @@ portable multi-dialect expression and derives the mapping structure:
 
 ```yaml
 fields:
-  - name: CUSTOMER_ID
+  - name: BUSINESS_PARTNER
     expression:
       dialects:
         - dialect: ANSI_SQL
-          expression: "CUSTOMER_ID"
+          expression: "BUSINESS_PARTNER"
     datatype: String
 ```
 
@@ -303,7 +303,7 @@ attributes is an error. Expressions are emitted in the portable ANSI SQL core.
 | `cds.String(n)` | `String` | `n` recorded in the description, not modeled |
 | `cds.LargeString` | `String` | unbounded (NCLOB-class); no length to record |
 | `cds.Integer` | `Integer` | CAP's `Integer` is 32-bit; `cds.Integer64`/`Int64` also → `Integer` |
-| `cds.Decimal(p, s)` | `Decimal` | `p`/`s` not modeled: no portable constraint form |
+| `cds.Decimal(p, s)` | `Decimal` | `p`/`s` dropped without a warning: no portable constraint form, and not recorded in the description |
 | `cds.Double` | `Float` | |
 | `cds.Boolean` | — | becomes a unary relationship, not a value type |
 | `cds.Date` | `Date` | |
