@@ -601,7 +601,7 @@ class TestOssieToMSIMetricConversion:
             datasets=[
                 _ossie_dataset(
                     "orders",
-                    fields=[_ossie_field("order_id"), _ossie_field("amount")],
+                    fields=[_ossie_field("order_id"), _ossie_field("amount"), _ossie_field("ordered_on", is_time=True)],
                     primary_key=["order_id"],
                 )
             ],
@@ -1729,10 +1729,14 @@ class TestOssieToMSIRoundTrip:
                         _ossie_field("amount"),
                     ],
                     primary_key=["order_id"],
+                    nonportable_extensions=[],
                 )
             ],
             metrics=[_ossie_metric("revenue", "SUM(orders.amount)")],
         )
+
+        # This snapshot is about structure, so leave out the time spine the builder adds.
+        original = original.model_copy(update={"nonportable_extensions": None})
 
         msi = OssieToMSIConverter().convert(original).output
         assert msi.semantic_models[0].measures == []
@@ -1827,7 +1831,11 @@ class TestOssieToMSIRoundTrip:
 
         back = OssieToMSIConverter().convert(ossie_doc)
 
-        assert back.issues == []
+        # The source manifest has no time spine or aggregation time dimension, so both are reported.
+        assert {i.issue_type for i in back.issues} == {
+            ConverterIssueType.TIME_SPINE_LOSS,
+            ConverterIssueType.AGG_TIME_DIMENSION_LOSS,
+        }
         metrics = {m.name: m for m in back.output.metrics}
         assert metrics["arpu"].type == MetricType.RATIO
         assert metrics["arpu_numerator"].type == MetricType.SIMPLE

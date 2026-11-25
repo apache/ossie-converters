@@ -130,6 +130,7 @@ denominator is 0, and the Ossie expression does the same rather than leave divis
 | `NON_PORTABLE_METRIC_SEMANTICS` | A metric uses window, grain, offset, time-spine, or conversion semantics that Ossie cannot represent; the metric is dropped |
 | `AMBIGUOUS_REFERENCE_METRIC_DROPPED` | An input metric is listed more than once under one reference with differing filters, so the expression reference is ambiguous; give each occurrence a distinct alias |
 | `CONSTANT_METRIC_SEMANTIC_MODEL_LOSS` | A metric over a constant, such as a row count (`SUM(1)`), has no column to carry its semantic model; recorded when the manifest has more than one, since converting it back will refuse it |
+| `AGG_TIME_DIMENSION_LOSS` | A derived or ratio metric is built from simple metrics with different aggregation time dimensions, and one Ossie metric can carry only one; none is written rather than guessing |
 
 Ossie `datatype` attributes use native MetricFlow datatype annotations when present,
 falling back to `config.meta.ossie.datatype` annotations on dimensions, entities,
@@ -140,6 +141,12 @@ A non-empty `config.meta` on a semantic model, dimension, entity, measure, or me
 is carried as one `DBT` `nonportable_extensions` entry on the matching Ossie dataset, field,
 or metric, with `data` set to `{"meta": {...}}`. Values JSON cannot represent, such as
 dates, are written as strings.
+
+The time spines and the aggregation time dimension have no portable Ossie equivalent, so they
+travel as further `DBT` `nonportable_extensions` entries, separate from the `meta` entry:
+`project_configuration.time_spines` as `{"time_spines": [...]}` on the Ossie model, a semantic
+model's `defaults.agg_time_dimension` as `{"defaults": {"agg_time_dimension": "..."}}` on its dataset,
+and a metric's aggregation time dimension as `{"agg_time_dimension": "..."}` on the metric.
 
 **Ossie → MSI** reconstructs a best-effort MSI manifest from Ossie's simpler schema. Nothing is dropped for supported inputs apart from the `nonportable_extensions` noted below, but Ossie carries less structural information than MSI, so the converter makes the following choices:
 
@@ -172,7 +179,9 @@ dates, are written as strings.
   `UNSUPPORTED_METRIC_EXPRESSION` issue
 - Time dimensions always receive `TimeGranularity.DAY` (Ossie carries no granularity field)
 - A `DBT` `nonportable_extensions` entry whose `data` has a `meta` object is restored to `config.meta` on the matching semantic model, entity, dimension, or metric. When the element has an Ossie `datatype`, it replaces any `meta.ossie.datatype` in the entry, so an edited datatype is not undone on the next dbt → Ossie pass
-- `DBT` entries without a `meta` key (dbt config such as `materialized`), entries with an empty `meta`, other vendors' entries, and model- and relationship-level `nonportable_extensions` are not carried into the manifest
+- A `DBT` entry on the Ossie model with a `time_spines` list is restored to `project_configuration.time_spines`; a `DBT` entry on a dataset with `defaults.agg_time_dimension` is restored to the semantic model's defaults; and a `DBT` entry on a metric with `agg_time_dimension` is restored to that metric's aggregation time dimension, including on the sub-metrics generated for a ratio. A malformed `time_spines` value is skipped with `INVALID_DBT_CUSTOM_EXTENSION`
+- The converter never guesses a time dimension. A manifest without a time spine reports `TIME_SPINE_LOSS`, and a simple metric with neither an aggregation time dimension nor a semantic model default reports `AGG_TIME_DIMENSION_LOSS`, because MetricFlow cannot load or query such a manifest
+- `DBT` entries without a `meta` key and without the keys above (dbt config such as `materialized`), entries with an empty `meta`, other vendors' entries, and relationship-level `nonportable_extensions` are not carried into the manifest
 - A `DBT` entry whose `data` is not a JSON object, or whose `meta` is not an object, is skipped with `INVALID_DBT_CUSTOM_EXTENSION`; the rest of the element still converts
 - When more than one `DBT` entry on the same element carries `meta`, the first is kept and the others are ignored with `DUPLICATE_DBT_CUSTOM_EXTENSION`
 

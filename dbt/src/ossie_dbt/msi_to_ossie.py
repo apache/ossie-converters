@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ossie import (
     OssieNonportableExtension,
@@ -203,6 +203,17 @@ class MSIToOssieConverter:
                     )
                 )
                 continue
+            agg_time_dimensions = self._leaf_agg_time_dimensions(metric, metric_index)
+            agg_time_extension = None
+            if len(agg_time_dimensions) == 1:
+                agg_time_extension = {"agg_time_dimension": next(iter(agg_time_dimensions))}
+            elif len(agg_time_dimensions) > 1:
+                # One Ossie metric cannot carry several bindings, and picking one would be a guess.
+                issues.append(
+                    ConverterIssue(
+                        issue_type=ConverterIssueType.AGG_TIME_DIMENSION_LOSS, element_name=metric.name
+                    )
+                )
             # Measure annotations declare aggregate result types, including on generated metrics.
             # Preserve recognized annotations without validating SQL/type compatibility.
             ossie_metrics.append(
@@ -211,7 +222,10 @@ class MSIToOssieConverter:
                     expression=self._make_expression(expr),
                     description=metric.description,
                     datatype=self._resolve_datatype(metric.datatype, metric.config),
-                    nonportable_extensions=self._custom_extensions_from_meta(metric.config),
+                    nonportable_extensions=self._with_dbt_extension(
+                        self._custom_extensions_from_meta(metric.config),
+                        agg_time_extension,
+                    ),
                 )
             )
             if len(manifest.semantic_models) > 1 and self._aggregates_a_constant(metric):
@@ -243,6 +257,9 @@ class MSIToOssieConverter:
                 datasets=datasets,
                 relationships=relationships if relationships else None,
                 metrics=ossie_metrics if ossie_metrics else None,
+                nonportable_extensions=self._with_dbt_extension(
+                    None, self._time_spine_extension(manifest.project_configuration)
+                ),
             ),
             issues=issues,
         )
@@ -265,7 +282,12 @@ class MSIToOssieConverter:
             unique_keys=unique_keys if unique_keys else None,
             description=sm.description,
             fields=fields if fields else None,
-            nonportable_extensions=self._custom_extensions_from_meta(sm.config),
+            nonportable_extensions=self._with_dbt_extension(
+                self._custom_extensions_from_meta(sm.config),
+                {"defaults": {"agg_time_dimension": sm.defaults.agg_time_dimension}}
+                if sm.defaults is not None and sm.defaults.agg_time_dimension
+                else None,
+            ),
         )
 
     def _convert_dimension(self, dim: Dimension) -> OssieField:
@@ -347,6 +369,58 @@ class MSIToOssieConverter:
                 data=json.loads(json.dumps({"meta": config.meta}, default=str)),
             )
         ]
+
+    @staticmethod
+    def _with_dbt_extension(
+        extensions: Optional[List[OssieNonportableExtension]],
+        data: Optional[Dict[str, Any]],
+    ) -> Optional[List[OssieNonportableExtension]]:
+        """Append one `DBT` entry holding `data`, kept apart from the entry that carries `config.meta`.
+
+        Ossie -> dbt reads `meta` only from entries that have a `meta` key, so a separate entry
+        for the time spine and aggregation time dimension cannot collide with it.
+        """
+        if not data:
+            return extensions
+        entry = OssieNonportableExtension(
+            vendor_name=OssieVendor.DBT.value, data=json.loads(json.dumps(data, default=str))
+        )
+        return [*(extensions or []), entry]
+
+    @staticmethod
+    def _time_spine_extension(project_configuration: Any) -> Optional[Dict[str, Any]]:
+        """The project's time spines as JSON, or None when there are none (#302)."""
+        spines = list(getattr(project_configuration, "time_spines", None) or [])
+        if not spines:
+            return None
+        return {"time_spines": [json.loads(spine.json(exclude_none=True)) for spine in spines]}
+
+    @staticmethod
+    def _leaf_agg_time_dimensions(
+        metric: Metric,
+        metric_index: Dict[str, Metric],
+        visiting: Optional[set[str]] = None,
+    ) -> set[str]:
+        """The explicit aggregation time dimensions of the SIMPLE metrics `metric` is built from."""
+        visiting = visiting if visiting is not None else set()
+        if metric.name in visiting:
+            return set()
+        visiting.add(metric.name)
+        params = metric.type_params
+        found: set[str] = set()
+        agg_params = params.metric_aggregation_params
+        if agg_params is not None and agg_params.agg_time_dimension:
+            found.add(agg_params.agg_time_dimension)
+        inputs = list(params.metrics or [])
+        if params.numerator is not None:
+            inputs.append(params.numerator)
+        if params.denominator is not None:
+            inputs.append(params.denominator)
+        for input_metric in inputs:
+            dependency = metric_index.get(input_metric.name)
+            if dependency is not None:
+                found |= MSIToOssieConverter._leaf_agg_time_dimensions(dependency, metric_index, visiting)
+        return found
 
     @staticmethod
     def _extract_keys(entities: Sequence[Entity]) -> Tuple[Optional[List[str]], List[List[str]]]:
