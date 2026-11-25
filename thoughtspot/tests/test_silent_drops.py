@@ -22,15 +22,18 @@ construct ThoughtSpot cannot receive is reported, with the object it was on,
 so an author can see what did not arrive. Four parts of the core
 specification were being read past instead.
 
-None of these is a translation this converter could have performed -- each
-genuinely has no home in TML, and the fix here is the issue, not a mapping.
+Three of these are not translations this converter could have performed --
+they genuinely have no home in TML, and the fix there is the issue, not a
+mapping. The fourth, `Dataset.metrics`, turned out to be a mapping after all.
 What makes them worth fixing is that an author converting a dbt, Databricks
 or Snowflake document had no way to learn the information was gone.
 
 * `Dataset.metrics` -- a dataset-scoped metric. Only `SemanticModel.metrics`
-  is read, so every metric declared on a dataset vanished. This one is a
-  measure disappearing from a model, which is why it is a WARNING rather
-  than a note.
+  was read, so every metric declared on a dataset vanished. This one has
+  since been fixed rather than merely reported: a dataset-scoped metric is
+  built against its own dataset's namespace (apache/ossie-converters#101),
+  and the tests below pin that it is built rather than that its loss is
+  announced.
 * `Field.dimension.is_time` -- the spec's temporal-role flag, independent of
   the field's datatype. ThoughtSpot derives the role from the column's own
   type and has no separate flag, so an author who set it on something other
@@ -99,24 +102,54 @@ def _issues(log, code):
     return [i for i in log.as_dicts() if i.get("code") == code]
 
 
-class TestADatasetScopedMetricIsReported:
-    """Only `SemanticModel.metrics` is read; a dataset's own metrics are not."""
+class TestADatasetScopedMetricIsBuilt:
+    """A dataset's own metrics are built, against its own namespace.
 
-    def _log(self):
-        return _build(_model([_dataset(
+    Until apache/ossie-converters#101 every dataset-scoped metric was dropped
+    wholesale, before its expression was looked at, so one that resolves
+    perfectly well went the same way as one that cannot be built at all. The
+    drop is gone; each metric now reports its own outcome.
+    """
+
+    def _model_doc(self, expression):
+        return _model([_dataset(
             "ORDERS", ["AMOUNT"],
-            metrics=[{"name": "total_amount", "expression": {"dialects": [
-                {"dialect": "ANSI_SQL", "expression": "SUM(AMOUNT)"}]}}],
-        )]))
+            metrics=[{"name": "total_amount", "expression": expression}],
+        )])
 
-    def test_the_drop_is_reported(self):
-        [issue] = _issues(self._log(), "TS-DATASET-METRICS-DROPPED")
-        assert issue["severity"] == Severity.WARNING.value
+    def _built(self, expression):
+        log = IssueLog()
+        doc = build_model(self._model_doc(expression), [_table("ORDERS", ["AMOUNT"])], log)
+        return doc.body, log
 
-    def test_the_issue_names_the_metric_and_its_dataset(self):
-        [issue] = _issues(self._log(), "TS-DATASET-METRICS-DROPPED")
-        assert "total_amount" in issue["message"]
-        assert issue["object_ref"] == "dataset:ORDERS"
+    def test_a_metric_over_its_own_field_becomes_a_formula(self):
+        body, log = self._built({"dialects": [
+            {"dialect": "ANSI_SQL", "expression": "SUM(AMOUNT)"}]})
+        [formula] = body["formulas"]
+        assert formula["name"] == "total_amount"
+        assert formula["expr"] == "sum ( [ORDERS::AMOUNT] )"
+        assert not log.has_errors(), log.as_dicts()
+
+    def test_it_is_surfaced_as_a_measure_column(self):
+        body, _ = self._built({"dialects": [
+            {"dialect": "ANSI_SQL", "expression": "SUM(AMOUNT)"}]})
+        [column] = [c for c in body["columns"] if c["name"] == "total_amount"]
+        assert column["properties"]["column_type"] == "MEASURE"
+
+    def test_the_blanket_drop_is_gone(self):
+        _, log = self._built({"dialects": [
+            {"dialect": "ANSI_SQL", "expression": "SUM(AMOUNT)"}]})
+        assert _issues(log, "TS-DATASET-METRICS-DROPPED") == []
+
+    def test_a_metric_naming_another_dataset_is_still_refused(self):
+        # Metric Scoping rule 1: a dataset-scoped metric references only its
+        # own declared fields, by single-part name. The qualified form is a
+        # model-scoped metric's spelling and must not resolve here, or the
+        # two namespaces would collapse into one.
+        _, log = self._built({"dialects": [
+            {"dialect": "ANSI_SQL", "expression": "SUM(ORDERS.AMOUNT)"}]})
+        assert _issues(log, "TS-EXPR-ANSI-UNRESOLVED") != []
+        assert _issues(log, "TS-MODEL-METRIC-UNTRANSLATABLE") != []
 
     def test_a_dataset_with_no_metrics_is_quiet(self):
         assert _issues(_build(_model()), "TS-DATASET-METRICS-DROPPED") == []

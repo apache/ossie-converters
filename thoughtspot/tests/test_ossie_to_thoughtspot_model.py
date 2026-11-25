@@ -41,7 +41,12 @@ from ossie_thoughtspot.constants import (
     RELATIONSHIP_STASH_TYPE,
 )
 from ossie_thoughtspot.issues import IssueLog
-from ossie_thoughtspot.ossie_to_thoughtspot import build_model, build_table, to_thoughtspot_expression
+from ossie_thoughtspot.ossie_to_thoughtspot import (
+    _dataset_scoped_resolver,
+    build_model,
+    build_table,
+    to_thoughtspot_expression,
+)
 from ossie_thoughtspot.tml import DocumentSet, TmlDocument, dump_document, load_document
 from ossie_thoughtspot.tml_to_ossie import convert as tml_to_ossie_convert
 
@@ -869,20 +874,34 @@ class TestDialectSelection:
         assert result == "[ORDERS::Amount]", result
         assert not log.has_errors(), log.as_dicts()
 
-    def test_the_two_namespaces_this_does_not_resolve_are_pinned_not_claimed(self):
-        """The limit of the line above, recorded so the scope is not
-        overstated by its absence.
+    def test_the_dataset_scoped_namespace_now_resolves(self):
+        """The positive form this test's predecessor asked for.
 
-        apache/ossie#486 defines three namespaces. Only the model-scoped
-        metric's qualified `dataset.field` resolves here. A dataset-scoped
-        metric's unqualified name and a field expression's source column both
-        fail, and they fail for ANSI_SQL exactly as they do for
-        OSSIE_SQL_2026 -- this is not something accepting the new dialect
-        introduced. Tracked as apache/ossie-converters#101.
+        apache/ossie#486 defines three namespaces. Two resolve here now: a
+        model-scoped metric's qualified `dataset.field`, and a dataset-scoped
+        metric's unqualified field name, each through a resolver its caller
+        scopes. The translator matches a reference of either arity and asks;
+        it does not itself know which namespace it is in.
 
-        Pinned as the current behaviour, not endorsed: when #100 lands, this
-        test should start failing and be replaced by its positive form.
+        The third, a field expression's source column, still does not resolve
+        and is pinned below. Tracked as apache/ossie-converters#101.
         """
+        for dialect in ("ANSI_SQL", "OSSIE_SQL_2026"):
+            log = IssueLog()
+            result = to_thoughtspot_expression(
+                _expr((dialect, "SUM(net_amount)")),
+                _dataset_scoped_resolver(
+                    {"orders.net_amount": ("ORDERS", "Net Amount")}, "orders",
+                ),
+                log, object_ref="metric:m",
+            )
+            assert result == "sum ( [ORDERS::Net Amount] )", (dialect, result)
+            assert not log.has_errors(), (dialect, log.as_dicts())
+
+    def test_a_model_scoped_resolver_still_refuses_an_unqualified_name(self):
+        # The scoping is the caller's, not the translator's. Handed the
+        # model-scoped index, a bare field name resolves to nothing, which is
+        # what keeps Metric Scoping rules 1 and 5 apart.
         for dialect in ("ANSI_SQL", "OSSIE_SQL_2026"):
             log = IssueLog()
             result = to_thoughtspot_expression(
@@ -891,9 +910,25 @@ class TestDialectSelection:
                 log, object_ref="metric:m",
             )
             assert result is None, (dialect, result)
-            assert any(i["code"] == "TS-EXPR-ANSI-UNSTRUCTURED" for i in log.as_dicts()), (
+            assert any(i["code"] == "TS-EXPR-ANSI-UNRESOLVED" for i in log.as_dicts()), (
                 dialect, log.as_dicts()
             )
+
+    def test_a_field_expressions_source_column_still_does_not_resolve(self):
+        """The one namespace of the three that is still open.
+
+        A field expression's identifiers name columns of the dataset's
+        `source`, which are not fields and are in no index this builds.
+        Pinned as current behaviour, not endorsed.
+        """
+        log = IssueLog()
+        result = to_thoughtspot_expression(
+            _expr(("ANSI_SQL", "UPPER(customer_name)")),
+            _resolve_field({"orders.customer_name": ("ORDERS", "Customer Name")}),
+            log, object_ref="field:f",
+        )
+        assert result is None
+        assert log.as_dicts() != []
 
     def test_ansi_sql_still_wins_when_both_are_present(self):
         # Preference order, not a free-for-all: a document carrying both gets

@@ -1215,7 +1215,16 @@ def _rewrite_formula_references(
 #: read back here: a round-tripped Ossie document always carries a THOUGHTSPOT
 #: entry too, which `to_thoughtspot_expression` prefers unconditionally, so
 #: this pattern is only ever exercised for a document with no such entry.
-_ANSI_DATASET_FIELD_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*$")
+#: One reference, as a portable expression writes it: a single identifier, or
+#: two joined by a dot. Which of apache/ossie#486's three namespaces that text
+#: belongs to is NOT decided here -- the `resolve_field` the caller passes is
+#: already scoped, and a key it does not know resolves to nothing. Matching
+#: both arities is what lets one translator serve a model-scoped metric
+#: (`dataset.field`) and a dataset-scoped one (a bare field name) without
+#: either knowing about the other.
+_ANSI_REFERENCE_RE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$"
+)
 
 
 def _match_ansi_call(name: str, args: list[str]) -> tuple[str, list[str]] | None:
@@ -1263,9 +1272,9 @@ def _translate_ansi_sql(
     another: a construct the catalog does not structurally match is left
     alone, not approximated.
     """
-    match = _ANSI_DATASET_FIELD_RE.match(expr)
+    match = _ANSI_REFERENCE_RE.match(expr)
     if match is not None:
-        key = f"{match.group(1)}.{match.group(2)}"
+        key = match.group(1)
         resolved = resolve_field(key)
         if resolved is None:
             log.add(
@@ -1888,6 +1897,37 @@ def _build_field_index(
     return index
 
 
+def _dataset_scoped_resolver(
+    field_index: dict[str, tuple[str, str]], dataset_prefix: str,
+) -> Callable[[str], tuple[str, str] | None]:
+    """`resolve_field` for an expression written inside `dataset_prefix`.
+
+    A dataset-scoped metric names its operands by single-part field name,
+    within its own dataset (core-spec Metric Scoping, rule 1). That is a
+    narrower namespace than the model-scoped `dataset.field` one, not a
+    different index: `_build_field_index` is already keyed `dataset.field`,
+    so scoping is a prefix.
+
+    A dotted key resolves to nothing here, deliberately, and the two reasons
+    are both ones the caller should hear about rather than have silently
+    rewritten:
+
+    * `other_dataset.field` is invalid in a dataset-scoped metric (rule 1); a
+      metric that must reach another dataset is model-scoped and belongs in
+      the model-root `metrics`.
+    * `source.column` names a column of the dataset's `source` rather than a
+      declared field (rule 2). That is legal and is not yet built -- see
+      apache/ossie-converters#101 -- so it must fail as unresolved rather
+      than be guessed at.
+    """
+    def resolve(key: str) -> tuple[str, str] | None:
+        if "." in key:
+            return None
+        return field_index.get(f"{dataset_prefix}.{key}")
+
+    return resolve
+
+
 #: The two spellings a source join `type` can arrive as for what
 #: ThoughtSpot calls `OUTER` (its own full outer join). Matched
 #: case/whitespace-insensitively: the stash carries whatever spelling the
@@ -2440,7 +2480,8 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         model_tables.append(table_entry)
         model_tables_by_prefix[dataset_prefix] = table_entry
 
-    resolve_field = _build_field_index(datasets).get
+    field_index = _build_field_index(datasets)
+    resolve_field = field_index.get
 
     allocator = _DisplayNameAllocator()
     columns: list[dict] = []
@@ -2467,24 +2508,26 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         dataset_metrics = dataset.get("metrics") or []
         if not dataset_metrics:
             continue
-        # Only `SemanticModel.metrics` is read above. A dataset-scoped metric
-        # resolves its operands within its own dataset by single-part name
-        # (core-spec "Metric Scoping"), a namespace this converter's
-        # `resolve_field` does not implement -- see
-        # apache/ossie-converters#101. Until it does, the metric cannot be
-        # built, and a measure vanishing from a model is worth a WARNING.
-        names = ", ".join(repr(m.get("name") or "<unnamed>") for m in dataset_metrics)
-        log.add(
-            code="TS-DATASET-METRICS-DROPPED",
-            severity=Severity.WARNING,
-            message=(
-                f"dataset {dataset.get('name') or '<unnamed>'!r} declares the "
-                f"dataset-scoped metric(s) {names}, whose expressions resolve "
-                f"against its own fields by single-part name; this converter "
-                f"reads only model-scoped metrics, so they are not built"
-            ),
-            object_ref=f"dataset:{dataset.get('name') or '<unnamed>'}",
-        )
+        # A dataset-scoped metric is built exactly as a model-scoped one is,
+        # against a resolver scoped to its own dataset. Until
+        # apache/ossie-converters#101 these were dropped wholesale, before
+        # any expression was looked at, so a metric that resolves perfectly
+        # well went the same way as one that cannot be built at all. Each
+        # metric now reports its own outcome.
+        dataset_prefix = dataset.get("name") or "<unnamed>"
+        resolve_in_dataset = _dataset_scoped_resolver(field_index, dataset_prefix)
+        for metric in dataset_metrics:
+            built = _build_metric(metric, allocator, resolve_in_dataset, log)
+            if built is None:
+                continue
+            formulas_entry, columns_entry = built
+            _allocate_formula_id(
+                formulas_entry, columns_entry, taken_formula_ids, log,
+                preserved=stash.read_stash(metric).get(FIELD_STASH_FORMULA_ID)
+                == formulas_entry["id"],
+            )
+            formulas.append(formulas_entry)
+            columns.append(columns_entry)
 
     for metric in semantic_model.get("metrics") or []:
         built = _build_metric(metric, allocator, resolve_field, log)

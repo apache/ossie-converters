@@ -289,20 +289,40 @@ class TestMetricsReadTheSqlLocationToo:
             i["code"] for i in result.issues.as_dicts()
         ]
 
-    def test_a_dataset_scoped_metric_is_not_read_at_all_yet(self):
-        """Pinning a PRE-EXISTING gap, not one this change introduced.
+    def test_a_dataset_scoped_metric_reads_sql_too(self):
+        """The positive form of a gap this file used to pin.
 
-        This converter has no dataset-scoped metric path: every metric it
-        reads comes from the document root. A metric under `datasets[].metrics`
-        is dropped silently -- no formula, and no issue saying so -- whichever
-        location its expression uses. Reading `sql` cannot help a metric that
-        is never looked at.
+        Every metric this converter read once came from the document root, so
+        a metric under `datasets[].metrics` was dropped before its expression
+        was looked at and reading `sql` could not help it. The dataset-scoped
+        path exists now (apache/ossie-converters#101), and it picks the
+        expression location the same way the model-scoped path does.
 
-        Pinned here so the limit is recorded next to the location work, and
-        so whoever adds the dataset-scoped path (apache/ossie-converters#30,
-        replanned around apache/ossie#633) is told by a failing test to read
-        both locations there too.
+        The name is single-part because that is the only spelling Metric
+        Scoping rule 1 allows here. `SUM(orders.amount)`, which this test used
+        while the path was missing, is the model-scoped spelling and is
+        refused below.
         """
+        document = _document([_field("amount", {"dialects": _dialects(("ANSI_SQL", "amount"))})])
+        document["datasets"][0]["metrics"] = [
+            {"name": "total", "expression": {"sql": "SUM(amount)"}}
+        ]
+        result = ossie_to_tml_convert(document)
+
+        formulas = {f["name"]: f["expr"] for f in result.documents.model.body["formulas"]}
+        assert formulas["total"] == "sum ( [orders::amount] )"
+        # The same convention note the model-scoped path raises, which is the
+        # point: the two paths differ in namespace, not in treatment.
+        assert [i["code"] for i in result.issues.as_dicts()] == [
+            "TS-DATASET-CONNECTION-MISSING",
+            "TS-MODEL-METRIC-AGGREGATION-CONVENTION",
+        ]
+
+    def test_a_dataset_scoped_metric_does_not_read_the_qualified_spelling(self):
+        # Rule 1 again, from the other side: letting `dataset.field` resolve
+        # inside a dataset-scoped metric would collapse the two namespaces,
+        # and a metric that reaches another dataset would silently become
+        # legal here instead of being moved to the model root.
         document = _document([_field("amount", {"dialects": _dialects(("ANSI_SQL", "amount"))})])
         document["datasets"][0]["metrics"] = [
             {"name": "total", "expression": {"sql": "SUM(orders.amount)"}}
@@ -310,12 +330,10 @@ class TestMetricsReadTheSqlLocationToo:
         result = ossie_to_tml_convert(document)
 
         assert "formulas" not in result.documents.model.body
-        # TS-DATASET-METRICS-DROPPED is the other half of this fact, added
-        # alongside. The metric is still not built; it is no longer dropped
-        # in silence, which is what made this test's own point hard to see.
         assert [i["code"] for i in result.issues.as_dicts()] == [
             "TS-DATASET-CONNECTION-MISSING",
-            "TS-DATASET-METRICS-DROPPED",
+            "TS-EXPR-ANSI-UNRESOLVED",
+            "TS-MODEL-METRIC-UNTRANSLATABLE",
         ]
 
     def test_a_computed_field_reads_sql(self):
