@@ -49,7 +49,7 @@ relationships:
   to: nation
   from_columns: [n_nationkey]
   to_columns: [c_nationkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"isReferentialConstraint": false, "from_columns": {"relation": "1"}}'
 - name: vdb_tpch.psql_tpch_region_psql_tpch_nation
@@ -62,7 +62,7 @@ relationships:
   to: customer
   from_columns: [c_custkey]
   to_columns: [o_custkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"to_columns": {"relation": "0,1"}}'
 metrics:

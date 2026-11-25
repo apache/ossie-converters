@@ -285,7 +285,7 @@ class TestBuildDimensions:
                         },
                     },
                 ],
-                "custom_extensions": [{
+                "nonportable_extensions": [{
                     "vendor_name": "DENODO",
                     "data": '{"fields_dimension":{"customer_name": "customer_dim","customer_address": "customer_dim"}}'
                 }]
@@ -309,7 +309,7 @@ class TestBuildDimensions:
 class TestExtractDenodoExtension:
     def test_extracts_folder_and_context(self):
         ossie = {
-            "custom_extensions": [
+            "nonportable_extensions": [
                 {
                     "vendor_name": "DENODO",
                     "data": '{"folder": "/3. views", "context": {"I18N": "us_pst"}}',
@@ -321,7 +321,7 @@ class TestExtractDenodoExtension:
         assert ext["context"] == {"I18N": "us_pst"}
 
     def test_returns_none_when_no_denodo_extension(self):
-        ossie = {"custom_extensions": [{"vendor_name": "SNOWFLAKE", "data": "{}"}]}
+        ossie = {"nonportable_extensions": [{"vendor_name": "SNOWFLAKE", "data": "{}"}]}
         assert _extract_denodo_extension(ossie) is None
 
     def test_returns_none_when_no_extensions(self):
@@ -387,7 +387,7 @@ class TestConvertOssieToVql:
     def test_tags_rendered(self):
         result = convert_ossie_to_vql(
             _minimal_ossie(
-                custom_extensions=[
+                nonportable_extensions=[
                     {"vendor_name": "DENODO", "data": '{"tags": ["tag1", "tag2"]}'}
                 ]
             )
@@ -397,7 +397,7 @@ class TestConvertOssieToVql:
     def test_folder_from_denodo_extension(self):
         result = convert_ossie_to_vql(
             _minimal_ossie(
-                custom_extensions=[
+                nonportable_extensions=[
                     {"vendor_name": "DENODO", "data": '{"folder": "/my/folder"}'}
                 ]
             )
@@ -407,7 +407,7 @@ class TestConvertOssieToVql:
     def test_context_from_denodo_extension(self):
         result = convert_ossie_to_vql(
             _minimal_ossie(
-                custom_extensions=[
+                nonportable_extensions=[
                     {"vendor_name": "DENODO", "data": '{"context": {"I18N": "us_pst"}}'}
                 ]
             )
@@ -1005,7 +1005,7 @@ class TestMappingFunctionCustomExtensionOsiToVql:
                     "to": "customers",
                     "from_columns": ["customer_key"],
                     "to_columns": ["customer_key"],
-                    "custom_extensions": [
+                    "nonportable_extensions": [
                         {
                             "vendor_name": "DENODO",
                             "data": json.dumps(data),
@@ -1327,7 +1327,7 @@ class TestExample15FieldDescriptions:
         from ossie_denodo.vql_to_osi import convert_vql_to_ossie
         osi = yaml.safe_load(convert_vql_to_ossie(self._vql()))
         fields = {f["name"]: f for ds in osi["datasets"] for f in ds.get("fields", [])}
-        assert json.loads(fields["year"]["custom_extensions"][0]["data"])["sourcetypeid"] == "4"
+        assert json.loads(fields["year"]["nonportable_extensions"][0]["data"])["sourcetypeid"] == "4"
 
     def test_no_descriptions_no_block(self):
         vql = convert_ossie_to_vql(_minimal_ossie())

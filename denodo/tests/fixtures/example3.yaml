@@ -69,6 +69,6 @@ metrics:
     - dialect: ANSI_SQL
       expression: nullif(sum(case WHEN (orders.o_totalprice > 10000) THEN 1 ELSE 0
         END), 0)
-custom_extensions:
+nonportable_extensions:
 - vendor_name: DENODO
   data: '{"folder": "/3. views", "context": {"I18N": "us_pst"}}'

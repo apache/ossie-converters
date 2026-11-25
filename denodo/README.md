@@ -126,7 +126,7 @@ datasets:
           dialects:
             - dialect: ANSI_SQL
               expression: customer.c_comment
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DENODO
         data: '{"fields_dimension":{"customer_address_full": "dim_customer", "customer_name":"dim_customer"}}'
 ```
@@ -144,7 +144,7 @@ relationships:
       - r_regionkey
     to_columns:
       - n_regionkey
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DENODO
         data: '{"from_columns": {"relation": "+"}}'
 ```
@@ -166,7 +166,7 @@ relationships:
       - n_nationkey
     to_columns:
       - c_nationkey
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DENODO
         data: '{"join_type": "RIGHT"}'
 ```
@@ -184,7 +184,7 @@ relationships:
       - c_nationkey
     to_columns:
       - n_nationkey
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DENODO
         data: '{"isReferentialConstraint": false, "from_columns": {"relation": "1"}}'
 ```
@@ -202,7 +202,7 @@ relationships:
       - customer_key
     to_columns:
       - customer_key
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DENODO
         data: '{"from_columns": {"relation": "1", "fields_replace": [{"customer_key": "round(customer_key)"}]}}'
 ```
@@ -210,7 +210,7 @@ The `fields_replace` entry within `from_columns` or `to_columns` is used to appl
 
 ### The Denodo field properties `sourcetyperadix`, `sourcetypesize` and `sourcetypeid` have no direct OSI equivalent.
 
-They are stored in a `custom_extensions` entry of the field (or metric) and read back from it when generating VQL.
+They are stored in a `nonportable_extensions` entry of the field (or metric) and read back from it when generating VQL.
 
 Example:
 ```yaml
@@ -220,7 +220,7 @@ fields:
       dialects:
         - dialect: ANSI_SQL
           expression: getyear(dates.full_date)
-    custom_extensions:
+    nonportable_extensions:
       - vendor_name: DENODO
         data: '{"sourcetyperadix": "10", "sourcetypesize": "10", "sourcetypeid": "4"}'
 ```

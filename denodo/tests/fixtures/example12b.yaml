@@ -10,7 +10,7 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: nation.n_name
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension":{"nation_name": "dim_customer_data"}}'
 - name: orders
@@ -46,7 +46,7 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: customer.c_comment
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension":{"customer_address_full": "dim_customer", "customer_name":"dim_customer_data"}}'
 relationships:
@@ -55,7 +55,7 @@ relationships:
   to: nation
   from_columns: [n_nationkey]
   to_columns: [c_nationkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"isReferentialConstraint": false, "from_columns": {"relation": "1"}}'
 - name: vdb_tpch.psql_tpch_region_psql_tpch_nation
@@ -68,7 +68,7 @@ relationships:
   to: customer
   from_columns: [c_custkey]
   to_columns: [o_custkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"to_columns": {"relation": "0,1"}}'
 metrics:

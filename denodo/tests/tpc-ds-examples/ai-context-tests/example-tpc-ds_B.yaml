@@ -437,7 +437,7 @@ metrics:
   description: Sales revenue change versus the previous month (requires grouping by
     date_dim.d_year and date_dim.d_moy)
   datatype: Decimal
-custom_extensions:
+nonportable_extensions:
 - vendor_name: SALESFORCE
   data: "{\n  \"tableau_workbook_id\": \"tpcds_retail_dashboard\",\n  \"einstein_enabled\"\
     : true,\n  \"crm_sync\": {\n    \"enabled\": true,\n    \"sync_frequency\": \"\

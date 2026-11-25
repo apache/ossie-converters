@@ -63,6 +63,6 @@ metrics:
     dialects:
     - dialect: ANSI_SQL
       expression: avg(orders.o_totalprice)
-custom_extensions:
+nonportable_extensions:
 - vendor_name: DENODO
   data: '{"context": {"I18N": "us_pst"},"tags": ["sales_data", "sensitive"]}'

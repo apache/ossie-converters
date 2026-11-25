@@ -71,7 +71,7 @@ metrics:
     dialects:
     - dialect: ANSI_SQL
       expression: avg(orders.o_totalprice)
-custom_extensions:
+nonportable_extensions:
 - vendor_name: DENODO
   data: '{"folder": "/3. views", "context": {"I18N": "us_pst"}, "tags": ["sales_data",
     "sensitive"], "filter_condition": "nation.n_name <> \"NON_EXISTENT_NATION\""}'

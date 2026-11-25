@@ -85,7 +85,7 @@ relationships:
   to: psql_tpch_region
   from_columns: [r_regionkey]
   to_columns: [n_regionkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"from_columns": {"relation": "+"}}'
 - name: psql_tpch_nation_customer
@@ -93,7 +93,7 @@ relationships:
   to: psql_tpch_customer
   from_columns: [c_nationkey]
   to_columns: [n_nationkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"isReferentialConstraint": false, "from_columns": {"relation": "1"}}'
 - name: psql_tpch_customer_orders
@@ -101,7 +101,7 @@ relationships:
   to: psql_tpch_customer
   from_columns: [c_custkey]
   to_columns: [o_custkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"from_columns": {"relation": "+"}}'
 - name: psql_tpch_orders_lineitem
@@ -109,7 +109,7 @@ relationships:
   to: psql_tpch_orders
   from_columns: [o_orderkey]
   to_columns: [l_orderkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"from_columns": {"relation": "+"}}'
 - name: psql_tpch_nation_supplier
@@ -117,7 +117,7 @@ relationships:
   to: psql_tpch_supplier
   from_columns: [s_nationkey]
   to_columns: [n_nationkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"from_columns": {"relation": "+"}}'
 metrics:

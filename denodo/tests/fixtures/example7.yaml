@@ -59,7 +59,7 @@ relationships:
   to: customers
   from_columns: [customer_key]
   to_columns: [customer_key]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"from_columns": {"relation": "1", "fields_replace": [{"customer_key":
       "round(customer_key)"}]}}'
@@ -68,7 +68,7 @@ relationships:
   to: products
   from_columns: [product_key]
   to_columns: [product_key]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"from_columns": {"relation": "1"}}'
 - name: dw_dim_date_dw_fact_sales
@@ -76,7 +76,7 @@ relationships:
   to: dates
   from_columns: [date_key]
   to_columns: [date_key]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"from_columns": {"relation": "1"}}'
 metrics:

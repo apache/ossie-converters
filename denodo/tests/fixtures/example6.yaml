@@ -23,7 +23,7 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: (o_orderkey+5)
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension":{"order_date": "orders_dim","order_dim_extra": "orders_dim"}}'
 - name: customer
@@ -54,7 +54,7 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: (o_orderkey-1)
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension":{"customer_address_full": "customer_dim","customer_name":
       "customer_dim","customer_address": "customer_dim","customer_comment": "customer_dim","generic_attribute":
@@ -65,7 +65,7 @@ relationships:
   to: nation
   from_columns: [c_nationkey]
   to_columns: [n_nationkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"folder":"/associations"}'
 - name: psql_tpch_customer_psql_tpch_orders
@@ -73,7 +73,7 @@ relationships:
   to: customer
   from_columns: [o_custkey]
   to_columns: [c_custkey]
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"folder":"/associations"}'
 metrics:
@@ -87,7 +87,7 @@ metrics:
     dialects:
     - dialect: ANSI_SQL
       expression: avg(orders.o_totalprice)
-custom_extensions:
+nonportable_extensions:
 - vendor_name: DENODO
   data: '{"folder": "/3. views", "context": {"I18N": "us_pst"}, "tags": ["sales_data",
     "sensitive"]}'

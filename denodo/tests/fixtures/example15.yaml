@@ -14,10 +14,10 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: getyear(dates.full_date)
-    custom_extensions:
+    nonportable_extensions:
     - vendor_name: DENODO
       data: '{"sourcetyperadix": "10", "sourcetypesize": "10", "sourcetypeid": "4"}'
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension": {"date_full": "dates", "year": "dates"}}'
 - name: customers
@@ -38,7 +38,7 @@ datasets:
       dialects:
       - dialect: ANSI_SQL
         expression: customers.customer_key
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension": {"customer_name": "customers", "customer_email": "customers",
       "customer_id": "customers"}}'
@@ -66,7 +66,7 @@ datasets:
       - dialect: ANSI_SQL
         expression: products.sku
     description: product sku description
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension": {"product_name": "products", "product_sku": "products"}}'
 relationships:
@@ -77,7 +77,7 @@ relationships:
   - customer_key
   to_columns:
   - customer_key
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"folder": "/99. assoc", "from_columns": {"fields_replace": [{"customer_key":
       "round(customer_key)"}]}, "to_columns": {"relation": "0,1"}}'
@@ -88,7 +88,7 @@ relationships:
   - product_key
   to_columns:
   - product_key
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"folder": "/99. assoc", "to_columns": {"relation": "0,1"}}'
 - name: dw_dim_date_dw_fact_sales
@@ -98,7 +98,7 @@ relationships:
   - date_key
   to_columns:
   - date_key
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"folder": "/99. assoc", "to_columns": {"relation": "0,1"}}'
 metrics:
@@ -123,6 +123,6 @@ metrics:
     dialects:
     - dialect: ANSI_SQL
       expression: count(sales.sale_id)
-custom_extensions:
+nonportable_extensions:
 - vendor_name: DENODO
   data: '{"folder": "/3. views"}'

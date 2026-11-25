@@ -238,7 +238,7 @@ def _has_ai_context(data: any) -> bool:
 
 def _extract_denodo_extension(ossie: dict) -> dict | None:
     """Return the parsed data dict from the DENODO custom_extension, or None."""
-    for ext in ossie.get("custom_extensions") or []:
+    for ext in (ossie.get("nonportable_extensions") or ossie.get("custom_extensions") or []):
         if isinstance(ext, dict) and ext.get("vendor_name") == "DENODO":
             data = ext.get("data")
             if isinstance(data, str):
@@ -359,7 +359,7 @@ def _extract_mapping_functions(rel: dict) -> tuple[dict[str, str], dict[str, str
     Returns (from_func_map, to_func_map) where each is a dict mapping
     bare column name → function expression string.
     """
-    for ext in rel.get("custom_extensions") or []:
+    for ext in (rel.get("nonportable_extensions") or rel.get("custom_extensions") or []):
         if isinstance(ext, dict) and ext.get("vendor_name") == "DENODO":
             data = ext.get("data")
             if isinstance(data, str):
@@ -393,7 +393,7 @@ def _extract_fields_replace(section) -> dict[str, str]:
 
 def _extract_denodo_ext_data(rel: dict) -> dict:
     """Return parsed DENODO custom_extension data dict, or empty dict."""
-    for ext in rel.get("custom_extensions") or []:
+    for ext in (rel.get("nonportable_extensions") or rel.get("custom_extensions") or []):
         if isinstance(ext, dict) and ext.get("vendor_name") == "DENODO":
             data = ext.get("data")
             if isinstance(data, str):

@@ -462,7 +462,7 @@ metrics:
     - month over month sales change
     - MoM sales
     - sales delta
-custom_extensions:
+nonportable_extensions:
 - vendor_name: SALESFORCE
   data: "{\n  \"tableau_workbook_id\": \"tpcds_retail_dashboard\",\n  \"einstein_enabled\"\
     : true,\n  \"crm_sync\": {\n    \"enabled\": true,\n    \"sync_frequency\": \"\

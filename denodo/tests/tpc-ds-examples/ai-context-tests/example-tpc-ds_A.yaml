@@ -672,7 +672,7 @@ metrics:
         - "MoM sales"
         - "sales delta"
 
-custom_extensions:
+nonportable_extensions:
   - vendor_name: SALESFORCE
     data: |
       {

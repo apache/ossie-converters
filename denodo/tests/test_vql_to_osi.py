@@ -45,8 +45,8 @@ class TestExample1:
 
     def test_denodo_custom_extension(self):
         osi_dict = self._convert(self.FIXTURE)
-        custom_extensions = osi_dict.get("custom_extensions", [])
-        denodo_ext = next((ext for ext in custom_extensions if ext.get("vendor_name") == "DENODO"), None)
+        nonportable_extensions = osi_dict.get("nonportable_extensions", [])
+        denodo_ext = next((ext for ext in nonportable_extensions if ext.get("vendor_name") == "DENODO"), None)
         assert denodo_ext is not None
 
         import json
@@ -370,9 +370,9 @@ class TestExample5:
         osi_dict = self._convert(self.FIXTURE)
         assert osi_dict["version"] == "0.2.0.dev0"
 
-    def test_custom_extensions_filter(self):
+    def test_nonportable_extensions_filter(self):
         osi_dict = self._convert(self.FIXTURE)
-        custom_exts = osi_dict.get("custom_extensions", [])
+        custom_exts = osi_dict.get("nonportable_extensions", [])
         denodo_ext = next((ext for ext in custom_exts if ext.get("vendor_name") == "DENODO"), None)
         assert denodo_ext is not None
 
@@ -396,7 +396,7 @@ class TestExample6:
         orders = next((ds for ds in datasets if ds.get("name") == "orders"), None)
         assert orders is not None
 
-        custom_exts = orders.get("custom_extensions", [])
+        custom_exts = orders.get("nonportable_extensions", [])
         denodo_ext = next((ext for ext in custom_exts if ext.get("vendor_name") == "DENODO"), None)
         assert denodo_ext is not None
 
@@ -411,7 +411,7 @@ class TestExample6:
         customer = next((ds for ds in datasets if ds.get("name") == "customer"), None)
         assert customer is not None
 
-        custom_exts = customer.get("custom_extensions", [])
+        custom_exts = customer.get("nonportable_extensions", [])
         denodo_ext = next((ext for ext in custom_exts if ext.get("vendor_name") == "DENODO"), None)
         assert denodo_ext is not None
 
@@ -429,7 +429,7 @@ class TestExample6:
         nation = next((ds for ds in datasets if ds.get("name") == "nation"), None)
         assert nation is not None
 
-        custom_exts = nation.get("custom_extensions", [])
+        custom_exts = nation.get("nonportable_extensions", [])
         denodo_ext = next((ext for ext in custom_exts if ext.get("vendor_name") == "DENODO"), None)
         if denodo_ext:
             data = json.loads(denodo_ext["data"])
@@ -450,7 +450,7 @@ class TestExample6b:
         # customer dataset: customer_name y customer_address_full
         customer = next((ds for ds in datasets if ds.get("name") == "customer"), None)
         assert customer is not None
-        cust_ext = next((ext for ext in customer.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        cust_ext = next((ext for ext in customer.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert cust_ext is not None
         cust_data = json.loads(cust_ext["data"])
         assert cust_data["fields_dimension"]["customer_name"] == "customer_data"
@@ -459,7 +459,7 @@ class TestExample6b:
         # orders dataset: order_customer_key
         orders = next((ds for ds in datasets if ds.get("name") == "orders"), None)
         assert orders is not None
-        ord_ext = next((ext for ext in orders.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ord_ext = next((ext for ext in orders.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ord_ext is not None
         ord_data = json.loads(ord_ext["data"])
         assert ord_data["fields_dimension"]["order_customer_key"] == "customer_data"
@@ -472,18 +472,18 @@ class TestExample7:
         yaml_str = convert_vql_to_ossie(vql)
         return yaml.safe_load(yaml_str)
 
-    def test_no_global_custom_extensions(self):
+    def test_no_global_nonportable_extensions(self):
         osi_dict = self._convert(self.FIXTURE)
-        assert "custom_extensions" not in osi_dict
+        assert "nonportable_extensions" not in osi_dict
 
-    def test_relationships_custom_extensions(self):
+    def test_relationships_nonportable_extensions(self):
         osi_dict = self._convert(self.FIXTURE)
         relationships = osi_dict.get("relationships", [])
 
         # dw_dim_customers_dw_fact_sales
         rel1 = next((r for r in relationships if r.get("name") == "dw_dim_customers_dw_fact_sales"), None)
         assert rel1 is not None
-        ext1 = next((ext for ext in rel1.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext1 = next((ext for ext in rel1.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext1 is not None
         data1 = json.loads(ext1["data"])
         assert data1["from_columns"] == {"relation": "1", "fields_replace": [{"customer_key": "round(customer_key)"}]}
@@ -491,7 +491,7 @@ class TestExample7:
         # dw_dim_products_dw_fact_sales
         rel2 = next((r for r in relationships if r.get("name") == "dw_dim_products_dw_fact_sales"), None)
         assert rel2 is not None
-        ext2 = next((ext for ext in rel2.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext2 = next((ext for ext in rel2.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext2 is not None
         data2 = json.loads(ext2["data"])
         assert data2["from_columns"] == {"relation": "1"}
@@ -499,7 +499,7 @@ class TestExample7:
         # dw_dim_date_dw_fact_sales
         rel3 = next((r for r in relationships if r.get("name") == "dw_dim_date_dw_fact_sales"), None)
         assert rel3 is not None
-        ext3 = next((ext for ext in rel3.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext3 = next((ext for ext in rel3.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext3 is not None
         data3 = json.loads(ext3["data"])
         assert data3["from_columns"] == {"relation": "1"}
@@ -512,42 +512,42 @@ class TestExample9:
         yaml_str = convert_vql_to_ossie(vql)
         return yaml.safe_load(yaml_str)
 
-    def test_relationships_custom_extensions(self):
+    def test_relationships_nonportable_extensions(self):
         osi_dict = self._convert(self.FIXTURE)
         relationships = osi_dict.get("relationships", [])
 
         # psql_tpch_region_nation
         rel = next((r for r in relationships if r.get("name") == "psql_tpch_region_nation"), None)
         assert rel is not None
-        ext = next((ext for ext in rel.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext = next((ext for ext in rel.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext is not None
         assert json.loads(ext["data"]) == {"from_columns": {"relation": "+"}}
 
         # psql_tpch_orders_lineitem
         rel = next((r for r in relationships if r.get("name") == "psql_tpch_orders_lineitem"), None)
         assert rel is not None
-        ext = next((ext for ext in rel.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext = next((ext for ext in rel.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext is not None
         assert json.loads(ext["data"]) == {"from_columns": {"relation": "+"}}
 
         # psql_tpch_nation_supplier
         rel = next((r for r in relationships if r.get("name") == "psql_tpch_nation_supplier"), None)
         assert rel is not None
-        ext = next((ext for ext in rel.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext = next((ext for ext in rel.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext is not None
         assert json.loads(ext["data"]) == {"from_columns": {"relation": "+"}}
 
         # psql_tpch_customer_orders
         rel = next((r for r in relationships if r.get("name") == "psql_tpch_customer_orders"), None)
         assert rel is not None
-        ext = next((ext for ext in rel.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext = next((ext for ext in rel.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext is not None
         assert json.loads(ext["data"]) == {"from_columns": {"relation": "0,1"}}
 
         # psql_tpch_nation_customer
         rel = next((r for r in relationships if r.get("name") == "psql_tpch_nation_customer"), None)
         assert rel is not None
-        ext = next((ext for ext in rel.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext = next((ext for ext in rel.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext is not None
         assert json.loads(ext["data"]) == {"from_columns": {"relation": "1"}}
 
@@ -565,7 +565,7 @@ class TestExample10:
 
         rel = next((r for r in relationships if r.get("name") == "psql_tpch_nation_customer"), None)
         assert rel is not None
-        ext = next((ext for ext in rel.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext = next((ext for ext in rel.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext is not None
         data = json.loads(ext["data"])
         assert data["isReferentialConstraint"] is False
@@ -586,7 +586,7 @@ class TestExample13:
         # vdb_tpch.psql_tpch_nation_psql_tpch_customer -> RIGHT
         rel1 = next((r for r in relationships if r.get("name") == "vdb_tpch.psql_tpch_nation_psql_tpch_customer"), None)
         assert rel1 is not None
-        ext1 = next((ext for ext in rel1.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext1 = next((ext for ext in rel1.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext1 is not None
         data1 = json.loads(ext1["data"])
         assert data1.get("join_type") == "RIGHT"
@@ -594,7 +594,7 @@ class TestExample13:
         # vdb_tpch.psql_tpch_customer_psql_tpch_orders -> LEFT
         rel2 = next((r for r in relationships if r.get("name") == "vdb_tpch.psql_tpch_customer_psql_tpch_orders"), None)
         assert rel2 is not None
-        ext2 = next((ext for ext in rel2.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext2 = next((ext for ext in rel2.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext2 is not None
         data2 = json.loads(ext2["data"])
         assert data2.get("join_type") == "LEFT"
@@ -602,7 +602,7 @@ class TestExample13:
         # vdb_tpch.psql_tpch_region_psql_tpch_nation -> NO custom_extension (or no join_type)
         rel3 = next((r for r in relationships if r.get("name") == "vdb_tpch.psql_tpch_region_psql_tpch_nation"), None)
         assert rel3 is not None
-        ext3 = next((ext for ext in rel3.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext3 = next((ext for ext in rel3.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         if ext3:
             data3 = json.loads(ext3["data"])
             assert "join_type" not in data3
@@ -630,7 +630,7 @@ class TestExample14:
 
         rel = next((r for r in relationships if r.get("name") == "dw_dim_products_dw_fact_sales"), None)
         assert rel is not None
-        ext = next((ext for ext in rel.get("custom_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
+        ext = next((ext for ext in rel.get("nonportable_extensions", []) if ext.get("vendor_name") == "DENODO"), None)
         assert ext is not None
         data = json.loads(ext["data"])
         assert data.get("folder") == "/99. assoc"
@@ -667,14 +667,14 @@ class TestExample15:
     def test_source_type_custom_extension(self):
         fields = self._dataset_fields(self._convert(self.FIXTURE))
 
-        ext = fields["year"]["custom_extensions"]
+        ext = fields["year"]["nonportable_extensions"]
         assert ext[0]["vendor_name"] == "DENODO"
         assert json.loads(ext[0]["data"]) == {
             "sourcetyperadix": "10",
             "sourcetypesize": "10",
             "sourcetypeid": "4",
         }
-        assert "custom_extensions" not in fields["product_name"]
+        assert "nonportable_extensions" not in fields["product_name"]
 
     def test_metric_description(self):
         osi_dict = self._convert(self.FIXTURE)

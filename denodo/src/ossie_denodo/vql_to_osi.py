@@ -139,7 +139,7 @@ def _build_ossie_dict(
         custom_data["filter_condition"] = mv.filter_condition.strip()
 
     if custom_data:
-        ossie["custom_extensions"] = [{
+        ossie["nonportable_extensions"] = [{
             "vendor_name": "DENODO",
             "data": json.dumps(custom_data)
         }]
@@ -193,7 +193,7 @@ def _build_datasets(
             if (alias, f.name) in field_to_dim
         }
         if ds_field_dim:
-            ds["custom_extensions"] = [{
+            ds["nonportable_extensions"] = [{
                 "vendor_name": "DENODO",
                 "data": json.dumps({"fields_dimension": ds_field_dim})
             }]
@@ -247,7 +247,7 @@ def _dim_field_to_ossie(
     if description:
         result["description"] = description
     if source_types:
-        result["custom_extensions"] = [{
+        result["nonportable_extensions"] = [{
             "vendor_name": "DENODO",
             "data": json.dumps(dict(source_types)),
         }]
@@ -302,7 +302,7 @@ def _build_relationships(
             join_type=ref.join_type
         )
         if ext:
-            rel["custom_extensions"] = [ext]
+            rel["nonportable_extensions"] = [ext]
 
         relationships.append(rel)
 
@@ -415,7 +415,7 @@ def _build_metrics(mv: MetricViewModel) -> list[dict]:
             metric["description"] = desc
         st = mv.field_source_types.get(metric_name.strip('"'))
         if st:
-            metric["custom_extensions"] = [{
+            metric["nonportable_extensions"] = [{
                 "vendor_name": "DENODO",
                 "data": json.dumps(dict(st)),
             }]
@@ -424,7 +424,7 @@ def _build_metrics(mv: MetricViewModel) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Mapping helpers (function detection for custom_extensions)
+# Mapping helpers (function detection for nonportable_extensions)
 # ---------------------------------------------------------------------------
 
 def _is_function_expr(expr: str) -> bool:

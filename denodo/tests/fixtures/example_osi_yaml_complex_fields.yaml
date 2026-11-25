@@ -46,7 +46,7 @@ datasets:
       - dialect: ANSI_SQL
         expression: amount
     description: Order amount
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension":{"order_id": "orders_dim","customer_id": "orders_dim","order_date":
       "orders_dim","order_date_year": "orders_dim","amount": "orders_dim"}}'
@@ -73,7 +73,7 @@ datasets:
       - dialect: ANSI_SQL
         expression: email
     description: Customer email
-  custom_extensions:
+  nonportable_extensions:
   - vendor_name: DENODO
     data: '{"fields_dimension":{"id": "customers_dim","customer_full_name": "customers_dim","email":
       "customers_dim"}}'
@@ -104,6 +104,6 @@ metrics:
     synonyms:
     - total customers
     - customer base
-custom_extensions:
+nonportable_extensions:
 - vendor_name: SNOWFLAKE
   data: '{"warehouse": "ANALYTICS_WH"}'
