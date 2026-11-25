@@ -457,6 +457,28 @@ def _mask_references(text, sentinel=_REF_SENTINEL):
     return masked.replace("\x00lb\x00", "\\{").replace("\x00rb\x00", "\\}"), saved
 
 
+# ANSI niladic values are not classified consistently by SQLGlot's statement
+# grammar. In particular SESSION_USER, USER and LOCALTIMESTAMP may parse as
+# columns. Bare endpoints must not turn these context values into physical keys.
+_NILADIC_VALUES = frozenset("""
+    CURRENT_CATALOG CURRENT_DATE CURRENT_PATH CURRENT_ROLE CURRENT_SCHEMA
+    CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER LOCALTIME LOCALTIMESTAMP
+    SESSION_USER SYSTEM_USER USER
+""".split())
+
+
+def is_sql_value(text, source_dialect=None):
+    """Whether a bare word denotes a SQL value instead of a physical column.
+
+    Reject known values rather than requiring the statement grammar to recognize
+    every column spelling: command-like names and genuine columns resembling
+    converter sentinels must keep their existing join behavior.
+    """
+    if str(text).strip().upper() in _NILADIC_VALUES:
+        return True
+    return isinstance(parse(text, source_dialect), (exp.Boolean, exp.Null, exp.Func))
+
+
 def unqualified_column_names(sql_text, source_dialect=None):
     """The bare (unqualified, unquoted) column names in a SQL snippet, or None.
 

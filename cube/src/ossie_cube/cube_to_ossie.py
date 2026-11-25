@@ -86,6 +86,7 @@ from ._dataset_metric import (count_key_signature, expression_fields, field_sign
 from .converter_issues import IssueLog, IssueType
 from .expressions import (
     has_top_level_operator,
+    is_sql_value,
     qualify_bare_columns,
     qualify_column_paths,
     unqualified_column_names,
@@ -1376,13 +1377,13 @@ def _is_member(cubes, cname, name):
 
 
 def _is_bare_join_column(text, source_dialect=None):
-    """A bare identifier that the SQL parser classifies as a column.
+    """A bare column spelling, excluding literals and niladic SQL values.
 
-    Identifier spelling alone also matches literals and niladic expressions such
-    as TRUE, NULL and CURRENT_DATE. Keep explicit alias-dot column references on
-    their own path: `{CUBE}.true` really does name a physical column.
+    A statement parser may reject a genuine column such as `comment` or `list`.
+    Preserve those names and reject only recognized values. Explicit alias-dot
+    columns follow their own path, independently of this bare-word check.
     """
-    return is_simple_identifier(text) and text in (unqualified_column_names(text, source_dialect) or ())
+    return is_simple_identifier(text) and not is_sql_value(text, source_dialect)
 
 
 def _ref_target(side, own_cube, target, cubes, source_dialect=None):
