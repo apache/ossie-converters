@@ -189,6 +189,10 @@ positions (`switch`, `sub_query`), measure extras (flat, same protocol) plus any
 Ossie form, Jinja-templated members, and files with no Ossie form (`.js`/`.ts`
 models, non-model YAML).
 
+Jinja detection checks opening `{{` and `{%` delimiters. Closing delimiters alone
+do not mark a file as templated: static nested YAML flow mappings such as
+`meta: {owner: {team: example}}` import normally and retain their metadata.
+
 **Identifier case**: Ossie regular (unquoted) identifiers are case-insensitive — the
 core spec's *normalized* form upper-cases them and strips quotes from quoted ones — so
 `orders.AMOUNT` addresses the field `amount`. Lookups use that form, and what is

@@ -1126,7 +1126,27 @@ def test_a_collection_of_the_wrong_shape_is_rejected():
 
 # --- Jinja ----------------------------------------------------------------------
 
-def test_jinja_anywhere_disqualifies_the_whole_file():
+@pytest.mark.parametrize("metadata", [
+    "    meta: {owner: {team: example}}\n",
+    "    meta:\n      owner:\n        team: example\n",
+])
+def test_static_nested_metadata_is_not_jinja(metadata):
+    files = _files(users=(
+        "cubes:\n  - name: users\n    sql_table: example_db.public.users\n"
+        + metadata
+        + "    dimensions:\n      - {name: id, sql: id, type: number, primary_key: true}\n"
+    ))
+    ossie, back, issues = _roundtrip(files)
+    model = model_of(ossie)
+    assert [ds["name"] for ds in model["datasets"]] == ["users"]
+    assert stash_of(model["datasets"][0])["cube_extras"]["meta"] == {
+        "owner": {"team": "example"}}
+    assert not issues.of_type(IssueType.TEMPLATED_FILE_SKIPPED)
+    assert parse_files(back) == parse_files(files)
+
+
+@pytest.mark.parametrize("template", ["{{ 'x' }}", "{% if true %}x{% endif %}"])
+def test_jinja_anywhere_disqualifies_the_whole_file(template):
     """Jinja is detected per *file*, not per member -- Cube's own CubeSchemaConverter
     uses the same file-level rule. So templating inside a single dimension's `sql`
     still costs the whole file, which is preserved verbatim rather than
@@ -1137,7 +1157,7 @@ def test_jinja_anywhere_disqualifies_the_whole_file():
         "    sql_table: public.orders\n"
         "    dimensions:\n"
         "      - name: dyn\n"
-        "        sql: \"{{ 'x' }}\"\n"
+        f"        sql: \"{template}\"\n"
         "        type: string\n"
     )
     files = {
