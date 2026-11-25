@@ -230,6 +230,24 @@ def read_stash(obj: dict) -> dict[str, Any]:
     return {}
 
 
+def find_unserialisable_key(payload: dict[str, Any]) -> str | None:
+    """The first top-level key of `payload` whose value has no JSON form, or
+    `None`.
+
+    The counterpart to `find_forbidden_key` for `_write_stash_safely`: that
+    caller turns a refusal into a logged drop, and to drop anything it has to
+    be able to name which key caused it. Same top-level granularity, and the
+    same `allow_nan=False` the writer applies, so the two cannot disagree
+    about what counts as representable.
+    """
+    for key, value in payload.items():
+        try:
+            json.dumps({key: value}, allow_nan=False)
+        except (TypeError, ValueError):
+            return key
+    return None
+
+
 def write_stash(obj: dict, payload: dict[str, Any]) -> dict:
     """Merge `payload` into this object's THOUGHTSPOT entry, returning a new dict.
 
@@ -257,7 +275,26 @@ def write_stash(obj: dict, payload: dict[str, Any]) -> dict:
     field = _extensions_field(obj)
     others = [e for e in obj.get(field) or [] if e.get("vendor_name") != VENDOR_KEY]
     out = dict(obj)
-    data = json.dumps(merged, sort_keys=True)
+    try:
+        data = json.dumps(merged, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        # `allow_nan=False` is the point of this call, not a detail. Left at
+        # its default, `json.dumps` emits the bare `NaN`/`Infinity` tokens,
+        # which are not JSON: a strict parser on the far side refuses the
+        # document we just wrote. It reaches both `data` shapes, because the
+        # object form below is `json.loads` of this very string, and
+        # `json.loads` accepts those tokens by default -- so the value
+        # survives the round trip and lands in the document either way.
+        #
+        # TypeError covers the other half: a payload read out of YAML can
+        # hold a `date`, `set` or `bytes`, none of which has a JSON form.
+        # `read_stash` already refuses those on the way in; this is the same
+        # refusal on the way out, for a payload the converter assembled
+        # rather than read.
+        raise ConversionError(
+            f"THOUGHTSPOT {_extensions_field(obj)} payload on "
+            f"{_object_label(obj)!r} is not JSON-representable: {exc}"
+        ) from exc
     # Exactly one own entry, merged rather than appended.
     out[field] = [
         *others,

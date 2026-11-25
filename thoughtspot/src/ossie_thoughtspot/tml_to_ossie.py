@@ -2010,16 +2010,33 @@ def _write_stash_safely(obj: dict, payload: dict, log: IssueLog, object_ref: str
                 ),
                 None,
             )
-            if offender is None:
-                raise
-            log.add(
-                code="TS-STASH-IDENTITY-DROPPED",
-                severity=Severity.WARNING,
-                message=(
+            if offender is not None:
+                code = "TS-STASH-IDENTITY-DROPPED"
+                message = (
                     f"stash field {offender!r} contains instance-local identity "
                     f"content; it is dropped rather than carried into the "
                     f"portable document"
-                ),
+                )
+            else:
+                # The writer's second refusal: a value with no JSON form, such
+                # as a YAML `.nan` or an unquoted date. Dropped and logged for
+                # the same reason an identity key is -- it is content read out
+                # of a source file, so it is expected input rather than a
+                # programming error, and expected input must not abort the
+                # conversion. Without this branch the guard would turn a
+                # silently malformed document into a dead one.
+                offender = stash.find_unserialisable_key(cleaned)
+                if offender is None:
+                    raise
+                code = "TS-STASH-UNSERIALISABLE-DROPPED"
+                message = (
+                    f"stash field {offender!r} has no JSON form, so it cannot "
+                    f"be carried into the portable document; it is dropped"
+                )
+            log.add(
+                code=code,
+                severity=Severity.WARNING,
+                message=message,
                 object_ref=object_ref,
             )
             del cleaned[offender]
