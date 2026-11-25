@@ -132,7 +132,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `ATACCAMA` | Ataccama ONE catalog metadata |
 | `SOLID` | Solid semantic model |
 
-[`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped spoke. It reads one Snowflake semantic view, writes one Ossie document, writes a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. It does not call `snowflake` (Cortex Analyst export only) or `wisdom` (that spoke drops synonyms and field or metric `ai_context`).
+[`wisdom-semantic-view`](wisdom-semantic-view/README.md) is a separate, fixture-scoped bridge. It reads Snowflake semantic-view YAML, writes one Ossie document and a Wisdom domain-export JSON (format `1.0`), and reverses that path. It keeps metric synonyms and `module_custom_instructions.sql_generation`. The general-purpose [`snowflake`](snowflake/README.md) converter handles Cortex Analyst YAML ↔ Ossie; the Wisdom bridge adds its fixture-specific mapping and enrichment workflow. The [`wisdom`](wisdom/README.md) spoke converts domain-export JSON but drops synonyms and field or metric `ai_context`.
 
 Each vendor may define non-portable extensions (via the `nonportable_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification.
 

@@ -48,11 +48,13 @@ Offline conversion of one Snowflake semantic view through an Apache Ossie docume
 into a WisdomAI domain export (format `1.0`), and back. No Snowflake account and no
 Wisdom tenant.
 
-This is not [`snowflake`](../snowflake). That package only writes Cortex
-Analyst YAML and cannot read a semantic view. This is not [`wisdom`](../wisdom).
-That package converts domain-export JSON both ways and drops synonyms and field or
-metric `ai_context`. Calling either one drops the revenue metric's synonyms and the
-`sql_generation` instruction this fixture carries.
+The sibling [`snowflake`](../snowflake) converter handles general Cortex Analyst
+YAML ↔ Ossie conversion. This package covers a narrower path: the finance fixture
+and the WisdomAI domain-export format, including its optional enrichment step and
+Wisdom-specific instructions. Both can read semantic-view YAML; use `snowflake`
+for general Ossie interoperability and this package for the documented
+finance-to-Wisdom workflow. This is not [`wisdom`](../wisdom), which converts
+domain-export JSON both ways but drops synonyms and field or metric `ai_context`.
 
 Scope is the finance model under `tests/fixtures/finance/` and the keys that model
 uses. A key outside that list, or an expression other than a bare column name or
