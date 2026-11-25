@@ -261,6 +261,23 @@ def _additional_members(data, native_format):
             for page in data.get("pages") or []
             for element in page.get("elements") or []
         )
+    if native_format == "starburst":
+        if data.get("apiVersion") != "v1" or data.get("kind") != "SemanticModel":
+            return 0
+        semantics = data.get("semantics") or {}
+        return (
+            sum(
+                len(schema.get(kind) or [])
+                for catalog in data.get("catalogs") or []
+                for schema in catalog.get("schemas") or []
+                for kind in ("tables", "views", "materializedViews")
+            )
+            + len(data.get("joins") or [])
+            + sum(
+                len(semantics.get(kind) or [])
+                for kind in ("terms", "metrics", "dimensions", "constraints", "rules", "sampleQueries", "businessContexts")
+            )
+        )
     if native_format == "solid":
         # A Solid export holds one model under `semantic_model`: table columns are its
         # dimensions and facts, and metrics are one model-level list.

@@ -227,6 +227,16 @@ converters:
     fixtures:
       tpcds: solid/tests/fixtures/tpcds_solid.yaml
       orders: solid/tests/fixtures/databricks_solid.yaml
+  starburst:
+    cwd: starburst
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, ossie-starburst, import, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-starburst, export, --skip-unsupported-metrics, -i, '{input}', -o, '{output}']
+    native_format: starburst
+    output: file
+    fixtures:
+      sales: starburst/tests/fixtures/sales.yaml
   tableau:
     cwd: tableau
     skip: Pending interop adapter and native .tds inspector registration; tested in converter-tableau-ci.
