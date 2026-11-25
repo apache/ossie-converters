@@ -289,45 +289,26 @@ class TestMetricsReadTheSqlLocationToo:
             i["code"] for i in result.issues.as_dicts()
         ]
 
-    def test_a_dataset_scoped_metric_is_not_read_at_all_yet(self):
-        """Pinning a PRE-EXISTING gap, not one this change introduced.
-
-        This converter has no dataset-scoped metric path: every metric it
-        reads comes from the document root. A metric under `datasets[].metrics`
-        is dropped silently -- no formula, and no issue saying so -- whichever
-        location its expression uses. Reading `sql` cannot help a metric that
-        is never looked at.
-
-        Pinned here so the limit is recorded next to the location work, and
-        so whoever adds the dataset-scoped path (apache/ossie-converters#30,
-        replanned around apache/ossie#633) is told by a failing test to read
-        both locations there too.
-        """
-        document = _document([_field("amount", {"dialects": _dialects(("ANSI_SQL", "amount"))})])
+    def test_a_dataset_scoped_metric_reads_sql(self):
+        document = _document([_field("amount", {"sql": "amount"})])
         document["datasets"][0]["metrics"] = [
-            {"name": "total", "expression": {"sql": "SUM(orders.amount)"}}
+            {"name": "total", "expression": {"sql": "SUM(amount)"}}
         ]
         result = ossie_to_tml_convert(document)
-
-        assert "formulas" not in result.documents.model.body
-        # TS-DATASET-METRICS-DROPPED is the other half of this fact, added
-        # alongside. The metric is still not built; it is no longer dropped
-        # in silence, which is what made this test's own point hard to see.
-        assert [i["code"] for i in result.issues.as_dicts()] == [
-            "TS-DATASET-CONNECTION-MISSING",
-            "TS-DATASET-METRICS-DROPPED",
-        ]
+        formulas = {f["name"]: f["expr"] for f in result.documents.model.body["formulas"]}
+        assert formulas["total"] == "sum ( [orders::amount] )"
+        assert not result.issues.has_errors(), result.issues.as_dicts()
 
     def test_a_computed_field_reads_sql(self):
         # The end-to-end case below uses physical fields only, which never
         # reach `_build_field`'s computed branch.
         document = _document([
             _field("amount", {"dialects": _dialects(("ANSI_SQL", "amount"))}),
-            _field("doubled", {"sql": "SUM(orders.amount)"}),
+            _field("doubled", {"sql": "ABS(amount)"}),
         ])
         result = ossie_to_tml_convert(document)
         formulas = {f["name"]: f["expr"] for f in result.documents.model.body["formulas"]}
-        assert formulas["doubled"] == "sum ( [orders::amount] )"
+        assert formulas["doubled"] == "abs ( [orders::amount] )"
 
 
 def test_a_sql_only_field_survives_end_to_end():

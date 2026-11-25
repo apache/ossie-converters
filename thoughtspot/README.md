@@ -150,6 +150,30 @@ newer versions both keep converting. The `ANSI_SQL` entry stays because not ever
 in this repository reads `sql` yet (snowflake skips an expression that has only `sql`).
 An expression with no portable form gets no `sql` and stays THOUGHTSPOT-only.
 
+### Expression scopes on export
+
+Field expressions read columns of their dataset's source. Dataset-scoped metrics
+resolve bare names against that dataset's declared fields; `source.column` reads
+a source column, unless the dataset declares a field named `source`. Model-scoped
+metrics use `dataset.field`. A calculated field is referenced by its emitted
+ThoughtSpot formula id, so a metric does not accidentally read a same-named raw column.
+
+Source-column references must resolve to columns present in the emitted Table or
+SQL View document. The converter does not discover warehouse columns or invent
+missing column types. Unresolved or ambiguous references are reported and the
+unsupported field or metric is omitted. Regular identifiers are normalized to uppercase; quoted references match the
+normalized name exactly, following the core spec.
+
+Both metric scopes produce Model measures. ThoughtSpot has a model-wide namespace,
+so colliding display names are allocated distinct names and formula ids, with a
+warning. Import continues to produce model-scoped Ossie metrics. Native
+`THOUGHTSPOT` expressions still take precedence and are preserved verbatim.
+
+Portable translation remains limited to reference expressions and catalogued
+single-argument calls (the existing aggregate forms, plus `ABS`, `LOWER` and `UPPER`).
+Other scalar catalog rows, general arithmetic, windows and `AGG` composition remain unsupported and
+are reported rather than translated approximately.
+
 ### What a join type is assumed to be
 
 An Ossie relationship carries no join type. ThoughtSpot requires one on every

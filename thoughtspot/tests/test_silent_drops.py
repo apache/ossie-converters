@@ -100,26 +100,25 @@ def _issues(log, code):
 
 
 class TestADatasetScopedMetricIsReported:
-    """Only `SemanticModel.metrics` is read; a dataset's own metrics are not."""
+    """Unsupported local metrics still have a per-metric diagnostic."""
 
     def _log(self):
         return _build(_model([_dataset(
             "ORDERS", ["AMOUNT"],
-            metrics=[{"name": "total_amount", "expression": {"dialects": [
-                {"dialect": "ANSI_SQL", "expression": "SUM(AMOUNT)"}]}}],
+            metrics=[{"name": "total_amount", "expression": {"sql": "SUM(MISSING)"}}],
         )]))
 
     def test_the_drop_is_reported(self):
-        [issue] = _issues(self._log(), "TS-DATASET-METRICS-DROPPED")
-        assert issue["severity"] == Severity.WARNING.value
+        [issue] = _issues(self._log(), "TS-MODEL-METRIC-UNTRANSLATABLE")
+        assert issue["severity"] == Severity.ERROR.value
 
     def test_the_issue_names_the_metric_and_its_dataset(self):
-        [issue] = _issues(self._log(), "TS-DATASET-METRICS-DROPPED")
+        [issue] = _issues(self._log(), "TS-MODEL-METRIC-UNTRANSLATABLE")
         assert "total_amount" in issue["message"]
-        assert issue["object_ref"] == "dataset:ORDERS"
+        assert issue["object_ref"] == "metric:ORDERS.total_amount"
 
     def test_a_dataset_with_no_metrics_is_quiet(self):
-        assert _issues(_build(_model()), "TS-DATASET-METRICS-DROPPED") == []
+        assert _issues(_build(_model()), "TS-MODEL-METRIC-UNTRANSLATABLE") == []
 
 
 class TestATemporalRoleFlagIsReported:
