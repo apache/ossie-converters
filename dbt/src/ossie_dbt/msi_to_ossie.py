@@ -105,6 +105,10 @@ def _has_nonportable_semantics(
         return True
     if params.join_to_timespine or params.fill_nulls_with is not None:
         return True
+    # A semi-additive metric (e.g. stock on hand) is not a plain aggregate over all rows.
+    agg_params = params.metric_aggregation_params
+    if agg_params is not None and agg_params.non_additive_dimension is not None:
+        return True
 
     inputs = list(params.metrics or [])
     if params.numerator is not None:
