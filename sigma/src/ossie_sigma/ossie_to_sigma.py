@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional, Union
 from uuid import NAMESPACE_URL, uuid5
 
@@ -38,7 +39,7 @@ from ossie_sigma.expression_utils import (
     preferred_sql_expression,
     sigma_dialect_text,
 )
-from ossie_sigma.sigma_formula import sql_to_sigma_formula
+from ossie_sigma.sigma_formula import is_plain_column_ref, sql_to_sigma_formula
 from ossie_sigma.spec_keys import MODEL_LEVEL_SPEC_KEYS
 
 # Objects a `SIGMA` nonportable_extensions vendor entry can be attached to.
@@ -100,7 +101,8 @@ def _emit_name(name: Optional[str], ext: dict[str, Any]) -> bool:
 
 
 def _resolve_formula(
-    expression, dataset_alias: str, element_name: str, issues: list[ConverterIssue]
+    expression, dataset_alias: str, element_name: str, issues: list[ConverterIssue],
+    *, source_alias: Optional[str] = None,
 ) -> Optional[str]:
     """Prefer native Sigma formula text, then translate the preferred SQL dialect.
 
@@ -117,7 +119,8 @@ def _resolve_formula(
     sql = preferred_sql_expression(expression)
     if sql is not None:
         translated = sql_to_sigma_formula(
-            sql.expression, dataset_alias=dataset_alias, dialect=SQL_DIALECT_READERS[sql.dialect]
+            sql.expression, dataset_alias=dataset_alias, dialect=SQL_DIALECT_READERS[sql.dialect],
+            source_alias=source_alias,
         )
         if translated is not None:
             return translated
@@ -270,7 +273,10 @@ class OssieToSigmaConverter:
         for field in dataset.fields or []:
             field_ext = _sigma_ext(field) or {}
             col_id = field_ext.get("id") or _stable_id("column", dataset.name, field.name)
-            column = self._build_column(dataset, field, col_id, field_ext, issues)
+            column = self._build_column(
+                dataset, field, col_id, field_ext, issues,
+                source_alias=source["path"][-1] if source.get("kind") == "warehouse-table" else None,
+            )
             if column is None:
                 continue
             field_ids[field.name] = col_id
@@ -311,13 +317,25 @@ class OssieToSigmaConverter:
         col_id: str,
         field_ext: dict[str, Any],
         issues: list[ConverterIssue],
+        *,
+        source_alias: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
-        formula = _resolve_formula(field.expression, dataset.name, f"{dataset.name}.{field.name}", issues)
+        formula = _resolve_formula(
+            field.expression, dataset.name, f"{dataset.name}.{field.name}", issues,
+            source_alias=source_alias,
+        )
         if formula is None:
             return None
 
         column: dict[str, Any] = {"id": col_id, "formula": formula}
-        needs_name = f"/{field.name}]" not in formula and f"[{field.name}]" != formula
+        # Only parse a single bracket reference here. Re-parsing a generated,
+        # deeply nested calculated formula can exhaust the Sigma parser's stack.
+        plain_reference = (
+            is_plain_column_ref(formula)
+            if re.fullmatch(r"\[[^\[\]]+\]", formula.strip())
+            else None
+        )
+        needs_name = plain_reference is None or plain_reference.column != field.name
         if field.name and (needs_name or field_ext.get("explicit_name")):
             column["name"] = field.name
         if field.description:

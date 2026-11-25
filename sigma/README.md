@@ -143,6 +143,15 @@ translation fails, the column or metric is **omitted** and flagged in `Converter
 model API validates the whole document before applying any of it, so emitting a placeholder would
 fail the entire upload rather than degrade one field.
 
+For warehouse-table sources, field formulas qualify source columns with the
+physical table name: `source: db.schema.dim_date_vw` and `sql: calendar_date`
+produce `[dim_date_vw/calendar_date]`. This also applies inside calculated field
+expressions and when the Ossie dataset has a different name. An aliased field
+keeps its own modeled name while its formula reads the source column.
+Metrics continue to reference modeled columns, so `COUNT(calendar_alias.calendar_date)`
+becomes `Count([calendar_date])`. Native Sigma formulas and column overrides keep
+precedence. Other source kinds retain their existing formula context.
+
 ### Relationship resolution
 
 Sigma relationships (`element.relationships[]`) join two *elements*, not two *Ossie datasets*

@@ -650,7 +650,8 @@ _REVERSE_EXTRACT_PARTS = {v: k.capitalize() for k, v in _EXTRACT_PARTS.items()}
 
 
 def sql_to_sigma_formula(
-    sql: str, dataset_alias: Optional[str] = None, *, dialect: str | type[Dialect] | None = Dialect
+    sql: str, dataset_alias: Optional[str] = None, *, dialect: str | type[Dialect] | None = Dialect,
+    source_alias: Optional[str] = None
 ) -> Optional[str]:
     """Best-effort translation from the given SQL dialect into Sigma formula syntax.
 
@@ -665,23 +666,25 @@ def sql_to_sigma_formula(
         return None
 
     try:
-        return _render_sql_node(tree, dataset_alias)
+        return _render_sql_node(tree, dataset_alias, source_alias)
     except _NotTranslatable:
         return None
 
 
-def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
+def _render_sql_node(
+    node: exp.Expression, dataset_alias: Optional[str], source_alias: Optional[str] = None,
+) -> str:
     if isinstance(node, exp.Column):
         parts = [p.name for p in node.parts]
         if len(parts) == 2:
             table, column = parts
-            if table == dataset_alias:
-                return f"[{column}]"
+            if table == dataset_alias or (source_alias and table.casefold() == "source"):
+                return f"[{source_alias}/{column}]" if source_alias else f"[{column}]"
             return f"[{table}/{column}]"
-        return f"[{parts[-1]}]"
+        return f"[{source_alias}/{parts[-1]}]" if source_alias else f"[{parts[-1]}]"
 
     if isinstance(node, exp.Paren):
-        return _render_sql_node(node.this, dataset_alias)
+        return _render_sql_node(node.this, dataset_alias, source_alias)
 
     if isinstance(node, exp.Literal):
         if node.is_string:
@@ -697,48 +700,48 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Count):
         inner = node.this
         if isinstance(inner, exp.Distinct) and len(inner.expressions) == 1:
-            return f"CountDistinct({_render_sql_node(inner.expressions[0], dataset_alias)})"
+            return f"CountDistinct({_render_sql_node(inner.expressions[0], dataset_alias, source_alias)})"
         if isinstance(inner, exp.Star):
             raise _NotTranslatable("COUNT(*) has no unambiguous Sigma column-based equivalent")
-        return f"Count({_render_sql_node(inner, dataset_alias)})"
+        return f"Count({_render_sql_node(inner, dataset_alias, source_alias)})"
 
     if isinstance(node, exp.Div):
-        left = _render_sql_node(node.this, dataset_alias)
-        right = _render_sql_node(node.expression, dataset_alias)
+        left = _render_sql_node(node.this, dataset_alias, source_alias)
+        right = _render_sql_node(node.expression, dataset_alias, source_alias)
         return f"({left} / {right})"
     if isinstance(node, exp.Mul):
-        return f"({_render_sql_node(node.this, dataset_alias)} * {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} * {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.Add):
-        return f"({_render_sql_node(node.this, dataset_alias)} + {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} + {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.Sub):
-        return f"({_render_sql_node(node.this, dataset_alias)} - {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} - {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.DPipe) or isinstance(node, exp.Concat):
         parts = node.flatten() if hasattr(node, "flatten") else [node.this, node.expression]
-        return " & ".join(_render_sql_node(p, dataset_alias) for p in parts)
+        return " & ".join(_render_sql_node(p, dataset_alias, source_alias) for p in parts)
 
     if isinstance(node, exp.EQ):
-        return f"({_render_sql_node(node.this, dataset_alias)} = {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} = {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.NEQ):
-        return f"({_render_sql_node(node.this, dataset_alias)} <> {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} <> {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.GT):
-        return f"({_render_sql_node(node.this, dataset_alias)} > {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} > {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.GTE):
-        return f"({_render_sql_node(node.this, dataset_alias)} >= {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} >= {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.LT):
-        return f"({_render_sql_node(node.this, dataset_alias)} < {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} < {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.LTE):
-        return f"({_render_sql_node(node.this, dataset_alias)} <= {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} <= {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.And):
-        return f"({_render_sql_node(node.this, dataset_alias)} AND {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} AND {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.Or):
-        return f"({_render_sql_node(node.this, dataset_alias)} OR {_render_sql_node(node.expression, dataset_alias)})"
+        return f"({_render_sql_node(node.this, dataset_alias, source_alias)} OR {_render_sql_node(node.expression, dataset_alias, source_alias)})"
     if isinstance(node, exp.Neg):
-        inner = _render_sql_node(node.this, dataset_alias)
+        inner = _render_sql_node(node.this, dataset_alias, source_alias)
         if isinstance(node.this, (exp.Column, exp.Literal)):
             return f"-{inner}"
         return f"-({inner})"
     if isinstance(node, exp.Not):
-        return f"NOT ({_render_sql_node(node.this, dataset_alias)})"
+        return f"NOT ({_render_sql_node(node.this, dataset_alias, source_alias)})"
 
     if isinstance(node, exp.In):
         candidates = node.expressions
@@ -751,11 +754,11 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
             for c in candidates
         ):
             raise _NotTranslatable("IN candidates other than non-null literals are not mapped")
-        rendered = [_render_sql_node(c, dataset_alias) for c in [node.this, *candidates]]
+        rendered = [_render_sql_node(c, dataset_alias, source_alias) for c in [node.this, *candidates]]
         return f"In({', '.join(rendered)})"
 
     if isinstance(node, exp.Is):
-        inner = _render_sql_node(node.this, dataset_alias)
+        inner = _render_sql_node(node.this, dataset_alias, source_alias)
         if isinstance(node.expression, exp.Null):
             return f"IsNull({inner})"
         raise _NotTranslatable("IS <non-null> has no Sigma equivalent")
@@ -769,31 +772,31 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
             raise _NotTranslatable("CASE with no WHEN branches")
         parts = []
         for branch in ifs:
-            parts.append(_render_sql_node(branch.this, dataset_alias))
-            parts.append(_render_sql_node(branch.args["true"], dataset_alias))
+            parts.append(_render_sql_node(branch.this, dataset_alias, source_alias))
+            parts.append(_render_sql_node(branch.args["true"], dataset_alias, source_alias))
         # Sigma's If() is variadic and returns Null when the else argument is
         # omitted, matching CASE without ELSE.
         if default is not None:
-            parts.append(_render_sql_node(default, dataset_alias))
+            parts.append(_render_sql_node(default, dataset_alias, source_alias))
         return f"If({', '.join(parts)})"
 
     if isinstance(node, exp.Nullif):
         # Sigma has a native NullIf(), which evaluates its first argument once.
-        return f"NullIf({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expression, dataset_alias)})"
+        return f"NullIf({_render_sql_node(node.this, dataset_alias, source_alias)}, {_render_sql_node(node.expression, dataset_alias, source_alias)})"
 
     if isinstance(node, exp.Coalesce) and len(node.expressions) == 1:
-        return f"IfNull({_render_sql_node(node.this, dataset_alias)}, {_render_sql_node(node.expressions[0], dataset_alias)})"
+        return f"IfNull({_render_sql_node(node.this, dataset_alias, source_alias)}, {_render_sql_node(node.expressions[0], dataset_alias, source_alias)})"
 
     if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast):
         # Only a cast to an unsized text type has a Sigma equivalent (Text()). A
         # length such as CHAR(1) truncates, which Text() would not; that and other
         # target types fall through to the not-translatable error below.
         if node.to.is_type(*exp.DataType.TEXT_TYPES) and not node.to.expressions:
-            return f"Text({_render_sql_node(node.this, dataset_alias)})"
+            return f"Text({_render_sql_node(node.this, dataset_alias, source_alias)})"
         # An unsized floating-point cast is Number(). Integer and DECIMAL/NUMBER casts
         # round to a scale (DECIMAL and NUMBER default to scale 0), so they are not.
         if node.to.is_type(*exp.DataType.FLOAT_TYPES) and not node.to.expressions:
-            return f"Number({_render_sql_node(node.this, dataset_alias)})"
+            return f"Number({_render_sql_node(node.this, dataset_alias, source_alias)})"
 
     if isinstance(node, exp.CurrentDate):
         return "Today()"
@@ -804,7 +807,7 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         part = node.this.name.upper() if hasattr(node.this, "name") else str(node.this).upper()
         sigma_part = _REVERSE_EXTRACT_PARTS.get(part)
         if sigma_part is not None:
-            return f"{sigma_part}({_render_sql_node(node.expression, dataset_alias)})"
+            return f"{sigma_part}({_render_sql_node(node.expression, dataset_alias, source_alias)})"
         raise _NotTranslatable(f"Unsupported EXTRACT part: {part}")
 
     func_name = node.__class__.__name__.upper()
@@ -814,7 +817,7 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
             raise _NotTranslatable(f"Unsupported SQL arguments for {func_name}")
         sigma_name = _REVERSE_AGG_FUNCTIONS[func_name]
         args = [node.this] + list(getattr(node, "expressions", []) or [])
-        rendered = [_render_sql_node(a, dataset_alias) for a in args if a is not None]
+        rendered = [_render_sql_node(a, dataset_alias, source_alias) for a in args if a is not None]
         return f"{sigma_name}({', '.join(rendered)})"
 
     raise _NotTranslatable(f"No Sigma formula equivalent for SQL node {node.__class__.__name__}")
