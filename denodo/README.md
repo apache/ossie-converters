@@ -21,12 +21,28 @@
 
 Bidirectional converter between Apache Ossie semantic model YAML and Denodo Metric View VQL. Pure offline conversion — no Denodo connection required.
 
+## Environment requirements
+
+- Install [uv](https://docs.astral.sh/uv/getting-started/installation/) (version `0.9.0` or later). `uv` can be installed without having Python installed.
+  - After install uv, it could be required to modify the PATH environment variable to include the uv executable.
+  - This converter requires Python 3.11 or higher, but you do not need to install Python separately.
+  - Running `uv sync` downloads a compatible Python version if one is not already available, then creates the project environment and installs the dependencies.
+  - An internet connection is needed the first time if Python or the dependencies must be downloaded.
+- The input VQLs have to come from 9.5.x and 9.6.x Denodo versions
+- For the conversor of Denodo VQL → OSI YAML, the vql has to contains the association vqls and the metric view vql (we strongly suggest to use full export with dependencies). The conversor will ignore any other vql commands and it will only take into account the associations + metric vql commands.
+  ```
+  DESC VQL VIEW <metric_view>
+  ```
 
 ## Setup
+
+From denodo folder, the first command has to be this one in order to install the required packages:
 
 ```bash
 uv sync
 ```
+
+After that all the below commands can be executed in the same denodo path.
 
 ## Converters
 
