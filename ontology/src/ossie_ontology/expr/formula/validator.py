@@ -17,6 +17,7 @@
 
 from typing import Optional
 
+from ossie_ontology.expr.model import BinOp
 from ossie_ontology.expr.formula.model import (
     Formula,
     FormulaExpressionInfo,
@@ -290,12 +291,22 @@ class MappingFormulaValidator:
     def validate(expr_info: FormulaExpressionInfo, formula_str: str, expr: object = None) -> None:
         """*expr* is the parsed top-level expression, the only place a
         value-type wrapper may appear; without it no wrapper is allowed."""
+        MappingFormulaValidator._validate_operators(expr_info, formula_str)
         MappingFormulaValidator._validate_no_var_handles(expr_info, formula_str)
         MappingFormulaValidator._validate_no_relationship_refs(expr_info, formula_str)
         wrapper = MappingFormulaValidator._validate_wrappers(expr_info, formula_str, expr)
         MappingFormulaValidator._validate_no_concept_refs(expr_info, formula_str, wrapper)
         MappingFormulaValidator._validate_no_dataset_refs(expr_info, formula_str)
         MappingFormulaValidator._validate_no_fact_refs(expr_info, formula_str, wrapper)
+
+    @staticmethod
+    def _validate_operators(expr_info: FormulaExpressionInfo, formula_str: str) -> None:
+        for op in expr_info.operators:
+            if op in (BinOp.LIKE, BinOp.ILIKE, BinOp.REGEXP_LIKE):
+                raise ValueError(
+                    f"Pattern matching operator '{op.value}' is not supported "
+                    f"in mapping expressions: '{formula_str}'."
+                )
 
     @staticmethod
     def value_type_wrapper(formula: object) -> tuple[Concept, DatasetField | None] | None:

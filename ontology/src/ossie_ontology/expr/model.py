@@ -30,6 +30,9 @@ class BinOp(str, Node, Enum):
     LE = "<="
     GT = ">"
     GE = ">="
+    LIKE = "LIKE"
+    ILIKE = "ILIKE"
+    REGEXP_LIKE = "REGEXP_LIKE"
     comparison_ops = {EQ, NE, LT, LE, GT, GE}
 
     # arithmetic operators
@@ -70,6 +73,8 @@ class Expression(Node):
 
     def __str__(self):
         left, right = self._args
+        if self._op == BinOp.REGEXP_LIKE:
+            return f"REGEXP_LIKE({left}, {right})"
         return f"{left} {self._op.value} {right}"
 
     def __repr__(self):

@@ -903,3 +903,31 @@ def test_a_field_with_only_sql_is_written_back_with_its_expression():
     )
 
     assert written.model_dump(exclude_none=True) == {"sql": "amount * 1.1"}
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "T.id LIKE 'A%'",
+        "T.id ILIKE 'a%'",
+        "T.id LIKE 'A%' OR T.id == 'B'",
+        "REGEXP_LIKE(T.id, '^[A-Z]+$')",
+    ],
+)
+def test_pattern_matching_mapping_is_rejected(
+    tmp_path: Path, expression: str
+):
+    """Reject pattern matching in mappings until execution is supported."""
+    concepts = [
+        {"concept": "StoreCode", "type": "ValueType", "extends": ["String"]},
+        _keyed_entity("Store", "StoreCode"),
+    ]
+    path = _write_mapped_spec(
+        tmp_path,
+        concepts,
+        [_key("Store", {"expression": expression})],
+        datatype="String",
+    )
+
+    with pytest.raises(ValueError, match="Pattern matching"):
+        OssieParser().parse(path)

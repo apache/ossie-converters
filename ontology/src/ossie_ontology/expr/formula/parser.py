@@ -75,7 +75,8 @@ class FormulaParser:
         ("left", "OR"),
         ("left", "AND"),
         ("right", "NOT"),
-        ("nonassoc", "EQUALS", "NOTEQUALS", "GREATER", "GREATEREQ", "LESS", "LESSEQ"),
+        ("nonassoc", "LIKE", "ILIKE", "EQUALS", "NOTEQUALS",
+         "GREATER", "GREATEREQ", "LESS", "LESSEQ"),
         ("left", "LPAREN"),
         ("left", "DOT"),
         ("left", "PLUS", "MINUS"),
@@ -280,6 +281,15 @@ class FormulaParser:
                    | SUM
         """
         p[0] = AggregationMethod(AggMethod.from_value(p[1]))
+
+    def p_formula_pattern_matching(self, p):
+        """formula : expr LIKE expr
+                   | expr ILIKE expr"""
+        p[0] = Expression(BinOp.from_value(p[2]), p[1], p[3])
+
+    def p_formula_regexp_like(self, p):
+        """formula : REGEXP_LIKE LPAREN expr COMMA expr RPAREN"""
+        p[0] = Expression(BinOp.REGEXP_LIKE, p[3], p[5])
 
     def p_comp_op(self, p):
         """
