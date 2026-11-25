@@ -1897,8 +1897,83 @@ def _build_field_index(
     return index
 
 
+#: How a dataset-scoped metric qualifies a column of its own `source`, as
+#: opposed to one of its declared fields (core-spec Metric Scoping, rule 2).
+#: Case insensitive there, so `SOURCE.quantity` and `source.quantity` name the
+#: same column.
+_SOURCE_QUALIFIER = "source"
+
+
+def _build_source_column_index(
+    table_doc_by_prefix: dict[str, TmlDocument | None],
+) -> dict[str, tuple[str, str]]:
+    """`"dataset.source_column" -> (TABLE, display name)`, for every physical
+    column of every built Table or SQL View.
+
+    The third namespace of apache/ossie#486, and the one `_build_field_index`
+    cannot serve. A field expression's identifiers name columns of the
+    dataset's `source`, and a dataset-scoped metric may name one as
+    `source.column`. Neither is a field: a dataset may declare the field
+    `cust` over the source column `customer_name`, and then the two
+    namespaces disagree about every key.
+
+    Built from the already-built documents rather than re-derived from the
+    fields, for the reason `_field_physical_display_name` gives for not
+    calling `_physical_identity` a second time -- `build_table` has already
+    classified each of these fields against the real log, so a second pass
+    would either repeat its findings or need a throwaway log that swallows
+    them. The built column states the answer outright, as `db_column_name`
+    for a Table and `sql_output_column` for a SQL View.
+    """
+    index: dict[str, tuple[str, str]] = {}
+    for prefix, table_doc in table_doc_by_prefix.items():
+        if table_doc is None or not prefix:
+            continue
+        for column in _physical_columns_of(table_doc):
+            display_name = column.get("name")
+            if not display_name:
+                continue
+            source_column = (
+                column.get("db_column_name")
+                or column.get("sql_output_column")
+                or display_name
+            )
+            index[f"{prefix}.{source_column}"] = (prefix, display_name)
+    return index
+
+
+def _field_expression_resolver(
+    source_index: dict[str, tuple[str, str]],
+    field_index: dict[str, tuple[str, str]],
+    dataset_prefix: str,
+) -> Callable[[str], tuple[str, str] | None]:
+    """`resolve_field` for a field's own expression, inside `dataset_prefix`.
+
+    A field expression's identifiers refer to columns of the dataset's
+    `source`, not to other fields (core-spec, Name Resolution), so the source
+    namespace is tried first and is the only correct one.
+
+    A declared field of the same dataset is accepted after it, and a
+    model-scoped `dataset.field` after that. Neither is what the
+    specification says a field expression contains, and both are kept only
+    because this converter resolved the second of them for every field
+    expression before the source namespace existed here. Narrowing to the
+    correct namespace alone would reject documents that convert today, which
+    is a separate decision from closing the gap.
+    """
+    def resolve(key: str) -> tuple[str, str] | None:
+        if "." not in key:
+            scoped = f"{dataset_prefix}.{key}"
+            return source_index.get(scoped) or field_index.get(scoped)
+        return field_index.get(key)
+
+    return resolve
+
+
 def _dataset_scoped_resolver(
-    field_index: dict[str, tuple[str, str]], dataset_prefix: str,
+    field_index: dict[str, tuple[str, str]],
+    dataset_prefix: str,
+    source_index: dict[str, tuple[str, str]] | None = None,
 ) -> Callable[[str], tuple[str, str] | None]:
     """`resolve_field` for an expression written inside `dataset_prefix`.
 
@@ -1915,15 +1990,24 @@ def _dataset_scoped_resolver(
     * `other_dataset.field` is invalid in a dataset-scoped metric (rule 1); a
       metric that must reach another dataset is model-scoped and belongs in
       the model-root `metrics`.
-    * `source.column` names a column of the dataset's `source` rather than a
-      declared field (rule 2). That is legal and is not yet built -- see
-      apache/ossie-converters#101 -- so it must fail as unresolved rather
-      than be guessed at.
+    `source.column` is the one dotted key that does resolve, through
+    `source_index`: rule 2 says a column of the dataset's own `source` is
+    qualified that way, case insensitively. Rule 3 makes that conditional --
+    a dataset that declares a field named `source` has no way left to name a
+    source column, and the qualifier is not read as one.
     """
     def resolve(key: str) -> tuple[str, str] | None:
-        if "." in key:
+        if "." not in key:
+            return field_index.get(f"{dataset_prefix}.{key}")
+        qualifier, _, column = key.partition(".")
+        if qualifier.casefold() != _SOURCE_QUALIFIER or source_index is None:
             return None
-        return field_index.get(f"{dataset_prefix}.{key}")
+        if f"{dataset_prefix}.{_SOURCE_QUALIFIER}" in field_index:
+            # Rule 3: `source` is not reserved. A dataset that declares a
+            # field called `source` has no way left to name a source column,
+            # and the qualifier must not be read as one here either.
+            return None
+        return source_index.get(f"{dataset_prefix}.{column}")
 
     return resolve
 
@@ -2481,6 +2565,7 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         model_tables_by_prefix[dataset_prefix] = table_entry
 
     field_index = _build_field_index(datasets)
+    source_index = _build_source_column_index(table_doc_by_prefix)
     resolve_field = field_index.get
 
     allocator = _DisplayNameAllocator()
@@ -2491,7 +2576,11 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         dataset_prefix = dataset.get("name") or "<unnamed>"
         table_doc = table_doc_by_prefix.get(dataset_prefix)
         for field in dataset.get("fields") or []:
-            built = _build_field(field, dataset_prefix, table_doc, allocator, resolve_field, log)
+            built = _build_field(
+                field, dataset_prefix, table_doc, allocator,
+                _field_expression_resolver(source_index, field_index, dataset_prefix),
+                log,
+            )
             if built is None:
                 continue
             columns_entry, formulas_entry = built
@@ -2515,7 +2604,9 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         # well went the same way as one that cannot be built at all. Each
         # metric now reports its own outcome.
         dataset_prefix = dataset.get("name") or "<unnamed>"
-        resolve_in_dataset = _dataset_scoped_resolver(field_index, dataset_prefix)
+        resolve_in_dataset = _dataset_scoped_resolver(
+            field_index, dataset_prefix, source_index,
+        )
         for metric in dataset_metrics:
             built = _build_metric(metric, allocator, resolve_in_dataset, log)
             if built is None:
