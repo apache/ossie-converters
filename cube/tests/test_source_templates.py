@@ -77,7 +77,7 @@ def test_referenced_queries_follow_cube_wrapping(base_sql, embedded):
                    _cube("active_users", "sql", "SELECT * FROM {users.sql()} u WHERE u.active"))
     ossie, _ = convert_cube_to_ossie(files)
     assert _sources(ossie)["active_users"] == f"SELECT * FROM {embedded} u WHERE u.active"
-    assert _exported_cubes(ossie)["users"]["sql"] == base_sql.strip()
+    assert _exported_cubes(ossie)["users"]["sql"] == base_sql
 
 
 def test_recursive_sql_dependencies_keep_the_original_definition():
@@ -212,3 +212,48 @@ def test_escaped_literal_sources_need_no_reconstruction_metadata():
     ossie, _ = convert_cube_to_ossie(files)
     assert not stash_of(model_of(ossie)["datasets"][0])
     assert _exported_cubes(ossie)["active_users"]["sql"] == files_source(files, "active_users")
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("dialect,comment", [(None, "-- source comment"), ("BIGQUERY", "# source comment")])
+def test_referenced_queries_preserve_line_comment_terminators(newline, dialect, comment):
+    import sqlglot
+
+    sql = f"SELECT id FROM example_db.public.users {comment}{newline}"
+    files = _files(_cube("users", "sql", sql), _cube(
+        "active_users", "sql", "SELECT * FROM {users.sql()} u WHERE u.id > 0"))
+    ossie, _ = convert_cube_to_ossie(files, source_dialect=dialect)
+    assert _sources(ossie)["active_users"] == f"SELECT * FROM ({sql}) u WHERE u.id > 0"
+    parsed = sqlglot.parse_one(_sources(ossie)["active_users"], read="bigquery" if dialect else None)
+    assert parsed.args.get("where") is not None
+    assert _exported_cubes(ossie)["users"]["sql"] == sql
+
+
+def test_sql_source_whitespace_survives_portable_export():
+    sql = "  SELECT id FROM example_db.public.users -- source comment\n"
+    files = _files(_cube("active_users", "sql", sql))
+    ossie, _ = convert_cube_to_ossie(files)
+    model = model_of(ossie)
+    assert model["datasets"][0]["source"] == sql
+    model.pop("nonportable_extensions", None)
+    for ds in model["datasets"]:
+        ds.pop("nonportable_extensions", None)
+    assert _exported_cubes(dump_yaml(model))["active_users"]["sql"] == sql
+
+
+@pytest.mark.parametrize("template", [
+    "malformed", ["malformed"],
+    {"kind": "sql", "sources": {"active_users": "SELECT * FROM example_db.public.users WHERE active"}},
+    {"kind": "sql", "value": 42, "sources": {"active_users": "SELECT * FROM example_db.public.users WHERE active"}},
+    {"kind": "sql", "value": "{users.sql()}", "sources": ["active_users"]},
+])
+def test_malformed_native_source_metadata_falls_back_to_the_portable_source(template):
+    from ossie_cube._common import write_stash
+
+    ossie, _ = convert_cube_to_ossie(_files(
+        _cube("users", "sql_table", "example_db.public.users"),
+        _cube("active_users", "sql", "SELECT * FROM {users.sql()} WHERE active")))
+    model = model_of(ossie)
+    ds = by_name(model["datasets"])["active_users"]
+    write_stash(ds, {"source_template": template})
+    assert _exported_cubes(dump_yaml(model))["active_users"]["sql"] == ds["source"]

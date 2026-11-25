@@ -108,17 +108,23 @@ def restore_source_templates(cubes, datasets, cube_names):
     """
     for name, ds in datasets.items():
         template = read_stash(ds).get("source_template")
-        if not template:
+        if not isinstance(template, dict):
             continue
-        sources = template.get("sources") or {}
+        sources = template.get("sources")
+        kind = template.get("kind")
+        value = template.get("value")
+        # Vendor extensions may be hand-edited or come from another tool. An
+        # incomplete snapshot cannot safely replace the portable source.
+        if (kind not in ("sql", "sql_table") or not isinstance(value, str)
+                or not value.strip() or not isinstance(sources, dict)
+                or not all(isinstance(dep, str) and isinstance(source, str)
+                           for dep, source in sources.items())):
+            continue
         if name not in sources or not all(
                 dep in datasets and cube_names.get(dep) == dep
                 and datasets[dep].get("source") == source for dep, source in sources.items()):
             continue
-        kind = template.get("kind")
-        if kind not in ("sql", "sql_table"):
-            continue
         cube = cubes[cube_names[name]]
         cube.pop("sql", None)
         cube.pop("sql_table", None)
-        cube[kind] = template["value"]
+        cube[kind] = value

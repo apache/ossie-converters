@@ -209,10 +209,12 @@ referenced `sql_table` is used directly; a referenced `sql` matching Cube's exac
 wrapped as subqueries. Runtime-context templates and unknown dependencies are
 refused with a conversion error. Cycles name the dependency chain; expansion is
 bounded to 100 dependency levels and 1,000,000 characters per expanded source.
+Query whitespace is retained, including newlines that terminate SQL line comments.
 Escaped braces remain literal SQL. Ordinary import preserves the original source
 definition in the CUBE extension when expansion changes it. Export restores that
 definition only while its own source and all dependency sources and names still
-match. Projection resolves references against the full input model, then publishes
+match; malformed snapshots fall back to the portable source. Projection resolves
+references against the full input model, then publishes
 the expanded source without retaining unpublished dependencies.
 
 **Expression dialects**: Cube SQL is the SQL of the model's data source, and the

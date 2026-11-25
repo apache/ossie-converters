@@ -1208,12 +1208,15 @@ def parse_source(source, dataset_name):
     """
     if not source or not str(source).strip():
         raise ConversionError(f"Dataset '{dataset_name}': missing/empty 'source'")
-    s = str(source).strip()
+    raw = str(source)
+    s = raw.strip()
     # Leading comments and parentheses are not part of the query's first keyword:
     # `/* note */ SELECT ...` and `(SELECT ...)` are subqueries too, and would break
     # Cube's compile if emitted as a table reference. The source itself is kept as is.
     if _SOURCE_QUERY_HEAD_RE.match(_LEADING_NOISE_RE.sub("", s)):
-        return ("sql", s)
+        # A final newline can terminate a SQL line comment. Cube appends its
+        # subquery closing parenthesis directly after this text.
+        return ("sql", raw)
     return ("sql_table", s)
 
 
@@ -1247,7 +1250,9 @@ def join_source(cube, cube_name, *, default_catalog=None, default_schema=None,
                     return f"{default_catalog}.{default_schema}.{source}"
         return source
     if sql is not None:
-        return str(sql).strip()
+        # Do not strip the terminator of a trailing line comment: references
+        # to this source append a closing parenthesis and then more SQL.
+        return str(sql)
     raise ConversionError(
         f"Cube '{cube_name}': has neither 'sql' nor 'sql_table' (an `extends`-only "
         f"cube?); Ossie datasets require a source")
