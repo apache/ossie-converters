@@ -201,6 +201,19 @@ def test_is_plain_column_ref():
         ('CAST("A" AS REAL)', "T", "Number([A])"),
         ('CAST("A" AS VARCHAR) || "B"', "T", "Text([A]) & [B]"),
         ('CAST("A" AS VARCHAR) || CAST("B" AS VARCHAR)', "T", "Text([A]) & Text([B])"),
+        # `x IS TRUE` / `x IS FALSE`: a boolean operand is itself the predicate.
+        ('"A" IS TRUE', "T", "[A]"),
+        ('"A" IS FALSE', "T", "NOT ([A])"),
+        ('CASE WHEN "A" IS TRUE THEN "B" END', "T", "If([A], [B])"),
+        ('CASE WHEN "A" IS FALSE THEN "B" ELSE 0 END', "T", "If(NOT ([A]), [B], 0)"),
+        ('SUM(CASE WHEN "A" IS TRUE THEN "B" END)', "T", "Sum(If([A], [B]))"),
+        # A bare IF(...) parses to exp.If rather than exp.Case.
+        ('IF("A" > 0, "B", "C")', "T", "If(([A] > 0), [B], [C])"),
+        ('IF("A" > 0, "B", NULL)', "T", "If(([A] > 0), [B], Null())"),
+        ('SUM(IF("A" > 0, "B", 0))', "T", "Sum(If(([A] > 0), [B], 0))"),
+        # SAFE_DIVIDE returns NULL on a zero denominator, as Sigma division does.
+        ('SAFE_DIVIDE("A", "B")', "T", "([A] / [B])"),
+        ('SAFE_DIVIDE(SUM("A"), SUM("B"))', "T", "(Sum([A]) / Sum([B]))"),
     ],
 )
 def test_reverse_translation_basic(sql, dataset_alias, expected):
