@@ -45,8 +45,8 @@ The complete mapping is specified in [docs/csn-mapping.md](docs/csn-mapping.md).
 Its executable form is the fixture pair `tests/fixtures/sap-bp-slice.csn.json` →
 `sap-bp-slice.ossie.yaml`: a Business Partner slice with compound identity,
 associations in both directions, a check-table domain, a role subtype and a
-data-product mapping. The same CSN is the input of the `examples/` Business
-Partner ontology in apache/ossie.
+data-product mapping. The fixture models the same Business Partner slice as the
+hand-written example in apache/ossie#310.
 
 ## Relationship to the `sap-csn` converter
 
@@ -136,10 +136,9 @@ data-product binding. Nothing in it changes structure.
 | Conversion routines (ALPHA) | representation, not meaning | `description`, by design |
 | Aspects, `kind: context`, services | not read in v1 | future work |
 
-Every dropped construct is **reported**, with one exception: decimal `precision`
-and `scale` are dropped without a warning. `Conversion.warnings` lists the
-reported losses and `Conversion.dropped_annotations` names each annotation;
-`tests/test_mapping_rules.py::TestKnownLosses` asserts this.
+The table lists known losses. The converter reports dropped annotations in
+`Conversion.dropped_annotations`. Decimal precision and scale, composition
+containment, and minimum cardinality can be lost without a warning.
 
 ## Parser acceptance
 
