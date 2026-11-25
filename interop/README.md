@@ -78,6 +78,7 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 | Cube, dbt | Existing CLI runners; focused semantic regressions retained |
 | Databricks | Ossie-native: `from-databricks` / `to-databricks` read and write an Ossie model (`native_format: ossie`); `to-databricks` is a pass-through |
 | GoodData | API adapter for declarative LDM JSON, using the converter's serialization helpers |
+| SLayer | Ossie-native: `slayer ossie-roundtrip` (from the pinned `motley-slayer` package) imports an Ossie model into a temporary SLayer store and exports it; it serves as both import and export (`native_format: ossie`) |
 | Atlan, Honeydew, Lightdash, Microsoft, NVIDIA, Omni, OrionBelt, Sigma, Wisdom | File/directory CLI import and export |
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |

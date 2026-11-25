@@ -206,6 +206,16 @@ converters:
     output: file
     fixtures:
       sales: sigma/tests/fixtures/fixtureA_sigma.json
+  slayer:
+    cwd: slayer
+    toolchain: uv
+    prepare: [uv, sync, --locked, --no-dev]
+    import: [uv, run, --no-sync, slayer, ossie-roundtrip, '{input}', '{output}']
+    export: [uv, run, --no-sync, slayer, ossie-roundtrip, '{input}', '{output}']
+    native_format: ossie
+    output: file
+    fixtures:
+      minimal: ossie/examples/minimal.yaml
   snowflake:
     cwd: snowflake
     toolchain: uv

@@ -51,6 +51,7 @@ body:
         - relationalai
         - salesforce
         - sigma
+        - slayer
         - snowflake
         - solid
         - tableau
