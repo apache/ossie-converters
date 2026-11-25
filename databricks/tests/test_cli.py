@@ -17,6 +17,7 @@
 
 """The command line as the interop harness of apache/ossie-converters calls it."""
 
+import pytest
 import yaml
 from conftest import FIXTURES
 
@@ -67,3 +68,68 @@ def test_error_exit_code(tmp_path, capsys):
     bad.write_text("version: 0.3.0.dev0\nname: m\ndatasets: []\n")
     assert main(["to-databricks", str(bad), "-o", str(tmp_path / "out")]) == 1
     assert capsys.readouterr().err.startswith("error: the input is not a valid Ossie model")
+
+
+def test_deploy_does_not_warn_for_retained_semantic_objects(tmp_path, capsys):
+    source = tmp_path / "model.yaml"
+    model = yaml.safe_load((FIXTURES / "retail.ossie.yaml").read_text())
+    model["datasets"][0]["metrics"] = [
+        m for m in model["datasets"][0]["metrics"] if m["name"] != "discount"
+    ]
+    source.write_text(yaml.safe_dump(model))
+    folder = tmp_path / "deployment"
+    assert (
+        main(
+            [
+                "deploy",
+                str(source),
+                "-o",
+                str(folder),
+                "--catalog",
+                "main",
+                "--schema",
+                "sales",
+            ]
+        )
+        == 0
+    )
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("missing", ["metric", "relationship"])
+def test_deploy_rejects_invalid_references_before_writing_files(tmp_path, capsys, missing):
+    source = tmp_path / "model.yaml"
+    model = yaml.safe_load((FIXTURES / "retail.ossie.yaml").read_text())
+    if missing == "metric":
+        model["metrics"] = [{"name": "invalid", "expression": {"sql": "SUM(orders.o_totalprice)"}}]
+        expected = ("invalid", "o_totalprice")
+    else:
+        model["metrics"] = []
+        field = next(f for f in model["datasets"][0]["fields"] if f["name"] == "customer_id")
+        field["expression"] = {"dialects": [{"dialect": "DAX", "expression": "1"}]}
+        expected = ("orders_to_customers", "customer_id")
+    source.write_text(yaml.safe_dump(model))
+    folder = tmp_path / "deployment"
+    folder.mkdir()
+    existing = folder / "retail.ossie.yaml"
+    existing.write_text("previous successful deployment")
+    assert (
+        main(
+            [
+                "deploy",
+                str(source),
+                "-o",
+                str(folder),
+                "--overwrite",
+                "--catalog",
+                "main",
+                "--schema",
+                "sales",
+            ]
+        )
+        == 1
+    )
+    assert existing.read_text() == "previous successful deployment"
+    assert sorted(p.name for p in folder.iterdir()) == ["retail.ossie.yaml"]
+    stderr = capsys.readouterr().err
+    assert all(value in stderr for value in expected)

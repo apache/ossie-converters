@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import copy
+
 import pytest
 import yaml
 from conftest import assert_golden, fixture, warnings_of
@@ -110,3 +112,225 @@ def test_multi_table_query_source_is_not_a_collision():
     }
     result = _deploy(model)
     assert "metric_views/joined.yaml" in result.value
+
+
+def test_model_metrics_and_relationships_are_semantic_objects_not_omissions():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["datasets"][0]["metrics"] = [
+        m for m in model["datasets"][0]["metrics"] if m["name"] != "discount"
+    ]
+    original = copy.deepcopy(model)
+    result = _deploy(model)
+    assert result.warnings == []
+    rewritten = yaml.safe_load(result.value["retail.ossie.yaml"])
+    assert rewritten["metrics"] == original["metrics"]
+    assert rewritten["relationships"] == original["relationships"]
+    view = yaml.safe_load(result.value["metric_views/orders.yaml"])
+    assert "joins" not in view
+    assert not {"revenue_per_customer", "average_amount"} & {m["name"] for m in view["measures"]}
+    assert model == original
+
+
+@pytest.mark.parametrize(
+    "missing,dialect",
+    [
+        (missing, dialect)
+        for missing in ("source_column", "unexported_field")
+        for dialect in (None, "DATABRICKS", "ANSI_SQL", "OSSIE_SQL_2026")
+    ]
+    + [("unexported_metric", dialect) for dialect in (None, "DATABRICKS", "OSSIE_SQL_2026")],
+)
+def test_model_metric_cannot_read_an_unexposed_view_member(dialect, missing):
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    dataset = model["datasets"][0]
+    if missing == "source_column":
+        expression = "SUM(orders.o_totalprice)"
+        unavailable = "o_totalprice"
+    elif missing == "unexported_field":
+        dataset["fields"].append(
+            {
+                "name": "hidden_value",
+                "expression": {"dialects": [{"dialect": "DAX", "expression": "1"}]},
+            }
+        )
+        expression = "SUM(orders.hidden_value)"
+        unavailable = "hidden_value"
+    else:
+        dataset["metrics"].append(
+            {
+                "name": "hidden_measure",
+                "expression": {"dialects": [{"dialect": "DAX", "expression": "1"}]},
+            }
+        )
+        expression = (
+            "MEASURE(orders.hidden_measure)"
+            if dialect == "DATABRICKS"
+            else "AGG(orders.hidden_measure)"
+        )
+        unavailable = "hidden_measure"
+    model["metrics"] = [
+        {
+            "name": "unavailable",
+            "expression": (
+                {"sql": expression}
+                if dialect is None
+                else {"dialects": [{"dialect": dialect, "expression": expression}]}
+            ),
+        }
+    ]
+    with pytest.raises(ConversionError, match="cannot be evaluated over the metric views") as error:
+        _deploy(model)
+    assert "unavailable" in str(error.value)
+    assert unavailable in str(error.value)
+
+
+def test_model_metric_keeps_qualified_case_insensitive_and_measure_references():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"][0]["expression"]["sql"] = (
+        "AGG(ORDERS.REVENUE) / COUNT(DISTINCT CUSTOMERS.CUSTOMER_ID)"
+    )
+    model["metrics"][1]["expression"]["sql"] = "AVG(orders.amount)"
+    result = _deploy(model)
+    assert yaml.safe_load(result.value["retail.ossie.yaml"])["metrics"] == model["metrics"]
+
+
+def test_non_sql_model_metric_is_retained_without_an_omission_warning():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"] = [
+        {
+            "name": "dax",
+            "expression": {
+                "dialects": [{"dialect": "DAX", "expression": "COUNTROWS(Orders)"}],
+            },
+        }
+    ]
+    result = _deploy(model)
+    assert not any(w.path.startswith("metrics[") for w in result.warnings)
+    assert yaml.safe_load(result.value["retail.ossie.yaml"])["metrics"] == model["metrics"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "MEASURE(orders.revenue) / COUNT(DISTINCT customers.customer_id)",
+        "MEASURE(ORDERS.REVENUE) + MEASURE(orders.big_orders)",
+        "MEASURE(orders.revenue)",
+        "MEASURE(orders.`revenue`) + COUNT_IF(orders.status = 'X')",
+        "MEASURE(orders.revenue) OVER (PARTITION BY orders.status)",
+        "MEASURE(orders.revenue) FILTER (WHERE orders.status = 'X')",
+        "my_udfs.MEASURE(orders.amount)",
+        "catalog.my_udfs.MEASURE(orders.amount)",
+    ],
+)
+def test_native_model_metric_can_evaluate_generated_measures(expression):
+    model = yaml.safe_load(fixture("databricks_first.ossie.yaml"))
+    model["metrics"][0]["expression"]["dialects"][0]["expression"] = expression
+    result = _deploy(model)
+    rewritten = yaml.safe_load(result.value["databricks_first.ossie.yaml"])
+    assert rewritten["metrics"] == model["metrics"]
+    assert not any(w.path.startswith("metrics[") for w in result.warnings)
+
+
+def test_model_metric_reference_check_honors_portable_expression_precedence():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"][1]["expression"]["dialects"] = [
+        {"dialect": "OSSIE_SQL_2026", "expression": "AVG(orders.missing_source_column)"}
+    ]
+    result = _deploy(model)
+    assert yaml.safe_load(result.value["retail.ossie.yaml"])["metrics"] == model["metrics"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "SUM(orders.revenue)",
+        "MEASURE(orders.revenue) + SUM(orders.revenue)",
+        "MEASURE(orders.amount)",
+        "MEASURE(orders.revenue, orders.discount)",
+        "MEASURE()",
+        "my_udfs.MEASURE(orders.revenue)",
+        "catalog.my_udfs.MEASURE(orders.absent)",
+        "MEASURE(orders.revenue) OVER (PARTITION BY orders.absent) + orders.also_absent",
+        "MEASURE(orders.revenue) FILTER (WHERE orders.absent > 0) + SUM(orders.revenue)",
+    ],
+)
+def test_native_measure_calls_do_not_make_measures_readable_as_columns(expression):
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"] = [
+        {
+            "name": "native",
+            "expression": {"dialects": [{"dialect": "DATABRICKS", "expression": expression}]},
+        }
+    ]
+    with pytest.raises(ConversionError, match="cannot be evaluated over the metric views"):
+        _deploy(model)
+
+
+def test_native_measure_call_does_not_hide_other_missing_columns():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"] = [
+        {
+            "name": "native",
+            "expression": {
+                "dialects": [
+                    {
+                        "dialect": "DATABRICKS",
+                        "expression": "MEASURE(orders.revenue) + orders.absent",
+                    }
+                ]
+            },
+        }
+    ]
+    with pytest.raises(ConversionError, match="absent"):
+        _deploy(model)
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("from", "from_columns"),
+        ("to", "to_columns"),
+        ("primary", "primary_key"),
+        ("unique", "unique_keys"),
+    ],
+)
+def test_relationship_and_dataset_keys_must_remain_exposed(case, expected):
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["metrics"] = []
+    dataset = model["datasets"][1 if case == "to" else 0]
+    name = "order_id" if case == "primary" else "customer_id"
+    if case in ("from", "to"):
+        for item in model["datasets"]:
+            item.pop("primary_key", None)
+    else:
+        model["relationships"] = []
+        if case == "unique":
+            dataset["unique_keys"] = [["order_id", "customer_id"]]
+    next(f for f in dataset["fields"] if f["name"] == name)["expression"] = {
+        "dialects": [{"dialect": "DAX", "expression": "1"}]
+    }
+    with pytest.raises(ConversionError, match="cannot be evaluated over the metric views") as error:
+        _deploy(model)
+    assert expected in str(error.value)
+    assert name in str(error.value)
+
+
+def test_exposed_composite_and_case_insensitive_keys_are_preserved():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["datasets"][0]["primary_key"] = ["ORDER_ID", "CUSTOMER_ID"]
+    model["datasets"][0]["unique_keys"] = [["ORDER_ID", "REGION"]]
+    model["relationships"][0]["from_columns"] = ["CUSTOMER_ID"]
+    model["relationships"][0]["to_columns"] = ["CUSTOMER_ID"]
+    original = copy.deepcopy(model)
+    result = _deploy(model)
+    rewritten = yaml.safe_load(result.value["retail.ossie.yaml"])
+    assert rewritten["relationships"] == original["relationships"]
+    for actual, before in zip(rewritten["datasets"], original["datasets"], strict=True):
+        assert actual["primary_key"] == before["primary_key"]
+        assert actual.get("unique_keys") == before.get("unique_keys")
+
+
+def test_unchanged_key_coverage_advisories_do_not_block_deployment():
+    model = yaml.safe_load(fixture("retail.ossie.yaml"))
+    model["relationships"][0]["to_columns"] = ["segment"]
+    assert "retail.ossie.yaml" in _deploy(model).value

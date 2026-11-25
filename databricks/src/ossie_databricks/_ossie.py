@@ -31,6 +31,7 @@ from types import ModuleType
 from typing import Any
 
 import yaml
+from sqlglot import exp
 
 from ossie_databricks.result import ConversionError
 
@@ -120,3 +121,60 @@ def check(model: Mapping[str, Any], what: str) -> None:
     errors = validate(model)
     if errors:
         raise ConversionError(f"{what} is not a valid Ossie model:\n  " + "\n  ".join(errors))
+
+
+def model_metric_reference_problems(model: Mapping[str, Any]) -> list[str]:
+    """Core reference diagnostics against the members exposed by generated views.
+
+    The core checker recognizes measure evaluation only through portable AGG.
+    Check native MEASURE arguments against that same measure namespace, then
+    check the remaining expression against dimensions without widening it.
+    """
+    module = _validator()
+    fields = module.declared_fields(model)
+    measures = module.declared_dataset_metrics(model)
+    metric_names = {
+        metric["name"].casefold(): metric["name"] for metric in model.get("metrics") or []
+    }
+    problems = []
+    for metric in model.get("metrics") or []:
+        for expression in module.read_expressions(metric, "model_metric"):
+            text = expression.text
+            if expression.dialect == "DATABRICKS":
+                context = expression.context(model.get("name", "<unnamed>"))
+                tree = module.parse_tree(text, expression.dialect, context)
+                if tree is None:
+                    continue  # Input SQL validation already reports parse errors.
+                for call in tree.find_all(exp.Anonymous):
+                    if call.name.upper() != "MEASURE" or (
+                        isinstance(call.parent, exp.Dot) and call.parent.expression is call
+                    ):
+                        continue
+                    argument = call.expressions[0] if len(call.expressions) == 1 else None
+                    problem = module.agg_argument_problem(argument, fields, measures, metric_names)
+                    if problem:
+                        problem = problem.replace("AGG(", "MEASURE(").replace(
+                            "AGG takes", "MEASURE takes"
+                        )
+                        problems.append(f"[Reference] {context}: {problem}")
+                    # Mask only the checked argument. Keep function syntax so
+                    # FILTER/OVER still parse and their field references are checked.
+                    call.set("expressions", [exp.Literal.number(0)])
+                text = tree.sql(dialect="databricks")
+            probe_metric = {
+                **metric,
+                "expression": {"dialects": [{"dialect": expression.dialect, "expression": text}]},
+            }
+            probe = {**model, "metrics": [probe_metric]}
+            problems.extend(str(finding) for finding in module.validate_metric_references(probe))
+    return problems
+
+
+def key_reference_problems(model: Mapping[str, Any]) -> list[str]:
+    """Missing fields in primary/unique keys or either end of a relationship."""
+    module = _validator()
+    return [
+        str(finding)
+        for finding in module.validate_references(dict(model))
+        if not isinstance(finding, module.ValidationWarning)
+    ]
