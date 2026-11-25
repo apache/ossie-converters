@@ -172,6 +172,10 @@ attributes preserve the additional Ossie metadata during export.
 Structured `ai_context` values are restored from these attributes on import.
 For datasets and joins, restoration requires the preserved object to match the
 native `agentContext` text; later native edits and ordinary text remain strings.
+Model descriptions and context retain empty values, and removing them updates
+the stored header so they do not reappear on import.
+Celonis export rejects case-insensitive entity identity collisions, including
+case-distinct Ossie datasets that would share a native identity.
 
 ## First-version limits
 

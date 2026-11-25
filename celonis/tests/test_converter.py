@@ -368,6 +368,77 @@ def test_json_looking_context_stays_text(pig, edited):
     assert ossie_to_celonis(imported) == pig
 
 
+@pytest.mark.parametrize("companions", [False, True])
+def test_export_rejects_case_distinct_dataset_identities(companions):
+    from ossie_celonis.ontology import build_ontology_documents
+
+    model = {
+        "version": "0.3.0.dev0",
+        "name": "example",
+        "datasets": [
+            {
+                "name": name,
+                "source": name,
+                "primary_key": ["ID"],
+                "fields": [
+                    {"name": "ID", "datatype": "String", "expression": {"sql": "ID"}}
+                ],
+            }
+            for name in ("Orders", "orders")
+        ],
+    }
+    kwargs = {}
+    if companions:
+        ontology, mapping = build_ontology_documents(model)
+        ontology["ontology"][0]["description"] = "EDITED"
+        kwargs.update(ontology=ontology, mapping=mapping)
+    with pytest.raises(ConversionError, match="Dataset identity collision"):
+        ossie_to_celonis(model, **kwargs)
+
+
+@pytest.mark.parametrize("bucket", ["futureEntities", "relationships"])
+def test_export_rejects_collision_with_preserved_identity(pig, bucket):
+    original = (
+        pig["objects"][0] if bucket == "futureEntities" else pig["relationships"][1]
+    )
+    duplicate = deepcopy(original)
+    duplicate["entityIdentifier"]["name"] = (
+        original["entityIdentifier"]["name"].upper()
+    )
+    if bucket == "relationships":
+        duplicate["relationshipType"] = "TYPE_TO_TYPE"
+    pig[bucket].append(duplicate)
+    model = convert(pig)
+    with pytest.raises(ConversionError, match="Entity identity collision"):
+        ossie_to_celonis(model)
+
+
+@pytest.mark.parametrize(
+    "property,value",
+    [
+        ("ai_context", "model notes"),
+        ("ai_context", {"instructions": "model notes"}),
+        ("ai_context", {}),
+        ("ai_context", ""),
+        ("description", "model description"),
+        ("description", ""),
+    ],
+)
+def test_model_header_preserves_empty_values_and_removals(pig, property, value):
+    model = convert(pig)
+    model[property] = deepcopy(value)
+    exported = ossie_to_celonis(model)
+    header = json.loads(exported["objects"][0]["attributes"]["apache_ossie_model"])
+    assert header[property] == value
+    imported = convert(exported)
+    assert imported[property] == value
+    del imported[property]
+    updated = ossie_to_celonis(imported)
+    header = json.loads(updated["objects"][0]["attributes"]["apache_ossie_model"])
+    assert property not in header
+    assert property not in convert(updated)
+
+
 def test_non_ansi_metrics_and_malformed_extensions_fail(pig):
     model = convert(pig)
     model["metrics"] = [

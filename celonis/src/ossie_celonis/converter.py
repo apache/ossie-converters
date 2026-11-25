@@ -151,6 +151,26 @@ def _import_agent_context(entity):
     return text if isinstance(text, str) else None
 
 
+def _validate_entity_identities(pig):
+    identities, dataset_names = set(), set()
+    for bucket, entities in pig.items():
+        for entity in entities:
+            if "entityIdentifier" not in entity:
+                continue
+            identity = _identity(entity["entityIdentifier"])
+            if bucket in ("objects", "eventSources", "events"):
+                name = _name(identity).casefold()
+                if name in dataset_names:
+                    raise ConversionError(
+                        f"Dataset identity collision: {_name(identity)}"
+                    )
+                dataset_names.add(name)
+            key = _identity_key(identity)
+            if key in identities:
+                raise ConversionError(f"Entity identity collision: {_name(identity)}")
+            identities.add(key)
+
+
 def _validate(model):
     # The shared parser rejects legacy wrappers, unknown fields, nulls and invalid dialects.
     try:
@@ -303,9 +323,12 @@ def celonis_to_ossie(pig, *, name=None):
         ),
         {},
     )
-    context = _ossie_attribute(first, "apache_ossie_model").get("ai_context")
+    header = _ossie_attribute(first, "apache_ossie_model")
+    context = header.get("ai_context")
     if isinstance(context, (str, dict)):
         model["ai_context"] = deepcopy(context)
+    if isinstance(header.get("description"), str):
+        model["description"] = header["description"]
     preserved_relationships = []
     relationship_order = []
     for relationship in _array(pig, "relationships"):
@@ -614,36 +637,52 @@ def ossie_to_celonis(
             key=lambda b: binding_order.get(_binding_key(b), len(binding_order))
         )
     model_extras = _extra_extensions(model, "model")
+    first = next(
+        e
+        for bucket in ("objects", "eventSources", "events")
+        for e in pig.get(bucket, [])
+    )
+    has_model_attr = (
+        isinstance(first.get("attributes"), dict)
+        and "apache_ossie_model" in first["attributes"]
+    )
     if (
         not metadata
         or model_extras
-        or model.get("description")
-        or model.get("ai_context")
+        or model.get("description") is not None
+        or model.get("ai_context") is not None
+        or has_model_attr
     ):
-        header = {
-            k: deepcopy(v)
-            for k, v in model.items()
-            if k not in (
-                "datasets", "relationships", "metrics", "nonportable_extensions"
-            )
-        }
+        # Keep other preserved header metadata (including foreign extensions),
+        # while replacing the context and description managed by this importer.
+        header = deepcopy(_ossie_attribute(first, "apache_ossie_model"))
+        header.pop("ai_context", None)
+        header.pop("description", None)
+        header.update(
+            {
+                k: deepcopy(v)
+                for k, v in model.items()
+                if k not in (
+                    "datasets", "relationships", "metrics", "nonportable_extensions"
+                )
+            }
+        )
         if model_extras:
             header["nonportable_extensions"] = model_extras
-        first = next(
-            e
-            for bucket in ("objects", "eventSources", "events")
-            for e in pig.get(bucket, [])
-        )
         first["attributes"] = {
             **(first.get("attributes") or {}),
             "apache_ossie_model": json.dumps(header),
         }
+    # Reject collisions before ontology lookup can overwrite an entity or apply
+    # an edit to the wrong one. Include identities in preserved containers.
+    _validate_entity_identities(pig)
     if ontology is not None:
         from .ontology import apply_ontology_documents
 
         pig = apply_ontology_documents(
             pig, model, ontology, mapping, namespace=namespace, package_key=package_key
         )
+        _validate_entity_identities(pig)
     if metadata:
         # Apply ontology edits before restoring absent versus present-empty buckets.
         for bucket in list(pig):
