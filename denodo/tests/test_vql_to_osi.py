@@ -635,3 +635,125 @@ class TestExample14:
         data = json.loads(ext["data"])
         assert data.get("folder") == "/99. assoc"
         assert data["to_columns"]["relation"] == "0,1"
+
+class TestExample15:
+    FIXTURE = "example15.vql"
+
+    def _convert(self, vql_name: str) -> dict:
+        vql = _load_vql(vql_name)
+        yaml_str = convert_vql_to_ossie(vql)
+        return yaml.safe_load(yaml_str)
+
+    def _dataset_fields(self, osi_dict: dict) -> dict:
+        return {
+            f["name"]: f
+            for ds in osi_dict.get("datasets", [])
+            for f in ds.get("fields", [])
+        }
+
+    def test_dimension_field_descriptions(self):
+        fields = self._dataset_fields(self._convert(self.FIXTURE))
+
+        assert fields["unit_price_sales"]["description"] == "unit prices per sale"
+        assert fields["product_name"]["description"] == "Product name"
+        assert fields["product_sku"]["description"] == "product sku description"
+
+    def test_field_without_description_has_no_description(self):
+        fields = self._dataset_fields(self._convert(self.FIXTURE))
+
+        assert "year" in fields
+        assert "description" not in fields["year"]
+
+    def test_source_type_custom_extension(self):
+        fields = self._dataset_fields(self._convert(self.FIXTURE))
+
+        ext = fields["year"]["custom_extensions"]
+        assert ext[0]["vendor_name"] == "DENODO"
+        assert json.loads(ext[0]["data"]) == {
+            "sourcetyperadix": "10",
+            "sourcetypesize": "10",
+            "sourcetypeid": "4",
+        }
+        assert "custom_extensions" not in fields["product_name"]
+
+    def test_metric_description(self):
+        osi_dict = self._convert(self.FIXTURE)
+        metric = next((m for m in osi_dict.get("metrics", []) if m.get("name") == "total_quantity"), None)
+
+        assert metric is not None
+        assert metric["description"] == "Total quantity of orders"
+
+
+class TestAssociationRequired:
+    FIXTURE = Path(__file__).parent / "fixtures_vql" / "example15.vql"
+
+    def _vql(self) -> str:
+        return self.FIXTURE.read_text(encoding="utf-8")
+
+    def _without_associations(self) -> str:
+        import re
+        stmts = self._vql().split(";")
+        kept = [s for s in stmts if not re.search(r"CREATE\s+(OR\s+REPLACE\s+)?ASSOCIATION\b", s, re.I)]
+        return ";".join(kept)
+
+    def test_no_association_raises(self):
+        import pytest
+        from ossie_denodo.vql_to_osi import VqlConversionError
+        with pytest.raises(VqlConversionError, match="ASSOCIATION"):
+            convert_vql_to_ossie(self._without_associations())
+
+    def test_association_without_or_replace_is_accepted(self):
+        import re
+        vql = re.sub(r"CREATE\s+OR\s+REPLACE\s+ASSOCIATION", "CREATE ASSOCIATION", self._vql(), flags=re.I)
+        osi = yaml.safe_load(convert_vql_to_ossie(vql))
+        assert osi["relationships"]
+
+    def test_association_with_or_replace_is_accepted(self):
+        osi = yaml.safe_load(convert_vql_to_ossie(self._vql()))
+        assert osi["relationships"]
+
+    def test_no_metric_view_still_raises(self):
+        import pytest
+        from ossie_denodo.vql_to_osi import VqlConversionError
+        with pytest.raises(VqlConversionError):
+            convert_vql_to_ossie("CREATE OR REPLACE FOLDER '/x' ;")
+
+
+class TestMissingAssociation:
+    def test_missing_referenced_association_raises(self):
+        import re
+        import pytest
+        from ossie_denodo.vql_to_osi import VqlConversionError
+        vql = (Path(__file__).parent / "fixtures_vql" / "example15.vql").read_text(encoding="utf-8")
+        stmts = [
+            s for s in vql.split(";")
+            if not (re.search(r"CREATE\s+(OR\s+REPLACE\s+)?ASSOCIATION\b", s, re.I)
+                    and "dw_dim_customers_dw_fact_sales" in s)
+        ]
+        with pytest.raises(VqlConversionError, match="dw_dim_customers_dw_fact_sales"):
+            convert_vql_to_ossie(";".join(stmts))
+
+
+class TestMetricViewWithoutAssociations:
+    VQL = """CREATE OR REPLACE METRIC VIEW example
+    FOLDER = '/3. views'
+SOURCES (
+        sales AS dw_fact_sales
+    )
+    DIMENSIONS (
+        sales_id as sales.sale_id
+    )
+    METRICS (
+        total_quantity AS sum(sales.quantity),
+        avg_quantity AS avg(sales.quantity),
+        number_sales AS count(sales.sale_id)
+    )
+;
+"""
+
+    def test_no_associations_section_is_valid(self):
+        osi = yaml.safe_load(convert_vql_to_ossie(self.VQL))
+        assert osi["relationships"] == []
+        assert [d["name"] for d in osi["datasets"]] == ["sales"]
+        names = {m["name"] for m in osi["metrics"]}
+        assert {"total_quantity", "avg_quantity", "number_sales"} <= names

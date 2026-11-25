@@ -114,3 +114,5 @@ class MetricViewModel:
     dimensions: list[DimensionGroupModel] = field(default_factory=list)
     metrics: list[MetricFieldModel] = field(default_factory=list)
     context: dict[str, str] = field(default_factory=dict)
+    field_descriptions: dict[str, str] = field(default_factory=dict)
+    field_source_types: dict[str, dict[str, str]] = field(default_factory=dict)

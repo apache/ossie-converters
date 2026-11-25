@@ -1,0 +1,128 @@
+version: 0.2.0.dev0
+name: products_view1
+datasets:
+- name: dates
+  source: dw_dim_date
+  fields:
+  - name: date_full
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: dates.full_date
+  - name: year
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: getyear(dates.full_date)
+    custom_extensions:
+    - vendor_name: DENODO
+      data: '{"sourcetyperadix": "10", "sourcetypesize": "10", "sourcetypeid": "4"}'
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"fields_dimension": {"date_full": "dates", "year": "dates"}}'
+- name: customers
+  source: dw_dim_customers
+  fields:
+  - name: customer_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: concat(customers.last_name, ', ', customers.first_name)
+  - name: customer_email
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: customers.email
+  - name: customer_id
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: customers.customer_key
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"fields_dimension": {"customer_name": "customers", "customer_email": "customers",
+      "customer_id": "customers"}}'
+- name: sales
+  source: dw_fact_sales
+  fields:
+  - name: unit_price_sales
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: (sales.unit_price||'test')
+    description: unit prices per sale
+- name: products
+  source: dw_dim_products
+  fields:
+  - name: product_name
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: product_name
+    description: Product name
+  - name: product_sku
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: products.sku
+    description: product sku description
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"fields_dimension": {"product_name": "products", "product_sku": "products"}}'
+relationships:
+- name: dw_dim_customers_dw_fact_sales
+  from: sales
+  to: customers
+  from_columns:
+  - customer_key
+  to_columns:
+  - customer_key
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"folder": "/99. assoc", "from_columns": {"fields_replace": [{"customer_key":
+      "round(customer_key)"}]}, "to_columns": {"relation": "0,1"}}'
+- name: dw_dim_products_dw_fact_sales
+  from: sales
+  to: products
+  from_columns:
+  - product_key
+  to_columns:
+  - product_key
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"folder": "/99. assoc", "to_columns": {"relation": "0,1"}}'
+- name: dw_dim_date_dw_fact_sales
+  from: sales
+  to: dates
+  from_columns:
+  - date_key
+  to_columns:
+  - date_key
+  custom_extensions:
+  - vendor_name: DENODO
+    data: '{"folder": "/99. assoc", "to_columns": {"relation": "0,1"}}'
+metrics:
+- name: total_quantity
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: sum(sales.quantity)
+  description: Total quantity of orders
+- name: avg_quantity
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: avg(sales.quantity)
+- name: count_prod
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: count(products.product_name)
+- name: number_sales
+  expression:
+    dialects:
+    - dialect: ANSI_SQL
+      expression: count(sales.sale_id)
+custom_extensions:
+- vendor_name: DENODO
+  data: '{"folder": "/3. views"}'

@@ -254,7 +254,7 @@ _MV_HEADER_RE = re.compile(
     r'CREATE\s+(?:OR\s+REPLACE\s+)?METRIC\s+VIEW\s+' + _IDENT_PATTERN,
     re.IGNORECASE,
 )
-_MV_DESCRIPTION_RE = re.compile(r"DESCRIPTION\s*=\s*'([^']*)'", re.IGNORECASE)
+_MV_DESCRIPTION_RE = re.compile(r"^[ \t]*DESCRIPTION\s*=\s*'([^']*)'", re.IGNORECASE | re.MULTILINE)
 _MV_TAGS_RE = re.compile(r'TAGS\s*\(([^)]*)\)', re.IGNORECASE)
 _MV_CONTEXT_RE = re.compile(r"CONTEXT\s*\(([^)]*)\)", re.IGNORECASE | re.DOTALL)
 
@@ -284,6 +284,8 @@ def _parse_metric_view(stmt: str) -> MetricViewModel:
     metrics = _parse_metrics_block(stmt)
     context = _parse_context_block(stmt)
     filter_condition = _extract_block(stmt, 'FILTER')
+    field_descriptions = _parse_field_descriptions(stmt, m.end())
+    field_source_types = _parse_field_source_types(stmt, m.end())
 
     return MetricViewModel(
         name=name,
@@ -296,7 +298,66 @@ def _parse_metric_view(stmt: str) -> MetricViewModel:
         metrics=metrics,
         context=context,
         filter_condition=filter_condition,
+        field_descriptions=field_descriptions,
+        field_source_types=field_source_types,
     )
+
+
+_FIELD_DESC_RE = re.compile(
+    _IDENT_PATTERN + r"\s*\([^()]*?\bdescription\s*=\s*'((?:[^']|'')*)'",
+    re.IGNORECASE,
+)
+
+
+SOURCE_TYPE_KEYS = ('sourcetyperadix', 'sourcetypesize', 'sourcetypeid')
+_FIELD_ENTRY_RE = re.compile(_IDENT_PATTERN + r"\s*\(((?:[^()']|'(?:[^']|'')*')*)\)")
+_SOURCE_TYPE_RE = re.compile(
+    r"\b(" + '|'.join(SOURCE_TYPE_KEYS) + r")\s*=\s*'((?:[^']|'')*)'", re.IGNORECASE
+)
+
+
+def _parse_field_source_types(stmt: str, pos: int) -> dict[str, dict[str, str]]:
+    """Parses sourcetyperadix/sourcetypesize/sourcetypeid of the field block.
+    Returns a map field name -> {property: value}."""
+    sources_m = re.search(r'\bSOURCES\s*\(', stmt[pos:], re.IGNORECASE)
+    header = stmt[pos:pos + sources_m.start()] if sources_m else ''
+    masked = re.sub(r"'(?:[^']|'')*'", lambda m_: ' ' * len(m_.group(0)), header)
+    masked = re.sub(
+        r'\bTAGS\s*\([^)]*\)', lambda m_: ' ' * len(m_.group(0)), masked, flags=re.IGNORECASE
+    )
+    start = masked.find('(')
+    if start < 0:
+        return {}
+    inner, _ = _extract_inner(header, start)
+    result: dict[str, dict[str, str]] = {}
+    for fm in _FIELD_ENTRY_RE.finditer(inner):
+        props = {
+            pm.group(1).lower(): pm.group(2).replace("''", "'")
+            for pm in _SOURCE_TYPE_RE.finditer(fm.group(2))
+        }
+        if props:
+            ordered = {k: props[k] for k in SOURCE_TYPE_KEYS if k in props}
+            result[fm.group(1).strip('"')] = ordered
+    return result
+
+
+def _parse_field_descriptions(stmt: str, pos: int) -> dict[str, str]:
+    """Parses the optional '(field (description = '...'), ...)' block that
+    precedes SOURCES. Returns a map field name -> description."""
+    sources_m = re.search(r'\bSOURCES\s*\(', stmt[pos:], re.IGNORECASE)
+    header = stmt[pos:pos + sources_m.start()] if sources_m else ''
+    masked = re.sub(r"'(?:[^']|'')*'", lambda m_: ' ' * len(m_.group(0)), header)
+    masked = re.sub(
+        r'\bTAGS\s*\([^)]*\)', lambda m_: ' ' * len(m_.group(0)), masked, flags=re.IGNORECASE
+    )
+    start = masked.find('(')
+    if start < 0:
+        return {}
+    inner, _ = _extract_inner(header, start)
+    result: dict[str, str] = {}
+    for fm in _FIELD_DESC_RE.finditer(inner):
+        result[fm.group(1).strip('"')] = fm.group(2).replace("''", "'")
+    return result
 
 
 # ---------------------------------------------------------------------------

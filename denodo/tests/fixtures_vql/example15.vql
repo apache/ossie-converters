@@ -1,0 +1,303 @@
+CREATE OR REPLACE FOLDER '/1. Data Sources' ;
+
+CREATE OR REPLACE DATASOURCE JDBC psql_ds
+    FOLDER = '/1. data sources'
+    DRIVERCLASSNAME = 'org.postgresql.Driver'
+    DATABASEURI = 'xxxxx'
+    USERNAME = 'xxxx'
+    USERPASSWORD = 'xxxxxxx'
+    CLASSPATH = 'postgresql-17'
+    DATABASENAME = 'postgresql'
+    DATABASEVERSION = '17'
+    FETCHSIZE = 10000
+    VALIDATIONQUERY = 'Select 1'
+    INITIALSIZE = 4
+    MAXIDLE = -1
+    MINIDLE = 0
+    MAXACTIVE = 20
+    EXHAUSTEDACTION = 1
+    TESTONBORROW = true
+    TESTONRETURN = false
+    TESTWHILEIDLE = false
+    TIMEBETWEENEVICTION = -1
+    NUMTESTPEREVICTION = 3
+    MINEVICTABLETIME = 1800000
+    POOLPREPAREDSTATEMENTS = false
+    MAXOPENPREPAREDSTATEMENTS = -1
+    PROPERTIES ('escapeSyntaxCallMode'='callIfNoReturn')
+    SOURCECONFIGURATION (
+        delegatefetchinsubqueries = false,
+        delegateoffsetinsubqueries = false,
+        delegateorderby = false,
+        supportseqouterjoinoperator = false,
+        delegateaggregatefunctionslist = (avg, count, max, min, stdev, stdevp, sum, var, varp),
+        delegatescalarfunctionslist = (abs, acos, addday, addhour, addmillis, addminute, addmonth, addsecond, addweek, addyear, ascii, asin, atan, atan2, base64_to_hex, case, cast, ceil, char, coalesce, concat, convert_timezone, convert_timezone(evaluate_literal), cos, cot, current_date, degrees, deletespaces, div, exp, expression_list, firstdayofmonth, floor, formatdate, getday, getdayofweek, getdayofyear, getdaysbetween, gethour, getmillisecond, getminute, getmonth, getquarter, getsecond, getweek, getyear, hex_to_base64, instr, lastdayofmonth, len, ln, localtimestamp(evaluate_literal), log, lower, ltrim, max, min, mod, mult, now, nullif, pi, position, pow, power, propercase, radians, rand, regexp, removeaccents, repeat, replace, round, rtrim, sign, sin, sql_trim, sqrt, substr, substring, subtract, sum, tan, textcat, to_date, to_interval_day_second(evaluate_literal), to_interval_year_month(evaluate_literal), to_localdate, to_time, to_timestamp, to_timestamptz, trim, trunc, upper)
+    );
+
+CREATE OR REPLACE FOLDER '/2. Base Views' ;
+
+CREATE OR REPLACE WRAPPER JDBC dw_dim_date
+    FOLDER = '/2. base views'
+    DATASOURCENAME=psql_ds
+    SCHEMANAME='xxxxx' 
+    RELATIONNAME='dw_dim_date' 
+    OUTPUTSCHEMA (
+        date_key = 'date_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  NOT NULL SORTABLE,
+        full_date = 'full_date' :'java.time.LocalDate' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='13', sourcetypeid='91', sourcetypename='date')  NOT NULL SORTABLE,
+        day_name = 'day_name' :'java.lang.String' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='12', sourcetypename='varchar')  SORTABLE,
+        day_of_week = 'day_of_week' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        day_of_month = 'day_of_month' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        month_name = 'month_name' :'java.lang.String' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='12', sourcetypename='varchar')  SORTABLE,
+        month_number = 'month_number' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        quarter = 'quarter' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        year = 'year' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  ESCAPE SORTABLE,
+        is_weekend = 'is_weekend' :'java.lang.Boolean' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='1', sourcetypeid='-7', sourcetypename='bool')  NOT SORTABLE,
+        is_holiday = 'is_holiday' :'java.lang.Boolean' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='1', sourcetypeid='-7', sourcetypename='bool')  NOT SORTABLE
+    )
+    CONSTRAINT 'dw_dim_date_pkey' PRIMARY KEY ( 'date_key' )
+    INDEX 'dw_dim_date_pkey' OTHER UNIQUE PRIMARY ( 'date_key' );
+
+CREATE OR REPLACE TABLE dw_dim_date I18N es_euro (
+        date_key:int (notnull, sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        full_date:localdate (notnull, sourcetypeid = '91', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '13'),
+        day_name:text (sourcetypeid = '-9', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        day_of_week:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        day_of_month:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        month_name:text (sourcetypeid = '-9', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        month_number:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        quarter:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        year:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        is_weekend:boolean (sourcetypeid = '16', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '1'),
+        is_holiday:boolean (sourcetypeid = '16', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '1')
+    )
+    FOLDER = '/2. base views'
+    CONSTRAINT 'dw_dim_date_pkey' PRIMARY KEY ( 'date_key' )
+    CACHE OFF
+    TIMETOLIVEINCACHE DEFAULT
+    ADD SEARCHMETHOD dw_dim_date(
+        I18N es_euro
+        CONSTRAINTS (
+             ADD date_key (any) OPT ANY
+             ADD full_date (any) OPT ANY
+             ADD day_name (any) OPT ANY
+             ADD day_of_week (any) OPT ANY
+             ADD day_of_month (any) OPT ANY
+             ADD month_name (any) OPT ANY
+             ADD month_number (any) OPT ANY
+             ADD quarter (any) OPT ANY
+             ADD year (any) OPT ANY
+             ADD is_weekend (any) OPT ANY
+             ADD is_holiday (any) OPT ANY
+        )
+        OUTPUTLIST (date_key, day_name, day_of_month, day_of_week, full_date, is_holiday, is_weekend, month_name, month_number, quarter, year
+        )
+        WRAPPER (jdbc dw_dim_date)
+    );
+
+CREATE OR REPLACE WRAPPER JDBC dw_dim_customers
+    FOLDER = '/2. base views'
+    DATASOURCENAME=psql_ds
+    SCHEMANAME='xxxxx' 
+    RELATIONNAME='dw_dim_customers' 
+    OUTPUTSCHEMA (
+        customer_key = 'customer_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='serial')  NOT NULL SORTABLE IS_AUTOINCREMENT,
+        first_name = 'first_name' :'java.lang.String' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='50', sourcetypeid='12', sourcetypename='varchar')  SORTABLE,
+        last_name = 'last_name' :'java.lang.String' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='50', sourcetypeid='12', sourcetypename='varchar')  SORTABLE,
+        email = 'email' :'java.lang.String' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='100', sourcetypeid='12', sourcetypename='varchar')  SORTABLE,
+        registration_date = 'registration_date' :'java.time.LocalDate' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='13', sourcetypeid='91', sourcetypename='date')  SORTABLE
+    )
+    CONSTRAINT 'dw_dim_customers_pkey' PRIMARY KEY ( 'customer_key' )
+    INDEX 'dw_dim_customers_pkey' OTHER UNIQUE PRIMARY ( 'customer_key' );
+
+CREATE OR REPLACE TABLE dw_dim_customers I18N es_euro (
+        customer_key:int (notnull, autoincrement, sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        first_name:text (sourcetypeid = '-9', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '50'),
+        last_name:text (sourcetypeid = '-9', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '50'),
+        email:text (sourcetypeid = '-9', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '100'),
+        registration_date:localdate (sourcetypeid = '91', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '13')
+    )
+    FOLDER = '/2. base views'
+    CONSTRAINT 'dw_dim_customers_pkey' PRIMARY KEY ( 'customer_key' )
+    CACHE OFF
+    TIMETOLIVEINCACHE DEFAULT
+    ADD SEARCHMETHOD dw_dim_customers(
+        I18N es_euro
+        CONSTRAINTS (
+             ADD customer_key (any) OPT ANY
+             ADD first_name (any) OPT ANY
+             ADD last_name (any) OPT ANY
+             ADD email (any) OPT ANY
+             ADD registration_date (any) OPT ANY
+        )
+        OUTPUTLIST (customer_key, email, first_name, last_name, registration_date
+        )
+        WRAPPER (jdbc dw_dim_customers)
+    );
+
+CREATE OR REPLACE WRAPPER JDBC dw_fact_sales
+    DATASOURCENAME=psql_ds
+    SCHEMANAME='xxxxx' 
+    RELATIONNAME='dw_fact_sales' 
+    OUTPUTSCHEMA (
+        sale_id = 'sale_id' :'java.lang.Long' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='19', sourcetypeid='-5', sourcetypename='bigserial')  NOT NULL SORTABLE IS_AUTOINCREMENT,
+        date_key = 'date_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        customer_key = 'customer_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        product_key = 'product_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        store_key = 'store_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        quantity = 'quantity' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        unit_price = 'unit_price' :'java.math.BigDecimal' (OPT) (sourcetypedecimals='2', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='2', sourcetypename='numeric')  SORTABLE,
+        total_amount = 'total_amount' :'java.math.BigDecimal' (OPT) (sourcetypedecimals='2', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='2', sourcetypename='numeric')  SORTABLE IS_GENERATEDCOLUMN
+    )
+    CONSTRAINT 'dw_fact_sales_pkey' PRIMARY KEY ( 'sale_id' )
+    CONSTRAINT 'dw_fact_sales_customer_key_fkey' FOREIGN KEY ( 'customer_key' ) 
+    REFERENCES 'xxxxx'.'dw_dim_customers'( 'customer_key' )  ON UPDATE NO ACTION  ON DELETE NO ACTION NOT DEFERRABLE 
+    CONSTRAINT 'dw_fact_sales_date_key_fkey' FOREIGN KEY ( 'date_key' ) 
+    REFERENCES 'xxxxx'.'dw_dim_date'( 'date_key' )  ON UPDATE NO ACTION  ON DELETE NO ACTION NOT DEFERRABLE 
+    CONSTRAINT 'dw_fact_sales_product_key_fkey' FOREIGN KEY ( 'product_key' ) 
+    REFERENCES 'xxxxx'.'dw_dim_products'( 'product_key' )  ON UPDATE NO ACTION  ON DELETE NO ACTION NOT DEFERRABLE 
+    CONSTRAINT 'dw_fact_sales_store_key_fkey' FOREIGN KEY ( 'store_key' ) 
+    REFERENCES 'xxxxx'.'dw_dim_stores'( 'store_key' )  ON UPDATE NO ACTION  ON DELETE NO ACTION NOT DEFERRABLE 
+    INDEX 'dw_fact_sales_pkey' OTHER UNIQUE PRIMARY ( 'sale_id' );
+
+CREATE OR REPLACE TABLE dw_fact_sales I18N es_euro (
+        sale_id:long (notnull, autoincrement, sourcetypeid = '-5', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '19'),
+        date_key:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        customer_key:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        product_key:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        store_key:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        quantity:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        unit_price:decimal (sourcetypeid = '2', sourcetyperadix = '10', sourcetypedecimals = '2', sourcetypesize = '10'),
+        total_amount:decimal (generatedcolumn, sourcetypeid = '2', sourcetyperadix = '10', sourcetypedecimals = '2', sourcetypesize = '10')
+    )
+    CONSTRAINT 'dw_fact_sales_pkey' PRIMARY KEY ( 'sale_id' )
+    CACHE OFF
+    TIMETOLIVEINCACHE DEFAULT
+    ADD SEARCHMETHOD dw_fact_sales(
+        I18N es_euro
+        CONSTRAINTS (
+             ADD sale_id (any) OPT ANY
+             ADD date_key (any) OPT ANY
+             ADD customer_key (any) OPT ANY
+             ADD product_key (any) OPT ANY
+             ADD store_key (any) OPT ANY
+             ADD quantity (any) OPT ANY
+             ADD unit_price (any) OPT ANY
+             ADD total_amount (any) OPT ANY
+        )
+        OUTPUTLIST (customer_key, date_key, product_key, quantity, sale_id, store_key, total_amount, unit_price
+        )
+        WRAPPER (jdbc dw_fact_sales)
+    );
+
+CREATE OR REPLACE WRAPPER JDBC dw_dim_products
+    FOLDER = '/2. base views'
+    DATASOURCENAME=psql_ds
+    SCHEMANAME='xxxxx' 
+    RELATIONNAME='dw_dim_products' 
+    OUTPUTSCHEMA (
+        product_key = 'product_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='serial')  NOT NULL SORTABLE IS_AUTOINCREMENT,
+        category_key = 'category_key' :'java.lang.Integer' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='4', sourcetypename='int4')  SORTABLE,
+        sku = 'sku' :'java.lang.String' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='50', sourcetypeid='12', sourcetypename='varchar')  SORTABLE,
+        product_name = 'product_name' :'java.lang.String' (OPT) (sourcetypedecimals='0', sourcetyperadix='10', sourcetypesize='100', sourcetypeid='12', sourcetypename='varchar')  SORTABLE,
+        price = 'price' :'java.math.BigDecimal' (OPT) (sourcetypedecimals='2', sourcetyperadix='10', sourcetypesize='10', sourcetypeid='2', sourcetypename='numeric')  SORTABLE
+    )
+    CONSTRAINT 'dw_dim_products_pkey' PRIMARY KEY ( 'product_key' )
+    CONSTRAINT 'dw_dim_products_category_key_fkey' FOREIGN KEY ( 'category_key' ) 
+    REFERENCES 'dev'.'dw_dim_categories'( 'category_key' )  ON UPDATE NO ACTION  ON DELETE NO ACTION NOT DEFERRABLE 
+    INDEX 'dw_dim_products_pkey' OTHER UNIQUE PRIMARY ( 'product_key' )
+    INDEX 'dw_dim_products_sku_key' OTHER UNIQUE ( 'sku' );
+
+CREATE OR REPLACE TABLE dw_dim_products I18N es_euro (
+        product_key:int (notnull, autoincrement, sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        category_key:int (sourcetypeid = '4', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '10'),
+        sku:text (sourcetypeid = '-9', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '50'),
+        product_name:text (sourcetypeid = '-9', sourcetyperadix = '10', sourcetypedecimals = '0', sourcetypesize = '100'),
+        price:decimal (sourcetypeid = '2', sourcetyperadix = '10', sourcetypedecimals = '2', sourcetypesize = '10')
+    )
+    FOLDER = '/2. base views'
+    CONSTRAINT 'dw_dim_products_pkey' PRIMARY KEY ( 'product_key' )
+    CACHE OFF
+    TIMETOLIVEINCACHE DEFAULT
+    ADD SEARCHMETHOD dw_dim_products(
+        I18N es_euro
+        CONSTRAINTS (
+             ADD product_key (any) OPT ANY
+             ADD category_key (any) OPT ANY
+             ADD sku (any) OPT ANY
+             ADD product_name (any) OPT ANY
+             ADD price (any) OPT ANY
+        )
+        OUTPUTLIST (category_key, price, product_key, product_name, sku
+        )
+        WRAPPER (jdbc dw_dim_products)
+    );
+
+CREATE OR REPLACE FOLDER '/3. views' ;
+
+CREATE OR REPLACE FOLDER '/99. Assoc' ;
+
+CREATE OR REPLACE ASSOCIATION dw_dim_customers_dw_fact_sales REFERENTIAL CONSTRAINT 
+FOLDER = '/99. assoc'
+    ENDPOINT dw_fact_sales dw_dim_customers PRINCIPAL (0,1)
+    ENDPOINT dw_dim_customers dw_fact_sales (0,*)
+    ADD MAPPING round(customer_key)=customer_key;
+
+CREATE OR REPLACE ASSOCIATION dw_dim_products_dw_fact_sales REFERENTIAL CONSTRAINT 
+FOLDER = '/99. assoc'
+    ENDPOINT dw_fact_sales dw_dim_products PRINCIPAL (0,1)
+    ENDPOINT dw_dim_products dw_fact_sales (0,*)
+    ADD MAPPING product_key=product_key;
+
+CREATE OR REPLACE ASSOCIATION dw_dim_date_dw_fact_sales REFERENTIAL CONSTRAINT 
+FOLDER = '/99. assoc'
+    ENDPOINT dw_fact_sales dw_dim_date PRINCIPAL (0,1)
+    ENDPOINT dw_dim_date dw_fact_sales (0,*)
+    ADD MAPPING date_key=date_key;
+
+CREATE OR REPLACE METRIC VIEW products_view1
+    FOLDER = '/3. views'
+     (
+    unit_price_sales (description = 'unit prices per sale'),
+    product_name (description = 'Product name'),
+    product_sku (description = 'product sku description'),
+    year (sourcetyperadix = '10', sourcetypesize = '10', sourcetypeid = '4'),
+    total_quantity (description = 'Total quantity of orders')
+ )
+SOURCES (
+        dates AS dw_dim_date,
+        customers AS dw_dim_customers,
+        sales AS dw_fact_sales,
+        products AS dw_dim_products    
+    )
+    ASSOCIATIONS (
+        customers sales dw_dim_customers_dw_fact_sales,
+        products sales dw_dim_products_dw_fact_sales,
+        dates sales dw_dim_date_dw_fact_sales    
+    )
+    DIMENSIONS (
+        products(
+            product_name AS products.product_name,
+            product_sku AS products.sku
+        ),
+        customers(
+            customer_name AS concat(customers.last_name, ', ', customers.first_name),
+            customer_email AS customers.email,
+            customer_id AS customers.customer_key
+        ),
+        dates(
+            date_full AS dates.full_date,
+            year AS getyear(dates.full_date)
+        ),
+        unit_price_sales AS (sales.unit_price||'test')    
+    )
+    METRICS (
+        total_quantity AS sum(sales.quantity),
+        avg_quantity AS avg(sales.quantity),
+        count_prod AS count(products.product_name),
+        number_sales AS count(sales.sale_id)    
+    )
+;
+
+ALTER VIEW products_view1
+ LAYOUT (dw_dim_products = [0, 0, 200, 200], dw_dim_customers = [0, 200, 200, 200], dw_dim_date = [0, 400, 200, 200], dw_fact_sales = [0, 600, 200, 200]);
+

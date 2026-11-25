@@ -53,8 +53,7 @@ def convert_vql_to_ossie(vql_str: str) -> str:
     """Convert a Denodo VQL string to an Ossie YAML string.
 
     The input must contain at least one ``CREATE OR REPLACE METRIC VIEW``
-    statement. ``CREATE OR REPLACE ASSOCIATION`` statements are optional but
-    recommended to reconstruct relationships.
+    statement and at least one ``CREATE [OR REPLACE] ASSOCIATION`` statement.
 
     Args:
         vql_str: Denodo VQL string.
@@ -73,6 +72,24 @@ def convert_vql_to_ossie(vql_str: str) -> str:
     if metric_view is None:
         raise VqlConversionError(
             "No CREATE METRIC VIEW statement found in the VQL input."
+        )
+
+    if metric_view.associations and not associations:
+        raise VqlConversionError(
+            "No CREATE [OR REPLACE] ASSOCIATION statement found in the VQL input. "
+            "The metric view references associations, so at least one is required."
+        )
+
+    defined = {a.name for a in associations}
+    missing = []
+    for ref in metric_view.associations:
+        name = ref.association_name.split('.')[-1]
+        if name not in defined and ref.association_name not in missing:
+            missing.append(ref.association_name)
+    if missing:
+        raise VqlConversionError(
+            "Missing CREATE [OR REPLACE] ASSOCIATION statement(s) for association(s) "
+            f"referenced in the metric view: {', '.join(missing)}."
         )
 
     ossie_dict = _build_ossie_dict(associations, metric_view)
@@ -161,7 +178,13 @@ def _build_datasets(
 
         dim_fields = fields_by_alias.get(alias, [])
         if dim_fields:
-            ds["fields"] = [_dim_field_to_ossie(f, alias) for f in dim_fields]
+            ds["fields"] = [
+                _dim_field_to_ossie(
+                    f, alias, mv.field_descriptions.get(f.name.strip('"')),
+                    mv.field_source_types.get(f.name.strip('"')),
+                )
+                for f in dim_fields
+            ]
 
         # Add custom_extension for fields_dimension if needed
         ds_field_dim = {
@@ -197,7 +220,10 @@ def _infer_alias_from_single_field(
 
 
 
-def _dim_field_to_ossie(field: DimensionFieldModel, alias: str) -> dict:
+def _dim_field_to_ossie(
+    field: DimensionFieldModel, alias: str, description: str | None = None,
+    source_types: dict | None = None,
+) -> dict:
     """Convert a DimensionFieldModel to an Ossie field dict."""
     field_name = field.name
 
@@ -210,7 +236,7 @@ def _dim_field_to_ossie(field: DimensionFieldModel, alias: str) -> dict:
     else:
         expr_str = field.expression
 
-    return {
+    result = {
         "name": field_name,
         "expression": {
             "dialects": [
@@ -218,6 +244,14 @@ def _dim_field_to_ossie(field: DimensionFieldModel, alias: str) -> dict:
             ]
         },
     }
+    if description:
+        result["description"] = description
+    if source_types:
+        result["custom_extensions"] = [{
+            "vendor_name": "DENODO",
+            "data": json.dumps(dict(source_types)),
+        }]
+    return result
 
 
 def _build_relationships(
@@ -368,14 +402,24 @@ def _build_metrics(mv: MetricViewModel) -> list[dict]:
     metrics = []
     for m in mv.metrics:
         metric_name = m.name
-        metrics.append({
+        metric = {
             "name": metric_name,
             "expression": {
                 "dialects": [
                     {"dialect": "ANSI_SQL", "expression": m.expression}
                 ]
             },
-        })
+        }
+        desc = mv.field_descriptions.get(metric_name.strip('"'))
+        if desc:
+            metric["description"] = desc
+        st = mv.field_source_types.get(metric_name.strip('"'))
+        if st:
+            metric["custom_extensions"] = [{
+                "vendor_name": "DENODO",
+                "data": json.dumps(dict(st)),
+            }]
+        metrics.append(metric)
     return metrics
 
 

@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 
 import pytest
@@ -1293,3 +1294,50 @@ class TestExampleTpcDsDatasetMetrics:
         ossie_yaml = self.FIXTURE_C.read_text(encoding="utf-8")
         with pytest.warns(UserWarning, match="Denodo currently does not support 'ai_context' and it will be ignored"):
             convert_ossie_to_vql(ossie_yaml)
+
+
+
+class TestExample15FieldDescriptions:
+    FIXTURE = FIXTURES / "example15.yaml"
+
+    def _vql(self) -> str:
+        return convert_ossie_to_vql(self.FIXTURE.read_text(encoding="utf-8"))
+
+    def test_descriptions_emitted(self):
+        vql = self._vql()
+        assert "unit_price_sales (description = 'unit prices per sale')" in vql
+        assert "product_name (description = 'Product name')" in vql
+        assert "product_sku (description = 'product sku description')" in vql
+        assert "total_quantity (description = 'Total quantity of orders')" in vql
+
+    def test_block_before_sources(self):
+        vql = self._vql()
+        assert vql.index("description = 'Product name'") < vql.index("SOURCES")
+
+    def test_field_without_description_not_in_block(self):
+        assert "year (description" not in self._vql()
+
+    def test_source_type_properties_emitted(self):
+        assert (
+            "year (sourcetyperadix = '10', sourcetypesize = '10', sourcetypeid = '4')"
+            in self._vql()
+        )
+
+    def test_roundtrip_preserves_source_types(self):
+        from ossie_denodo.vql_to_osi import convert_vql_to_ossie
+        osi = yaml.safe_load(convert_vql_to_ossie(self._vql()))
+        fields = {f["name"]: f for ds in osi["datasets"] for f in ds.get("fields", [])}
+        assert json.loads(fields["year"]["custom_extensions"][0]["data"])["sourcetypeid"] == "4"
+
+    def test_no_descriptions_no_block(self):
+        vql = convert_ossie_to_vql(_minimal_ossie())
+        assert "(description =" not in vql
+
+    def test_roundtrip_preserves_descriptions(self):
+        from ossie_denodo.vql_to_osi import convert_vql_to_ossie
+        osi = yaml.safe_load(convert_vql_to_ossie(self._vql()))
+        fields = {f["name"]: f for ds in osi["datasets"] for f in ds.get("fields", [])}
+        assert fields["product_name"]["description"] == "Product name"
+        assert "description" not in fields["year"]
+        metric = next(m for m in osi["metrics"] if m["name"] == "total_quantity")
+        assert metric["description"] == "Total quantity of orders"

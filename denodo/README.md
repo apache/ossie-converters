@@ -208,3 +208,19 @@ relationships:
 ```
 The `fields_replace` entry within `from_columns` or `to_columns` is used to apply specific logic or functions to the columns.
 
+### The Denodo field properties `sourcetyperadix`, `sourcetypesize` and `sourcetypeid` have no direct OSI equivalent.
+
+They are stored in a `custom_extensions` entry of the field (or metric) and read back from it when generating VQL.
+
+Example:
+```yaml
+fields:
+  - name: year
+    expression:
+      dialects:
+        - dialect: ANSI_SQL
+          expression: getyear(dates.full_date)
+    custom_extensions:
+      - vendor_name: DENODO
+        data: '{"sourcetyperadix": "10", "sourcetypesize": "10", "sourcetypeid": "4"}'
+```

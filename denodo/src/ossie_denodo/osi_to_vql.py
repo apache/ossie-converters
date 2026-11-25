@@ -30,6 +30,8 @@ import warnings
 
 import yaml
 
+from ossie_denodo.parser import SOURCE_TYPE_KEYS
+
 from ossie_denodo.models import (
     AssociationModel,
     AssociationRefModel,
@@ -187,6 +189,24 @@ def _build_internal_models(
     # TAGS — read from DENODO custom_extension, not from root OSI field
     tags = [str(t) for t in tags_raw] if tags_raw else []
 
+    field_descriptions: dict[str, str] = {}
+    field_source_types: dict[str, dict[str, str]] = {}
+    all_items = []
+    for ds in datasets:
+        all_items.extend(ds.get("fields") or [])
+        all_items.extend(ds.get("metrics") or [])
+    all_items.extend(metrics_raw)
+    for item in all_items:
+        if not item.get("name"):
+            continue
+        if item.get("description"):
+            field_descriptions[item["name"]] = str(item["description"])
+        ctx = _extract_denodo_extension(item)
+        if isinstance(ctx, dict):
+            st = {k: str(ctx[k]) for k in SOURCE_TYPE_KEYS if k in ctx}
+            if st:
+                field_source_types[item["name"]] = st
+
     metric_view = MetricViewModel(
         name=name,
         folder=folder,
@@ -198,6 +218,8 @@ def _build_internal_models(
         dimensions=dimensions,
         metrics=metric_fields,
         context=context,
+        field_descriptions=field_descriptions,
+        field_source_types=field_source_types,
     )
 
     return associations, metric_view
@@ -621,6 +643,23 @@ def _render_metric_view(mv: MetricViewModel) -> str:
     if mv.tags:
         tags_str = ", ".join(mv.tags)
         lines.append(f"    TAGS ({tags_str})")
+
+    # Field descriptions
+    field_names = list(dict.fromkeys([*mv.field_descriptions, *mv.field_source_types]))
+    if field_names:
+        desc_lines = []
+        for fname in field_names:
+            props = []
+            if fname in mv.field_descriptions:
+                props.append(
+                    f"description = '{mv.field_descriptions[fname].replace(chr(39), chr(39) * 2)}'"
+                )
+            for k, v in mv.field_source_types.get(fname, {}).items():
+                props.append(f"{k} = '{v.replace(chr(39), chr(39) * 2)}'")
+            desc_lines.append(f"    {fname} ({', '.join(props)})")
+        lines.append("    (")
+        lines.append(",\n".join(desc_lines))
+        lines.append(" )")
 
     # SOURCES
     if mv.sources:
