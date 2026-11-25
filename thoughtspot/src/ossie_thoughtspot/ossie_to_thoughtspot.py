@@ -1300,6 +1300,7 @@ def _match_ansi_call(name: str, args: list[str]) -> tuple[str, list[str]] | None
 
     Deliberately narrow: single-argument aggregate and scalar catalog entries
     (`SUM(expr)` and the `COUNT(DISTINCT expr)` special case) are matched.
+    ZEROIFNULL and NULLIFZERO retain their existing null-handling mappings;
     ABS, LOWER and UPPER also provide simple scalar field expressions. Other
     catalog rows need separate shape and NULL-semantics checks; namespace
     support must not enable the entire scalar catalog implicitly.

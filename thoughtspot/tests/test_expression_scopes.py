@@ -294,3 +294,34 @@ def test_unquoted_source_reads_cannot_choose_between_case_sensitive_columns():
     result = convert(model)
     assert "absolute" not in _formulas(result)
     assert result.issues.has_errors()
+
+
+@pytest.mark.parametrize(
+    "function,native", [("ZEROIFNULL", "ifnull"), ("NULLIFZERO", "nullif")]
+)
+@pytest.mark.parametrize("dialect", ["sql", "ANSI_SQL", "OSSIE_SQL_2026"])
+def test_existing_null_handling_functions_work_in_all_expression_scopes(
+    function, native, dialect
+):
+    model = _model(dialect)
+    model["datasets"][0]["fields"][1]["expression"] = _expression(
+        f"{function}(raw_amount)", dialect
+    )
+    model["datasets"][0]["metrics"][0]["expression"] = _expression(
+        f"SUM({function}(amount))", dialect
+    )
+    model["metrics"] = [
+        {
+            "name": "global",
+            "expression": _expression(f"SUM({function}(orders.amount))", dialect),
+        }
+    ]
+    result = convert(model)
+    formulas = _formulas(result)
+    assert str(formulas["absolute"]["expr"]) == f"{native} ( [orders::Amount] , 0 )"
+    for name in ("total", "global"):
+        assert (
+            str(formulas[name]["expr"])
+            == f"sum ( ({native} ( [orders::Amount] , 0 )) )"
+        )
+    assert not result.issues.has_errors(), result.issues.as_dicts()

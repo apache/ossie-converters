@@ -170,9 +170,12 @@ warning. Import continues to produce model-scoped Ossie metrics. Native
 `THOUGHTSPOT` expressions still take precedence and are preserved verbatim.
 
 Portable translation remains limited to reference expressions and catalogued
-single-argument calls (the existing aggregate forms, plus `ABS`, `LOWER` and `UPPER`).
-Other scalar catalog rows, general arithmetic, windows and `AGG` composition remain unsupported and
-are reported rather than translated approximately.
+single-argument calls: the existing aggregate forms, `ZEROIFNULL`, `NULLIFZERO`,
+`ABS`, `LOWER` and `UPPER`. The existing null-handling mappings preserve the distinction
+between NULL and zero: `ZEROIFNULL(x)` becomes `ifnull ( x , 0 )`, while
+`NULLIFZERO(x)` becomes `nullif ( x , 0 )`. These work in both field and metric
+expressions. Other scalar catalog rows, general arithmetic, windows and `AGG`
+composition remain unsupported and are reported rather than approximated.
 
 ### What a join type is assumed to be
 
