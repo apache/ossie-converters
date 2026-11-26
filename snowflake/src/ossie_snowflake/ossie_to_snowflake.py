@@ -164,7 +164,12 @@ def _convert_model(ossie):
         if converted_rels:
             result["relationships"] = converted_rels
 
-    converted_metrics = _convert_metrics(ossie)
+    table_metrics = {
+        (table["name"].lower(), metric["name"].lower())
+        for table in result.get("tables", [])
+        for metric in table.get("metrics", [])
+    }
+    converted_metrics = _convert_metrics(ossie, table_metrics)
     if converted_metrics:
         result["metrics"] = converted_metrics
 
@@ -262,7 +267,7 @@ def _convert_dataset(dataset):
     return result
 
 
-def _convert_metrics(ossie):
+def _convert_metrics(ossie, table_metrics):
     """Model-root Ossie metrics become view-level Snowflake metrics."""
     converted = []
     seen = {}
@@ -270,29 +275,46 @@ def _convert_metrics(ossie):
         item = _convert_named_expr(metric, "metric")
         if item is None:
             continue
-        item["expr"] = _model_metric_expr(item["expr"])
+        expr = _model_metric_expr(item["expr"], item["name"], table_metrics)
+        if expr is None:
+            continue
+        item["expr"] = expr
         _append_metric(converted, seen, item, already_converted=True)
     return converted
 
 
-def _model_metric_expr(expr):
+def _model_metric_expr(expr, metric_name, table_metrics):
     """Write ``AGG(dataset.metric)`` as ``dataset.metric``.
 
     In Ossie a model-scoped metric evaluates a dataset-scoped metric with
     ``AGG(dataset.metric)``. That metric is the table-level metric of the same
     name, which a Snowflake view-level metric references as ``table.metric``.
+    A reference to a table-level metric that was not exported skips the metric.
     """
     try:
         tree = parse_one(expr, dialect="snowflake")
     except (ParseError, TokenError, ValueError):
         return expr
-    changed = False
-    for agg in list(tree.find_all(exp.Agg)):
-        argument = agg.this
-        if isinstance(argument, exp.Column) and argument.table:
-            agg.replace(argument.copy())
-            changed = True
-    return tree.sql(dialect="snowflake") if changed else expr
+    missing = []
+
+    def to_metric_reference(node):
+        if isinstance(node, exp.Agg) and isinstance(node.this, exp.Column) and node.this.table:
+            reference = node.this
+            if (reference.table.lower(), reference.name.lower()) not in table_metrics:
+                missing.append(f"{reference.table}.{reference.name}")
+            return reference.copy()
+        return node
+
+    translated = tree.transform(to_metric_reference)
+    if missing:
+        warnings.warn(
+            f"Skipping metric '{metric_name}': AGG({', '.join(missing)}) refers to "
+            "a dataset-scoped metric that was not exported"
+        )
+        return None
+    if translated == tree:
+        return expr
+    return translated.sql(dialect="snowflake")
 
 
 def _convert_dataset_metrics(dataset, field_exprs):

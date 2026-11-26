@@ -86,7 +86,8 @@ table name is unqualified, and so is a `source.column` reference, unless a
 field of the same name has a different expression. A qualifier that names
 another table, or `AGG(source.measure)`, skips the metric with a warning. In a
 model-root metric, `AGG(dataset.metric)` becomes `dataset.metric`, the
-table-level metric of that name.
+table-level metric of that name; if that metric was not exported, the
+model-root metric is skipped with a warning.
 
 A unique key that repeats the dataset's primary key, with its columns in any
 order, is not emitted as a `unique_keys` entry: Snowflake semantic views

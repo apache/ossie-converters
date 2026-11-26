@@ -908,6 +908,22 @@ class TestConvertOssieToSnowflake:
             {"name": "avg_value", "expr": "my_table.total / COUNT(DISTINCT my_table.col1)"}
         ]
 
+    def test_root_metric_that_is_only_agg_of_a_dataset_metric(self):
+        model = _minimal_model(metrics=[_metric("all_total", "agg(my_table.total)")])
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(col1)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["metrics"] == [{"name": "all_total", "expr": "my_table.total"}]
+
+    def test_root_metric_agg_of_a_skipped_dataset_metric_is_skipped(self):
+        model = _minimal_model(metrics=[_metric("avg_qty", "AGG(my_table.qty) / 2")])
+        model["datasets"][0]["metrics"] = [_metric("qty", "SUM(customers.quantity)")]
+        with pytest.warns(UserWarning) as record:
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        messages = [str(w.message) for w in record]
+        assert any("'my_table.qty': expression names customers.quantity" in m for m in messages)
+        assert any("'avg_qty': AGG(my_table.qty) refers to" in m for m in messages)
+        assert "metrics" not in result
+
     def test_invalid_yaml_root_raises(self):
         with pytest.raises(OssieConversionError, match="expected a mapping"):
             convert_ossie_to_snowflake("- a list")
