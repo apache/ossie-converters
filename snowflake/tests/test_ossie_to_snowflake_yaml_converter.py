@@ -858,13 +858,55 @@ class TestConvertOssieToSnowflake:
 
     def test_dataset_metric_foreign_qualifier_is_skipped(self):
         model = _minimal_model()
-        model["datasets"][0]["metrics"] = [_metric("total", "SUM(source.quantity)")]
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(customers.quantity)")]
         with pytest.warns(
             UserWarning,
-            match=r"dataset-scoped metric 'my_table\.total': expression names source\.quantity",
+            match=r"dataset-scoped metric 'my_table\.total': expression names customers\.quantity",
         ):
             result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
         assert "metrics" not in result["tables"][0]
+
+    def test_dataset_metric_source_column_is_unqualified(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("total_qty", "SUM(source.quantity)")]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [{"name": "total_qty", "expr": "SUM(quantity)"}]
+
+    def test_dataset_metric_source_column_shadowed_by_a_field_is_skipped(self):
+        # `quantity` in a Snowflake table metric would read as the field, not the column.
+        model = _minimal_model()
+        model["datasets"][0]["fields"].append(_metric("quantity", "quantity * 12"))
+        model["datasets"][0]["metrics"] = [_metric("total_qty", "SUM(source.quantity)")]
+        with pytest.warns(
+            UserWarning, match=r"source\.quantity would read as the field 'quantity'"
+        ):
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert "metrics" not in result["tables"][0]
+
+    def test_dataset_metric_source_column_with_a_same_named_field_is_unqualified(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("n", "COUNT(source.col1)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [{"name": "n", "expr": "COUNT(col1)"}]
+
+    def test_dataset_metric_with_agg_is_skipped(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("rev", "AGG(source.total_revenue)")]
+        with pytest.warns(UserWarning, match=r"'my_table\.rev': AGG\(source\.measure\)"):
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert "metrics" not in result["tables"][0]
+
+    def test_root_metric_agg_of_a_dataset_metric_references_the_table_metric(self):
+        model = _minimal_model(
+            metrics=[_metric("avg_value", "AGG(my_table.total) / COUNT(DISTINCT my_table.col1)")]
+        )
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(col1)")]
+        result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["metrics"] == [
+            {"name": "avg_value", "expr": "my_table.total / COUNT(DISTINCT my_table.col1)"}
+        ]
 
     def test_invalid_yaml_root_raises(self):
         with pytest.raises(OssieConversionError, match="expected a mapping"):
