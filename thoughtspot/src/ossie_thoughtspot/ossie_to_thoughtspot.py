@@ -1281,8 +1281,8 @@ def _translate_ansi_sql(
                 code="TS-EXPR-ANSI-UNRESOLVED",
                 severity=Severity.WARNING,
                 message=(
-                    f"reference {key!r} does not resolve to a known field in this "
-                    f"model; no ThoughtSpot expression is produced for it"
+                    f"reference {key!r} does not resolve in this model; no "
+                    f"ThoughtSpot expression is produced for it"
                 ),
                 object_ref=object_ref,
             )
@@ -1974,6 +1974,7 @@ def _dataset_scoped_resolver(
     field_index: dict[str, tuple[str, str]],
     dataset_prefix: str,
     source_index: dict[str, tuple[str, str]] | None = None,
+    on_undeclared_source_column: Callable[[str], None] | None = None,
 ) -> Callable[[str], tuple[str, str] | None]:
     """`resolve_field` for an expression written inside `dataset_prefix`.
 
@@ -2007,7 +2008,14 @@ def _dataset_scoped_resolver(
             # field called `source` has no way left to name a source column,
             # and the qualifier must not be read as one here either.
             return None
-        return source_index.get(f"{dataset_prefix}.{column}")
+        resolved = source_index.get(f"{dataset_prefix}.{column}")
+        if resolved is None and on_undeclared_source_column is not None:
+            # The caller can say what the generic "does not resolve" cannot:
+            # this names a source column the dataset never declared as a
+            # field, so no Table column was built for it and none can be,
+            # its datatype being unknowable from the document.
+            on_undeclared_source_column(column)
+        return resolved
 
     return resolve
 
@@ -2604,10 +2612,27 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         # well went the same way as one that cannot be built at all. Each
         # metric now reports its own outcome.
         dataset_prefix = dataset.get("name") or "<unnamed>"
-        resolve_in_dataset = _dataset_scoped_resolver(
-            field_index, dataset_prefix, source_index,
-        )
         for metric in dataset_metrics:
+            metric_ref = f"metric:{metric.get('name') or '<unnamed>'}"
+
+            def _report_undeclared(column: str, _ref: str = metric_ref) -> None:
+                log.add(
+                    code="TS-METRIC-SOURCE-COLUMN-UNDECLARED",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"source column {column!r} is referenced but dataset "
+                        f"{dataset_prefix!r} does not declare it as a field, so no "
+                        f"table column was built for it. One cannot be built here "
+                        f"either: the document states no datatype for a column it "
+                        f"never declares, and this converter does not invent one. "
+                        f"Declare it as a field to include this metric"
+                    ),
+                    object_ref=_ref,
+                )
+
+            resolve_in_dataset = _dataset_scoped_resolver(
+                field_index, dataset_prefix, source_index, _report_undeclared,
+            )
             built = _build_metric(metric, allocator, resolve_in_dataset, log)
             if built is None:
                 continue

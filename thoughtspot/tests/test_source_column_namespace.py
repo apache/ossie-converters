@@ -40,7 +40,7 @@ from ossie_thoughtspot.constants import (
     FIELD_STASH_DB_COLUMN_NAME,
     FIELD_STASH_DB_COLUMN_NAME_WITNESS,
 )
-from ossie_thoughtspot.issues import IssueLog
+from ossie_thoughtspot.issues import IssueLog, Severity
 from ossie_thoughtspot.ossie_to_thoughtspot import (
     _build_source_column_index,
     _dataset_scoped_resolver,
@@ -180,3 +180,53 @@ class TestEndToEnd:
         formulas = {f["name"]: f["expr"]
                     for f in result.documents.model.body.get("formulas") or []}
         assert formulas["total"] == "sum ( [orders::Amount] )"
+
+
+class TestAnUndeclaredSourceColumnIsRefusedNotInvented:
+    """A source column the dataset never declares has no datatype anywhere.
+
+    The document states one only for a declared field, and the warehouse
+    cannot be asked: `connection/search` returns an empty column hierarchy
+    (live-verified, recorded in this repo's ts-cli rules). Minting a table
+    column would therefore mean asserting a `data_type` nobody knows, and a
+    column typed wrongly is the silent kind of failure this converter exists
+    to avoid. So the metric is refused, and the issue says why.
+    """
+
+    def _issues(self, metric_sql):
+        document = _document(
+            [_ts_field("amount", "Amount", "AMT")],
+            metrics=[{"name": "qty", "expression": {"sql": metric_sql}}],
+        )
+        return convert(document)
+
+    def test_the_metric_is_not_built(self):
+        result = self._issues("SUM(source.QUANTITY)")
+        assert "formulas" not in result.documents.model.body
+
+    def test_the_issue_names_the_column_the_dataset_and_the_remedy(self):
+        result = self._issues("SUM(source.QUANTITY)")
+        [issue] = [i for i in result.issues.as_dicts()
+                   if i["code"] == "TS-METRIC-SOURCE-COLUMN-UNDECLARED"]
+        assert issue["severity"] == Severity.ERROR.value
+        assert "QUANTITY" in issue["message"]
+        assert "orders" in issue["message"]
+        assert "Declare it as a field" in issue["message"]
+        assert issue["object_ref"] == "metric:qty"
+
+    def test_a_declared_source_column_raises_nothing(self):
+        result = self._issues("SUM(source.AMT)")
+        assert [i for i in result.issues.as_dicts()
+                if i["code"] == "TS-METRIC-SOURCE-COLUMN-UNDECLARED"] == []
+
+    def test_one_refused_metric_does_not_take_the_others_with_it(self):
+        document = _document(
+            [_ts_field("amount", "Amount", "AMT")],
+            metrics=[
+                {"name": "qty", "expression": {"sql": "SUM(source.QUANTITY)"}},
+                {"name": "tot", "expression": {"sql": "SUM(source.AMT)"}},
+            ],
+        )
+        result = convert(document)
+        built = [f["name"] for f in result.documents.model.body.get("formulas") or []]
+        assert built == ["tot"]
