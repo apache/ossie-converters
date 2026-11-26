@@ -937,10 +937,10 @@ def _pre_aggregated_measure_columns(
     """`"dataset.source_measure" -> display name`, for columns actually
     carrying `is_pre_aggregated_measure`.
 
-    Narrower than `_build_source_column_index` on purpose. A metric may only
-    be surfaced as an AGGREGATE model column when the table column under it
-    is one too (invariant I16), so the model side asks this rather than the
-    general source index, and refuses when the answer is no.
+    Narrower than `_build_source_column_index` on purpose. A model column
+    at `aggregation: AGGREGATE` must sit on a table column that is AGGREGATE
+    too, so the model side asks this rather than the general source index,
+    and refuses when the answer is no.
     """
     index: dict[str, str] = {}
     for prefix, table_doc in table_doc_by_prefix.items():
@@ -2791,9 +2791,9 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
                     "column_id": f"{table_name}::{column_display}",
                     "properties": {
                         "column_type": "MEASURE",
-                        # I16: a Model AGGREGATE column must sit on a Table
+                        # A model column at AGGREGATE must sit on a table
                         # column that is AGGREGATE too, which
-                        # `_flag_pre_aggregated_measures` has just made it.
+                        # `_mint_pre_aggregated_measures` has just made it.
                         "aggregation": "AGGREGATE",
                         "index_type": "DONT_INDEX",
                     },

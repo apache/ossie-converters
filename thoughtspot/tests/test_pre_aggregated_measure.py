@@ -161,8 +161,9 @@ class TestTheModelSurfacesItAsAColumn:
         assert entry["description"] == "Dollar value."
 
     def test_exactly_one_model_column_points_at_the_measure(self):
-        # Two would mean a field declared it as well, which the spec forbids
-        # and which I16 would then be violated by from the other side.
+        # Two would mean a field declared it as well, which the spec forbids,
+        # and the second column would sit at ATTRIBUTE over a table column
+        # that is AGGREGATE -- the same rule broken from the other side.
         pointing = [c["name"] for c in self._model()["columns"]
                     if c.get("column_id") == "SV_SALES::total_revenue"]
         assert pointing == ["Revenue"]
