@@ -646,14 +646,14 @@ _ROW_KINDS = {
     "boolean": "boolean",
 }
 
-# The declared types a calculated column is translated under. ``int64`` and ``decimal``
-# are left out on purpose: DAX stores the expression's value converted to a whole number
-# or to a fixed decimal, and the translator does not tell those from other numbers yet,
-# so ``[Amount] / 3`` in an ``int64`` column would come out as ``amount / 3``.
-_CALCULATED_ROW_KINDS = {
-    "string": "text",
-    "double": "number",
-    "boolean": "boolean",
+#: TMSL number types the translator tells from other numbers, as ``RowColumn.number``.
+#: DAX stores a calculated column's value converted to its declared type, so an ``int64``
+#: column is translated only for an expression that is a whole number already
+#: (``[Amount] / 3`` is not), and a ``decimal`` column only for a whole number or a fixed
+#: decimal.
+_ROW_NUMBERS = {
+    "int64": "whole number",
+    "decimal": "fixed decimal",
 }
 
 
@@ -672,7 +672,7 @@ def _row_kind(column):
     if not calculated:
         return _ROW_KINDS.get(data_type)
     # Any other declared type keeps its own name, so no expression is taken for it.
-    return _CALCULATED_ROW_KINDS.get(data_type, data_type)
+    return _ROW_KINDS.get(data_type, data_type)
 
 
 def _row_columns(table):
@@ -690,6 +690,7 @@ def _row_columns(table):
             kind=_row_kind(column),
             # TOM's default is nullable; only an explicit false rules BLANK out.
             nullable=column.get("isNullable") is not False,
+            number=_ROW_NUMBERS.get(column.get("dataType")),
         )
     return columns
 
@@ -698,8 +699,10 @@ def _calculated_column_expression(dax_expression, scope, table_name, row_columns
     """Build a field expression and its retained-DAX reason/detail for the report."""
     if row_columns is None:
         return make_expression(dax_expression, DIALECT_DAX), "dax_translation_disabled", None
-    declared = row_columns[name].kind
-    sql, reason = translate_column(dax_expression, table_name, row_columns, declared)
+    declared = row_columns[name]
+    sql, reason = translate_column(
+        dax_expression, table_name, row_columns, declared.kind, declared.number
+    )
     if sql is None:
         warn(
             scope,

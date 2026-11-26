@@ -200,7 +200,7 @@ _DATE_COLUMNS = (
      "expression": "HOUR([Logged])"},
     {"name": "BookedHour", "type": "calculated", "dataType": "double",
      "expression": "HOUR([Booked])"},
-    # An int64 calculated column stays DAX until the translator types whole numbers.
+    # A date part is a whole number, so it is translated in an int64 column too.
     {"name": "BookedYearWhole", "type": "calculated", "dataType": "int64",
      "expression": "YEAR([Booked])"},
 )
@@ -214,7 +214,8 @@ def test_import_reads_date_and_datetime_columns_from_the_format_string(bim):
     assert _dialects(_field(document, "BookedYear"))["OSSIE_SQL_2026"] == "YEAR(booked_on)"
     assert _dialects(_field(document, "LoggedHour"))["OSSIE_SQL_2026"] == "HOUR(logged_at)"
     assert list(_dialects(_field(document, "BookedHour"))) == ["DAX"]
-    assert list(_dialects(_field(document, "BookedYearWhole"))) == ["DAX"]
+    whole = _dialects(_field(document, "BookedYearWhole"))
+    assert whole["OSSIE_SQL_2026"] == "YEAR(booked_on)"
 
 
 # A calculated column stores its value converted to its declared type, so a date in a
