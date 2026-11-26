@@ -842,6 +842,124 @@ def _build_sql_view_body(
     return body
 
 
+def _pre_aggregated_source_measure(metric: dict) -> str | None:
+    """The source measure a metric composes with `AGG(source.measure)`, or
+    `None` when it is any other expression.
+
+    Core-spec Metric Scoping rule 7: a dataset-scoped metric MAY evaluate a
+    measure of its `source` this way when the `source` is a measure
+    relation, and the argument MUST be a single `source.measure` reference.
+    Rule 9 adds that the document does not say which source columns are
+    measures, so the call itself is the author's assertion and the only
+    thing to check is its form.
+
+    A composite such as `AGG(source.total_revenue) / COUNT(DISTINCT id)` is
+    legal Ossie and is deliberately NOT matched here: ThoughtSpot carries a
+    pre-aggregated measure as a COLUMN, and a composite is not one.
+    """
+    for entry in portable_expression_entries(metric.get("expression")):
+        expr = (entry.get("expression") or "").strip()
+        call = formula.split_call(expr)
+        if call is None:
+            continue
+        name, args = call
+        if name.upper() != "AGG" or len(args) != 1:
+            continue
+        qualifier, _, column = args[0].strip().partition(".")
+        if qualifier.casefold() == _SOURCE_QUALIFIER and column:
+            return column
+    return None
+
+
+def _mint_pre_aggregated_measures(
+    dataset: dict, body: dict, kind: str, log: IssueLog, *, object_ref: str,
+) -> None:
+    """Add a table column for every measure this dataset's metrics compose
+    with `AGG(source.x)`.
+
+    A source measure is NOT a field. "A field is never a measure"
+    (core-spec, Datasets), so the measure a metric AGGs has no field
+    declaring it and no column was built for it. One is added here.
+
+    The datatype comes from the metric's own `datatype`, which is the only
+    place the document states it. A metric that declares none is left alone
+    and refused where it is built: nothing here invents a type, because a
+    column silently typed INT64 over a DECIMAL measure is the failure this
+    converter exists to prevent.
+
+    ThoughtSpot carries such a column with four properties, verified against
+    a live Semantic-View-backed Table. Without
+    `is_pre_aggregated_measure` a newer build plans the column as an
+    ATTRIBUTE and refuses `AGG()` on it outright -- which is what makes
+    ThoughtSpot a conforming consumer of Metric Scoping rule 9, rather than
+    one that quietly substitutes an ordinary aggregate.
+    """
+    columns = body.get(_column_key_for(kind))
+    if columns is None:
+        return
+    existing = {
+        (column.get("db_column_name")
+         or column.get("sql_output_column")
+         or column.get("name"))
+        for column in columns
+    }
+    for metric in dataset.get("metrics") or []:
+        source_measure = _pre_aggregated_source_measure(metric)
+        if source_measure is None or source_measure in existing:
+            # Already a column means a field declares it, which the spec
+            # forbids for a measure. Refused where the metric is built; not
+            # silently overwritten here.
+            continue
+        datatype = metric.get("datatype")
+        if datatype is None:
+            continue
+        column = {
+            "name": source_measure,
+            "properties": {
+                "column_type": "MEASURE",
+                "aggregation": "AGGREGATE",
+                "index_type": "DONT_INDEX",
+                "is_pre_aggregated_measure": True,
+            },
+            "db_column_properties": {"data_type": datatypes.to_tml(datatype)},
+        }
+        if kind == "sql_view":
+            column["sql_output_column"] = source_measure
+        else:
+            column["db_column_name"] = source_measure
+        columns.append(column)
+        existing.add(source_measure)
+
+
+def _pre_aggregated_measure_columns(
+    table_doc_by_prefix: dict[str, TmlDocument | None],
+) -> dict[str, str]:
+    """`"dataset.source_measure" -> display name`, for columns actually
+    carrying `is_pre_aggregated_measure`.
+
+    Narrower than `_build_source_column_index` on purpose. A metric may only
+    be surfaced as an AGGREGATE model column when the table column under it
+    is one too (invariant I16), so the model side asks this rather than the
+    general source index, and refuses when the answer is no.
+    """
+    index: dict[str, str] = {}
+    for prefix, table_doc in table_doc_by_prefix.items():
+        if table_doc is None or not prefix:
+            continue
+        for column in _physical_columns_of(table_doc):
+            if not (column.get("properties") or {}).get("is_pre_aggregated_measure"):
+                continue
+            display_name = column.get("name")
+            source_name = (
+                column.get("db_column_name")
+                or column.get("sql_output_column")
+                or display_name
+            )
+            if display_name and source_name:
+                index[f"{prefix}.{source_name}"] = display_name
+    return index
+
+
 def build_table(dataset: dict, log: IssueLog, *, connection_name: str | None = None) -> TmlDocument:
     """One Ossie dataset -> one ThoughtSpot `table:`/`sql_view:` TML document.
 
@@ -881,9 +999,11 @@ def build_table(dataset: dict, log: IssueLog, *, connection_name: str | None = N
 
     if _decide_kind(dataset, payload, log, object_ref=object_ref) == "sql_view":
         body = _build_sql_view_body(dataset, payload, connection, log, object_ref=object_ref)
+        _mint_pre_aggregated_measures(dataset, body, "sql_view", log, object_ref=object_ref)
         return TmlDocument(kind="sql_view", body=body, guid=None)
 
     body = _build_table_body(dataset, payload, connection, log, object_ref=object_ref)
+    _mint_pre_aggregated_measures(dataset, body, "table", log, object_ref=object_ref)
     return TmlDocument(kind="table", body=body, guid=None)
 
 
@@ -2574,6 +2694,7 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
 
     field_index = _build_field_index(datasets)
     source_index = _build_source_column_index(table_doc_by_prefix)
+    pre_aggregated = _pre_aggregated_measure_columns(table_doc_by_prefix)
     resolve_field = field_index.get
 
     allocator = _DisplayNameAllocator()
@@ -2629,6 +2750,59 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
                     ),
                     object_ref=_ref,
                 )
+
+            source_measure = _pre_aggregated_source_measure(metric)
+            if source_measure is not None:
+                # A pre-aggregated measure is a COLUMN in ThoughtSpot, never
+                # a formula: there is no formula syntax for "hand this to the
+                # platform's own measure function". `_build_metric`'s "always
+                # a formula" rule is the one shape that cannot express this
+                # one, so the column is built here instead.
+                column_display = pre_aggregated.get(
+                    f"{dataset_prefix}.{source_measure}")
+                if column_display is None:
+                    log.add(
+                        code="TS-METRIC-SOURCE-MEASURE-UNTYPED",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"metric composes source measure {source_measure!r} "
+                            f"with AGG(), which ThoughtSpot carries as a "
+                            f"pre-aggregated measure column. No such column could "
+                            f"be built: either the metric declares no datatype, "
+                            f"and the document states one nowhere else, or "
+                            f"dataset {dataset_prefix!r} declares "
+                            f"{source_measure!r} as a field, which a source "
+                            f"measure may not be. Give the metric a datatype"
+                        ),
+                        object_ref=f"metric:{metric.get('name') or '<unnamed>'}",
+                    )
+                    continue
+                table_name = dataset_prefix
+                payload = stash.read_stash(metric)
+                live_name = metric.get("name") or "<unnamed>"
+                display_name = _restore_tml_name(
+                    payload, live_name, log, object_ref=f"metric:{live_name}",
+                )
+                metric_object_ref = f"metric:{display_name}"
+                entry = {
+                    "name": allocator.allocate(
+                        display_name, log, object_ref=metric_object_ref,
+                    ),
+                    "column_id": f"{table_name}::{column_display}",
+                    "properties": {
+                        "column_type": "MEASURE",
+                        # I16: a Model AGGREGATE column must sit on a Table
+                        # column that is AGGREGATE too, which
+                        # `_flag_pre_aggregated_measures` has just made it.
+                        "aggregation": "AGGREGATE",
+                        "index_type": "DONT_INDEX",
+                    },
+                }
+                description = metric.get("description")
+                if description:
+                    entry["description"] = description
+                columns.append(entry)
+                continue
 
             resolve_in_dataset = _dataset_scoped_resolver(
                 field_index, dataset_prefix, source_index, _report_undeclared,
