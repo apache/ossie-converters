@@ -155,9 +155,15 @@ def _validate_entity_identities(pig):
     identities, dataset_names = set(), set()
     for bucket, entities in pig.items():
         for entity in entities:
-            if "entityIdentifier" not in entity:
+            identifier = entity.get("entityIdentifier")
+            # Some preserved entities and bindings have no complete identity.
+            # Import keeps these opaque, so collision checks must do so too.
+            if not isinstance(identifier, dict) or any(
+                not isinstance(identifier.get(key), str) or not identifier[key].strip()
+                for key in ("namespace", "name", "entityType")
+            ):
                 continue
-            identity = _identity(entity["entityIdentifier"])
+            identity = _identity(identifier)
             if bucket in ("objects", "eventSources", "events"):
                 name = _name(identity).casefold()
                 if name in dataset_names:

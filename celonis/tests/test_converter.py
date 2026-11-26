@@ -414,6 +414,40 @@ def test_export_rejects_collision_with_preserved_identity(pig, bucket):
 
 
 @pytest.mark.parametrize(
+    "identifier",
+    [
+        None,
+        {},
+        {"name": "binding"},
+        {"namespace": None, "name": "binding", "entityType": "DATA_BINDING"},
+        {"namespace": "d", "name": " ", "entityType": "DATA_BINDING"},
+        {"namespace": "d", "name": 123, "entityType": "DATA_BINDING"},
+    ],
+)
+def test_incomplete_preserved_identifiers_round_trip(identifier):
+    pig = {
+        "objects": [
+            {
+                "entityIdentifier": {
+                    "namespace": "d", "name": "O", "entityType": "OBJECT"
+                },
+                "fields": [{"id": "ID", "dataType": "STRING"}],
+            }
+        ],
+        "dataBindings": [
+            {
+                "entityIdentifier": deepcopy(identifier),
+                "entityRef": {"namespace": "d", "name": "O", "entityType": "OBJECT"},
+                "sql": "SELECT * FROM o",
+            }
+        ],
+        "futureEntities": [{"entityIdentifier": deepcopy(identifier), "extra": True}],
+    }
+    model = celonis_to_ossie(pig)
+    assert ossie_to_celonis(model) == pig
+
+
+@pytest.mark.parametrize(
     "property,value",
     [
         ("ai_context", "model notes"),
