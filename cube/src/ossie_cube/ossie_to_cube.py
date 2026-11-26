@@ -1277,7 +1277,11 @@ def _model_metric_measure_names(metrics):
         if not isinstance(metric, dict) or not isinstance(metric.get("name"), str):
             continue
         stash = read_stash(metric)
-        names.add((stash.get("name") or sanitize_name(metric["name"], "metric", set())).lower())
+        # Dataset imports record their native member separately from a name
+        # override. Use the same precedence as _build_dataset_measures so a
+        # legacy key cannot claim the member selected by a saved view.
+        pinned = stash.get("name") or stash.get("dataset_metric_member")
+        names.add((pinned or sanitize_name(metric["name"], "metric", set())).lower())
         measure = stash.get("measure")
         if isinstance(measure, dict) and measure.get("name"):
             names.add(str(measure["name"]).lower())

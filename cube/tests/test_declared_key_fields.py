@@ -918,13 +918,14 @@ def test_projected_join_keys_follow_native_sql_instead_of_parked_expressions():
 
 
 @pytest.mark.parametrize("native_name", ["id", "ID"])
-def test_legacy_key_fields_reserve_stored_dataset_metric_names(native_name):
+@pytest.mark.parametrize("stash_key", ["name", "dataset_metric_member"])
+def test_legacy_key_fields_reserve_stored_dataset_metric_names(native_name, stash_key):
     view = {"name": "shop", "cubes": [{"join_path": "orders", "includes": [native_name]}]}
     model = {"version": OSSIE_VERSION, "name": "shop", "datasets": [{
         "name": "orders", "source": "sales.public.orders", "primary_key": ["id"],
         "fields": [{"name": "amount", "expression": expression("amount"), "datatype": "Decimal"}],
         "metrics": [{"name": "row_count", "expression": expression("SUM(amount)"),
-                     "nonportable_extensions": [{"vendor_name": "CUBE", "data": {"_v": 1, "name": native_name}}]}],
+                     "nonportable_extensions": [{"vendor_name": "CUBE", "data": {"_v": 1, stash_key: native_name}}]}],
     }], "nonportable_extensions": [{"vendor_name": "CUBE", "data": {
         "_v": 1, "views": {"shop": view}, "mapped_view": "shop",
     }}]}
@@ -938,3 +939,46 @@ def test_legacy_key_fields_reserve_stored_dataset_metric_names(native_name):
         out, _ = convert_cube_to_ossie(files)
         model = yaml.safe_load(out)
         assert_declared(model)
+
+
+def test_legacy_key_reservation_uses_the_effective_stored_metric_name():
+    model = {"version": OSSIE_VERSION, "name": "shop", "datasets": [{
+        "name": "orders", "source": "sales.public.orders", "primary_key": ["id"],
+        "fields": [field("amount", "amount")],
+        "metrics": [{"name": "row_count", "expression": expression("SUM(amount)"),
+                     "nonportable_extensions": [{"vendor_name": "CUBE", "data": {
+                         "_v": 1, "name": "preferred", "dataset_metric_member": "id"}}]}],
+    }]}
+    orders = cubes(export(model))["orders"]
+    assert set(by_name(orders["measures"])) == {"preferred"}
+    assert by_name(orders["dimensions"])["id"]["primary_key"] is True
+
+
+def test_imported_dataset_metric_keeps_its_view_binding_when_a_key_becomes_legacy():
+    from ossie_cube import convert_cube_to_ossie as import_native
+
+    original = {"cubes": [{
+        "name": "orders", "sql_table": "sales.public.orders",
+        "dimensions": [
+            {"name": "order_key", "sql": "id", "type": "number", "primary_key": True},
+            {"name": "amount", "sql": "amount", "type": "number"},
+        ],
+        "measures": [{"name": "id", "sql": "amount", "type": "sum"}],
+    }], "views": [{"name": "shop", "cubes": [{"join_path": "orders", "includes": ["id"]}]}]}
+    imported, _ = import_native({"model.yml": yaml.safe_dump(original)})
+    model = yaml.safe_load(imported)
+    ds = model["datasets"][0]
+    metric = ds["metrics"][0]
+    assert stash_of(metric)["dataset_metric_member"] == "id"
+    metric["name"] = "row_count"
+    ds["fields"] = [f for f in ds["fields"] if f["name"] != "order_key"]
+    ds["primary_key"] = ["id"]
+    files = export(model)
+    orders = cubes(files)["orders"]
+    assert set(by_name(orders["measures"])) == {"id"}
+    key = next(d for d in orders["dimensions"] if d.get("primary_key"))
+    assert key["name"].lower() != "id"
+    assert key["sql"] == "id"
+    assert key["public"] is False
+    view = next(v for doc in parse_files(files).values() for v in doc.get("views", []))
+    assert view["cubes"][0]["includes"] == ["id"]
