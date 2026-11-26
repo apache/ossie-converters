@@ -29,6 +29,7 @@ from referencing import Registry, Resource
 
 from .converter import (
     ConversionError,
+    _complete_identity,
     _core,
     _extension,
     _identity,
@@ -36,6 +37,7 @@ from .converter import (
     _metadata,
     _name,
     _quote,
+    _text,
     _validate,
     celonis_to_ossie,
 )
@@ -251,12 +253,12 @@ def build_ontology_documents(model, *, semantic_model_iri=None, ontology_iri=Non
     remainder = metadata["remainder"] if metadata else {}
     native_entities = {}
     for bucket, entities in remainder.items():
+        if bucket in ("relationships", "dataBindings"):
+            continue
         for entity in entities:
-            if "entityIdentifier" in entity and bucket not in (
-                "relationships",
-                "dataBindings",
-            ):
-                key = _identity_key(_identity(entity["entityIdentifier"]))
+            identity = _complete_identity(entity)
+            if identity is not None:
+                key = _identity_key(identity)
                 if key in native_entities:
                     raise ConversionError(
                         f"Duplicate native ontology entity identity: {key}"
@@ -602,8 +604,9 @@ def apply_ontology_documents(
         if bucket in ("relationships", "dataBindings"):
             continue
         for entity in values:
-            if "entityIdentifier" in entity:
-                entities[_identity_key(_identity(entity["entityIdentifier"]))] = entity
+            identity = _complete_identity(entity)
+            if identity is not None:
+                entities[_identity_key(identity)] = entity
     datasets = {d["name"]: d for d in model["datasets"]}
     current_identity = {}
     for concept, record in records.items():
@@ -748,7 +751,7 @@ def apply_ontology_documents(
             raise ConversionError(
                 "New type relationships cannot translate multiplicity, rules or derivations"
             )
-        identity = (namespace, name, "RELATIONSHIP")
+        identity = (_text(namespace, "namespace"), name, "RELATIONSHIP")
         if _identity_key(identity) in native_relations:
             raise ConversionError(
                 f"New ontology relationship identity collision: {name}"

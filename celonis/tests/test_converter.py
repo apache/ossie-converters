@@ -447,6 +447,21 @@ def test_incomplete_preserved_identifiers_round_trip(identifier):
     assert ossie_to_celonis(model) == pig
 
 
+def test_relationship_apache_ossie_clears_removed_or_string_context(pig):
+    model = convert(pig)
+    model["relationships"][0]["ai_context"] = {"instructions": "join rule"}
+    exported = ossie_to_celonis(model)
+    imported = convert(exported)
+    del imported["relationships"][0]["ai_context"]
+    updated = ossie_to_celonis(imported)
+    stored = json.loads(updated["relationships"][1]["attributes"]["apache_ossie"])
+    assert "ai_context" not in stored
+    assert "ai_context" not in convert(updated)["relationships"][0]
+    imported["relationships"][0]["ai_context"] = '{"instructions": "join rule"}'
+    as_text = ossie_to_celonis(imported)
+    assert convert(as_text)["relationships"][0]["ai_context"] == '{"instructions": "join rule"}'
+
+
 @pytest.mark.parametrize(
     "property,value",
     [
