@@ -46,7 +46,7 @@ from pathlib import Path
 import pytest
 
 import snapshots
-from ossie_holistics import _yaml, aml_to_ossie, aql, ossie_to_aml
+from ossie_holistics import _yaml, aml_to_ossie, aql, ossie_to_aml, sqlrefs
 from ossie_holistics.cli import main
 from ossie_holistics.errors import ConversionError
 from ossie_holistics.issues import Severity
@@ -754,3 +754,202 @@ def test_trino_dialect_parses_and_rewrites_column_references():
         dialect="TRINO",
     )
     assert [c.name for c in cols] == ["created_at", "user_id"]
+
+
+@pytest.mark.parametrize(
+    ("dialect", "sqlglot_name", "expression", "names"),
+    [
+        # sqlglot's default dialect cannot parse the containment operator.
+        (
+            "POSTGRES",
+            "postgres",
+            "tags @> ARRAY['vip'] AND payload ->> 'plan' = 'pro'",
+            ["tags", "payload"],
+        ),
+        # Read without the dialect, `day` comes back as a column.
+        (
+            "REDSHIFT",
+            "redshift",
+            "DATEDIFF(day, created_at, shipped_at)",
+            ["created_at", "shipped_at"],
+        ),
+    ],
+)
+def test_postgres_and_redshift_dialects_parse_and_find_column_references(
+    dialect, sqlglot_name, expression, names
+):
+    from ossie_holistics import sqlrefs
+
+    assert sqlrefs.SQLGLOT_DIALECT[dialect] == sqlglot_name
+    cols = sqlrefs.columns(expression, dialect=dialect)
+    assert [c.name for c in cols] == names
+
+
+@pytest.mark.parametrize(
+    ("dialect", "body", "written"),
+    [
+        ("POSTGRES", "tags @> ARRAY['vip']", "{{ #SOURCE.tags }} @> ARRAY['vip']"),
+        (
+            "REDSHIFT",
+            "DATEDIFF(day, created_at, shipped_at)",
+            "DATEDIFF(day, {{ #SOURCE.created_at }}, {{ #SOURCE.shipped_at }})",
+        ),
+    ],
+)
+def test_a_postgres_or_redshift_body_is_kept_for_that_warehouse(dialect, body, written):
+    """`to-aml` aimed at the warehouse a body is written for keeps the body.
+
+    While the dialect was missing from `SQLGLOT_DIALECT` the CLI refused it as a
+    target and the body was read in sqlglot's default dialect, which cannot
+    parse the first of these and takes `day` in the second for a column.
+    """
+    document = {
+        "version": "0.3.0.dev0",
+        "name": "shop",
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "public.orders",
+                "primary_key": ["id"],
+                "fields": [
+                    {
+                        "name": name,
+                        "expression": {"dialects": [{"dialect": dialect, "expression": sql}]},
+                    }
+                    for name, sql in (("id", "id"), ("derived", body))
+                ],
+            }
+        ],
+    }
+    result = ossie_to_aml.convert(document, dialect, data_source_name="warehouse")
+
+    orders = next(text for name, text in result.files if name.endswith("orders.model.aml"))
+    assert f"definition: @sql {written};;" in orders
+
+
+def _aql_definitions(result) -> dict[str, str]:
+    """Each dataset-level metric a conversion wrote, by name, with its AQL body."""
+    dataset = next(text for name, text in result.files if name.endswith(".dataset.aml"))
+    return dict(
+        re.findall(r"^  metric (\w+) \{.*?^    definition: @aql (.*?);;", dataset, re.M | re.S)
+    )
+
+
+def _dropped(result) -> set[str]:
+    return {
+        issue["object_ref"]
+        for issue in result.issues.as_dicts()
+        if issue["code"] == ossie_to_aml.ISSUE_METRIC_NOT_TRANSLATED
+    }
+
+
+@pytest.mark.parametrize("dialect", ["POSTGRES", "REDSHIFT"])
+def test_a_dataset_metric_keeps_its_aql_when_the_target_divides_integers(dialect):
+    """A portable body the target renders with a cast is translated as written.
+
+    Postgres and Redshift divide two integers as integers, so sqlglot renders
+    `SUM(items.quantity) / COUNT(users.id)` with the numerator cast to
+    `DOUBLE PRECISION`. `CAST` has no entry in the AQL function table, and
+    translating the rendering dropped the metric with an ERROR.
+    """
+    document = _yaml.load(snapshots.METRIC_REFERENCES.read_text(encoding="utf-8"))
+    portable = ossie_to_aml.convert(document, "ANSI_SQL", data_source_name="warehouse")
+    result = ossie_to_aml.convert(document, dialect, data_source_name="warehouse")
+
+    assert not _dropped(result)
+    definitions = _aql_definitions(result)
+    assert definitions["quantity_per_customer"] == "sum(items.quantity) / count(users.id)"
+    assert definitions == _aql_definitions(portable)
+    rendered_as_aql = next(
+        issue["message"]
+        for issue in result.issues.as_dicts()
+        if issue["code"] == ossie_to_aml.ISSUE_RENDERED_AS_AQL
+        and issue["object_ref"] == "quantity_per_customer"
+    )
+    assert "The ANSI_SQL expression was rendered as AQL" in rendered_as_aql
+    # The metric is written from the portable body, so no rendering is reported for it.
+    assert not [
+        issue
+        for issue in result.issues.as_dicts()
+        if issue["code"] == ossie_to_aml.ISSUE_TRANSPILED
+        and issue["object_ref"] == "quantity_per_customer"
+    ]
+
+
+@pytest.mark.parametrize("dialect", ["POSTGRES", "REDSHIFT"])
+def test_the_documented_tpcds_metric_reaches_aml_for_postgres_and_redshift(dialect):
+    """`customer_lifetime_value` is the worked example in `docs/aql.md`."""
+    document = _yaml.load(snapshots.TPCDS_OSSIE.read_text(encoding="utf-8"))
+    result = ossie_to_aml.convert(document, dialect, data_source_name="warehouse")
+
+    assert _aql_definitions(result)["customer_lifetime_value"] == (
+        "sum(store_sales.ss_ext_sales_price) / count_distinct(customer.c_customer_sk)"
+    )
+    # The window functions are the only metrics with no AQL form, as on every other target.
+    assert _dropped(result) == {"cumulative_sales", "brand_rank_in_store", "monthly_sales_change"}
+
+
+@pytest.mark.parametrize("dialect", sorted(sqlrefs.SQLGLOT_DIALECT))
+def test_a_portable_body_with_an_aql_form_is_kept_on_every_target(dialect):
+    """The target changes how a `@sql` body is written, not whether a metric has AQL."""
+    document = _yaml.load(snapshots.AQL_TRANSLATION.read_text(encoding="utf-8"))
+    result = ossie_to_aml.convert(document, dialect, data_source_name="warehouse")
+
+    definitions = _aql_definitions(result)
+    assert definitions["quantity_per_customer"] == (
+        "sum(items.quantity) / count_distinct(users.id)"
+    )
+    assert definitions["rounded_ratio"] == (
+        "round(safe_divide(sum(items.quantity), abs(count(users.id))), 2)"
+    )
+    assert "windowed_rank" in _dropped(result)
+
+
+def _with_metric(name: str, dialect: str, body: str) -> dict:
+    """The AQL translation fixture with one more dataset-level metric."""
+    document = _yaml.load(snapshots.AQL_TRANSLATION.read_text(encoding="utf-8"))
+    document["metrics"].append(
+        {
+            "name": name,
+            "datatype": "Decimal",
+            "expression": {"dialects": [{"dialect": dialect, "expression": body}]},
+        }
+    )
+    return document
+
+
+@pytest.mark.parametrize("dialect", ["POSTGRES", "REDSHIFT"])
+def test_a_portable_body_that_needs_the_passthrough_is_not_written_for_another_warehouse(dialect):
+    """A call the passthrough would carry under its portable name stops the fallback.
+
+    PostgreSQL has no `MEDIAN`, so sqlglot renders it as `PERCENTILE_CONT`.
+    Translating the portable body would write `sql_number('MEDIAN', ...)`,
+    which the warehouse refuses at query time. The metric is dropped with an
+    ERROR when the files are written, as it was before the fallback.
+    """
+    document = _with_metric(
+        "median_per_customer", "OSSIE_SQL_2026", "MEDIAN(items.quantity) / COUNT(users.id)"
+    )
+    result = ossie_to_aml.convert(document, dialect, data_source_name="warehouse")
+
+    assert "median_per_customer" in _dropped(result)
+    assert "median_per_customer" not in _aql_definitions(result)
+    assert "sql_number('MEDIAN'" not in "".join(text for _, text in result.files)
+    # The plain division beside it still takes the fallback.
+    plain = _with_metric("plain_ratio", "OSSIE_SQL_2026", "SUM(items.quantity) / COUNT(users.id)")
+    kept = ossie_to_aml.convert(plain, dialect, data_source_name="warehouse")
+    assert _aql_definitions(kept)["plain_ratio"] == "sum(items.quantity) / count(users.id)"
+
+
+def test_a_passthrough_call_is_still_spelled_for_the_target_warehouse():
+    """The rendering is tried first, since the passthrough hands the call to the warehouse.
+
+    `LOG10(x)` has no AQL name. Snowflake spells it `LOG(10, x)`, which is the
+    call the passthrough carries when the target is Snowflake.
+    """
+    document = _yaml.load(snapshots.AQL_TRANSLATION.read_text(encoding="utf-8"))
+    result = ossie_to_aml.convert(document, "SNOWFLAKE", data_source_name="warehouse")
+
+    assert _aql_definitions(result)["unmapped_function"] == (
+        "sum(items.quantity) + sql_number('LOG', 10, count(users.id))"
+    )

@@ -60,6 +60,8 @@ SQLGLOT_DIALECT: dict[str, str | None] = {
     "DATABRICKS": "databricks",
     "BIGQUERY": "bigquery",
     "CLICKHOUSE": "clickhouse",
+    "POSTGRES": "postgres",
+    "REDSHIFT": "redshift",
     "TRINO": "trino",
 }
 

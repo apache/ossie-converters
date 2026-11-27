@@ -77,7 +77,8 @@ Options:
 
 - `-o`, required in both directions. A file for `to-ossie`, a directory for `to-aml`.
 - `--sql-dialect DIALECT`, required in both directions. The choices are `ANSI_SQL`, `OSSIE_SQL_2026`,
-  `BIGQUERY`, `CLICKHOUSE`, `DATABRICKS`, `SNOWFLAKE` and `TRINO`, the Ossie dialects sqlglot can parse.
+  `BIGQUERY`, `CLICKHOUSE`, `DATABRICKS`, `POSTGRES`, `REDSHIFT`, `SNOWFLAKE` and `TRINO`, the Ossie
+  dialects sqlglot can parse.
   - On `to-ossie` it tags every `@sql` body. AML does not record which warehouse a body was written for.
   - On `to-aml` it names the warehouse the Holistics connection reads. An expression already in that dialect
     is written as it stands. One in `ANSI_SQL` or `OSSIE_SQL_2026` is rendered into it, with a WARNING

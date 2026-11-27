@@ -109,6 +109,19 @@ class TestDialectCatching:
         assert measure["columns"][0] == {"dataObject": "Orders", "column": "amount"}
         assert not any(w.startswith("LOSSY:") for w in converter.warnings)
 
+    @pytest.mark.parametrize("dialect", ["CLICKHOUSE", "POSTGRES", "REDSHIFT"])
+    def test_other_sql_engine_only_agg_becomes_measure(self, dialect: str) -> None:
+        # A model exported for one of these engines may carry no ANSI_SQL
+        # expression. Its aggregation reads like ANSI, so it converts.
+        ossie = _ossie_model([_metric("Total Amount", dialect, "SUM(Orders.amount)")])
+        converter = conv.OssietoOBML(ossie)
+        obml = converter.convert()
+
+        measure = obml["measures"]["Total Amount"]
+        assert measure["aggregation"] == "sum"
+        assert measure["columns"][0] == {"dataObject": "Orders", "column": "amount"}
+        assert not any(w.startswith("LOSSY:") for w in converter.warnings)
+
     def test_snowflake_uppercased_identifiers_resolve_to_canonical(self) -> None:
         # Snowflake commonly upper-cases identifiers. They must resolve back to
         # the real Ossie dataset/field names, not produce refs to ORDERS.AMOUNT.

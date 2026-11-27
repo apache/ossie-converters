@@ -29,6 +29,7 @@ import yaml
 
 from interop.checks import Validator
 from interop.contracts import (
+    _DIALECTS,
     check_document,
     check_lookml_portable_sql,
     check_native_sources,
@@ -44,6 +45,10 @@ from interop.report import write_report
 from interop.runner import Runner, exit_code
 
 ROOT = Path(__file__).resolve().parents[2]
+# Every dialect the contract reads, so a new row is exercised without a test edit.
+SQL_DIALECTS = sorted(_DIALECTS)
+# These quote an identifier with backticks. In BigQuery a double-quoted token is a string.
+BACKTICK_DIALECTS = {"BIGQUERY", "DATABRICKS"}
 
 
 def regression(name):
@@ -137,7 +142,7 @@ def test_missing_members_and_defaulted_or_wrong_expressions_fail(mutation):
 
 
 @pytest.mark.parametrize(
-    "dialect", ["ANSI_SQL", "OSSIE_SQL_2026", "DATABRICKS", "SNOWFLAKE"]
+    "dialect", SQL_DIALECTS
 )
 def test_returned_dialect_labels_and_self_qualification_may_normalize(dialect):
     name = "dialect-databricks-only"
@@ -173,11 +178,11 @@ def test_sigma_return_requires_matching_sql_beside_native_formula(sql, expected)
 
 
 @pytest.mark.parametrize(
-    "dialect", ["ANSI_SQL", "OSSIE_SQL_2026", "DATABRICKS", "SNOWFLAKE"]
+    "dialect", SQL_DIALECTS
 )
 @pytest.mark.parametrize("qualifier", ["ORDERS", "OrDeRs", '"orders"'])
 def test_self_qualifier_ownership_normalizes_unquoted_case(dialect, qualifier):
-    if dialect == "DATABRICKS":
+    if dialect in BACKTICK_DIALECTS:
         qualifier = qualifier.replace('"', "`")
     name = "dialect-databricks-only"
     data = document(name)
@@ -191,13 +196,13 @@ def test_self_qualifier_ownership_normalizes_unquoted_case(dialect, qualifier):
 
 
 @pytest.mark.parametrize(
-    "dialect", ["ANSI_SQL", "OSSIE_SQL_2026", "DATABRICKS", "SNOWFLAKE"]
+    "dialect", SQL_DIALECTS
 )
 @pytest.mark.parametrize(
     "qualifier", ['"ORDERS"', '"OrDeRs"', "customers", "analytics.orders"]
 )
 def test_qualifier_case_normalization_cannot_hide_other_owners(dialect, qualifier):
-    if dialect == "DATABRICKS":
+    if dialect in BACKTICK_DIALECTS:
         qualifier = qualifier.replace('"', "`")
     name = "dialect-databricks-only"
     data = document(name)

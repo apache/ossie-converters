@@ -758,6 +758,40 @@ class _Reverse:
         block.text("format", data.get("format"))
         return block
 
+    def portable_for_aql(self, expression: Any) -> tuple[str, str] | None:
+        """The portable body a dataset-level metric is translated from, when it has to be.
+
+        `pick_body` renders a portable body into `--sql-dialect`, which is what
+        a `@sql` definition needs. A dataset-level metric is written as AQL,
+        which reads the same on every warehouse, and the rendering can add a
+        construct AQL has no name for. Postgres and Redshift divide two
+        integers as integers, so sqlglot renders `SUM(a) / COUNT(b)` as
+        `CAST(SUM(a) AS DOUBLE PRECISION) / COUNT(b)`, and `CAST` is outside
+        the function table. When the rendering has no AQL form and the body it
+        came from has one, this returns that body and its dialect.
+
+        The rendering is still tried first. The passthrough hands the warehouse
+        a call under the name the body spells it, and the rendering spells it
+        the way the target does. For the same reason a body whose AQL form
+        needs the passthrough is never returned: `MEDIAN(x)` would reach
+        PostgreSQL as `sql_number('MEDIAN', x)`, a function it lacks.
+        """
+        available = dialects_of(expression)
+        if AQL_DIALECT in available or self.sql_dialect in available:
+            return None
+        source = next((d for d in PORTABLE_DIALECTS if d in available), None)
+        if source is None:
+            return None
+        try:
+            rendered = sqlrefs.transpile(available[source], source, self.sql_dialect)
+        except sqlrefs.UnparseableSQL:
+            return None
+        if aql.translates(rendered, self.sql_dialect):
+            return None
+        if not aql.translates(available[source], source, passthrough=False):
+            return None
+        return source, available[source]
+
     def as_aql(self, text: str, dialect: str, scope: str) -> str | None:
         """A dataset-level metric's Ossie SQL body rendered as AQL, or None if it cannot be.
 
@@ -861,7 +895,8 @@ class _Reverse:
         name = payload["name"]
         scope = name
         data = stash.read(payload)
-        dialect, text = self.pick_body(payload.get("expression"), scope)
+        expression = payload.get("expression")
+        dialect, text = self.portable_for_aql(expression) or self.pick_body(expression, scope)
         if dialect != AQL_DIALECT:
             rendered = self.as_aql(text, dialect, scope)
             if rendered is None:

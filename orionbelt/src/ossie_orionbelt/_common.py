@@ -39,9 +39,19 @@ _OSSIE_VERSION = "0.3.0.dev0"
 # OSSIE_SQL_2026 (the spec's portable, ANSI-compatible expression language);
 # SNOWFLAKE and DATABRICKS are SQL engines OrionBelt also targets, and their
 # simple/expression aggregations (``SUM(t.c)``, ``SUM(t.a * t.b)``) are
-# syntactically identical to ANSI. Non-SQL languages (MDX, TABLEAU, MAQL, SIGMA,
-# THOUGHTSPOT, DAX) are never parsed as SQL.
-_SQL_PARSEABLE_DIALECTS = ("ANSI_SQL", "OSSIE_SQL_2026", "SNOWFLAKE", "DATABRICKS", "CLICKHOUSE", "TRINO")
+# syntactically identical to ANSI. CLICKHOUSE, POSTGRES, REDSHIFT and TRINO are read
+# on the same ground. Non-SQL languages (MDX, TABLEAU, MAQL, SIGMA, THOUGHTSPOT,
+# DAX) are never parsed as SQL.
+_SQL_PARSEABLE_DIALECTS = (
+    "ANSI_SQL",
+    "OSSIE_SQL_2026",
+    "SNOWFLAKE",
+    "DATABRICKS",
+    "CLICKHOUSE",
+    "POSTGRES",
+    "REDSHIFT",
+    "TRINO",
+)
 
 # Ossie SQL-dialect tag -> sqlglot ``read`` dialect. ANSI and the portable
 # OSSIE_SQL_2026 map to sqlglot's default (None).
@@ -51,6 +61,8 @@ _OSSIE_DIALECT_TO_SQLGLOT: dict[str, str | None] = {
     "SNOWFLAKE": "snowflake",
     "DATABRICKS": "databricks",
     "CLICKHOUSE": "clickhouse",
+    "POSTGRES": "postgres",
+    "REDSHIFT": "redshift",
     "TRINO": "trino",
 }
 
