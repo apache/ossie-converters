@@ -65,4 +65,4 @@ if __name__ == "__main__":
     ontology_model = PalantirToOssieConverter().convert(palantir_model, db_name, schema_name)
 
     ossie_spec = OssieToSpecConverter.convert(ontology_model)
-    print(ossie_spec.dump_yaml())
+    print(ossie_spec.to_ossie_yaml())

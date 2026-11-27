@@ -60,6 +60,7 @@ from ._common import (
     write_stash,
 )
 from ._dax_to_sql import RowColumn, translate_column, translate_measure
+from ._report import record, record_items
 
 # What happens to a TMSL construct Apache Ossie cannot express: it survives a round trip
 # back to Power BI, but it is invisible to any other consumer of the document.
@@ -161,25 +162,53 @@ def build_ossie_document(bim_file, translate_dax=False):
         raise ValueError("model.bim is missing the required 'model' object")
 
     all_tables = [
-        t for t in model.get("tables") or [] if isinstance(t, dict) and t.get("name")
+        (index, table) for index, table in enumerate(model.get("tables") or [])
+        if isinstance(table, dict) and table.get("name")
     ]
-    tables = [t for t in all_tables if _is_exported_table(t)]
+    tables = [(index, table) for index, table in all_tables if _is_exported_table(table)]
     if not tables:
         raise ValueError(
             "model.bim has no tables that can be exported as Apache Ossie datasets"
         )
-    excluded_tables = [t for t in all_tables if not _is_exported_table(t)]
-    exported_names = {t["name"] for t in tables}
+    excluded_tables = []
+    metric_tables = []
+    for index, table in all_tables:
+        if not _is_exported_table(table):
+            excluded_tables.append(table)
+            record(
+                "dataset", f"/model/tables/{index}", table, "vendor_metadata",
+                vendor="POWER_BI", reason="excluded_table", detail=_exclusion_reason(table),
+                table=table["name"],
+            )
+            record_items(
+                "field", f"/model/tables/{index}/columns", table.get("columns"),
+                "vendor_metadata", vendor="POWER_BI", reason="excluded_table", table=table["name"],
+            )
+        if _is_measure_table(table):
+            metric_tables.append((index, table))
+        else:
+            record_items(
+                "metric", f"/model/tables/{index}/measures", table.get("measures"),
+                "vendor_metadata", vendor="POWER_BI", reason="excluded_table", table=table["name"],
+            )
+    exported_names = {table["name"] for _, table in tables}
 
     semantic_model = {"name": bim_file.get("name") or "semantic_model"}
-    warn_unsupported("model", model, TMSL_UNSUPPORTED_MODEL, "Apache Ossie", _PRESERVED)
+    metadata_properties = warn_unsupported(
+        "model", model, TMSL_UNSUPPORTED_MODEL, "Apache Ossie", _PRESERVED
+    )
+    record("model", "/model", bim_file, "translated", vendor="POWER_BI",
+           metadata_properties=metadata_properties or None)
     description = model.get("description") or bim_file.get("description")
     if description:
         semantic_model["description"] = text(description)
     model_ai_context, model_stash = _split_ai_context(model, _MODEL_CONSUMED)
     if model_ai_context is not None:
         semantic_model["ai_context"] = model_ai_context
-    semantic_model["datasets"] = [_convert_table(t, translate_dax) for t in tables]
+    semantic_model["datasets"] = [
+        _convert_table(table, f"/model/tables/{index}", translate_dax=translate_dax)
+        for index, table in tables
+    ]
 
     relationships, excluded_relationships = _convert_relationships(
         model.get("relationships") or [], exported_names
@@ -187,7 +216,6 @@ def build_ossie_document(bim_file, translate_dax=False):
     if relationships:
         semantic_model["relationships"] = relationships
 
-    metric_tables = [table for table in all_tables if _is_measure_table(table)]
     resolve_field = _build_field_resolver(semantic_model["datasets"]) if translate_dax else None
     metrics, excluded_measures = _convert_metrics(
         metric_tables, translate_dax=translate_dax, resolve_field=resolve_field
@@ -276,26 +304,50 @@ def _is_measure_table(table):
     )
 
 
-def _convert_table(table, translate_dax=False):
+def _convert_table(table, source_path, translate_dax=False):
     dataset = {"name": table["name"], "source": _table_source(table)}
     scope = f"table '{table['name']}'"
     row_columns = _row_columns(table) if translate_dax else None
 
-    warn_unsupported(scope, table, TMSL_UNSUPPORTED_TABLE, "Apache Ossie", _PRESERVED)
+    metadata_properties = warn_unsupported(
+        scope, table, TMSL_UNSUPPORTED_TABLE, "Apache Ossie", _PRESERVED
+    )
+    record("dataset", source_path, table, "translated", table=table["name"],
+           target_name=dataset["name"], vendor="POWER_BI",
+           metadata_properties=metadata_properties or None)
     primary_key = []
     unique_keys = []
     fields = []
     field_stashes = []
     excluded_columns = []
-    for column in table.get("columns") or []:
+    for index, column in enumerate(table.get("columns") or []):
+        column_path = f"{source_path}/columns/{index}"
         if not isinstance(column, dict) or not column.get("name"):
+            record("field", column_path, column, "dropped", reason="invalid_column",
+                   table=table["name"])
             continue
         # A rowNumber column is a storage-engine artifact with no user-visible data. It
         # is kept in the stash so an export can put it back.
         if column.get("type") == "rowNumber":
             excluded_columns.append(column)
+            record(
+                "field", column_path, column, "vendor_metadata",
+                vendor="POWER_BI", reason="row_number_column", table=table["name"],
+            )
             continue
-        field, column_stash = _convert_column(column, scope, table["name"], row_columns)
+        field, column_stash, reason, detail = _convert_column(
+            column, scope, table["name"], row_columns
+        )
+        calculated = column.get("type") == "calculated"
+        record(
+            "field", column_path, column, "source_dialect" if reason else "translated",
+            target_name=field["name"], target_dataset=dataset["name"], table=table["name"],
+            source_dialect=DIALECT_DAX if calculated else None,
+            target_dialect=(DIALECT_DAX if reason else DIALECT_OSSIE_SQL) if calculated else None,
+            reason=reason, detail=detail,
+            vendor="POWER_BI" if column_stash else None,
+            metadata_properties=sorted(column_stash) or None,
+        )
         fields.append(field)
         field_stashes.append((field, column_stash))
         if column.get("isKey"):
@@ -464,11 +516,12 @@ def _convert_column(column, table_scope, table_name=None, row_columns=None):
 
     warn_unsupported(scope, column, TMSL_UNSUPPORTED_COLUMN, "Apache Ossie", _PRESERVED)
 
+    reason = detail = None
     if column.get("type") == "calculated":
         # A calculated column is DAX. It is carried across as DAX rather than rewritten
         # into SQL, so no expression semantics are invented, unless translation is on
         # and the translation is exact.
-        expression = _calculated_column_expression(
+        expression, reason, detail = _calculated_column_expression(
             text(column.get("expression", "")), scope, table_name, row_columns, name
         )
     else:
@@ -504,7 +557,7 @@ def _convert_column(column, table_scope, table_name=None, row_columns=None):
         # The portable type does not map back to this exact TMSL type, so keep the
         # original rather than let the export guess.
         stash["dataType"] = column.get("dataType")
-    return field, stash
+    return field, stash, reason, detail
 
 
 def _is_reversible_datatype(tmsl_type, datatype):
@@ -636,9 +689,9 @@ def _row_columns(table):
 
 
 def _calculated_column_expression(dax_expression, scope, table_name, row_columns, name):
-    """Build a calculated column's field expression, like ``_measure_expression``."""
+    """Build a field expression and its retained-DAX reason/detail for the report."""
     if row_columns is None:
-        return make_expression(dax_expression, DIALECT_DAX)
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_disabled", None
     declared = row_columns[name].kind
     sql, reason = translate_column(dax_expression, table_name, row_columns, declared)
     if sql is None:
@@ -646,13 +699,13 @@ def _calculated_column_expression(dax_expression, scope, table_name, row_columns
             scope,
             f"DAX calculated column kept as-is; not translated to OSSIE_SQL_2026 ({reason})",
         )
-        return make_expression(dax_expression, DIALECT_DAX)
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_refused", reason
     return {
         "dialects": [
             {"dialect": DIALECT_OSSIE_SQL, "expression": sql},
             {"dialect": DIALECT_DAX, "expression": dax_expression},
         ]
-    }
+    }, None, None
 
 
 def _measure_expression(dax_expression, scope, translate_dax, resolve_field, measures=None):
@@ -663,22 +716,26 @@ def _measure_expression(dax_expression, scope, translate_dax, resolve_field, mea
     carries ``OSSIE_SQL_2026`` as the primary dialect with the original DAX kept as a
     fallback, so no information is lost and a reader that trusts only DAX still has it.
     ``measures`` maps the model's measure names to their DAX, so a reference to another
-    measure can be expanded.
+    measure can be expanded. Return the expression plus a retained-DAX reason code
+    and refusal detail for the CLI report.
     """
-    if not translate_dax or resolve_field is None:
-        return make_expression(dax_expression, DIALECT_DAX)
+    if not translate_dax:
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_disabled", None
+    if resolve_field is None:
+        return (make_expression(dax_expression, DIALECT_DAX),
+                "dax_translation_refused", "no field resolver")
 
     sql, reason = translate_measure(dax_expression, resolve_field, measures)
     if sql is None:
         warn(scope, f"DAX measure kept as-is; not translated to OSSIE_SQL_2026 ({reason})")
-        return make_expression(dax_expression, DIALECT_DAX)
+        return make_expression(dax_expression, DIALECT_DAX), "dax_translation_refused", reason
 
     return {
         "dialects": [
             {"dialect": DIALECT_OSSIE_SQL, "expression": sql},
             {"dialect": DIALECT_DAX, "expression": dax_expression},
         ]
-    }
+    }, None, None
 
 
 def _measure_bodies(tables):
@@ -696,10 +753,13 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
     metrics = []
     excluded = []
     seen = set()
-    measures = _measure_bodies(tables) if translate_dax else None
-    for table in tables:
+    measures = _measure_bodies(table for _, table in tables) if translate_dax else None
+    for table_index, table in tables:
         for index, measure in enumerate(table.get("measures") or []):
+            source_path = f"/model/tables/{table_index}/measures/{index}"
             if not isinstance(measure, dict) or not measure.get("name"):
+                record("metric", source_path, measure, "dropped", reason="invalid_measure",
+                       table=table["name"])
                 continue
             scope = f"table '{table['name']}' measure '{measure.get('name')}'"
             warn_unsupported(scope, measure, TMSL_UNSUPPORTED_MEASURE, "Apache Ossie", _PRESERVED)
@@ -718,6 +778,10 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 excluded.append(
                     {"table": table["name"], "measure": measure, "index": index}
                 )
+                record(
+                    "metric", source_path, measure, "vendor_metadata",
+                    vendor="POWER_BI", reason="missing_expression", table=table["name"],
+                )
                 continue
 
             # Measure names are unique per model in Power BI, but a qualified name may
@@ -728,12 +792,10 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 warn(scope, f"duplicate measure name; renamed to '{name}'")
             seen.add(name)
 
-            metric = {
-                "name": name,
-                "expression": _measure_expression(
-                    expression, scope, translate_dax, resolve_field, measures
-                ),
-            }
+            converted_expression, reason, detail = _measure_expression(
+                expression, scope, translate_dax, resolve_field, measures
+            )
+            metric = {"name": name, "expression": converted_expression}
             if measure.get("description"):
                 metric["description"] = text(measure["description"])
             # A measure's result type is inferred from its DAX, so it is reported for
@@ -755,6 +817,13 @@ def _convert_metrics(tables, translate_dax=False, resolve_field=None):
                 stash["name"] = measure["name"]
             write_stash(metric, stash)
             metrics.append(metric)
+            record(
+                "metric", source_path, measure, "source_dialect" if reason else "translated",
+                target_name=name, table=table["name"], source_dialect=DIALECT_DAX,
+                target_dialect=DIALECT_DAX if reason else DIALECT_OSSIE_SQL,
+                reason=reason, detail=detail,
+                vendor="POWER_BI", metadata_properties=sorted(stash),
+            )
     return metrics, excluded
 
 
@@ -805,8 +874,12 @@ def _convert_relationships(relationships, exported_names):
     converted = []
     excluded = []
     seen = set()
-    for relationship in relationships:
+    for index, relationship in enumerate(relationships):
+        source_path = f"/model/relationships/{index}"
         if not isinstance(relationship, dict):
+            record(
+                "relationship", source_path, relationship, "dropped", reason="invalid_relationship",
+            )
             continue
         scope = f"relationship '{relationship.get('name', '<unnamed>')}'"
 
@@ -817,6 +890,10 @@ def _convert_relationships(relationships, exported_names):
         if not all((from_table, from_column, to_table, to_column)):
             warn(scope, "relationship is missing an endpoint; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="missing_endpoint",
+            )
             continue
 
         # Apache Ossie has no notion of an inactive relationship; keeping one would make
@@ -824,11 +901,19 @@ def _convert_relationships(relationships, exported_names):
         if relationship.get("isActive") is False:
             warn(scope, "inactive relationships have no Apache Ossie counterpart; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="inactive_relationship",
+            )
             continue
 
         if from_table not in exported_names or to_table not in exported_names:
             warn(scope, "relationship references a table that is not exported; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="excluded_table",
+            )
             continue
 
         # TMSL spells these lowercase, but the property is case-insensitive to the
@@ -839,6 +924,10 @@ def _convert_relationships(relationships, exported_names):
             # Apache Ossie relationships are many-to-one or one-to-one only.
             warn(scope, "many-to-many relationships have no Apache Ossie counterpart; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="unsupported_cardinality",
+            )
             continue
 
         flipped = from_cardinality == "one" and to_cardinality == "many"
@@ -850,6 +939,10 @@ def _convert_relationships(relationships, exported_names):
         if name in seen:
             warn(scope, f"duplicate relationship '{name}'; skipped")
             excluded.append(relationship)
+            record(
+                "relationship", source_path, relationship, "vendor_metadata",
+                vendor="POWER_BI", reason="duplicate_relationship",
+            )
             continue
         seen.add(name)
 
@@ -891,6 +984,10 @@ def _convert_relationships(relationships, exported_names):
             ]
         write_stash(converted_relationship, stash)
         converted.append(converted_relationship)
+        record(
+            "relationship", source_path, relationship, "translated", target_name=name,
+            vendor="POWER_BI" if stash else None, metadata_properties=sorted(stash) or None,
+        )
     return converted, excluded
 
 

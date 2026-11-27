@@ -202,6 +202,21 @@ skipped — and the spec's table decides what it matches: `orders."AMOUNT"` is t
 `amount` (force-matched to the normalized case), while `orders."Amount"` is not, and
 stays a raw quoted column.
 
+**Static source templates**: Import expands named `{cube.sql()}` references in
+`sql` and `sql_table`, including recursive dependencies. A
+referenced `sql_table` is used directly; a referenced `sql` matching Cube's exact
+`SELECT * FROM table` optimization becomes that table, and other queries are
+wrapped as subqueries. Runtime-context templates and unknown dependencies are
+refused with a conversion error. Cycles name the dependency chain; expansion is
+bounded to 100 dependency levels and 1,000,000 characters per expanded source.
+Query whitespace is retained, including newlines that terminate SQL line comments.
+Escaped braces remain literal SQL. Ordinary import preserves the original source
+definition in the CUBE extension when expansion changes it. Export restores that
+definition only while its own source and all dependency sources and names still
+match; malformed snapshots fall back to the portable source. Projection resolves
+references against the full input model, then publishes
+the expanded source without retaining unpublished dependencies.
+
 **Expression dialects**: Cube SQL is the SQL of the model's data source, and the
 Ossie dialect enum has no `CUBE` entry. Pass `--source-dialect ANSI_SQL|SNOWFLAKE|DATABRICKS|BIGQUERY`
 on import (including `--project`) to parse source SQL in that dialect, qualify metric

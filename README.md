@@ -38,7 +38,7 @@ git submodule update --init
 ```
 
 Repository-level cross-converter acceptance and pairwise checks live in
-[`interop/`](interop/README.md). The matrix registers all 28 converter projects,
+[`interop/`](interop/README.md). The matrix registers all 29 converter projects,
 with explicit capability skips, JSON/Markdown reports, and intermediate artifacts.
 
 The Microsoft converter also has an optional
@@ -118,7 +118,6 @@ The Ossie specification currently defines extensions for the following vendors:
 | `SALESFORCE` | Salesforce / Tableau semantic layer |
 | `DBT` | dbt semantic models |
 | `DATABRICKS` | Databricks semantic layer |
-| `BIGQUERY` | Looker / LookML (Google Cloud semantic layer over BigQuery) |
 | `OMNI` | Omni semantic model |
 | `WISDOM` | WisdomAI domain |
 | `NVIDIA_AUTO_ONTOLOGY` | NVIDIA Auto Ontology model document YAML (formerly `NVIDIA_GSF`) |

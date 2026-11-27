@@ -539,8 +539,8 @@ def test_dataset_source_table_is_a_synonym_when_it_differs_from_the_name():
 
 
 def test_ai_context_round_trips_instructions_and_examples():
-    from ossie.models import OssieDocument
-    doc = OssieDocument.model_validate({
+    from ossie.models import OssieSemanticModel
+    doc = OssieSemanticModel.model_validate({
         "name": "m",
         "ai_context": {"instructions": "prefer sales", "examples": ["show revenue"]},
         "datasets": [{"name": "ORDERS", "source": "DB.SCH.ORDERS", "fields": [
@@ -644,8 +644,8 @@ def test_unknown_datasource_child_survives_round_trip():
 
 
 def test_snowflake_field_extension_survives_to_tds():
-    from ossie.models import OssieDocument
-    doc = OssieDocument.model_validate({
+    from ossie.models import OssieSemanticModel
+    doc = OssieSemanticModel.model_validate({
         "name": "m",
         "datasets": [{"name": "ORDERS", "source": "DB.SCH.ORDERS", "fields": [
             {"name": "AMT", "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "AMT"}]},

@@ -24,11 +24,11 @@ from ossie import (
     OssieDialect,
     OssieDialectExpression,
     OssieDimension,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieMetric,
     OssieRelationship,
+    OssieSemanticModel,
 )
 from metricflow_semantic_interfaces.implementations.element_config import (
     PydanticSemanticLayerElementConfig,
@@ -244,8 +244,8 @@ def _ossie_doc(
     metrics: list[OssieMetric] | None = None,
     relationships: list[OssieRelationship] | None = None,
     model_name: str = "test",
-) -> OssieDocument:
-    return OssieDocument(
+) -> OssieSemanticModel:
+    return OssieSemanticModel(
         name=model_name,
         datasets=datasets if datasets is not None else [_ossie_dataset("default")],
         metrics=metrics if metrics else None,

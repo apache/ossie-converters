@@ -28,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-from ossie import OssieDataType, OssieDocument
+from ossie import OssieDataType, OssieSemanticModel
 
 from ossie_lightdash import (
     ConverterIssueType,
@@ -55,8 +55,8 @@ def _expression_text(expression) -> str:
     return expression.sql
 
 
-def _load_tpcds() -> OssieDocument:
-    return OssieDocument.model_validate(yaml.safe_load(TPCDS_PATH.read_text()))
+def _load_tpcds() -> OssieSemanticModel:
+    return OssieSemanticModel.model_validate(yaml.safe_load(TPCDS_PATH.read_text()))
 
 
 def _roundtrip():

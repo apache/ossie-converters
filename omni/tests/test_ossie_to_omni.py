@@ -307,7 +307,8 @@ def test_fallback_translates_databricks_identifier_quoting(target):
     )
 
 
-def test_warehouse_fallback_without_target_warns_for_fields_and_metrics():
+@pytest.mark.parametrize("target", [None, "ANSI_SQL", "OSSIE_SQL_2026"])
+def test_warehouse_fallback_to_generic_sql_warns_for_fields_and_metrics(target):
     source = minimal(
         datasets=[{"name": "orders", "source": "db.sch.orders", "fields": [
             _field("currency", "UPPER(`Currency Code`)", "DATABRICKS")
@@ -315,13 +316,28 @@ def test_warehouse_fallback_without_target_warns_for_fields_and_metrics():
         metrics=[_field("total", "SUM(orders.amount)", "DATABRICKS")],
     )
     with pytest.warns(UserWarning, match="without a target warehouse") as recorded:
-        convert_ossie_to_omni(source)
+        convert_ossie_to_omni(source, dialect=target)
     assert {str(w.message).split("]")[0] for w in recorded} == {
         "[dataset 'orders': field 'currency'", "[metric 'total'"
     }
-    files = convert_ossie_to_omni(source, dialect="DATABRICKS")
+
+
+@pytest.mark.parametrize(("target", "expected_sql"), [
+    ("DATABRICKS", "UPPER(`Currency Code`)"),
+    ("SNOWFLAKE", 'UPPER("Currency Code")'),
+])
+def test_warehouse_target_does_not_warn_about_generic_sql(target, expected_sql):
+    source = minimal(datasets=[
+        {"name": "orders", "source": "db.sch.orders", "fields": [
+            _field("currency", "UPPER(`Currency Code`)", "DATABRICKS")
+        ]},
+    ])
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        files = convert_ossie_to_omni(source, dialect=target)
+    assert not any("generic SQL" in str(w.message) for w in recorded)
     assert parse(files["views/orders.view.yaml"])["dimensions"]["currency"]["sql"] == (
-        "UPPER(`Currency Code`)"
+        expected_sql
     )
 
 

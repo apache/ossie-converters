@@ -25,10 +25,10 @@ from ossie import (
     OssieDataset,
     OssieDialect,
     OssieDialectExpression,
-    OssieDocument,
     OssieExpression,
     OssieField,
     OssieRelationship,
+    OssieSemanticModel,
 )
 from ossie_wisdom import ConverterIssueType, OssieToWisdomConverter, WisdomToOssieConverter
 from ossie_wisdom.wisdom_to_ossie import RELATIONSHIP_TYPE_NOTES
@@ -187,7 +187,7 @@ def test_unrepresentable_elements_are_reported():
             OssieField(name="order_id", expression=_snowflake("order_id"), ai_context="the identifier"),
         ],
     )
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="first",
         datasets=[dataset],
         relationships=[
@@ -212,7 +212,7 @@ def test_unrepresentable_elements_are_reported():
 
 
 def test_one_to_one_note_restores_relationship_type():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="a", source="db.s.a"),
@@ -236,7 +236,7 @@ def test_one_to_one_note_restores_relationship_type():
 
 def test_relationship_note_with_surrounding_whitespace_still_matches():
     # A YAML block scalar (`ai_context: |`) loads with a trailing newline.
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="a", source="db.s.a"),
@@ -260,7 +260,7 @@ def test_relationship_note_with_surrounding_whitespace_still_matches():
 
 
 def test_free_text_relationship_note_is_not_read_as_a_type_marker():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -287,7 +287,7 @@ def test_free_text_relationship_note_is_not_read_as_a_type_marker():
 
 
 def test_one_to_many_note_restores_relationship_type_and_direction():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -323,7 +323,7 @@ def _wisdom_extension(data):
 
 def _orders_customers_export(**relationship_fields):
     """Exports one orders -> customers relationship with distinct join columns on each side."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -446,7 +446,7 @@ def test_malformed_wisdom_extension_exports_many_to_one(data):
 
 
 def test_consumed_wisdom_extension_is_not_reported_as_dropped():
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -532,7 +532,7 @@ def test_note_is_read_when_wisdom_extension_is_stale():
 def test_renamed_dataset_keeps_many_to_many_through_its_note():
     # Imported as orders MANY_TO_MANY tags, then `tags` was renamed to `order_tags` in Ossie, which
     # updates `to` but not the WISDOM entry. MANY_TO_ONE would tell Wisdom `to` is unique and fan out joins.
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(name="orders", source="db.s.orders"),
@@ -574,7 +574,7 @@ def test_unreadable_wisdom_extension_falls_back_to_the_note(data):
 def test_unresolved_metric_attaches_to_first_dataset():
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[OssieDataset(name="a", source="db.s.a"), OssieDataset(name="b", source="db.s.b")],
         metrics=[OssieMetric(name="row_count", expression=_snowflake("COUNT(*)"))],
@@ -590,7 +590,7 @@ def test_unresolved_metric_attaches_to_first_dataset():
 def test_field_only_ossie_sql_2026_is_exported_without_missing_issue():
     """A field expressed only in OSSIE_SQL_2026 is exported, with no spurious
     MISSING_DIALECT_EXPRESSION issue (#442)."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -611,7 +611,7 @@ def test_metric_only_ossie_sql_2026_is_exported_without_missing_issue():
     spurious MISSING_DIALECT_EXPRESSION issue (#442)."""
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[OssieDataset(name="orders", source="analytics.sales.orders")],
         metrics=[
@@ -627,7 +627,7 @@ def test_metric_only_ossie_sql_2026_is_exported_without_missing_issue():
 def test_sql_only_field_and_metric_are_dropped_with_missing_issues():
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -652,7 +652,7 @@ def test_sql_only_field_and_metric_are_dropped_with_missing_issues():
 
 def test_ansi_sql_preferred_over_ossie_sql_2026():
     """ANSI_SQL wins over OSSIE_SQL_2026 when both are present."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -677,7 +677,7 @@ def test_ansi_sql_preferred_over_ossie_sql_2026():
 
 def test_native_dialect_preferred_over_ossie_sql_2026():
     """A native dialect (SNOWFLAKE) wins over OSSIE_SQL_2026 when both are present."""
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(
@@ -706,7 +706,7 @@ def test_unusable_dialect_still_reports_missing_expression():
     listed expression. Guards the fallback chain against silently accepting any dialect (#442)."""
     from ossie import OssieMetric
 
-    document = OssieDocument(
+    document = OssieSemanticModel(
         name="m",
         datasets=[
             OssieDataset(

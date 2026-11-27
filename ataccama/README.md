@@ -110,7 +110,7 @@ ataccama-to-ossie --env-file .ataccama.env --urn <urn> \
 ```
 
 ```python
-# Library — returns an ossie.OssieDocument from the apache-ossie package
+# Library — returns an ossie.OssieSemanticModel from the apache-ossie package
 from ossie_ataccama import AtaccamaClient, ataccama_to_ossie
 
 client = AtaccamaClient(base_url="https://<host>", client_id="...", client_secret="...", tenant="<tenant>")

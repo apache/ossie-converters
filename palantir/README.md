@@ -69,7 +69,7 @@ from ossie_palantir import PalantirParser, PalantirToOssieConverter
 
 palantir_model = PalantirParser().parse(Path("palantir_export.zip"))
 ontology = PalantirToOssieConverter().convert(palantir_model, "MY_DB", "MY_SCHEMA")
-print(OssieToSpecConverter.convert(ontology).dump_yaml())
+print(OssieToSpecConverter.convert(ontology).to_ossie_yaml())
 ```
 
 `PalantirParser` accepts a `.zip` archive or an already extracted folder. By

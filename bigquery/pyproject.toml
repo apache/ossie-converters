@@ -28,7 +28,7 @@ dev = [
 [project]
 name = "apache-ossie-bigquery"
 version = "0.2.0.dev0"
-description = "Looker / LookML (BigQuery) <> Apache Ossie converter"
+description = "Apache Ossie → Looker / LookML (BigQuery) converter"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
 requires-python = ">=3.11"
 readme = "README.md"
@@ -50,7 +50,7 @@ ossie-bigquery = "ossie_bigquery.cli:main"
 
 [project.urls]
 homepage = "https://ossie.apache.org/"
-repository = "https://github.com/apache/ossie/"
+repository = "https://github.com/apache/ossie-converters/"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ossie_bigquery"]

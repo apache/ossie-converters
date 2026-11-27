@@ -982,3 +982,58 @@ def test_imported_dataset_metric_keeps_its_view_binding_when_a_key_becomes_legac
     assert key["public"] is False
     view = next(v for doc in parse_files(files).values() for v in doc.get("views", []))
     assert view["cubes"][0]["includes"] == ["id"]
+
+
+@pytest.mark.parametrize("project", [False, True])
+def test_source_templates_and_declared_key_bindings_work_together(project):
+    original = {"cubes": [{
+        "name": "base", "sql_table": "sales.public.orders",
+        "dimensions": [{"name": "id", "sql": "id", "type": "string", "primary_key": True}],
+    }, {
+        "name": "orders", "sql": "SELECT * FROM {base.sql()}",
+        "dimensions": [
+            {"name": "order_key", "sql": "LOWER(id)", "type": "string", "primary_key": True},
+            {"name": "buyer_key", "sql": "customer_id", "type": "number"},
+        ],
+        "joins": [{"name": "customers", "relationship": "many_to_one",
+                   "sql": "{CUBE.buyer_key} = {customers.customer_key}"}],
+        "measures": [{"name": "order_count", "type": "count"}],
+    }, {
+        "name": "customers", "sql_table": "sales.public.customers",
+        "dimensions": [
+            {"name": "customer_key", "sql": "customer_id", "type": "number", "primary_key": True},
+            {"name": "city", "sql": "city", "type": "string"},
+        ],
+    }], "views": [{"name": "shop", "cubes": [
+        {"join_path": "orders", "includes": ["order_count"]},
+        {"join_path": "orders.customers", "includes": ["city"]},
+    ]}]}
+    files = {"model.yml": yaml.safe_dump(original)}
+    if project:
+        out, source, _ = convert_cube_view_to_ossie(files, "shop")
+        assert source == "orders"
+    else:
+        out, _ = convert_cube_to_ossie(files)
+    model = yaml.safe_load(out)
+    assert_declared(model)
+    assert_ossie_is_valid(out, "static sources combined with declared join and count fields")
+    datasets = by_name(model["datasets"])
+    orders = datasets["orders"]
+    assert orders["source"] == "SELECT * FROM sales.public.orders"
+    key = orders["primary_key"][0]
+    assert expr_of(by_name(orders["fields"])[key]) == "LOWER(id)"
+    metric = by_name(model["metrics"])["order_count"]
+    assert expr_of(metric) == f"COUNT(DISTINCT orders.{key})"
+    rel = model["relationships"][0]
+    assert expr_of(by_name(orders["fields"])[rel["from_columns"][0]]) == "customer_id"
+    if project:
+        assert "base" not in datasets
+        assert "source_template" not in stash_of(orders)
+    else:
+        assert stash_of(orders)["source_template"]["value"] == "SELECT * FROM {base.sql()}"
+    exported = export(model)
+    expected = orders["source"] if project else "SELECT * FROM {base.sql()}"
+    assert cubes(exported)["orders"]["sql"] == expected
+    returned, _ = convert_cube_to_ossie(exported)
+    assert_declared(yaml.safe_load(returned))
+    assert by_name(yaml.safe_load(returned)["datasets"])["orders"]["source"] == orders["source"]

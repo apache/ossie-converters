@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from ossie.models import OssieDocument, OssieField
+from ossie.models import OssieSemanticModel, OssieField
 from ossie_tableau.convert import convert_file
 from ossie_tableau.losses import KNOWN_KINDS
 from ossie_tableau.tds_writer import SnowflakeConn, write_tds
@@ -32,7 +32,7 @@ def _ex(dialect, e):
 
 
 def _doc():
-    return OssieDocument.model_validate({
+    return OssieSemanticModel.model_validate({
         "name": "star",
         "datasets": [
             {"name": "FACT", "source": "DB.SCH.FACT", "primary_key": ["ID"], "fields": [
@@ -101,7 +101,7 @@ def test_fixed_point(tmp_path):
 
 @pytest.mark.unit
 def test_undeclared_relationship_key_becomes_hidden_column():
-    doc = OssieDocument.model_validate({
+    doc = OssieSemanticModel.model_validate({
         "name": "m",
         "datasets": [{"name": "F", "source": "DB.SCH.F", "fields": [{"name": "A", "expression": _ex("ANSI_SQL", "A"), "dimension": {}}]},
                      {"name": "D", "source": "DB.SCH.D", "primary_key": ["K"],
@@ -118,7 +118,7 @@ def test_undeclared_relationship_key_becomes_hidden_column():
 @pytest.mark.unit
 def test_qualified_sql_becomes_source_column():
     """Snowflake READ emits table.column; the Ossie field name is often a label."""
-    doc = OssieDocument.model_validate({
+    doc = OssieSemanticModel.model_validate({
         "name": "sv",
         "datasets": [{"name": "CUSTOMERS", "source": "SUPERSTORE.AGENTS.CUSTOMERS", "primary_key": ["CUSTOMER_ID"],
                       "fields": [
@@ -144,7 +144,7 @@ def test_qualified_sql_becomes_source_column():
 
 @pytest.mark.unit
 def test_metric_can_reference_another_metric():
-    doc = OssieDocument.model_validate({
+    doc = OssieSemanticModel.model_validate({
         "name": "m",
         "datasets": [{"name": "ORDERS", "source": "SUPERSTORE.AGENTS.ORDER_LINES", "primary_key": ["ORDER_ID"],
                       "fields": [
@@ -181,7 +181,7 @@ _LAG = """orders.total_profit - LAG(orders.total_profit) OVER (
 
 
 def _window_doc():
-    return OssieDocument.model_validate({
+    return OssieSemanticModel.model_validate({
         "name": "w",
         "datasets": [{"name": "ORDERS", "source": "SUPERSTORE.AGENTS.ORDER_LINES", "primary_key": ["ORDER_ID"],
                       "fields": [
@@ -236,7 +236,7 @@ def test_excluding_windows_roundtrip_keep_all_metrics(tmp_path):
 
 @pytest.mark.unit
 def test_composed_metric_roundtrip_is_not_row_level(tmp_path):
-    doc = OssieDocument.model_validate({
+    doc = OssieSemanticModel.model_validate({
         "name": "m",
         "datasets": [{"name": "ORDERS", "source": "SUPERSTORE.AGENTS.ORDER_LINES", "primary_key": ["ORDER_ID"],
                       "fields": [
@@ -300,7 +300,7 @@ def test_unwrap_parens_inverts_wrapping():
 @pytest.mark.unit
 def test_custom_sql_source_ending_in_paren_survives_write_and_reconvert(tmp_path):
     sql = "SELECT * FROM t WHERE id IN (1,2)"
-    d = OssieDocument.model_validate({"name": "q", "datasets": [{"name": "Q", "source": f"({sql})", "fields": [
+    d = OssieSemanticModel.model_validate({"name": "q", "datasets": [{"name": "Q", "source": f"({sql})", "fields": [
         {"name": "id", "expression": _ex("SNOWFLAKE", "id"), "datatype": "Integer"}]}]})
     res = write_tds(d, CONN)
     rel = next(e for e in ET.fromstring(res.xml).iter("relation") if e.get("type") == "text")
@@ -315,7 +315,7 @@ def test_custom_sql_source_ending_in_paren_survives_write_and_reconvert(tmp_path
 
 @pytest.mark.unit
 def test_portable_sql_only_expressions_write_to_tds(tmp_path):
-    doc = OssieDocument.model_validate({
+    doc = OssieSemanticModel.model_validate({
         "name": "portable",
         "datasets": [{
             "name": "ORDERS",

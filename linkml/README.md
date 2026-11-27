@@ -70,7 +70,7 @@ from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverte
 from ossie_linkml import LinkmlToOssieConverter, OssieToLinkmlConverter
 
 ontology = LinkmlToOssieConverter().convert_file("schema.yaml")
-print(OssieToSpecConverter.convert(ontology).dump_yaml())
+print(OssieToSpecConverter.convert(ontology).to_ossie_yaml())
 
 print(OssieToLinkmlConverter.convert(ontology, schema_id="https://example.org/my-schema"))
 ```

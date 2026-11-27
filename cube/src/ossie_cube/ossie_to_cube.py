@@ -93,6 +93,8 @@ from .expressions import (UnattributableSQL, aggregate_spans, date_unit_spans, n
                           replace_bare_identifiers, unqualified_column_names,
                           unsplittable_aggregate_datasets)
 
+from .source_sql import restore_source_templates
+
 # The order Cube's own YAML documentation and generators use, so exported files
 # read the way a hand-authored model does.
 _CUBE_KEY_ORDER = [
@@ -226,6 +228,8 @@ def _convert_model(model, dialect, base_cube, issues):
             m["name"] for key in ("dimensions", "measures", "segments")
             for m in _member_entries(cube.get(key))
             if isinstance(m, dict) and m.get("name")]
+
+    restore_source_templates(cubes_by_name, datasets, cube_names)
 
     for vpath, views in _build_views(model, model_stash, cube_names, relationships,
                                      datasets, base_cube, emitted_members,
@@ -451,7 +455,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     cube = {"name": cname}
 
     kind, value = parse_source(ds.get("source"), ds_name)
-    cube[kind] = value
+    cube[kind] = escape_braces_for_cube(value)
     if ds.get("description"):
         cube["description"] = escape_braces_for_cube(ds["description"])
 

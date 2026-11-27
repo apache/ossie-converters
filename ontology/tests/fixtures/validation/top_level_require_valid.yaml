@@ -27,6 +27,7 @@ ontology:
       - name: ssn
         roles:
           - concept: SocialSecurityNr
+        verbalizes: ['{Person} has {SocialSecurityNr}']
         multiplicity: OneToOne
   - concept: SocialSecurityNr
     type: ValueType

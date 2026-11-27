@@ -110,9 +110,9 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     if args.cmd == "to-tds":
         import yaml
-        from ossie.models import OssieDocument
+        from ossie.models import OssieSemanticModel
         from .tds_writer import write_tds
-        doc = OssieDocument.model_validate(yaml.safe_load(Path(args.ossie_yaml).read_text()))
+        doc = OssieSemanticModel.model_validate(yaml.safe_load(Path(args.ossie_yaml).read_text()))
         wh = WAREHOUSES[args.warehouse_type]
         saved = _saved_connection(doc, wh)
         server = args.server or saved.get("server", "") or wh.default_server

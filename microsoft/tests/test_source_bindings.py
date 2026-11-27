@@ -271,14 +271,18 @@ def test_snowflake_navigation_supports_quoted_steps_and_reordered_keys(model, or
 
 
 @pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("with_report", [False, True])
 def test_strict_source_bindings_work_with_pbip_export(
-    tmp_path, model, orders_binding, monkeypatch, capsys, missing,
+    tmp_path, model, orders_binding, monkeypatch, capsys, missing, with_report,
 ):
     bindings = dict.fromkeys(("orders", "customers"), orders_binding)
     if missing:
         bindings.pop("customers")
     args, output = _export_args(tmp_path, model, yaml.safe_dump(bindings))
     args = args[:-2] + ["--pbip", str(tmp_path / "project"), "--strict"]
+    report = tmp_path / "report.json"
+    if with_report:
+        args += ["--report", str(report)]
     written = []
 
     def serialize(document, path, *, assembly_dir=None):
@@ -290,6 +294,15 @@ def test_strict_source_bindings_work_with_pbip_export(
     assert main(args) == int(missing)
     assert capsys.readouterr().out == ""
     assert not output.exists()
+    if with_report:
+        recorded = json.loads(report.read_text())
+        assert recorded["completed"] is (not missing)
+        if missing:
+            assert "missing Snowflake source binding" in recorded["error"]
+        else:
+            assert {e["name"] for e in recorded["entries"] if e["kind"] == "dataset"} == {
+                "orders", "customers"
+            }
     if missing:
         assert not written
         assert not (tmp_path / "project").exists()

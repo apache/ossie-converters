@@ -26,7 +26,7 @@ from typing import List, Optional
 import yaml
 from pydantic import ValidationError
 
-from ossie import OssieDialect, OssieDocument
+from ossie import OssieDialect, OssieSemanticModel
 from ossie_lightdash.catalog import load_catalog
 from ossie_lightdash.converter_issues import ISSUE_EXPLANATIONS, ConversionError
 from ossie_lightdash.dbt_project import load_schema_with_skips
@@ -34,7 +34,7 @@ from ossie_lightdash.lightdash_to_ossie import LightdashToOssieConverter
 from ossie_lightdash.ossie_to_lightdash import OssieToLightdashConverter
 
 
-def _read_document(path: Path) -> OssieDocument:
+def _read_document(path: Path) -> OssieSemanticModel:
     """Reads the Ossie document at ``path``.
 
     Raises:
@@ -45,8 +45,8 @@ def _read_document(path: Path) -> OssieDocument:
     text = path.read_text(encoding="utf-8")
     try:
         if path.suffix == ".json":
-            return OssieDocument.model_validate_json(text)
-        return OssieDocument.model_validate(yaml.safe_load(text))
+            return OssieSemanticModel.model_validate_json(text)
+        return OssieSemanticModel.model_validate(yaml.safe_load(text))
     except yaml.YAMLError as exc:
         raise ConversionError(f"{path}: not valid YAML: {exc}") from exc
     except ValidationError as exc:
