@@ -40,7 +40,7 @@ def test_basic_datasets_fields_relationships_metrics():
     is_closed = next(f for f in orders.fields if f.name == "Is Closed")
     dialects = {d.dialect: d.expression for d in is_closed.expression.dialects}
     assert dialects[OssieDialect.SIGMA] == 'If([Status] = "closed", 1, 0)'
-    assert dialects[OssieDialect.ANSI_SQL] == "CASE WHEN \"Status\" = 'closed' THEN 1 ELSE 0 END"
+    assert dialects[OssieDialect.ANSI_SQL] == "CASE WHEN \"STATUS\" = 'closed' THEN 1 ELSE 0 END"
 
     net_amount = next(f for f in orders.fields if f.name == "Net Amount")
     net_dialects = {d.dialect: d.expression for d in net_amount.expression.dialects}
@@ -48,7 +48,7 @@ def test_basic_datasets_fields_relationships_metrics():
         'IfNull([Amount], 0) - SumIf([Amount], [Status] = "refunded")'
     )
     assert net_dialects[OssieDialect.ANSI_SQL] == (
-        'COALESCE("Amount", 0) - SUM(CASE WHEN "Status" = \'refunded\' THEN "Amount" ELSE 0 END)'
+        'COALESCE("AMOUNT", 0) - SUM(CASE WHEN "STATUS" = \'refunded\' THEN "AMOUNT" ELSE 0 END)'
     )
 
     assert model.description == "Orders and the customers who placed them"

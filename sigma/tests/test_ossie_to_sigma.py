@@ -73,7 +73,7 @@ def test_foreign_origin_document_synthesizes_valid_spec():
     store_sales = next(e for p in spec["pages"] for e in p["elements"] if e["name"] == "store_sales")
     assert all("id" in c and "formula" in c for c in store_sales["columns"])
     # Plain passthrough columns get no explicit `name` (matches Sigma's own convention).
-    plain_column = next(c for c in store_sales["columns"] if c["formula"] == "[ss_sold_date_sk]")
+    plain_column = next(c for c in store_sales["columns"] if c["formula"] == "[store_sales/ss_sold_date_sk]")
     assert "name" not in plain_column
 
     # Single-dataset metrics are attached to their owning element ...
@@ -269,7 +269,7 @@ def test_sql_only_dialect_exports_fields_and_places_metrics(dialect, amount, met
     result = OssieToSigmaConverter().convert(document)
     customers, element = result.output["pages"][0]["elements"]
     assert not customers.get("metrics")
-    assert [column["formula"] for column in element["columns"]] == ["[amount]", "([amount] * 0.9)"]
+    assert [column["formula"] for column in element["columns"]] == ["[orders/amount]", "([orders/amount] * 0.9)"]
     assert [metric["formula"] for metric in element["metrics"]] == ["Sum([amount])"]
     assert not result.issues
 
@@ -413,7 +413,7 @@ def test_authoritative_sql_exports_fields_and_places_metrics(with_sibling):
     result = OssieToSigmaConverter().convert(document)
     element = result.output["pages"][0]["elements"][0]
 
-    assert [column["formula"] for column in element["columns"]] == ["([amount] * 2)"]
+    assert [column["formula"] for column in element["columns"]] == ["([orders/amount] * 2)"]
     assert [metric["formula"] for metric in element["metrics"]] == ["Sum([amount])"]
     assert not result.issues
 
@@ -435,7 +435,7 @@ def test_export_reports_functions_with_untranslated_options(dialect):
     ])
     result = OssieToSigmaConverter().convert(document)
     columns = result.output["pages"][0]["elements"][0]["columns"]
-    assert [column["formula"] for column in columns] == ["Round([amount])", "Trim([name])"]
+    assert [column["formula"] for column in columns] == ["Round([orders/amount])", "Trim([orders/name])"]
     assert {issue.element_name for issue in result.issues
             if issue.issue_type == ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE} == {
         "orders.rounded", "orders.left_trimmed",
@@ -486,7 +486,7 @@ def test_only_numeric_datatypes_get_a_coarse_format_and_dates_never_get_kind_dat
     )
 
     columns = OssieToSigmaConverter().convert(document).output["pages"][0]["elements"][0]["columns"]
-    kinds = {c["formula"].strip("[]"): c["format"]["kind"] for c in columns if "format" in c}
+    kinds = {c["formula"].strip("[]").rsplit("/", 1)[-1]: c["format"]["kind"] for c in columns if "format" in c}
     assert kinds == {
         "integer": "number",
         "decimal": "number",
@@ -495,7 +495,7 @@ def test_only_numeric_datatypes_get_a_coarse_format_and_dates_never_get_kind_dat
     # Only number columns get a format. Date columns get none, so Sigma uses its own
     # default. We must never write the format "date": Sigma does not know that name and
     # would reject the whole model.
-    assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {
+    assert {c["formula"].strip("[]").rsplit("/", 1)[-1] for c in columns if "format" not in c} == {
         "date",
         "datetime",
         "datetimetz",
