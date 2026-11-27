@@ -212,10 +212,14 @@ class OssieToSigmaConverter:
         # A relationship key names a column on each side, so every dataset's column ids
         # have to exist before any relationship is built.
         field_ids_by_dataset: dict[str, dict[str, str]] = {}
+        # field expression -> column id, as a fallback for relationship keys that
+        # name a field's expression instead of the field. None means ambiguous.
+        expr_ids_by_dataset: dict[str, dict[str, Optional[str]]] = {}
         built_elements: list[tuple[OssieDataset, dict[str, Any]]] = []
         for dataset in model.datasets:
             element = self._build_element(
-                dataset, dataset_element_id, metrics_by_element, field_ids_by_dataset, issues
+                dataset, dataset_element_id, metrics_by_element, field_ids_by_dataset,
+                expr_ids_by_dataset, issues
             )
             built_elements.append((dataset, element))
             ext = _sigma_ext(dataset) or {}
@@ -227,7 +231,8 @@ class OssieToSigmaConverter:
             relationships = relationships_by_element.get(dataset_element_id[dataset.name], [])
             built = [
                 self._build_relationship(
-                    r, dataset.name, dataset_element_id, field_ids_by_dataset, declared_fields, issues
+                    r, dataset.name, dataset_element_id, field_ids_by_dataset,
+                    expr_ids_by_dataset, declared_fields, issues
                 )
                 for r in relationships
             ]
@@ -249,6 +254,7 @@ class OssieToSigmaConverter:
         dataset_element_id: dict[str, str],
         metrics_by_element: dict[str, list[OssieMetric]],
         field_ids_by_dataset: dict[str, dict[str, str]],
+        expr_ids_by_dataset: dict[str, dict[str, Optional[str]]],
         issues: list[ConverterIssue],
     ) -> dict[str, Any]:
         ext = _sigma_ext(dataset) or {}
@@ -274,6 +280,14 @@ class OssieToSigmaConverter:
             if column is None:
                 continue
             field_ids[field.name] = col_id
+            expr_ids = expr_ids_by_dataset.setdefault(dataset.name, {})
+            preferred = preferred_sql_expression(field.expression)
+            field_expr = preferred.expression if preferred is not None else None
+            if field_expr and field_expr != field.name:
+                # A producer may key a relationship on the field's expression rather
+                # than its name (msi-to-ossie emits a MetricFlow entity's `expr`).
+                # None marks an ambiguous expression so it is never guessed at.
+                expr_ids[field_expr] = None if field_expr in expr_ids else col_id
             columns.append(column)
 
         element: dict[str, Any] = {
@@ -366,6 +380,7 @@ class OssieToSigmaConverter:
         dataset_name: str,
         dataset_element_id: dict[str, str],
         field_ids_by_dataset: dict[str, dict[str, str]],
+        expr_ids_by_dataset: dict[str, dict[str, Optional[str]]],
         declared_fields: dict[str, set[str]],
         issues: list[ConverterIssue],
     ) -> Optional[dict[str, Any]]:
@@ -403,10 +418,18 @@ class OssieToSigmaConverter:
                 )
             keys = []
             omitted = False
+            def resolved(side: str, column: str, ids: dict[str, str]) -> Optional[str]:
+                """Field name first, then an unambiguous field expression."""
+                if column in ids:
+                    return ids[column]
+                return (expr_ids_by_dataset.get(side) or {}).get(column)
+
             for from_col, to_col in zip(rel.from_columns, rel.to_columns):
                 # Each side is a column of its own dataset: the target key must carry the
                 # target element's column id, not a lookup in the source element.
                 for side, column, ids in ((dataset_name, from_col, source_ids), (rel.to, to_col, target_ids)):
+                    if resolved(side, column, ids) is not None:
+                        continue
                     if column not in ids and column in declared_fields.get(side, set()):
                         # A declared field with no usable expression gets no Sigma column, so
                         # no key can point at it and Sigma would reject the whole spec.
@@ -432,8 +455,8 @@ class OssieToSigmaConverter:
                         )
                 keys.append(
                     {
-                        "sourceColumnId": source_ids.get(from_col, from_col),
-                        "targetColumnId": target_ids.get(to_col, to_col),
+                        "sourceColumnId": resolved(dataset_name, from_col, source_ids) or from_col,
+                        "targetColumnId": resolved(rel.to, to_col, target_ids) or to_col,
                     }
                 )
             if omitted:

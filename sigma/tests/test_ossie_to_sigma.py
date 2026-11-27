@@ -576,6 +576,65 @@ def test_relationship_keys_use_the_column_id_of_each_side(reverse):
     assert not result.issues
 
 
+def _aliased_field_model(ambiguous: bool = False) -> OssieSemanticModel:
+    """A dimension whose field is named for an entity but whose expression is the
+    warehouse column, which is what msi-to-ossie emits for a MetricFlow entity with
+    an `expr`. The relationship then keys on the expression, not the field name."""
+
+    def field(name: str, expression: str) -> OssieField:
+        return OssieField(
+            name=name,
+            expression=OssieExpression(
+                dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=expression)]
+            ),
+        )
+
+    dim_fields = [field("merchant_id", "merchant_1_id")]
+    if ambiguous:
+        dim_fields.append(field("merchant_id_again", "merchant_1_id"))
+    return OssieSemanticModel(
+        name="m",
+        datasets=[
+            OssieDataset(name="dim_merchant", source="db.public.dim_merchant", fields=dim_fields),
+            OssieDataset(
+                name="fact_sales",
+                source="db.public.fact_sales",
+                fields=[field("merchant_id", "merchant_id")],
+            ),
+        ],
+        relationships=[
+            OssieRelationship(
+                name="fact_sales_to_dim_merchant",
+                **{"from": "fact_sales"},
+                to="dim_merchant",
+                from_columns=["merchant_id"],
+                to_columns=["merchant_1_id"],
+            )
+        ],
+    )
+
+
+def test_relationship_key_resolves_through_a_field_expression():
+    """`to_columns` naming a field's expression rather than the field still resolves."""
+    result = OssieToSigmaConverter().convert(_aliased_field_model())
+
+    elements = {e["name"]: e for p in result.output["pages"] for e in p["elements"]}
+    [relationship] = elements["fact_sales"]["relationships"]
+    [key] = relationship["keys"]
+    assert key["targetColumnId"] == elements["dim_merchant"]["columns"][0]["id"]
+    assert not result.issues
+
+
+def test_ambiguous_field_expression_is_not_guessed_at():
+    """Two fields sharing one expression cannot identify a column, so the fallback
+    declines and the existing unresolved-column issue is reported as before."""
+    result = OssieToSigmaConverter().convert(_aliased_field_model(ambiguous=True))
+
+    unresolved = [i for i in result.issues if i.issue_type is ConverterIssueType.RELATIONSHIP_COLUMN_UNRESOLVED]
+    assert len(unresolved) == 1
+    assert "merchant_1_id" in unresolved[0].detail
+
+
 def test_relationship_column_missing_from_its_dataset_is_reported():
     result = OssieToSigmaConverter().convert(_relationship_model(dim_day_key="no_such_column"))
 
