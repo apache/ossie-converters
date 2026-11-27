@@ -230,16 +230,20 @@ def _path(column):
     return [part.name.lower() for part in column.parts]
 
 
-def _bare_columns(tree, known):
+def _bare_columns(tree, known, qualifiers=frozenset()):
     """Count, per name, the column references the AST reports that start with a column
     in `known`: a bare column, or the head of a struct path (`customer.id`, where
     `customer` is a STRUCT column). Solid stores formulas against bare names, so a path
     that starts with one of the table's columns is a field access into it, and the
-    dataset qualifier belongs in front of the whole path.
+    dataset qualifier belongs in front of the whole path. A dotted path whose head is in
+    `qualifiers` is already dataset-qualified and is left out.
     """
     counts = Counter()
     for column in tree.find_all(exp.Column):
-        head = _path(column)[0]
+        path = _path(column)
+        head = path[0]
+        if len(path) > 1 and head in qualifiers:
+            continue
         if head in known:
             counts[head] += 1
     return counts
@@ -323,7 +327,7 @@ def qualify_by_owner(expression, dialect, owners, shared=(), datasets=()):
     paths = [_path(column) for column in tree.find_all(exp.Column)]
     if any(len(p) > 1 and p[0] not in known and p[0] not in qualifiers for p in paths):
         return expression, ALIASED
-    expected = _bare_columns(tree, known)
+    expected = _bare_columns(tree, known, qualifiers)
     if not expected:
         return expression, UNCHANGED
     if _opens_scope(tree):
@@ -337,16 +341,21 @@ def qualify_by_owner(expression, dialect, owners, shared=(), datasets=()):
     for index, token in enumerate(tokens):
         if not _is_name_token(token):
             continue
-        if _unquote(token.text).lower() not in known:
+        lowered = _unquote(token.text).lower()
+        if lowered not in known:
             continue
         previous = tokens[index - 1] if index else None
         following = tokens[index + 1] if index + 1 < len(tokens) else None
-        # Already qualified (`t.col`), or a function call (`col(...)`) -- neither is a
-        # reference to the column. One followed by a dot (`col.x`) is the head of a
+        # Already qualified (`t.col`), a function call (`col(...)`), or a dataset
+        # qualifier (`orders.col`) -- none of these is a bare column reference. A name
+        # followed by a dot that is not a dataset qualifier (`col.x`) is the head of a
         # struct path, and is qualified like a bare column.
         if previous is not None and previous.token_type is TokenType.DOT:
             continue
         if following is not None and following.token_type is TokenType.L_PAREN:
+            continue
+        if (following is not None and following.token_type is TokenType.DOT
+                and lowered in qualifiers):
             continue
         targets.append(token)
 
