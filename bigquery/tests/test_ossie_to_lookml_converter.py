@@ -1243,6 +1243,24 @@ class TestSourceDialects:
         assert "type: sum" in measure
         assert "sql: DATE_DIFF(${t.end_date}, ${t.start_date}, DAY) ;;" in measure
 
+    def test_datediff_metric_home_ignores_the_unit_token(self):
+        other = _dataset("other", [_field("id")], primary_key=["id"])
+        t = _dataset(
+            "t",
+            [_field("id"), _field("start_date"), _field("end_date")],
+            primary_key=["id"],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(
+                _model(
+                    [other, t],
+                    metrics=[_metric("span", "SUM(DATEDIFF(day, start_date, end_date))")],
+                )
+            )
+        assert "measure: span" in _block(out, "view: t")
+        assert "measure: span" not in _block(out, "view: other")
+
     def test_unknown_function_warns_and_is_emitted(self):
         model = _model([_dataset("t", [_field("x", expr="FOO(order_date)")])])
         with pytest.warns(UserWarning, match="Field 't.x'.*FOO was not translated to BigQuery"):
@@ -1256,7 +1274,76 @@ class TestSourceDialects:
             out = convert_ossie_to_lookml(model)
         sql = _block(out, "dimension: d")
         assert "INTERVAL 1 HOUR" not in sql
-        assert "DATE_DIFF(" not in sql or "HOUR" not in sql
+        assert "${TABLE}.hour" not in sql
+        assert "DATE_ADD(" not in sql
+        assert "DATE_DIFF(" not in sql
+        assert "TIMESTAMP_DIFF(" not in sql
+        assert "hour" in sql.lower()
+
+    def test_datetime_tz_dateadd_hour_is_timestamp_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(hour, 1, created_at)"),
+        )
+        assert "sql: TIMESTAMP_ADD(${TABLE}.created_at, INTERVAL 1 HOUR) ;;" in view
+
+    def test_pass_through_column_drives_dateadd_family(self):
+        view = self._view(
+            _field("created_at", expr="created_ts", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(hour, 1, created_ts)"),
+        )
+        assert "sql: TIMESTAMP_ADD(${TABLE}.created_ts, INTERVAL 1 HOUR) ;;" in view
+
+    def test_datetime_dateadd_hour_is_datetime_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTime"),
+            _field("d", expr="DATEADD(hour, 1, created_at)"),
+        )
+        assert "sql: DATETIME_ADD(${TABLE}.created_at, INTERVAL 1 HOUR) ;;" in view
+
+    def test_date_dateadd_hour_is_left_as_is(self):
+        model = _model([_dataset("t", [
+            _field("order_date", datatype="Date"),
+            _field("d", expr="DATEADD(hour, 1, order_date)"),
+        ])])
+        with pytest.warns(UserWarning, match="HOUR has no BigQuery DATE_ADD spelling"):
+            out = convert_ossie_to_lookml(model)
+        sql = _block(out, "dimension: d")
+        assert "DATE_ADD(" not in sql
+        assert "${TABLE}.hour" not in sql
+
+    def test_datetime_tz_dateadd_day_is_timestamp_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(day, 1, created_at)"),
+        )
+        assert "sql: TIMESTAMP_ADD(${TABLE}.created_at, INTERVAL 1 DAY) ;;" in view
+
+    def test_datetime_tz_dateadd_month_is_left_as_is(self):
+        model = _model([_dataset("t", [
+            _field("created_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEADD(month, 1, created_at)"),
+        ])])
+        with pytest.warns(UserWarning, match="MONTH has no BigQuery TIMESTAMP_ADD spelling"):
+            out = convert_ossie_to_lookml(model)
+        sql = _block(out, "dimension: d")
+        assert "DATE_ADD(" not in sql
+        assert "TIMESTAMP_ADD(" not in sql
+
+    def test_datetime_dateadd_month_is_datetime_add(self):
+        view = self._view(
+            _field("created_at", datatype="DateTime"),
+            _field("d", expr="DATEADD(month, 1, created_at)"),
+        )
+        assert "sql: DATETIME_ADD(${TABLE}.created_at, INTERVAL 1 MONTH) ;;" in view
+
+    def test_datetime_tz_datediff_day_is_timestamp_diff(self):
+        view = self._view(
+            _field("start_at", datatype="DateTimeTz"),
+            _field("end_at", datatype="DateTimeTz"),
+            _field("d", expr="DATEDIFF(day, start_at, end_at)"),
+        )
+        assert "sql: TIMESTAMP_DIFF(${TABLE}.end_at, ${TABLE}.start_at, DAY) ;;" in view
 
     def test_bigquery_date_diff_with_date_part_column_is_not_repaired(self):
         with warnings.catch_warnings():
@@ -1398,6 +1485,30 @@ class TestDatasetMetrics:
         measure = _block(_block(out, "view: orders"), "measure: total")
         assert "type: sum" in measure
         assert "sql: ${TABLE}.amount ;;" in measure
+
+    def test_dataset_metric_dateadd_does_not_treat_unit_as_a_field(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("created_at", datatype="DateTimeTz")],
+            primary_key=["id"],
+            metrics=[_metric("later", "SUM(DATEADD(hour, 1, created_at))")],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(_model([ds]))
+        measure = _block(_block(out, "view: t"), "measure: later")
+        assert "TIMESTAMP_ADD" in measure
+        assert "${TABLE}.hour" not in measure
+
+    def test_dataset_metric_datediff_checks_the_end_argument(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("start_date")],
+            primary_key=["id"],
+            metrics=[_metric("span", "SUM(DATEDIFF(day, start_date, end_date))")],
+        )
+        with pytest.warns(UserWarning, match="Metric 't.span'.*'end_date' matches no field"):
+            convert_ossie_to_lookml(_model([ds]))
 
     def test_dataset_metric_is_placed_in_its_dataset_even_when_another_exposes_the_field(self):
         a = _dataset("a", [_field("id"), _field("amount")], primary_key=["id"])

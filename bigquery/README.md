@@ -119,9 +119,12 @@ BigQuery, `DATE_TRUNC('month', d)` becomes `DATE_TRUNC(d, MONTH)`,
 `DATEDIFF(day, start, end)` becomes `DATE_DIFF(end, start, DAY)`.
 `DATEDIFF(week, start, end)` becomes `DATE_DIFF(end, start, WEEK(MONDAY))`
 because Ossie weeks start Monday and BigQuery `WEEK` starts Sunday.
-`HOUR` / `MINUTE` / `SECOND` are left as-is with a warning until
-`TIMESTAMP_ADD` / `TIMESTAMP_DIFF` is mapped. A portable function with no
-BigQuery spelling is emitted as-is with a warning.
+The operand field's `Date` / `DateTime` / `DateTimeTz` datatype selects
+`DATE_ADD`, `DATETIME_ADD` or `TIMESTAMP_ADD` (and the matching DIFF).
+`HOUR` / `MINUTE` / `SECOND` map on DateTime and DateTimeTz; they stay as-is
+(unit not qualified as a column) on Date or untyped operands.
+`TIMESTAMP_ADD` / `TIMESTAMP_DIFF` take no WEEK, MONTH, QUARTER or YEAR.
+A portable function with no BigQuery spelling is emitted as-is with a warning.
 Blank expressions are ignored, so a blank tagged entry falls back to the next
 supported expression. If only unsupported or blank dialect entries remain, the
 field/metric is skipped with a warning. An expression with no `dialects` and
