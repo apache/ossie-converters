@@ -758,6 +758,11 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         inner = _render_sql_node(node.this, dataset_alias)
         if isinstance(node.expression, exp.Null):
             return f"IsNull({inner})"
+        # `x IS TRUE` / `x IS FALSE`: Sigma has no IS operator, but a boolean
+        # operand is itself the predicate. This is how MetricFlow renders a
+        # boolean dimension filter, so it is common in dbt-sourced documents.
+        if isinstance(node.expression, exp.Boolean):
+            return inner if node.expression.this else f"NOT ({inner})"
         raise _NotTranslatable("IS <non-null> has no Sigma equivalent")
 
     if isinstance(node, exp.Case):
@@ -776,6 +781,26 @@ def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
         if default is not None:
             parts.append(_render_sql_node(default, dataset_alias))
         return f"If({', '.join(parts)})"
+
+    if isinstance(node, exp.If):
+        # A bare `IF(cond, then, else)` -- BigQuery, Databricks, Spark, MySQL --
+        # parses to exp.If rather than exp.Case. Sigma's If() is variadic and
+        # returns Null when the else argument is omitted.
+        parts = [
+            _render_sql_node(node.this, dataset_alias),
+            _render_sql_node(node.args["true"], dataset_alias),
+        ]
+        false_branch = node.args.get("false")
+        if false_branch is not None:
+            parts.append(_render_sql_node(false_branch, dataset_alias))
+        return f"If({', '.join(parts)})"
+
+    if isinstance(node, exp.SafeDivide):
+        # BigQuery SAFE_DIVIDE returns NULL on a zero or null denominator, which
+        # is also what Sigma's division operator does.
+        left = _render_sql_node(node.this, dataset_alias)
+        right = _render_sql_node(node.expression, dataset_alias)
+        return f"({left} / {right})"
 
     if isinstance(node, exp.Nullif):
         # Sigma has a native NullIf(), which evaluates its first argument once.
