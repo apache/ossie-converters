@@ -1156,6 +1156,51 @@ class TestSourceDialects:
         assert "sql: DATE_TRUNC(${TABLE}.order_date, MONTH) ;;" in view
 
     @pytest.mark.parametrize("dialect", ["ANSI_SQL", "OSSIE_SQL_2026"])
+    def test_ansi_date_trunc_week_uses_monday_start(self, dialect):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(_field("w", expr="DATE_TRUNC('week', order_date)", dialect=dialect))
+        assert "sql: DATE_TRUNC(${TABLE}.order_date, WEEK(MONDAY)) ;;" in view
+
+    def test_primary_sql_date_trunc_week_uses_monday_start(self):
+        field = {"name": "w", "expression": {"sql": "DATE_TRUNC('week', order_date)"}}
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(field)
+        assert "sql: DATE_TRUNC(${TABLE}.order_date, WEEK(MONDAY)) ;;" in view
+
+    def test_nested_date_trunc_week_uses_monday_start(self):
+        ds = _dataset(
+            "t",
+            [_field("id"), _field("start_date"), _field("end_date")],
+            primary_key=["id"],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = convert_ossie_to_lookml(
+                _model(
+                    [ds],
+                    metrics=[
+                        _metric(
+                            "span",
+                            "SUM(DATEDIFF(week, DATE_TRUNC('week', t.start_date), t.end_date))",
+                        )
+                    ],
+                )
+            )
+        measure = _block(out, "measure: span")
+        assert (
+            "sql: DATE_DIFF(${t.end_date}, DATE_TRUNC(${t.start_date}, WEEK(MONDAY)), WEEK(MONDAY)) ;;"
+            in measure
+        )
+
+    def test_bigquery_date_trunc_week_is_preserved(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            view = self._view(_field("w", expr="DATE_TRUNC(order_date, WEEK)", dialect="BIGQUERY"))
+        assert "sql: DATE_TRUNC(${TABLE}.order_date, WEEK) ;;" in view
+
+    @pytest.mark.parametrize("dialect", ["ANSI_SQL", "OSSIE_SQL_2026"])
     @pytest.mark.parametrize(
         "expr, sql",
         [

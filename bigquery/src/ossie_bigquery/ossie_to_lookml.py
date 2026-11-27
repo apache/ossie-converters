@@ -66,7 +66,7 @@ _DATE_PARTS = {
     "YEAR": "YEAR", "YEARS": "YEAR", "YY": "YEAR", "YYYY": "YEAR",
     "QUARTER": "QUARTER", "QUARTERS": "QUARTER",
     "MONTH": "MONTH", "MONTHS": "MONTH", "MM": "MONTH",
-    "WEEK": "WEEK", "WEEKS": "WEEK",  # DATE_ADD; DATE_DIFF uses WEEK(MONDAY)
+    "WEEK": "WEEK", "WEEKS": "WEEK",  # DATE_ADD; DATE_DIFF and DATE_TRUNC use WEEK(MONDAY)
     "DAY": "DAY", "DAYS": "DAY", "DD": "DAY", "D": "DAY",
 }
 _TIMESTAMP_PARTS = {
@@ -771,7 +771,7 @@ def _prepare_tree(tree, expr, dialect, context):
 
 
 def _rewrite_ossie_date_functions(tree, original, dialect, context):
-    """Rewrite DATEADD/DATEDIFF bottom-up so nested calls are rewritten too.
+    """Rewrite DATE_TRUNC/DATEADD/DATEDIFF bottom-up so nested calls are rewritten too.
 
     sqlglot ``transform`` does not walk children of a replaced node, so a
     DATEADD whose amount is a DATEDIFF would keep the inner call in the
@@ -790,7 +790,8 @@ def _rewrite_ossie_date_functions(tree, original, dialect, context):
 
 
 def _rewrite_ossie_date_function(node, original, dialect, context):
-    """DATEADD(part, n, d) -> DATE_ADD(d, INTERVAL n PART);
+    """DATE_TRUNC('week', d) -> DATE_TRUNC(d, WEEK(MONDAY));
+    DATEADD(part, n, d) -> DATE_ADD(d, INTERVAL n PART);
     DATEDIFF(part, start, end) -> DATE_DIFF(end, start, PART)."""
     if isinstance(node, exp.Anonymous):
         name = str(node.this).upper()
@@ -799,6 +800,13 @@ def _rewrite_ossie_date_function(node, original, dialect, context):
             return _rewrite_date_add(args[0], args[1], args[2], context) or node
         if name in _DATE_DIFF_NAMES and len(args) == 3:
             return _rewrite_date_diff(args[0], args[1], args[2], original, context) or node
+        return node
+    if isinstance(node, exp.DateTrunc) and dialect != "BIGQUERY":
+        # BigQuery bare WEEK starts Sunday; Ossie DATE_TRUNC('week', ...) is Monday.
+        if _date_part_name(node.args.get("unit")) == "WEEK":
+            updated = node.copy()
+            updated.set("unit", exp.var(_monday_week_unit("WEEK")))
+            return updated
         return node
     if isinstance(node, exp.DateDiff) and dialect != "BIGQUERY":
         # Default reader: DATEDIFF(day, start, end) has this=day (a column)
@@ -813,7 +821,7 @@ def _rewrite_ossie_date_function(node, original, dialect, context):
             return exp.DateDiff(
                 this=end,
                 expression=node.expression,
-                unit=exp.var(_date_diff_unit(part)),
+                unit=exp.var(_monday_week_unit(part)),
             )
     return node
 
@@ -836,7 +844,7 @@ def _rewrite_date_diff(unit, start, end, original, context):
     if not part:
         return None
     return exp.DateDiff(
-        this=end, expression=start, unit=exp.var(_date_diff_unit(part))
+        this=end, expression=start, unit=exp.var(_monday_week_unit(part))
     )
 
 
@@ -858,7 +866,7 @@ def _date_part_name(node):
     return _DATE_PARTS.get(token.upper()) if token else None
 
 
-def _date_diff_unit(part: str) -> str:
+def _monday_week_unit(part: str) -> str:
     """BigQuery ``WEEK`` starts Sunday; Ossie ``DATE_TRUNC('week', ...)`` is Monday."""
     return "WEEK(MONDAY)" if part == "WEEK" else part
 
