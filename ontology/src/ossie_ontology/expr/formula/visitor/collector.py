@@ -52,6 +52,7 @@ class FormulaCollector(Visitor):
         self._dataset_field_handles: list[DatasetFieldHandle] = []
         self._fact_refs: list[FactRef] = []
         self._dot_join_handles: list[DotJoinHandle] = []
+        self._operators: list[BinOp] = []
 
     def expression_info(self) -> FormulaExpressionInfo:
         return FormulaExpressionInfo(
@@ -63,7 +64,11 @@ class FormulaCollector(Visitor):
             dataset_field_handles=self._dataset_field_handles,
             fact_refs=self._fact_refs,
             dot_join_handles=self._dot_join_handles,
+            operators=self._operators,
         )
+
+    def visit_binop(self, node: BinOp, parent: Optional[Node]):
+        self._operators.append(node)
 
     def visit_varhandle(self, node: VarHandle, parent: Optional[Node]):
         var_type = self._resolved_var_handles.get(node)

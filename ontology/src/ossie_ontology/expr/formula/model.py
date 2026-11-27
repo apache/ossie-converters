@@ -33,6 +33,7 @@ from ossie_ontology.model import (
     Formula as OSIFormula,
 )
 
+from ossie_ontology.expr.model import BinOp
 from ossie_ontology.expr.model import Expression as ExprNode
 
 
@@ -357,6 +358,7 @@ class FormulaExpressionInfo:
     dataset_field_handles: list[DatasetFieldHandle] = field(default_factory=list)
     fact_refs: list[FactRef] = field(default_factory=list)
     dot_join_handles: list[DotJoinHandle] = field(default_factory=list)
+    operators: list[BinOp] = field(default_factory=list)
 
 
 class Formula(OSIFormula):
