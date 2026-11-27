@@ -280,11 +280,33 @@ def write_report(report, output):
         ]
         if live.get("cleanup_error") and live["cleanup_error"] != live["reason"]:
             lines.append(_cell(live["cleanup_error"]))
+        if live.get("dataset_rows"):
+            lines += [
+                "",
+                "Rows preserved by each dataset projection: "
+                + ", ".join(
+                    f"{name}={count}" for name, count in live["dataset_rows"].items()
+                )
+                + ".",
+            ]
+        if live.get("dataset_measures"):
+            lines += [
+                "",
+                "Native dataset measures (Cube SQL versus MEASURE):",
+                "",
+                "| Dataset | Measure | Differing groups | Missing groups |",
+                "|---|---|---:|---:|",
+            ]
+            for name, summary in live["dataset_measures"].items():
+                for measure, count in summary["measure_mismatches"].items():
+                    lines.append(
+                        f"| {name} | {measure} | {count} | {summary['missing_groups']} |"
+                    )
         if live["grains"]:
             measures = next(iter(live["grains"].values()))["measure_mismatches"]
             lines += [
                 "",
-                "Counts of differing groups per measure.",
+                "Model queries over deployed dataset projections: differing groups per measure.",
                 "",
                 "| Grain | Cube rows | Metric View rows | Missing groups | "
                 + " | ".join(measures)

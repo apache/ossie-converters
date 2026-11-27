@@ -57,7 +57,7 @@ def main(argv=None):
     parser.add_argument(
         "--live-databricks",
         action="store_true",
-        help="compare TPC-DS Metric View and Cube query results on a Databricks SQL warehouse",
+        help="compare deployed TPC-DS dataset measures and Cube model queries on a Databricks SQL warehouse",
     )
     parser.add_argument(
         "--strict",

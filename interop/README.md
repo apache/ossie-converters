@@ -348,12 +348,38 @@ uv run --project interop --locked --with databricks-sdk python -m interop \
   --converters cube,databricks --live-databricks
 ```
 
-The check creates a uniquely named Metric View from the matrix export and removes
-it after the comparison. `--timeout` also applies to each warehouse statement. It runs Cube-generated SQL and native `MEASURE` queries
-on the same warehouse. The report counts missing groups and differences for
-`total_sales`, `total_profit`, `sales_by_brand`, `customer_lifetime_value`, and
-`store_productivity` at the total, `i_brand`, and `s_store_name` grains. Sums use
-exact equality. Ratios use absolute and relative tolerances of `1e-8`.
+The check passes the matrix's exported **Ossie model** to `ossie-databricks deploy`.
+It reads the generated dataset Metric Views and rewritten Ossie model, checks that
+model-scoped metrics and relationships are preserved, and binds each dataset to
+a uniquely named scratch view. Only views successfully created by this run are
+removed, in reverse order, including after a partial failure. A cleanup failure
+fails the check. `--timeout` also applies to each warehouse statement.
+
+Two checks run on the same warehouse:
+
+- The three dataset-scoped sales measures are compared directly between Cube SQL
+  and native Databricks `MEASURE` queries.
+- Cube-generated SQL compares the five original TPC-DS measures (`total_sales`,
+  `total_profit`, `sales_by_brand`, `customer_lifetime_value`, and
+  `store_productivity`) at the total, `i_brand`, and `s_store_name` grains, using
+  the original tables and then the deployed dataset projections.
+
+The second check uses **Cube as the model query executor**. Deployment retains
+cross-dataset metrics in Ossie; it does not flatten them into a single Metric View
+or provide a generic Ossie SQL executor. The live fixture adds a test-only
+`COUNT(*)` measure to each dataset so even datasets without local measures can
+be projected through native `MEASURE` queries. Before comparing results, the
+check requires each projection to be nonempty and its count to equal one for
+every row, preventing aggregation from silently collapsing duplicate rows.
+Computed fields remain view dimensions; the projections expose the fixture's
+identity fields under their physical names for Cube SQL.
+
+The report records dataset row counts, native measure mismatches, missing groups,
+and model-query mismatches. Sums use exact equality; ratios use absolute and
+relative tolerances of `1e-8`. Untouched deployment files and a separate model
+with the actual scratch bindings are saved under `live-databricks/deployment/`.
+These local artifacts can include connection-specific schema names; do not
+publish them without checking their contents.
 
 An explicitly requested live check returns exit status 1 on failure, including
 when its configuration or prerequisites are missing. Regular matrix runs do not
