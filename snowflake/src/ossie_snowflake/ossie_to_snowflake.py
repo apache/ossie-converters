@@ -279,7 +279,7 @@ def _convert_metrics(ossie, table_metrics):
         if expr is None:
             continue
         item["expr"] = expr
-        _append_metric(converted, seen, item, already_converted=True)
+        _append_metric(converted, seen, item)
     return converted
 
 
@@ -296,19 +296,34 @@ def _model_metric_expr(expr, metric_name, table_metrics):
     except (ParseError, TokenError, ValueError):
         return expr
     missing = []
+    invalid_agg = []
 
     def to_metric_reference(node):
-        if isinstance(node, exp.Agg) and isinstance(node.this, exp.Column) and node.this.table:
+        if isinstance(node, exp.Agg):
             reference = node.this
-            if (reference.table.lower(), reference.name.lower()) not in table_metrics:
-                missing.append(f"{reference.table}.{reference.name}")
-            return reference.copy()
+            if (
+                isinstance(reference, exp.Column)
+                and not isinstance(reference.this, exp.Star)
+                and reference.table
+                and not reference.db
+            ):
+                if (reference.table.lower(), reference.name.lower()) not in table_metrics:
+                    missing.append(f"{reference.table}.{reference.name}")
+                return reference.copy()
+            invalid_agg.append(node.sql(dialect="snowflake"))
         return node
 
     translated = tree.transform(to_metric_reference)
-    if missing:
+    if invalid_agg:
         warnings.warn(
-            f"Skipping metric '{metric_name}': AGG({', '.join(missing)}) refers to "
+            f"Skipping metric '{metric_name}': {', '.join(dict.fromkeys(invalid_agg))} "
+            "is not a single AGG(dataset.metric) reference"
+        )
+        return None
+    if missing:
+        calls = ", ".join(f"AGG({ref})" for ref in dict.fromkeys(missing))
+        warnings.warn(
+            f"Skipping metric '{metric_name}': {calls} refers to "
             "a dataset-scoped metric that was not exported"
         )
         return None
@@ -336,14 +351,11 @@ def _convert_dataset_metrics(dataset, field_exprs):
         if expr is None:
             continue
         item["expr"] = expr
-        _append_metric(converted, seen, item, already_converted=True)
+        _append_metric(converted, seen, item)
     return converted
 
 
-def _append_metric(converted, seen, metric, already_converted=False):
-    item = metric if already_converted else _convert_named_expr(metric, "metric")
-    if item is None:
-        return
+def _append_metric(converted, seen, item):
     name = item["name"]
     source = f"metric '{name}'"
     if name in seen:
@@ -386,12 +398,17 @@ def _table_metric_expr(expr, dataset_name, source, metric_name, field_exprs):
         table = column.table
         if not table:
             continue
-        if table == "source":
+        if table.lower() == "source":
+            if "source" in field_exprs:
+                warnings.warn(
+                    f"{skip}: {table}.{column.name} is shadowed by the field 'source'"
+                )
+                return None
             name = column.name
             field_expr = field_exprs.get(name.lower())
             if field_expr is not None and field_expr.strip().lower() != name.lower():
                 warnings.warn(
-                    f"{skip}: source.{name} would read as the field '{name}', "
+                    f"{skip}: {table}.{name} would read as the field '{name}', "
                     f"which is defined as {field_expr}"
                 )
                 return None

@@ -874,6 +874,24 @@ class TestConvertOssieToSnowflake:
             result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
         assert result["tables"][0]["metrics"] == [{"name": "total_qty", "expr": "SUM(quantity)"}]
 
+    def test_dataset_metric_uppercase_source_column_is_unqualified(self):
+        model = _minimal_model()
+        model["datasets"][0]["metrics"] = [_metric("total_qty", "SUM(SOURCE.quantity)")]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert result["tables"][0]["metrics"] == [{"name": "total_qty", "expr": "SUM(quantity)"}]
+
+    def test_dataset_metric_source_column_shadowed_by_source_field_is_skipped(self):
+        model = _minimal_model()
+        model["datasets"][0]["fields"].append(_metric("source", "src_col"))
+        model["datasets"][0]["metrics"] = [_metric("total_qty", "SUM(source.quantity)")]
+        with pytest.warns(
+            UserWarning, match=r"source\.quantity is shadowed by the field 'source'"
+        ):
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert "metrics" not in result["tables"][0]
+
     def test_dataset_metric_source_column_shadowed_by_a_field_is_skipped(self):
         # `quantity` in a Snowflake table metric would read as the field, not the column.
         model = _minimal_model()
@@ -922,6 +940,35 @@ class TestConvertOssieToSnowflake:
         messages = [str(w.message) for w in record]
         assert any("'my_table.qty': expression names customers.quantity" in m for m in messages)
         assert any("'avg_qty': AGG(my_table.qty) refers to" in m for m in messages)
+        assert "metrics" not in result
+
+    @pytest.mark.parametrize(
+        "bad_expr",
+        ["AGG(total)", "AGG(db.my_table.total)", "AGG(my_table.*)", "AGG(my_table.col1 + 1)"],
+    )
+    def test_root_metric_malformed_agg_is_skipped(self, bad_expr):
+        model = _minimal_model(metrics=[_metric("bad_agg", bad_expr)])
+        model["datasets"][0]["metrics"] = [_metric("total", "SUM(col1)")]
+        with pytest.warns(
+            UserWarning, match=r"is not a single AGG\(dataset\.metric\) reference"
+        ):
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
+        assert "metrics" not in result
+
+    def test_root_metric_multiple_missing_agg_references_warning(self):
+        model = _minimal_model(
+            metrics=[
+                _metric(
+                    "ratio",
+                    "AGG(my_table.a) / NULLIF(AGG(my_table.a) + AGG(my_table.b), 0)",
+                )
+            ]
+        )
+        with pytest.warns(
+            UserWarning,
+            match=r"Skipping metric 'ratio': AGG\(my_table\.a\), AGG\(my_table\.b\) refers to",
+        ):
+            result = yaml.safe_load(convert_ossie_to_snowflake(_wrap_ossie(model)))
         assert "metrics" not in result
 
     def test_invalid_yaml_root_raises(self):
