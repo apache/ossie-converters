@@ -344,6 +344,7 @@ def convert_ossie_to_auto_ontology(
             for column in relationship[key]:
                 _add_catalog_column(datasets[str(relationship[side])], str(column))
 
+    field_sql: dict[str, dict[str, str]] = {name: {} for name in datasets}
     for name, context in datasets.items():
         dataset = context["original"]
         for column in dataset.get("primary_key") or []:
@@ -366,6 +367,7 @@ def convert_ossie_to_auto_ontology(
             field_names.add(field_name)
             expressions = _normalize_expressions(field.get("expression"), field_name)
             selected = _pick_expression(expressions, field_name)
+            field_sql[name][field_name] = selected
             source_column = _simple_source_column(
                 selected, name, str(context["source"]["table"])
             )
@@ -380,7 +382,9 @@ def convert_ossie_to_auto_ontology(
                 context["computed_fields"].append((field, expressions, selected, refs))
                 _collect_expression_columns(selected, name, refs, datasets, preserved)
 
-    metrics: list[tuple[dict[str, Any], list[dict[str, str]], str, list[str]]] = []
+    metrics: list[
+        tuple[dict[str, Any], list[dict[str, str]], str, str, list[str]]
+    ] = []
     metric_names: set[str] = set()
     for metric in model.get("metrics") or []:
         if not isinstance(metric, dict) or not metric.get("name"):
@@ -394,8 +398,11 @@ def convert_ossie_to_auto_ontology(
         expressions = _normalize_expressions(metric.get("expression"), name)
         selected = _pick_expression(expressions, name)
         refs = _metric_table_refs(metric, selected, datasets)
-        _collect_expression_columns(selected, None, refs, datasets, preserved)
-        metrics.append((metric, expressions, selected, refs))
+        physical = _substitute_field_refs(
+            selected, None, refs, datasets, field_sql
+        )
+        _collect_expression_columns(physical, None, refs, datasets, preserved)
+        metrics.append((metric, expressions, selected, physical, refs))
 
     databases, table_ids, column_ids = _build_catalog(datasets, preserved)
     if native:
@@ -555,26 +562,36 @@ def convert_ossie_to_auto_ontology(
             )
 
     custom_analyses: list[dict[str, Any]] = []
-    for metric, _, selected, refs in metrics:
+    for metric, _, selected, physical, refs in metrics:
         name = str(metric["name"])
         extension = _auto_ontology_extension_data(metric)
         preserved_analysis = preserved["custom_analyses"].get(name, {})
+        stored_sql = extension.get("sql")
         expression_unchanged = _expression_matches(
             selected, extension.get("ossie_expression")
         )
+        physical_unchanged = _physical_matches_stored(physical, stored_sql)
+        if not _selected_names_current_fields(
+            selected, None, refs, datasets, field_sql
+        ):
+            # Metric text still names a field this export does not have, so
+            # substitution cannot tell whether the stored SQL is stale.
+            physical_unchanged = True
         full_sql = str(
-            extension.get("sql")
-            if expression_unchanged and extension.get("sql")
-            else _wrap_expression(selected, name, refs, datasets, relationships)
+            stored_sql
+            if expression_unchanged and physical_unchanged
+            else _wrap_expression(physical, name, refs, datasets, relationships)
         )
         referenced_column_ids = _sql_column_ids(
-            selected, None, refs, datasets, column_ids
+            physical, None, refs, datasets, column_ids
         )
         preserved_column_ids = extension.get(
             "sql_column_is", preserved_analysis.get("sql_column_is")
         )
-        if expression_unchanged and _all_resolvable_ids(
-            preserved_column_ids, column_ids
+        if (
+            expression_unchanged
+            and physical_unchanged
+            and _all_resolvable_ids(preserved_column_ids, column_ids)
         ):
             referenced_column_ids = list(preserved_column_ids)
         if not referenced_column_ids:
@@ -848,6 +865,7 @@ def convert_auto_ontology_to_ossie(
             catalog,
         )
         ossie_expression = _requalified(_expression_from_sql(sql), dataset_by_alias)
+        ossie_expression = _substitute_columns_with_fields(ossie_expression, datasets)
         metric: dict[str, Any] = {
             "name": names["metrics"][analysis_id],
             "expression": _ossie_expression(
@@ -1566,6 +1584,117 @@ def _field_names_by_column(dataset: Mapping[str, Any]) -> dict[str, str]:
     return names
 
 
+def _substitute_columns_with_fields(
+    sql: str,
+    datasets: Iterable[Mapping[str, Any]],
+) -> str:
+    """Replace source SQL in *sql* with the fields that read it.
+
+    Pass-through: ``SUM(orders.o_totalprice)`` becomes ``SUM(orders.amount)``
+    when ``amount`` is the field whose expression is that column.
+
+    Calculated: ``SUM((orders.o_totalprice / 100.0))`` becomes
+    ``SUM(orders.amount)`` when ``amount`` is ``o_totalprice / 100.0``. The
+    whole inlined tree is replaced first so an inner column is not mapped to a
+    different pass-through field, and columns that replacement inserts are
+    left alone so a pass-through of the same name cannot claim them.
+    """
+    parsed = _parse_sql(sql)
+    if parsed is None:
+        return sql
+    dataset_list = list(datasets)
+    parsed, inserted = _replace_inlined_field_expressions(parsed, dataset_list)
+    by_dataset = {
+        str(dataset["name"]): _field_names_by_column(dataset)
+        for dataset in dataset_list
+    }
+    changed = bool(inserted)
+    for column in parsed.find_all(exp.Column):
+        if id(column) in inserted or not column.table or _is_date_part_unit(column):
+            continue
+        field = by_dataset.get(column.table, {}).get(column.name)
+        if field and field != column.name:
+            column.set("this", exp.to_identifier(field))
+            changed = True
+    return parsed.sql() if changed else sql
+
+
+def _field_expression_sql(field: Mapping[str, Any]) -> str | None:
+    expression = field.get("expression")
+    if not isinstance(expression, dict):
+        return None
+    dialects = expression.get("dialects") or []
+    if (
+        dialects
+        and isinstance(dialects[0], dict)
+        and dialects[0].get("expression") is not None
+    ):
+        return str(dialects[0]["expression"])
+    return None
+
+
+def _calculated_field_tree(
+    field_expr: str, dataset_name: str, table_name: str
+) -> exp.Expression | None:
+    """The tree export inlines for a non-pass-through field, or ``None``."""
+    if _simple_source_column(field_expr, dataset_name, table_name):
+        return None
+    inlined = _parse_sql(field_expr)
+    if inlined is None or isinstance(inlined, exp.Query):
+        return None
+    _qualify_source_columns(inlined, dataset_name, table_name, dataset_name)
+    if isinstance(inlined, (exp.Column, exp.Literal)):
+        return None
+    return exp.Paren(this=inlined)
+
+
+def _replace_inlined_field_expressions(
+    parsed: exp.Expression, datasets: list[Mapping[str, Any]]
+) -> tuple[exp.Expression, set[int]]:
+    """Replace inlined field trees with ``dataset.field``, longest first.
+
+    A match at the root of *parsed* becomes the returned tree: ``replace``
+    needs a parent, so it would otherwise loop forever. The ids of the
+    columns this inserts are returned so the pass-through step can skip them.
+    """
+    targets: list[tuple[int, exp.Expression, exp.Column]] = []
+    for dataset in datasets:
+        dataset_name = str(dataset["name"])
+        source = str(dataset.get("source") or "")
+        table_name = source.rsplit(".", 1)[-1]
+        for field in dataset.get("fields") or []:
+            if not isinstance(field, dict) or not field.get("name"):
+                continue
+            field_expr = _field_expression_sql(field)
+            if field_expr is None:
+                continue
+            tree = _calculated_field_tree(field_expr, dataset_name, table_name)
+            if tree is None:
+                continue
+            replacement = exp.Column(
+                this=exp.to_identifier(str(field["name"])),
+                table=exp.to_identifier(dataset_name),
+            )
+            targets.append((len(tree.sql()), tree, replacement))
+            if tree.this is not None:
+                targets.append((len(tree.this.sql()), tree.this, replacement))
+    targets.sort(key=lambda item: item[0], reverse=True)
+    inserted: set[int] = set()
+    for _, target, replacement in targets:
+        while True:
+            match = next((node for node in parsed.walk() if node == target), None)
+            if match is None:
+                break
+            new = replacement.copy()
+            if match.parent is None:
+                parsed = new
+                inserted.add(id(new))
+                break
+            match.replace(new)
+            inserted.add(id(new))
+    return parsed, inserted
+
+
 def _relationships_from_auto_ontology(
     root: dict[str, Any],
     catalog: Mapping[str, Any],
@@ -2066,6 +2195,83 @@ def _simple_source_column(
     return match.group("column")
 
 
+def _substitute_field_refs(
+    sql: str,
+    owner: str | None,
+    refs: list[str],
+    datasets: Mapping[str, dict[str, Any]],
+    field_sql: Mapping[str, Mapping[str, str]],
+) -> str:
+    """Replace field names in *sql* with each field's source expression.
+
+    Metric expressions name Ossie fields. Auto Ontology SQL runs against the
+    catalog, so ``SUM(orders.amount)`` with ``amount = o_totalprice`` must
+    become ``SUM(orders.o_totalprice)``.
+    """
+    parsed = _parse_sql(sql)
+    if parsed is None:
+        return sql
+    replacements: list[tuple[exp.Column, exp.Expression]] = []
+    for column in parsed.find_all(exp.Column):
+        if _is_date_part_unit(column):
+            continue
+        dataset_name = _column_dataset(column, owner, refs, datasets)
+        if not dataset_name:
+            continue
+        field_expr = field_sql.get(dataset_name, {}).get(column.name)
+        if field_expr is None:
+            continue
+        table_name = str(datasets[dataset_name]["source"]["table"])
+        simple = _simple_source_column(field_expr, dataset_name, table_name)
+        if simple == column.name:
+            continue
+        replacement = _inline_field_expression(
+            field_expr, simple, dataset_name, table_name, column
+        )
+        if replacement is not None:
+            replacements.append((column, replacement))
+    if not replacements:
+        return sql
+    for column, replacement in replacements:
+        column.replace(replacement)
+    return parsed.sql()
+
+
+def _inline_field_expression(
+    field_expr: str,
+    simple: str | None,
+    dataset_name: str,
+    table_name: str,
+    column: exp.Column,
+) -> exp.Expression | None:
+    if simple:
+        renamed = column.copy()
+        renamed.set("this", exp.to_identifier(simple))
+        return renamed
+    inlined = _parse_sql(field_expr)
+    if inlined is None or isinstance(inlined, exp.Query):
+        return None
+    alias = column.table or dataset_name
+    _qualify_source_columns(inlined, dataset_name, table_name, alias)
+    if isinstance(inlined, (exp.Column, exp.Literal)):
+        return inlined
+    return exp.Paren(this=inlined)
+
+
+def _qualify_source_columns(
+    tree: exp.Expression,
+    dataset_name: str,
+    table_name: str,
+    alias: str,
+) -> None:
+    for column in tree.find_all(exp.Column):
+        if _is_date_part_unit(column):
+            continue
+        if column.table and column.table not in (dataset_name, table_name, alias):
+            continue
+        column.set("table", exp.to_identifier(alias))
+
+
 def _field_table_refs(
     field: Mapping[str, Any],
     expression: str,
@@ -2494,6 +2700,51 @@ def _expression_matches(current: str, emitted: Any) -> bool:
     if parsed_current is None or parsed_emitted is None:
         return current.strip() == emitted.strip()
     return parsed_current.sql() == parsed_emitted.sql()
+
+
+def _unqualified_sql(sql: str) -> str | None:
+    """*sql* with table qualifiers stripped, for comparing catalog formulas."""
+    parsed = _parse_sql(sql)
+    if parsed is None:
+        return None
+    for column in parsed.find_all(exp.Column):
+        if column.table:
+            column.set("table", None)
+    return parsed.sql()
+
+
+def _physical_matches_stored(physical: str, stored_sql: object) -> bool:
+    """Whether *physical* is the same formula as the stored custom-analysis SQL.
+
+    Stored SQL keeps native table aliases; *physical* uses dataset names. The
+    comparison ignores qualifiers so a display-name round trip still reuses
+    the stored SQL, while an edited field expression does not.
+    """
+    if not isinstance(stored_sql, str) or not stored_sql.strip():
+        return False
+    current = _unqualified_sql(physical)
+    stored = _unqualified_sql(_expression_from_sql(stored_sql))
+    return current is not None and current == stored
+
+
+def _selected_names_current_fields(
+    selected: str,
+    owner: str | None,
+    refs: list[str],
+    datasets: Mapping[str, Any],
+    field_sql: Mapping[str, Mapping[str, str]],
+) -> bool:
+    """Whether *selected* names at least one field this export still declares."""
+    parsed = _parse_sql(selected)
+    if parsed is None:
+        return False
+    for column in parsed.find_all(exp.Column):
+        if _is_date_part_unit(column):
+            continue
+        dataset_name = _column_dataset(column, owner, refs, datasets)
+        if dataset_name and column.name in field_sql.get(dataset_name, {}):
+            return True
+    return False
 
 
 def _ossie_expression(expression: str, dialect: str = "ANSI_SQL") -> dict[str, Any]:
