@@ -376,6 +376,64 @@ def unsafe_aggregate_heads(expr, source_dialect=None):
     return heads, unqualified
 
 
+def unsafe_aggregate_reads(expr, source_dialect=None, heads=False):
+    """Per non-idempotent aggregate in `expr`, what it reads as a value and what it reads
+    only to decide which rows count -- or None when `expr` does not parse.
+
+    Each entry is `(values, predicates, unqualified_value, unqualified_predicate)`. A
+    column is a predicate when it sits in the condition of a `CASE WHEN` (or `IF`)
+    inside the aggregate: `SUM(CASE WHEN stores.region = 'EU' THEN orders.amount END)`
+    reads `orders` as its value and `stores` only as a predicate. Fan-out inflates an
+    aggregate through the rows it aggregates, so a predicate whose dataset is joined
+    without multiplying those rows selects among them and adds none. An aggregate with
+    no value column -- `COUNT(CASE WHEN ... THEN 1 END)` -- counts the rows of the cube
+    it is declared on, so that cube is its value.
+
+    `heads` names a column by the first part of its path, as `unsafe_aggregate_heads`
+    does; otherwise by its table, as `unsafe_aggregate_datasets` does.
+    """
+    tree = parse(expr, source_dialect) if heads else parse(expr)
+    if tree is None:
+        return None
+    reads = []
+    for scope in _outermost_aggregate_scopes(tree):
+        if is_idempotent_aggregate(scope):
+            continue
+        values, predicates = set(), set()
+        unqualified_value = unqualified_predicate = has_value = False
+        for column in scope.find_all(exp.Column):
+            if heads:
+                qualified = (len(column.parts) > 1
+                             and isinstance(column.parts[0], exp.Identifier))
+                name = column.parts[0].name if qualified else None
+            else:
+                name = column.table or None
+            if _in_condition(column, scope):
+                if name:
+                    predicates.add(name)
+                else:
+                    unqualified_predicate = True
+                continue
+            has_value = True
+            if name:
+                values.add(name)
+            else:
+                unqualified_value = True
+        reads.append((values, predicates, unqualified_value or not has_value,
+                      unqualified_predicate))
+    return reads
+
+
+def _in_condition(column, scope):
+    """Whether `column` sits in the condition of a CASE/IF branch inside `scope`."""
+    child, node = column, column.parent
+    while node is not None and child is not scope:
+        if isinstance(node, exp.If) and node.args.get("this") is child:
+            return True
+        child, node = node, node.parent
+    return False
+
+
 def unsplittable_aggregate_datasets(expr, source_dialect=None):
     """Datasets read by an aggregate that decomposition has to leave where it is.
 

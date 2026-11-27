@@ -867,6 +867,21 @@ def test_hidden_unsafe_measure_dependency_blocks_strict_publication():
         "orders.risky_value", "users.lifetime_value"}
 
 
+def test_a_filter_on_a_joined_dimension_does_not_block_strict_publication():
+    """`orders -> users` is many-to-one, so a revenue filtered on the user's city still
+    sums each order once: the city only selects which orders count."""
+    text = _MODEL.replace(
+        '        sql: "{revenue} / {count}"\n        type: number',
+        '        sql: "{revenue} / {count}"\n        type: number\n'
+        '      - name: nyc_revenue\n        sql: "{net_amount}"\n        type: sum\n'
+        '        filters:\n          - sql: "{users}.city = \'NYC\'"',
+    ).replace("          - status\n          - average_value",
+              "          - status\n          - nyc_revenue")
+    out, _, issues = _project(text)
+    assert "nyc_revenue" in _surface(out)[1]
+    assert not issues.of_type(IssueType.FANOUT_UNSAFE_METRIC)
+
+
 _CHAIN = """
 cubes:
   - name: orders
