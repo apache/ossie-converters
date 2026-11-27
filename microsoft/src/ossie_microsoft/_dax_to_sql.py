@@ -107,6 +107,20 @@ and text functions, again only for arguments that can never be BLANK (a text lit
 non-negative integer literals (positions from 1), because DAX raises an error on a
 negative one where SQL engines differ.
 
+and date functions, only for a date that can never be BLANK (DAX reads a BLANK date as 30
+December 1899, so ``YEAR(BLANK())`` is 1899, where SQL gives NULL): ``YEAR``, ``QUARTER``,
+``MONTH`` and ``DAY`` of a date or datetime, and ``HOUR``, ``MINUTE`` and ``SECOND`` of a
+datetime (DAX gives 0 for a date-only value, while the spec's ``HOUR`` takes a timestamp);
+``DATE(y, m, d)`` with integer literals for a valid date from 1900 on -> ``DATE 'YYYY-MM-DD'``
+(DAX shifts earlier years and rolls out-of-range months and days over);
+``EDATE(date, n)`` -> ``DATEADD(month, n, date)`` for a date-only value and an integer
+literal ``n``; and ``EOMONTH(date, n)`` -> ``CAST(DATEADD(day, -1, DATEADD(month, n + 1,
+DATE_TRUNC('month', date))) AS DATE)``. EOMONTH truncates first, so no day overflows a
+shorter month and the result does not depend on how an engine clamps month-ends; EDATE
+relies on ``DATEADD`` clamping a month-end the way DAX does (31 January plus one month is
+the last day of February), which engines agree on and the spec does not spell out.
+A date and a datetime combine as a datetime (``COALESCE(datetime, DATE(...))``).
+
 Calculated columns
 ------------------
 ``translate_column`` translates a calculated column, which DAX evaluates once per row
@@ -121,14 +135,23 @@ of its own table (row context). The same rules apply, plus:
 * A calculated column stores its expression's value converted to the column's declared
   ``dataType``. The conversion is not translated, so a column whose expression is of
   another kind than its declared type (a number in a column declared as text) is
-  refused, and so is a reference to such a column. A column declared ``int64`` or
-  ``decimal`` is always refused: its value is converted to a whole number or to a fixed
-  decimal, and numbers are not typed that finely here yet. ``automatic`` and ``unknown``
+  refused, and so is a reference to such a column. ``automatic`` and ``unknown``
   declare nothing.
+* A column declared ``int64`` holds a whole number and one declared ``decimal`` a fixed
+  decimal (four decimal places). Such a column is translated only when its expression
+  is one already, by DAX's own typing, so that no conversion is needed: an integer
+  literal, an ``int64`` column, ``LEN`` and the date parts are whole numbers, a
+  ``decimal`` column is a fixed decimal, ``+``, ``-`` and ``*`` of whole numbers give a
+  whole number, and ``+`` and ``-`` of fixed decimals and whole numbers, and ``*`` of a
+  fixed decimal and a whole number, give a fixed decimal. A whole number also fits a
+  ``decimal`` column. Every other number (``/``, ``DIVIDE``, the math functions, a
+  literal with a decimal point, a ``double`` column) is refused in these columns: DAX
+  would round or truncate it. Overflow of the 64-bit range is not modelled.
 * Refused: an aggregate (in a calculated column it ranges over the whole table, which a
   field expression cannot express), a measure reference (evaluated with context
-  transition), a column of another table (needs ``RELATED``, a later tier), and a date or
-  other non-text, non-number, non-boolean column (a later tier).
+  transition), a column of another table (needs ``RELATED``, a later tier), and a column
+  that is not text, number, boolean, date or datetime (a later tier). A ``dateTime``
+  column with a date-only format string is a date, as on import.
 
 What is refused (and why, so the refusal is defensible)
 -------------------------------------------------------
@@ -161,6 +184,10 @@ What is refused (and why, so the refusal is defensible)
   ``SEARCH`` (an error when not found), ``CONTAINSSTRING`` (case-insensitive, with
   wildcards), and a text function over a number (DAX formats the number as text). A text
   function over a value that may be BLANK.
+* ``DATEDIFF``: DAX counts the interval boundaries crossed, and whether the spec's
+  ``DATEDIFF`` counts boundaries or whole elapsed units is not specified (engines differ).
+  Date arithmetic and comparisons (``[Date] + 1``), ``EDATE`` of a datetime, a time of day
+  or a timestamp with a time zone, and a date that may be BLANK.
 * ``ROUND``: DAX breaks ties half away from zero, and the spec's ``ROUND`` does not say how
   ties are broken. ``CEILING`` / ``FLOOR`` (rounding to a multiple of a significance) and
   ``ROUNDUP``: later tiers. A math function over a value that may be BLANK.
@@ -181,8 +208,9 @@ datatype), and optionally the model's measures for measure references.
 
 from __future__ import annotations
 
+import datetime
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ._dax_catalog import refusal_reason
 from ._dax_parser import (
@@ -234,6 +262,8 @@ TRANSLATED_FUNCTIONS = frozenset(_AGGREGATES) | frozenset(
     "DIVIDE", "IF", "IF.EAGER", "SWITCH", "COALESCE", "BLANK", "ISBLANK",
     "TRUE", "FALSE", "AND", "OR", "NOT",
     "LEFT", "RIGHT", "MID", "LEN", "UPPER", "LOWER", "CONCATENATE",
+    "YEAR", "QUARTER", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "DATE", "EDATE",
+    "EOMONTH",
 }
 
 # A simple identifier: a letter or underscore, then letters, digits, underscores.
@@ -250,6 +280,15 @@ _OR, _AND, _NOT, _CMP, _ADD, _MUL, _ATOM = 0, 1, 2, 3, 4, 5, 6
 _NUM, _BOOL, _TEXT, _DATE, _UNTYPED, _BLANK = (
     "number", "boolean", "text", "date", "untyped", "blank"
 )
+#: A date with a time of day (Ossie DateTime, a wall-clock timestamp), a time of day only,
+#: and a timestamp with a time zone. Only date and datetime values are read by the date
+#: functions; the other two are distinct so they never pass for one.
+_DATETIME, _TIME, _DATETIME_TZ = "datetime", "time", "datetime with time zone"
+#: What a number fragment is known to be, by DAX's typing: a whole number (Integer) or a
+#: fixed decimal (Currency, four decimal places). None is any other number, and every
+#: fragment that is not a number.
+_WHOLE, _FIXED = "whole number", "fixed decimal"
+_DATE_KINDS = frozenset({_DATE, _DATETIME})
 
 #: Ossie datatypes and the fragment kind of an aggregate over a column of that type.
 _KIND_OF_DATATYPE = {
@@ -259,9 +298,9 @@ _KIND_OF_DATATYPE = {
     "String": _TEXT,
     "Boolean": _BOOL,
     "Date": _DATE,
-    "Time": _DATE,
-    "DateTime": _DATE,
-    "DateTimeTz": _DATE,
+    "Time": _TIME,
+    "DateTime": _DATETIME,
+    "DateTimeTz": _DATETIME_TZ,
 }
 
 _COMPARISONS = {"=": "=", "<>": "<>", "<": "<", ">": ">", "<=": "<=", ">=": ">="}
@@ -284,6 +323,7 @@ class _Sql:
     precedence: int
     nullable: bool
     kind: str = _NUM
+    number: str | None = None
 
     def __post_init__(self):
         # Checked on every fragment, so a growing expression stops at the first
@@ -333,29 +373,31 @@ class RowColumn:
 
     ``source`` is the source column a data column reads (None for a calculated column),
     ``dax`` the expression of a calculated column (None for a data column), ``kind`` one
-    of ``"number"``, ``"text"``, ``"boolean"`` or None for any other type, and
+    of ``"number"``, ``"text"``, ``"boolean"``, ``"date"``, ``"datetime"`` or None for any
+    other type, and
     ``nullable`` False only when the column is declared ``isNullable: false``.
+    ``number`` says more about a number column: ``"whole number"`` for ``int64``,
+    ``"fixed decimal"`` for ``decimal``, None for any other.
 
-    For a calculated column ``kind`` is the kind of its declared data type: None when it
-    declares none (its type is then its expression's), and the name of the declared type
-    itself when the column is not translated under that type (``dateTime``, and ``int64``
-    and ``decimal``, whose conversion to a whole number or a fixed decimal is not
-    translated).
+    For a calculated column ``kind`` and ``number`` are those of its declared data type:
+    ``kind`` is None when it declares none (its type is then its expression's), and the
+    name of the declared type itself when no expression is translated under that type.
     """
 
     source: str | None
     dax: str | None
     kind: str | None
     nullable: bool = True
+    number: str | None = None
 
 
-def translate_column(expression, table, columns, kind=None):
+def translate_column(expression, table, columns, kind=None, number=None):
     """Translate a DAX calculated column of ``table`` to an OSSIE_SQL field expression.
 
-    ``columns`` maps each column name of ``table`` to a ``RowColumn``, and ``kind`` is
-    the kind of the column's own declared data type, as in ``RowColumn.kind`` (None when
-    it declares none). Returns ``(sql, None)`` on success or ``(None, reason)`` on
-    refusal, like ``translate_measure``.
+    ``columns`` maps each column name of ``table`` to a ``RowColumn``, and ``kind`` and
+    ``number`` are those of the column's own declared data type, as in ``RowColumn``
+    (``kind`` is None when it declares none). Returns ``(sql, None)`` on success or
+    ``(None, reason)`` on refusal, like ``translate_measure``.
     """
     too_deep = "the expression is too deeply nested to translate"
     try:
@@ -367,7 +409,7 @@ def translate_column(expression, table, columns, kind=None):
     translator = _Translator(None, None, row_table=table, row_columns=columns)
     try:
         fragment = translator.translate(tree, {})
-        _check_declared_kind("the column", kind, fragment)
+        _check_declared_kind("the column", kind, fragment, number)
         return fragment.text, None
     except _RefusedError as refusal:
         return None, str(refusal)
@@ -386,7 +428,7 @@ class _Translator:
 
     def translate(self, node, variables):
         if isinstance(node, Number):
-            return _Sql(_sql_number(node.text), _ATOM, nullable=False)
+            return _Sql(_sql_number(node.text), _ATOM, nullable=False, number=_literal_type(node))
         if isinstance(node, String):
             return _Sql("'" + node.value.replace("'", "''") + "'", _ATOM, False, _TEXT)
         if isinstance(node, Call):
@@ -445,6 +487,10 @@ class _Translator:
             return getattr(self, _TEXT_FUNCTIONS[node.name])(node, variables)
         if node.name in _TEXT_REFUSED:
             raise _RefusedError(_TEXT_REFUSED[node.name])
+        if node.name in _DATE_FUNCTIONS:
+            return getattr(self, _DATE_FUNCTIONS[node.name])(node, variables)
+        if node.name in _DATE_REFUSED:
+            raise _RefusedError(_DATE_REFUSED[node.name])
         if node.name in _SEMANTIC_MISMATCH:
             raise _RefusedError(_SEMANTIC_MISMATCH[node.name])
         raise _RefusedError(refusal_reason(node.name))
@@ -487,7 +533,10 @@ class _Translator:
             left = self.number(node.left, variables)
             right = self.number(node.right, variables)
             text = f"{_wrap(left, _MUL)} * {_wrap(right, _MUL, strict=True)}"
-            return _Sql(text, _MUL, nullable=left.nullable or right.nullable)
+            return _Sql(
+                text, _MUL, nullable=left.nullable or right.nullable,
+                number=_product_type(left, right),
+            )
         if node.op == "/":
             if not _is_nonzero_number(node.right):
                 raise _RefusedError(
@@ -521,14 +570,17 @@ class _Translator:
                 f"CASE WHEN {left.text} IS NULL AND {right.text} IS NULL THEN NULL "
                 f"ELSE {text} END"
             )
-            return _Sql(guarded, _ATOM, nullable=True)
-        return _Sql(text, _ADD, nullable=False)
+            return _Sql(guarded, _ATOM, nullable=True, number=_sum_type(left, right))
+        return _Sql(text, _ADD, nullable=False, number=_sum_type(left, right))
 
     def unary(self, node, variables):
         if node.op == "+":
             return self.translate(node.operand, variables)
         if node.op == "-" and isinstance(node.operand, Number):
-            return _Sql(f"-{_sql_number(node.operand.text)}", _ATOM, nullable=False)
+            return _Sql(
+                f"-{_sql_number(node.operand.text)}", _ATOM, nullable=False,
+                number=_literal_type(node.operand),
+            )
         if node.op == "NOT":
             operand = self.boolean(node.operand, variables)
             return _Sql(f"NOT {_wrap(operand, _NOT)}", _NOT, False, _BOOL)
@@ -629,7 +681,7 @@ class _Translator:
         values = [self.translate(arg, variables) for arg in node.args]
         kind = _common_kind(values)
         text = "COALESCE(" + ", ".join(v.text for v in values) + ")"
-        return _Sql(text, _ATOM, all(v.nullable for v in values), kind)
+        return _Sql(text, _ATOM, all(v.nullable for v in values), kind, _common_number(values))
 
     def if_(self, node, variables):
         if len(node.args) not in (2, 3):
@@ -641,7 +693,7 @@ class _Translator:
         otherwise = f" ELSE {branches[1].text}" if len(branches) == 2 else ""
         text = f"CASE WHEN {test.text} THEN {branches[0].text}{otherwise} END"
         nullable = len(branches) == 1 or any(b.nullable for b in branches)
-        return _Sql(text, _ATOM, nullable, kind)
+        return _Sql(text, _ATOM, nullable, kind, _common_number(branches))
 
     def switch(self, node, variables):
         if not node.args or not _is_true(node.args[0]):
@@ -665,7 +717,7 @@ class _Translator:
         tail = f" ELSE {results[-1].text}" if otherwise is not None else ""
         text = "CASE " + " ".join(whens) + tail + " END"
         nullable = otherwise is None or any(r.nullable for r in results)
-        return _Sql(text, _ATOM, nullable, kind)
+        return _Sql(text, _ATOM, nullable, kind, _common_number(results))
 
     # --- math ------------------------------------------------------------------
 
@@ -725,7 +777,7 @@ class _Translator:
         if len(node.args) != 1:
             raise _RefusedError("LEN takes 1 argument")
         value = self.text(node.args[0], variables, "LEN")
-        return _Sql(f"LENGTH({value.text})", _ATOM, False, _NUM)
+        return _Sql(f"LENGTH({value.text})", _ATOM, False, _NUM, _WHOLE)
 
     def letter_case(self, node, variables):
         if len(node.args) != 1:
@@ -741,6 +793,88 @@ class _Translator:
     def concat(self, function, nodes, variables):
         left, right = (self.text(arg, variables, function) for arg in nodes)
         return _Sql(f"CONCAT({left.text}, {right.text})", _ATOM, False, _TEXT)
+
+    # --- dates ------------------------------------------------------------------
+
+    def date_value(self, node, variables, function, kinds=_DATE_KINDS):
+        """Translate a date argument, which must be of one of ``kinds`` and never BLANK.
+
+        DAX reads a BLANK date as 30 December 1899 (``YEAR(BLANK())`` is 1899) where SQL
+        functions give NULL, so a date that may be BLANK is refused; COALESCE with a DATE
+        literal, or a column declared not nullable, makes it translatable.
+        """
+        fragment = self.translate(node, variables)
+        if fragment.kind not in kinds:
+            wanted = " or ".join(sorted(kinds))
+            raise _RefusedError(f"{function} of a {fragment.kind} value is not translated "
+                                f"(it needs a {wanted} value)")
+        if fragment.nullable:
+            raise _RefusedError(
+                f"{function} of a date that may be BLANK: DAX reads BLANK as 30 December "
+                "1899 where SQL gives NULL (wrap it in COALESCE(x, DATE(...)) to translate it)"
+            )
+        return fragment
+
+    def date_part(self, node, variables):
+        """YEAR, QUARTER, MONTH, DAY of a date; HOUR, MINUTE, SECOND of a datetime."""
+        if len(node.args) != 1:
+            raise _RefusedError(f"{node.name} takes 1 argument")
+        if node.name in ("HOUR", "MINUTE", "SECOND"):
+            # On a date-only value DAX gives 0; the spec's HOUR takes a timestamp, and
+            # engines differ on a DATE argument.
+            value = self.date_value(node.args[0], variables, node.name, frozenset({_DATETIME}))
+        else:
+            value = self.date_value(node.args[0], variables, node.name)
+        return _Sql(f"{node.name}({value.text})", _ATOM, False, _NUM, _WHOLE)
+
+    def date_literal(self, node, variables):
+        """DATE(year, month, day) with integer literals -> a DATE typed literal."""
+        if len(node.args) != 3:
+            raise _RefusedError("DATE takes 3 arguments")
+        if not all(isinstance(a, Number) and _INTEGER.fullmatch(a.text) for a in node.args):
+            raise _RefusedError(
+                "DATE is translated only with integer literals: the spec builds a date from "
+                "a literal or an ISO string, not from parts"
+            )
+        year, month, day = (int(a.text) for a in node.args)
+        try:
+            value = datetime.date(year, month, day)
+        except ValueError:
+            value = None
+        if value is None or year < 1900:
+            # DAX adds 1900 to a year below 1900 and rolls an out-of-range month or day
+            # over into the next one; written as a valid date it translates.
+            raise _RefusedError(
+                "DATE is translated only for a valid date from year 1900 on (DAX shifts "
+                "earlier years and rolls out-of-range months and days over)"
+            )
+        return _Sql(f"DATE '{value.isoformat()}'", _ATOM, False, _DATE)
+
+    def edate(self, node, variables):
+        """EDATE(date, months) -> DATEADD(month, months, date) for a date-only value."""
+        if len(node.args) != 2:
+            raise _RefusedError("EDATE takes 2 arguments")
+        # Whether DAX keeps the time of day of a datetime is not documented, so only a
+        # date-only value is shifted.
+        value = self.date_value(node.args[0], variables, "EDATE", frozenset({_DATE}))
+        months = _integer_literal(node.args[1], "EDATE")
+        return _Sql(f"DATEADD(month, {months}, {value.text})", _ATOM, False, _DATE)
+
+    def eomonth(self, node, variables):
+        """EOMONTH(date, months): the last day of the month ``months`` after ``date``.
+
+        Emitted as the day before the first day of the month after that one. Truncating
+        to the first of the month before adding months means no day ever overflows a
+        shorter month, so the result does not depend on how an engine clamps month-ends.
+        The CAST fixes the type: DATE_TRUNC returns a timestamp on some engines.
+        """
+        if len(node.args) != 2:
+            raise _RefusedError("EOMONTH takes 2 arguments")
+        value = self.date_value(node.args[0], variables, "EOMONTH")
+        months = _integer_literal(node.args[1], "EOMONTH") + 1
+        text = (f"CAST(DATEADD(day, -1, DATEADD(month, {months}, "
+                f"DATE_TRUNC('month', {value.text}))) AS DATE)")
+        return _Sql(text, _ATOM, False, _DATE)
 
     # --- row context ------------------------------------------------------------
 
@@ -765,7 +899,7 @@ class _Translator:
                 f"column [{column_name}] reads a source column whose name needs SQL quoting, "
                 "a later tier"
             )
-        return _Sql(column.source, _ATOM, column.nullable, column.kind)
+        return _Sql(column.source, _ATOM, column.nullable, column.kind, column.number)
 
     def calculated_column(self, name, column):
         key = ("column", name.upper())
@@ -781,7 +915,12 @@ class _Translator:
             ) from None
         try:
             fragment = self.translate(tree, {})
-            _check_declared_kind(f"column [{name}]", column.kind, fragment)
+            _check_declared_kind(f"column [{name}]", column.kind, fragment, column.number)
+            if column.kind == _NUM and fragment.kind == _NUM:
+                # The column holds its value as its declared type: a whole number in a
+                # ``double`` column is no longer one, and one in a ``decimal`` column is
+                # a fixed decimal.
+                fragment = replace(fragment, number=column.number)
             return fragment
         except _RefusedError as refusal:
             if str(refusal).startswith("referenced column ["):
@@ -954,6 +1093,37 @@ _TEXT_REFUSED = {
 }
 
 
+#: DAX date functions and the translator method for each.
+_DATE_FUNCTIONS = {
+    "YEAR": "date_part",
+    "QUARTER": "date_part",
+    "MONTH": "date_part",
+    "DAY": "date_part",
+    "HOUR": "date_part",
+    "MINUTE": "date_part",
+    "SECOND": "date_part",
+    "DATE": "date_literal",
+    "EDATE": "edate",
+    "EOMONTH": "eomonth",
+}
+
+#: Date functions refused for a semantic reason more specific than "not yet".
+_DATE_REFUSED = {
+    "DATEDIFF": "DAX DATEDIFF counts the interval boundaries crossed; whether the spec's "
+    "DATEDIFF counts boundaries or whole elapsed units is not specified, and engines "
+    "differ (31 December to 1 January is 1 month or 0; apache/ossie#743)",
+}
+
+
+def _integer_literal(node, function):
+    """An integer literal argument, optionally negated, as an int."""
+    negate = isinstance(node, Unary) and node.op == "-"
+    operand = node.operand if isinstance(node, Unary) and node.op in ("+", "-") else node
+    if isinstance(operand, Number) and _INTEGER.fullmatch(operand.text):
+        return -int(operand.text) if negate else int(operand.text)
+    raise _RefusedError(f"{function} is translated only with an integer literal number of months")
+
+
 def _count(node, function, minimum):
     """A count or position argument: an integer literal of at least ``minimum``."""
     if isinstance(node, Number) and _INTEGER.fullmatch(node.text) and int(node.text) >= minimum:
@@ -975,22 +1145,78 @@ def _is_true(node):
     )
 
 
-def _check_declared_kind(subject, declared, fragment):
+def _check_declared_kind(subject, declared, fragment, number=None):
     """Refuse a calculated column whose expression is not of its declared kind.
 
     DAX converts the expression's value to the column's declared data type, and that
-    conversion is not translated. BLANK() fits every type.
+    conversion is not translated. BLANK() fits every type. ``number`` is the declared
+    number type (``int64`` or ``decimal``): the expression must be a whole number for
+    the first, and a whole number or a fixed decimal for the second, because the
+    conversion of any other number rounds or truncates.
     """
     if declared is not None and fragment.kind not in (declared, _BLANK):
         raise _RefusedError(
             f"{subject} is declared as {declared} and its expression is a {fragment.kind} "
             "value: DAX converts the value to the declared type, which is not translated"
         )
+    if number is None or fragment.kind != _NUM:
+        return
+    fits = (_WHOLE,) if number == _WHOLE else (_WHOLE, _FIXED)
+    if fragment.number not in fits:
+        raise _RefusedError(
+            f"{subject} is declared as a {number} and its expression is not known to be "
+            "one: DAX converts the value to the declared type, which is not translated"
+        )
+
+
+def _literal_type(node):
+    """A literal without a decimal point or exponent is a whole number."""
+    return _WHOLE if _INTEGER.fullmatch(node.text) else None
+
+
+def _sum_type(left, right):
+    """The number type of ``left + right`` and ``left - right``, as DAX types them.
+
+    Whole numbers give a whole number, and fixed decimals and whole numbers give a fixed
+    decimal. BLANK counts as 0, so it leaves the type to the other operand.
+    """
+    types = {f.number for f in (left, right) if f.kind != _BLANK}
+    if types <= {_WHOLE}:
+        return _WHOLE if types else None
+    return _FIXED if types <= {_WHOLE, _FIXED} else None
+
+
+def _product_type(left, right):
+    """The number type of ``left * right``, as DAX types it.
+
+    Whole numbers give a whole number, and a fixed decimal times a whole number gives a
+    fixed decimal. Two fixed decimals give a floating-point number, and a fixed decimal
+    times one is rounded to four decimal places by DAX, so neither has a type here.
+    """
+    types = sorted((left.number or "", right.number or ""))
+    if types == [_WHOLE, _WHOLE]:
+        return _WHOLE
+    return _FIXED if types == [_FIXED, _WHOLE] else None
+
+
+def _common_number(fragments):
+    """The number type of a value that is one of ``fragments`` (IF, SWITCH, COALESCE).
+
+    Whole numbers give a whole number. Whole numbers and fixed decimals give a fixed
+    decimal: each of them is one without a change of value.
+    """
+    types = {f.number for f in fragments if f.kind != _BLANK}
+    if types == {_WHOLE}:
+        return _WHOLE
+    return _FIXED if types and types <= {_WHOLE, _FIXED} else None
 
 
 def _common_kind(fragments):
     """The single kind of the non-BLANK fragments, or refuse a mix (e.g. text and number)."""
     kinds = {f.kind for f in fragments if f.kind != _BLANK}
+    if kinds == _DATE_KINDS:
+        # A date and a datetime combine as a datetime (a date is its midnight).
+        return _DATETIME
     if len(kinds) > 1:
         mixed = ", ".join(sorted(kinds))
         raise _RefusedError(f"results of different types ({mixed}) are a later tier")

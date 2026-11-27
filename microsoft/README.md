@@ -673,13 +673,30 @@ spec's field expressions refer to source columns, not to other fields; a referen
 calculated column is expanded inline. A calculated column stores its value converted to
 its declared `dataType`, so a column whose expression is of another kind than that type
 (a number in a column declared as text) stays DAX. A calculated column declared `int64`
-or `decimal` always stays DAX, because DAX converts its value to a whole number or to a
-fixed decimal and the translator does not type numbers that finely yet; `double`,
-`string` and `boolean` columns are translated, and `automatic` or `unknown` declare
+holds a whole number and one declared `decimal` a fixed decimal, so it is translated
+only when its expression is one already by DAX's own typing, and no conversion is
+needed: integer literals, `int64` columns, `LEN` and the date parts are whole numbers,
+`decimal` columns are fixed decimals, `+`, `-` and `*` of whole numbers give a whole
+number, and `+` and `-` of fixed decimals and whole numbers, and `*` of a fixed decimal
+and a whole number, give a fixed decimal (a whole number also fits a `decimal` column).
+Any other number there (`/`, `DIVIDE`, a math function, a literal with a decimal point,
+a `double` column) stays DAX, because DAX would round or truncate it. `double`, `string`
+and `boolean` columns are translated as before, and `automatic` or `unknown` declare
 nothing. An aggregate (which in a calculated
-column ranges over the whole table), a measure, a column of another table (`RELATED`), a
-date column, and `TRIM`, `SUBSTITUTE`, `EXACT`, `VALUE`, `FIND`, `SEARCH` and
-`CONTAINSSTRING` are refused with a reason:
+column ranges over the whole table), a measure, a column of another table (`RELATED`),
+and `TRIM`, `SUBSTITUTE`, `EXACT`, `VALUE`, `FIND`, `SEARCH` and `CONTAINSSTRING` are
+refused with a reason.
+
+Date functions, in measures and calculated columns, again only for a date that can never
+be BLANK (DAX reads BLANK as 30 December 1899, SQL gives NULL): `YEAR`, `QUARTER`,
+`MONTH` and `DAY` of a date or datetime, `HOUR`, `MINUTE` and `SECOND` of a datetime
+(a `dateTime` column with a date-only format string is a date, as on import),
+`DATE(y, m, d)` with literals for a valid date from 1900 on (-> `DATE 'YYYY-MM-DD'`),
+`EDATE(date, n)` -> `DATEADD(month, n, date)` for a date, and `EOMONTH(date, n)` -> the
+day before the first of the month `n + 1` months on. `DATEDIFF` is refused: DAX counts
+the interval boundaries crossed, and the spec does not say whether its `DATEDIFF` does (apache/ossie#743).
+In a calculated column the date parts are whole numbers, so they are translated in a
+column declared `int64` as well as in one declared `double`.
 
 ```
 LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
@@ -688,6 +705,12 @@ LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
                                 declared as text and its expression is a number value
 [Amount] / 3                ->  refused in a column declared as int64: DAX stores a
                                 whole number there, amount / 3 is not one
+[Quantity] * 2              ->  quantity * 2           (Quantity and the column: int64)
+[Quantity] * [Price]        ->  quantity * price       (Price and the column: decimal)
+[Price] * 1.2               ->  refused in a column declared as decimal: DAX rounds
+                                the product to four decimal places
+YEAR([Booked])              ->  YEAR(booked_on)        (Booked: a date, isNullable false)
+YEAR(MAX('Sales'[Date]))    ->  refused: a date that may be BLANK
 ```
 
 `_dax_to_sql.py` documents each rule and each refusal.

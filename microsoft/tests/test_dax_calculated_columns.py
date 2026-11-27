@@ -166,11 +166,6 @@ def test_calculated_column_refusals(dax, reason):
         ("[First]", "number", "text"),
         ("[Visits] > 3", "number", "boolean"),
         ("[Visits]", "dateTime", "number"),
-        # int64 and decimal keep their own name: the value is converted to a whole
-        # number or to a fixed decimal, even when the expression is a number.
-        ("[Visits] / 3", "int64", "number"),
-        ("[Visits] * 2", "int64", "number"),
-        ("[Visits] / 3", "decimal", "number"),
     ],
 )
 def test_an_expression_of_another_kind_than_the_declared_type_is_refused(dax, declared, kind):
@@ -312,7 +307,8 @@ def test_flag_keeps_the_fixture_decimal_calculated_column_as_dax(bim):
     assert _dialects(field) == {"DAX": "Sales[Amount] * 1.2"}
     assert any(
         "AmountWithTax'" in str(w.message)
-        and "is declared as decimal and its expression is a number value" in str(w.message)
+        and "is declared as a fixed decimal and its expression is not known to be one"
+        in str(w.message)
         for w in caught
     ), [str(w.message) for w in caught]
 
@@ -377,7 +373,8 @@ def test_a_declared_type_the_expression_does_not_have_keeps_the_dax(bim):
 
 def test_int64_and_decimal_calculated_columns_keep_the_dax(bim):
     # DAX stores [Amount] / 3 in an int64 column as a whole number and in a decimal
-    # column with four decimals; amount / 3 is neither. A double column is not converted.
+    # column with four decimals; amount / 3 is neither. Amount is a decimal column, so
+    # [Amount] * 2 is a fixed decimal, not a whole number. A double column is not converted.
     model = _with_columns(
         bim,
         {"name": "AmountThird", "type": "calculated", "dataType": "int64",
@@ -400,17 +397,18 @@ def test_int64_and_decimal_calculated_columns_keep_the_dax(bim):
     assert third["OSSIE_SQL_2026"] == "amount / 3"
     messages = [str(w.message) for w in caught]
     for name, declared in (
-        ("AmountThird'", "int64"),
-        ("AmountTwiceWhole'", "int64"),
-        ("AmountThirdFixed'", "decimal"),
+        ("AmountThird'", "whole number"),
+        ("AmountTwiceWhole'", "whole number"),
+        ("AmountThirdFixed'", "fixed decimal"),
     ):
         assert any(
-            name in m and f"is declared as {declared} and its expression is a number value" in m
+            name in m
+            and f"is declared as a {declared} and its expression is not known to be one" in m
             for m in messages
         ), (name, messages)
     # The reference names the int64 column as the reason.
     assert any(
-        "AmountThirdAgain'" in m and "column [AmountThird] is declared as int64" in m
+        "AmountThirdAgain'" in m and "column [AmountThird] is declared as a whole number" in m
         for m in messages
     ), messages
 
@@ -449,3 +447,170 @@ def test_round_trip_with_translation_is_unchanged(bim):
             dump_yaml(build_ossie_document(model, translate_dax=True))
         )
     assert translated == plain
+
+
+# --- whole numbers and fixed decimals -------------------------------------------------
+
+# DAX types Integer and Currency ("fixed decimal") apart from other numbers. A column
+# declared int64 or decimal is translated only when its expression is of that type
+# already, so the conversion DAX applies on storing the value changes nothing.
+NUMBERS = {
+    "Qty": RowColumn("qty", None, "number", number="whole number"),
+    "Packs": RowColumn("packs", None, "number", nullable=False, number="whole number"),
+    "Price": RowColumn("price", None, "number", number="fixed decimal"),
+    "Fee": RowColumn("fee", None, "number", number="fixed decimal"),
+    "Weight": RowColumn("weight", None, "number"),
+    "Code": RowColumn("code", None, "text", nullable=False),
+    "Placed": RowColumn("placed_on", None, "date", nullable=False),
+    "Twice": RowColumn(None, "[Packs] * 2", "number", number="whole number"),
+    "TwiceAsDouble": RowColumn(None, "[Packs] * 2", "number"),
+    "TwiceAsFixed": RowColumn(None, "[Packs] * 2", "number", number="fixed decimal"),
+}
+
+
+def typed(dax, number):
+    return translate_column(dax, "Orders", NUMBERS, "number", number)
+
+
+@pytest.mark.parametrize(
+    ("dax", "sql"),
+    [
+        ("7", "7"),
+        ("-7", "-7"),
+        ("[Packs]", "packs"),
+        ("[Packs] * 2", "packs * 2"),
+        ("[Packs] * [Packs] - 1", "packs * packs - 1"),
+        ("[Qty] + 1", "COALESCE(qty, 0) + 1"),
+        ("COALESCE([Qty], 0)", "COALESCE(qty, 0)"),
+        ("IF([Packs] > 3, [Packs], 0)", "CASE WHEN packs > 3 THEN packs ELSE 0 END"),
+        ("SWITCH(TRUE(), [Packs] > 3, 1, 0)", "CASE WHEN packs > 3 THEN 1 ELSE 0 END"),
+        ("VAR n = [Packs] RETURN n * n", "packs * packs"),
+        ("LEN([Code])", "LENGTH(code)"),
+        ("YEAR([Placed])", "YEAR(placed_on)"),
+        ("YEAR([Placed]) * 100 + MONTH([Placed])", "YEAR(placed_on) * 100 + MONTH(placed_on)"),
+        ("[Twice] + 1", "packs * 2 + 1"),
+        ("BLANK()", "NULL"),
+        ("[Packs] + BLANK()", "packs + COALESCE(NULL, 0)"),  # BLANK counts as 0
+    ],
+)
+def test_a_whole_number_expression_is_translated_in_an_int64_column(dax, sql):
+    assert typed(dax, "whole number") == (sql, None)
+
+
+@pytest.mark.parametrize(
+    "dax",
+    [
+        "[Packs] / 2",             # Integer / Integer is a floating-point number
+        "DIVIDE([Packs], 2)",
+        "[Packs] * 1.5",
+        "[Packs] * 2.0",           # a literal with a decimal point is not a whole number
+        "[Packs] * 1e3",
+        "[Packs] + [Weight]",      # a double column
+        "[Packs] * [Price]",       # a fixed decimal is not a whole number
+        "ABS([Packs])",            # the math functions are not typed
+        "IF([Packs] > 3, [Packs], [Price])",
+        "[Packs] * BLANK()",       # a product with BLANK is not typed
+        "[TwiceAsDouble]",         # held as a double, whatever its expression is
+        "[TwiceAsFixed]",
+    ],
+)
+def test_any_other_number_is_refused_in_an_int64_column(dax):
+    sql, reason = typed(dax, "whole number")
+    assert sql is None
+    assert (
+        "the column is declared as a whole number and its expression is not known to be one"
+        in reason
+    ), reason
+
+
+@pytest.mark.parametrize(
+    ("dax", "sql"),
+    [
+        ("[Price]", "price"),
+        ("[Price] * [Packs]", "price * packs"),
+        ("[Packs] * [Price]", "packs * price"),
+        ("[Price] * 2", "price * 2"),
+        (
+            "[Price] + [Fee]",
+            "CASE WHEN price IS NULL AND fee IS NULL THEN NULL "
+            "ELSE COALESCE(price, 0) + COALESCE(fee, 0) END",
+        ),
+        ("[Price] - 1", "COALESCE(price, 0) - 1"),
+        ("COALESCE([Price], 0)", "COALESCE(price, 0)"),
+        # Either branch is a fixed decimal without a change of value.
+        ("IF([Packs] > 3, [Price], [Packs])", "CASE WHEN packs > 3 THEN price ELSE packs END"),
+        # A whole number converts to a fixed decimal without a change of value.
+        ("[Packs] * 2", "packs * 2"),
+        ("[TwiceAsFixed] + [Price]", "packs * 2 + COALESCE(price, 0)"),
+    ],
+)
+def test_a_fixed_decimal_expression_is_translated_in_a_decimal_column(dax, sql):
+    assert typed(dax, "fixed decimal") == (sql, None)
+
+
+@pytest.mark.parametrize(
+    "dax",
+    [
+        "[Price] * 1.2",           # Currency * Real is rounded to four decimal places
+        "[Price] * [Fee]",         # Currency * Currency is a floating-point number
+        "[Price] / 3",             # Currency / Integer is rounded to four decimal places
+        "[Packs] / 3",
+        "DIVIDE([Price], [Packs])",
+        "[Price] + [Weight]",
+        "[Price] + 0.5",
+        "IF([Packs] > 3, [Price], [Weight])",
+    ],
+)
+def test_any_other_number_is_refused_in_a_decimal_column(dax):
+    sql, reason = typed(dax, "fixed decimal")
+    assert sql is None
+    assert (
+        "the column is declared as a fixed decimal and its expression is not known to be one"
+        in reason
+    ), reason
+
+
+@pytest.mark.parametrize(
+    "dax", ["[Packs] / 2", "[Packs] * 1.5", "[Price] * 1.2", "[Packs] * 2", "[Twice]"]
+)
+def test_a_double_column_takes_every_number_as_before(dax):
+    sql, reason = translate_column(dax, "Orders", NUMBERS, "number")
+    assert sql is not None, reason
+
+
+def test_a_referenced_int64_column_with_another_number_names_the_column():
+    columns = dict(NUMBERS, Half=RowColumn(None, "[Packs] / 2", "number", number="whole number"))
+    sql, reason = translate_column("[Half] + 1", "Orders", columns, "number")
+    assert sql is None
+    assert "referenced column [Half] is not translated" in reason
+    assert "column [Half] is declared as a whole number" in reason
+
+
+def test_int64_and_decimal_calculated_columns_are_translated_when_exact(bim):
+    # Sales[Amount] is `decimal` in the fixture and its key columns are `int64`.
+    model = _with_columns(
+        bim,
+        {"name": "AmountTwice", "type": "calculated", "dataType": "decimal",
+         "expression": "[Amount] * 2"},
+        {"name": "AmountTwiceAgain", "type": "calculated", "dataType": "decimal",
+         "expression": "[AmountTwice] + [Amount]"},
+        {"name": "Seven", "type": "calculated", "dataType": "int64", "expression": "3 + 4"},
+        {"name": "SevenFixed", "type": "calculated", "dataType": "decimal",
+         "expression": "[Seven]"},
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        document = build_ossie_document(model, translate_dax=True)
+    expected = {
+        "AmountTwice": "amount * 2",
+        "AmountTwiceAgain": "CASE WHEN amount * 2 IS NULL AND amount IS NULL THEN NULL "
+        "ELSE COALESCE(amount * 2, 0) + COALESCE(amount, 0) END",
+        "Seven": "3 + 4",
+        "SevenFixed": "3 + 4",
+    }
+    for name, sql in expected.items():
+        dialects = _dialects(_field(document, "Sales", name))
+        assert dialects.get("OSSIE_SQL_2026") == sql, (name, dialects)
+        assert "DAX" in dialects, name
+    kept = [str(w.message) for w in caught if "kept as-is" in str(w.message)]
+    assert not any(name + "'" in m for name in expected for m in kept), kept
