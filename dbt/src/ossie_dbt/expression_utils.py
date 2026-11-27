@@ -19,6 +19,7 @@ from typing import Optional, Set, Tuple
 
 import sqlglot
 import sqlglot.expressions as exp
+from sqlglot.tokens import TokenType
 
 from metricflow_semantic_interfaces.type_enums import AggregationType
 
@@ -47,17 +48,46 @@ def _col_name(node: exp.Expression, dialect: str = "") -> str:
 
 
 # Scalar categories from core-spec/expression_language.md; never admit Func wholesale.
-_SAFE_SCALAR_NODE_TYPES = {
-    exp.Abs,
+# Import and export extend this shared set with the nodes they support.
+_SHARED_SCALAR_NODE_TYPES = {
     exp.Add,
     exp.And,
     exp.Between,
     exp.Boolean,
     exp.Case,
-    exp.Cast,
-    exp.Ceil,
     exp.Coalesce,
     exp.Column,
+    exp.DateAdd,
+    exp.DateDiff,
+    exp.EQ,
+    exp.GT,
+    exp.GTE,
+    exp.ILike,
+    exp.Identifier,
+    exp.If,
+    exp.In,
+    exp.Is,
+    exp.LT,
+    exp.LTE,
+    exp.Like,
+    exp.Literal,
+    exp.Mod,
+    exp.Mul,
+    exp.NEQ,
+    exp.Neg,
+    exp.Not,
+    exp.Null,
+    exp.Nullif,
+    exp.Or,
+    exp.Paren,
+    exp.Sub,
+    exp.Var,
+}
+
+_SAFE_SCALAR_NODE_TYPES = _SHARED_SCALAR_NODE_TYPES | {
+    exp.Abs,
+    exp.Cast,
+    exp.Ceil,
     exp.Concat,
     exp.Contains,
     exp.CurrentDate,
@@ -66,52 +96,29 @@ _SAFE_SCALAR_NODE_TYPES = {
     exp.DPipe,
     exp.DataType,
     exp.DataTypeParam,
-    exp.DateAdd,
-    exp.DateDiff,
     exp.DateSub,
     exp.DateTrunc,
     exp.Day,
     exp.DayOfWeek,
     exp.DayOfYear,
     exp.Div,
-    exp.EQ,
     exp.EndsWith,
     exp.Exp,
     exp.Extract,
     exp.Floor,
-    exp.GT,
-    exp.GTE,
     exp.Greatest,
     exp.Hour,
-    exp.ILike,
-    exp.Identifier,
-    exp.If,
-    exp.In,
     exp.Interval,
-    exp.Is,
-    exp.LT,
-    exp.LTE,
     exp.Least,
     exp.Left,
     exp.Length,
-    exp.Like,
     exp.Ln,
     exp.Localtime,
     exp.Log,
-    exp.Literal,
     exp.Lower,
-    exp.Mod,
-    exp.Month,
     exp.Minute,
-    exp.Mul,
-    exp.NEQ,
-    exp.Neg,
-    exp.Not,
-    exp.Null,
-    exp.Nullif,
+    exp.Month,
     exp.Nvl2,
-    exp.Or,
-    exp.Paren,
     exp.Pow,
     exp.Quarter,
     exp.RegexpLike,
@@ -124,18 +131,31 @@ _SAFE_SCALAR_NODE_TYPES = {
     exp.Sqrt,
     exp.StartsWith,
     exp.StrPosition,
-    exp.Sub,
     exp.Substring,
-    exp.Trim,
     exp.TimestampAdd,
     exp.TimestampDiff,
     exp.TimestampTrunc,
+    exp.Trim,
     exp.Trunc,
     exp.TryCast,
     exp.Tuple,
     exp.Upper,
-    exp.Var,
     exp.Year,
+}
+
+_PORTABLE_NODE_TYPES = _SHARED_SCALAR_NODE_TYPES | {
+    exp.Avg,
+    exp.Count,
+    exp.Distinct,
+    exp.Max,
+    exp.Min,
+    exp.Order,
+    exp.Ordered,
+    exp.PercentileCont,
+    exp.PercentileDisc,
+    exp.Star,
+    exp.Sum,
+    exp.WithinGroup,
 }
 
 
@@ -148,6 +168,45 @@ def _is_scalar_expression(node: exp.Expression) -> bool:
     Query nodes are also absent, excluding scalar subqueries.
     """
     return all(type(child) in _SAFE_SCALAR_NODE_TYPES for child in node.walk())
+
+
+# SQLGlot's Snowflake reader understands Ossie's unit-first DATEADD and DATEDIFF.
+PORTABLE_SQL_READER = "snowflake"
+
+def _portable_tokens(sql: str) -> list[tuple[TokenType, str]]:
+    tokens = sqlglot.tokenize(sql, read=PORTABLE_SQL_READER)
+    parts = []
+    for token in tokens:
+        spelling = sql[token.start : token.end + 1]
+        if token.token_type not in (TokenType.STRING, TokenType.IDENTIFIER):
+            spelling = spelling.upper()
+        parts.append((token.token_type, spelling))
+    return parts
+
+
+def is_portable_sql(sql: str, *, generated_ratio: bool = False) -> bool:
+    """Recognize supported forms without promoting vendor syntax normalized by the parser."""
+    try:
+        statements = sqlglot.parse(sql, read=PORTABLE_SQL_READER)
+        if len(statements) != 1 or statements[0] is None:
+            return False
+        tree = statements[0]
+        # MetricFlow defines ratios as fractional division. An authored division
+        # may instead be integer division in the source warehouse.
+        ratio_division = tree if generated_ratio and isinstance(tree, exp.Div) else None
+        if any(type(node) not in _PORTABLE_NODE_TYPES for node in tree.walk() if node is not ratio_division):
+            return False
+        # Ossie supports COUNT(DISTINCT expr) with a single expression.
+        if any(
+            isinstance(count.this, exp.Distinct) and len(count.this.expressions) != 1
+            for count in tree.find_all(exp.Count)
+        ):
+            return False
+        # For example, the reader normalizes Snowflake NVL into COALESCE. Compare
+        # the token spellings so we only promote SQL already written in the portable form.
+        return _portable_tokens(sql) == _portable_tokens(tree.sql(dialect=PORTABLE_SQL_READER))
+    except sqlglot.errors.SqlglotError:
+        return False
 
 
 def _is_row_count_argument(node: exp.Expression) -> bool:

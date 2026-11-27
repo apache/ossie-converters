@@ -96,7 +96,7 @@ def test_metadata_and_ratio_remain_stable_across_three_serialized_round_trips(ex
         extensions = [e for e in metric.nonportable_extensions if e.vendor_name == OssieVendor.DBT.value]
         assert len(extensions) == 1
         assert _user_metadata(extensions[0].data["meta"]) == USER_META
-        current_sql = metric.expression.dialects[0].expression
+        current_sql = metric.expression.sql or metric.expression.dialects[0].expression
         assert _evaluate(current_sql) == pytest.approx(expected_value)
         current_expression = _canonical_sql(current_sql)
         if normalized_expression is not None:
