@@ -49,6 +49,7 @@ body:
         - orionbelt
         - palantir
         - polaris
+        - rdfs
         - relationalai
         - salesforce
         - sigma
