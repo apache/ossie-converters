@@ -451,6 +451,8 @@ class OssieToMSIConverter:
                 semantic_model_name = self._find_dataset_for_row_count(expr_str, datasets, dialect)
             else:
                 semantic_model_name = self._find_dataset_for_col(expr_str, datasets, dialect)
+                dataset = next(dataset for dataset in datasets if dataset.name == semantic_model_name)
+                col = self._expand_metric_fields(col, dataset, dialect)
             agg_params = (
                 PydanticMeasureAggregationParameters(
                     percentile=percentile,
@@ -563,6 +565,46 @@ class OssieToMSIConverter:
                 f"{raw_expr_str!r} does not identify one semantic model"
             )
         return owners.pop()
+
+    def _expand_metric_fields(self, sql: str, dataset: OssieDataset, dialect: str) -> str:
+        """Replace logical field names with source SQL before writing a dbt metric."""
+        fields = {field.name: field for field in dataset.fields or []}
+        tree = sqlglot.parse_one(sql, read=dialect)
+        changed = False
+        for column in list(tree.find_all(exp.Column)):
+            field = fields.get(column.name)
+            if field is None and not column.this.quoted:
+                matches = [field for name, field in fields.items() if name.casefold() == column.name.casefold()]
+                if len(matches) > 1:
+                    raise _UnsupportedMetricExpression(f"Ambiguous field {column.name!r} in {dataset.name!r}")
+                field = matches[0] if matches else None
+            if field is None:
+                # Earlier converters emitted source column names directly.
+                continue
+            expression = self._get_dialect_expression(field.expression, sql_only=True)
+            if expression is None:
+                raise _UnsupportedMetricExpression(f"Field {field.name!r} has no SQL expression")
+            try:
+                reader = self._sql_dialect(expression.dialect)
+                source = sqlglot.parse_one(expression.expression, read=reader)
+            except sqlglot.errors.SqlglotError as exc:
+                raise _UnsupportedMetricExpression(f"Cannot parse source SQL for {field.name!r}") from exc
+            if source == column:
+                continue
+            if isinstance(source, exp.Alias):
+                # Older documents sometimes repeat an unquoted display name as
+                # the source, even when the metric reads it as one quoted column.
+                if column.this.quoted and expression.expression == field.name:
+                    continue
+                raise _UnsupportedMetricExpression(f"Field {field.name!r} does not contain scalar SQL")
+            if not isinstance(source, (exp.Column, exp.Literal)):
+                source = exp.Paren(this=source)
+            if tree is column:
+                tree = source
+            else:
+                column.replace(source)
+            changed = True
+        return tree.sql(dialect=dialect) if changed else sql
 
     def _field_matches_column(self, field: OssieField, column: exp.Column) -> bool:
         if field.name == column.name:
