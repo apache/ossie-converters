@@ -116,6 +116,10 @@ converter/solid:
   - changed-files:
       - any-glob-to-any-file: 'solid/**'
 
+converter/starburst:
+  - changed-files:
+      - any-glob-to-any-file: 'starburst/**'
+
 converter/tableau:
   - changed-files:
       - any-glob-to-any-file: 'tableau/**'

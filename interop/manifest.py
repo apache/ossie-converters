@@ -133,6 +133,7 @@ NATIVE_SHAPES = {
             "sigma",
             "snowflake",
             "solid",
+            "starburst",
             "wisdom",
             "semantic-view",
             "salesforce",
