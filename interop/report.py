@@ -271,6 +271,56 @@ def write_report(report, output):
                     f"| {name} | {stage}: {_cell(check['path'])} | {_cell(json.dumps(check['expected']))} "
                     f"| {_cell(json.dumps(check['actual']))} {_cell(check['error'] or '')} |"
                 )
+    if live := report.get("live_databricks"):
+        lines += [
+            "",
+            "## Live Databricks TPC-DS measure parity",
+            "",
+            f"{live['grade']} {_cell(live['reason'])}".rstrip(),
+        ]
+        if live.get("cleanup_error") and live["cleanup_error"] != live["reason"]:
+            lines.append(_cell(live["cleanup_error"]))
+        if live.get("dataset_rows"):
+            lines += [
+                "",
+                "Rows preserved by each dataset projection: "
+                + ", ".join(
+                    f"{name}={count}" for name, count in live["dataset_rows"].items()
+                )
+                + ".",
+            ]
+        if live.get("dataset_measures"):
+            lines += [
+                "",
+                "Native dataset measures (Cube SQL versus MEASURE):",
+                "",
+                "| Dataset | Measure | Differing groups | Missing groups |",
+                "|---|---|---:|---:|",
+            ]
+            for name, summary in live["dataset_measures"].items():
+                for measure, count in summary["measure_mismatches"].items():
+                    lines.append(
+                        f"| {name} | {measure} | {count} | {summary['missing_groups']} |"
+                    )
+        if live["grains"]:
+            measures = next(iter(live["grains"].values()))["measure_mismatches"]
+            lines += [
+                "",
+                "Model queries over deployed dataset projections: differing groups per measure.",
+                "",
+                "| Grain | Cube rows | Metric View rows | Missing groups | "
+                + " | ".join(measures)
+                + " |",
+                "|---|" + "---:|" * (3 + len(measures)),
+            ]
+            for grain, summary in live["grains"].items():
+                counts = " | ".join(
+                    str(value) for value in summary["measure_mismatches"].values()
+                )
+                lines.append(
+                    f"| {grain} | {summary['cube_rows']} | {summary['metric_view_rows']} | "
+                    f"{summary['missing_groups']} | {counts} |"
+                )
     if report.get("portability"):
         lines += _portability_section(report["portability"], output)
     for error in report["harness_errors"]:
