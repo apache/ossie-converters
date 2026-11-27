@@ -869,20 +869,9 @@ class TestDialectSelection:
         assert result == "[ORDERS::Amount]", result
         assert not log.has_errors(), log.as_dicts()
 
-    def test_the_two_namespaces_this_does_not_resolve_are_pinned_not_claimed(self):
-        """The limit of the line above, recorded so the scope is not
-        overstated by its absence.
-
-        apache/ossie#486 defines three namespaces. Only the model-scoped
-        metric's qualified `dataset.field` resolves here. A dataset-scoped
-        metric's unqualified name and a field expression's source column both
-        fail, and they fail for ANSI_SQL exactly as they do for
-        OSSIE_SQL_2026 -- this is not something accepting the new dialect
-        introduced. Tracked as apache/ossie-converters#101.
-
-        Pinned as the current behaviour, not endorsed: when #100 lands, this
-        test should start failing and be replaced by its positive form.
-        """
+    def test_the_default_public_expression_scope_requires_qualified_fields(self):
+        # No enclosing dataset was supplied: a bare name must not be guessed
+        # against the single-dataset case. Scoped conversion is covered by #101.
         for dialect in ("ANSI_SQL", "OSSIE_SQL_2026"):
             log = IssueLog()
             result = to_thoughtspot_expression(

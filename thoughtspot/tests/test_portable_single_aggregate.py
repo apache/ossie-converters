@@ -126,13 +126,13 @@ class TestAFieldNeverCarriesAnAggregate:
         assert _field_ansi(result, "test") == "AMOUNT"
 
     def test_the_metric_path_is_unchanged(self):
-        assert _ansi(_convert("sum ( [ORDERS::AMOUNT] )"), "total") == "SUM(ORDERS.AMOUNT)"
+        assert _ansi(_convert("sum ( [ORDERS::AMOUNT] )"), "total") == "SUM(ORDERS.amount)"
 
 
 class TestASingleAggregateOverADeclaredColumnBecomesPortable:
 
     def test_sum_composes(self):
-        assert _ansi(_convert("sum ( [ORDERS::AMOUNT] )"), "total") == "SUM(ORDERS.AMOUNT)"
+        assert _ansi(_convert("sum ( [ORDERS::AMOUNT] )"), "total") == "SUM(ORDERS.amount)"
 
     def test_the_verbatim_thoughtspot_entry_is_untouched(self):
         result = _convert("sum ( [ORDERS::AMOUNT] )")
@@ -146,13 +146,13 @@ class TestASingleAggregateOverADeclaredColumnBecomesPortable:
 
     def test_every_catalog_aggregate_follows(self):
         for call, expected in (
-            ("sum", "SUM(ORDERS.AMOUNT)"),
-            ("average", "AVG(ORDERS.AMOUNT)"),
-            ("min", "MIN(ORDERS.AMOUNT)"),
-            ("max", "MAX(ORDERS.AMOUNT)"),
-            ("count", "COUNT(ORDERS.AMOUNT)"),
-            ("stddev", "STDDEV(ORDERS.AMOUNT)"),
-            ("variance", "VARIANCE(ORDERS.AMOUNT)"),
+            ("sum", "SUM(ORDERS.amount)"),
+            ("average", "AVG(ORDERS.amount)"),
+            ("min", "MIN(ORDERS.amount)"),
+            ("max", "MAX(ORDERS.amount)"),
+            ("count", "COUNT(ORDERS.amount)"),
+            ("stddev", "STDDEV(ORDERS.amount)"),
+            ("variance", "VARIANCE(ORDERS.amount)"),
         ):
             assert _ansi(_convert(f"{call} ( [ORDERS::AMOUNT] )"), "total") == expected, call
 
@@ -160,11 +160,11 @@ class TestASingleAggregateOverADeclaredColumnBecomesPortable:
         # Two words in ThoughtSpot, one construct, and the ANSI form needs
         # DISTINCT inside the parentheses rather than a different function.
         assert _ansi(_convert("unique count ( [ORDERS::CUST_ID] )"), "total") == (
-            "COUNT(DISTINCT ORDERS.CUST_ID)"
+            "COUNT(DISTINCT ORDERS.cust)"
         )
 
     def test_the_call_name_is_matched_case_insensitively(self):
-        assert _ansi(_convert("SUM ( [ORDERS::AMOUNT] )"), "total") == "SUM(ORDERS.AMOUNT)"
+        assert _ansi(_convert("SUM ( [ORDERS::AMOUNT] )"), "total") == "SUM(ORDERS.amount)"
 
 
 class TestWhatStaysUnportableStaysUnportable:
@@ -198,7 +198,7 @@ class TestWhatStaysUnportableStaysUnportable:
     def test_a_catalog_aggregate_carrying_a_second_argument(self):
         # Not valid ThoughtSpot, but the arity guard is what stands between a
         # malformed document and a composed expression that silently drops an
-        # operand. Without it this renders `SUM(ORDERS.AMOUNT)` and loses the
+        # operand. Without it this renders `SUM(ORDERS.amount)` and loses the
         # rest.
         assert self._thoughtspot_only(
             "sum ( [ORDERS::AMOUNT] , [ORDERS::CUST_ID] )"

@@ -1206,16 +1206,91 @@ def _rewrite_formula_references(
     return "".join(out)
 
 
-#: A bare `dataset.field` reference, per the specification's own dot-notation
-#: convention (`core-spec/expression_language.md:98`) -- the shape a
-#: hand-authored ANSI_SQL expression uses to name another Ossie field, e.g.
-#: `orders.amount`. Distinct from the warehouse-qualified dot form
-#: tml_to_ossie.py's own `resolve()` closure builds for a *round-tripped*
-#: document's portable sibling (`TABLE.db_column_name`) -- that form is never
-#: read back here: a round-tripped Ossie document always carries a THOUGHTSPOT
-#: entry too, which `to_thoughtspot_expression` prefers unconditionally, so
-#: this pattern is only ever exercised for a document with no such entry.
-_ANSI_DATASET_FIELD_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*$")
+# Portable references are one or two SQL identifiers. Their meaning is supplied
+# by the enclosing field/metric scope; native ThoughtSpot text bypasses this path.
+_SQL_IDENTIFIER = r'(?:[A-Za-z_][A-Za-z0-9_]*|"(?:[^"\n]|"")+")'
+_SQL_REFERENCE_RE = re.compile(
+    rf"^\s*({_SQL_IDENTIFIER})(?:\s*\.\s*({_SQL_IDENTIFIER}))?\s*$"
+)
+_ReferenceResolver = Callable[[tuple[str, ...]], str | None]
+
+
+def _identifier_matches(written: str, actual: str) -> bool:
+    actual_key = (
+        actual.upper() if _PLAIN_IDENTIFIER_SEGMENT_RE.fullmatch(actual) else actual
+    )
+    written_key = (
+        _bare_sql_identifier(written) if written.startswith('"') else written.upper()
+    )
+    return written_key == actual_key
+
+
+def _scoped_reference_resolver(
+    dataset: dict | None,
+    field_bindings: dict[tuple[str, str], str],
+    table_doc: TmlDocument | None = None,
+    *,
+    field_expression: bool = False,
+) -> _ReferenceResolver:
+    """Bind names to emitted fields or real source columns, never to both."""
+
+    def source_column(written: str) -> str | None:
+        # Physical warehouse names retain their exact spelling; unlike declared
+        # Ossie field identifiers they must not be normalized before a quoted read.
+        def matches_source(actual: str) -> bool:
+            if written.startswith('"'):
+                return _bare_sql_identifier(written) == actual
+            return written.casefold() == actual.casefold()
+
+        matches = [
+            column
+            for column in _physical_columns_of(table_doc)
+            if matches_source(
+                column.get("db_column_name")
+                or column.get("sql_output_column")
+                or column["name"],
+            )
+        ]
+        physical_names = {
+            column.get("db_column_name") or column.get("sql_output_column") or column["name"]
+            for column in matches
+        }
+        # Two exposed aliases of the same physical column are interchangeable.
+        # Different exact warehouse names matched by an unquoted read are not.
+        if len(physical_names) != 1:
+            return None
+        return identifiers.format_column_ref(dataset["name"], matches[0]["name"])
+
+    def resolve(parts: tuple[str, ...]) -> str | None:
+        if field_expression:
+            return source_column(parts[0]) if len(parts) == 1 else None
+        if dataset is not None:
+            if len(parts) == 2:
+                # The reserved source namespace is unavailable when a local field
+                # is named source (core-spec, Metric Scoping rule 3).
+                if _identifier_matches(parts[0], "source") and not any(
+                    f.get("name", "").casefold() == "source"
+                    for f in dataset.get("fields") or []
+                ):
+                    return source_column(parts[1])
+                return None
+            candidates = [
+                value
+                for (owner, name), value in field_bindings.items()
+                if owner == dataset["name"] and _identifier_matches(parts[0], name)
+            ]
+        else:
+            if len(parts) != 2:
+                return None
+            candidates = [
+                value
+                for (owner, name), value in field_bindings.items()
+                if _identifier_matches(parts[0], owner)
+                and _identifier_matches(parts[1], name)
+            ]
+        return candidates[0] if len(candidates) == 1 else None
+
+    return resolve
 
 
 def _match_ansi_call(name: str, args: list[str]) -> tuple[str, list[str]] | None:
@@ -1223,15 +1298,12 @@ def _match_ansi_call(name: str, args: list[str]) -> tuple[str, list[str]] | None
     single ANSI_SQL call `name(args)`, or `None` when nothing in the catalog
     matches this call structurally.
 
-    Deliberately narrow: only the single-argument aggregate family
-    (`SUM(expr)`, `COUNT(expr)`, ..., and the `COUNT(DISTINCT expr)` special
-    case) is matched. This is the shape a metric's portable expression
-    realistically takes (the scalar-formula-plus-aggregation pattern's own
-    composed shape), and the catalog's other
-    families spell their placeholder differently per row (`ABS(x)`,
-    `LOWER(str)`, ...) — matching those too would need a full per-row arity
-    index this module does not build, so anything else falls through to "no
-    catalog construct matches structurally" rather than a guess.
+    Deliberately narrow: single-argument aggregate and scalar catalog entries
+    (`SUM(expr)` and the `COUNT(DISTINCT expr)` special case) are matched.
+    ZEROIFNULL and NULLIFZERO retain their existing null-handling mappings;
+    ABS, LOWER and UPPER also provide simple scalar field expressions. Other
+    catalog rows need separate shape and NULL-semantics checks; namespace
+    support must not enable the entire scalar catalog implicitly.
     """
     upper = name.upper()
     if upper == "COUNT" and len(args) == 1 and args[0].strip().upper().startswith("DISTINCT "):
@@ -1243,6 +1315,9 @@ def _match_ansi_call(name: str, args: list[str]) -> tuple[str, list[str]] | None
         key = f"{upper}(expr)"
         if key in CATALOG:
             return key, args
+        scalar_key = {"ABS": "ABS(x)", "LOWER": "LOWER(str)", "UPPER": "UPPER(str)"}.get(upper)
+        if scalar_key in CATALOG:
+            return scalar_key, args
     return None
 
 
@@ -1252,34 +1327,36 @@ def _translate_ansi_sql(
     log: IssueLog,
     *,
     object_ref: str,
+    resolve_reference: _ReferenceResolver | None = None,
 ) -> str | None:
     """One ANSI_SQL expression -> a ThoughtSpot formula string, or `None`.
 
-    Handles exactly two structural shapes, recursively: a bare
-    `dataset.field` reference (rewritten via `resolve_field`), and a single
-    catalog-matched function call wrapping arguments of either shape. Anything
-    else raises an issue and returns `None` — the caller stashes rather than
-    this function guessing a rendering. Never re-renders one SQL dialect into
-    another: a construct the catalog does not structurally match is left
-    alone, not approximated.
+    Recognises a column reference or a single catalog-matched function call,
+    recursively. Scoped callers supply a resolver bound to the enclosing dataset
+    and to the emitted Table/Model members. Without a scoped resolver, only the
+    legacy model-level dataset.field shape is accepted. Unsupported operators
+    and unresolved names are reported rather than approximated.
     """
-    match = _ANSI_DATASET_FIELD_RE.match(expr)
-    if match is not None:
-        key = f"{match.group(1)}.{match.group(2)}"
-        resolved = resolve_field(key)
-        if resolved is None:
+    match = _SQL_REFERENCE_RE.fullmatch(expr)
+    if match is not None and (match.group(2) is not None or resolve_reference is not None):
+        parts = tuple(p for p in match.groups() if p is not None)
+        if resolve_reference is not None:
+            rendered = resolve_reference(parts)
+        elif len(parts) == 2:
+            resolved = resolve_field(".".join(parts))
+            rendered = identifiers.format_column_ref(*resolved) if resolved else None
+        else:
+            rendered = None
+        if rendered is None:
             log.add(
                 code="TS-EXPR-ANSI-UNRESOLVED",
                 severity=Severity.WARNING,
-                message=(
-                    f"reference {key!r} does not resolve to a known field in this "
-                    f"model; no ThoughtSpot expression is produced for it"
-                ),
+                message=(f"reference {expr!r} does not resolve in this expression's "
+                         "namespace to an emitted field or source column; "
+                         "no ThoughtSpot expression is produced"),
                 object_ref=object_ref,
             )
-            return None
-        table, column = resolved
-        return identifiers.format_column_ref(table, column)
+        return rendered
 
     call = formula.split_call(expr)
     if call is None:
@@ -1313,9 +1390,15 @@ def _translate_ansi_sql(
     construct = CATALOG[spec_key]
     translated: list[str] = []
     for arg in inner_args:
-        piece = _translate_ansi_sql(arg, resolve_field, log, object_ref=object_ref)
+        piece = _translate_ansi_sql(
+            arg, resolve_field, log, object_ref=object_ref, resolve_reference=resolve_reference,
+        )
         if piece is None:
             return None
+        # A catalog argument may expand into a conditional or arithmetic.
+        # Preserve its grouping when the outer template embeds it in an operator.
+        if formula.split_call(arg) is not None:
+            piece = f"({piece})"
         translated.append(piece)
 
     if construct.classification is Classification.DIRECT:
@@ -1332,6 +1415,7 @@ def to_thoughtspot_expression(
     log: IssueLog,
     *,
     object_ref: str,
+    resolve_reference: _ReferenceResolver | None = None,
 ) -> str | None:
     """One Ossie `expression` -> a ThoughtSpot formula string, or `None`.
 
@@ -1361,9 +1445,10 @@ def to_thoughtspot_expression(
     Only when there is no THOUGHTSPOT entry at all — a hand-authored document,
     or the worked-shape example in the construct-mapping document, both of
     which carry only an ANSI_SQL sibling — does this fall through to
-    `_translate_ansi_sql`, which structurally matches a bare `dataset.field`
-    reference or a single catalog-recognised function call and rewrites via
-    `resolve_field`. Anything else raises an issue and returns `None` (the
+    `_translate_ansi_sql`, which structurally matches a reference or a single
+    catalog-recognised function call. `resolve_reference` supplies the explicit
+    source-column, dataset-metric or model-metric namespace; callers without
+    it retain the model-level `resolve_field` interface. Anything else raises an issue and returns `None` (the
     caller stashes rather than guessing); one dialect is never re-rendered
     into another.
     """
@@ -1394,7 +1479,9 @@ def to_thoughtspot_expression(
         )
         return None
 
-    return _translate_ansi_sql(ansi_expr, resolve_field, log, object_ref=object_ref)
+    return _translate_ansi_sql(
+        ansi_expr, resolve_field, log, object_ref=object_ref, resolve_reference=resolve_reference,
+    )
 
 
 def _field_physical_display_name(field: dict) -> str | None:
@@ -1574,6 +1661,8 @@ def _build_field(
     allocator: _DisplayNameAllocator,
     resolve_field: Callable[[str], tuple[str, str] | None],
     log: IssueLog,
+    *,
+    resolve_reference: _ReferenceResolver | None = None,
 ) -> tuple[dict, dict | None] | None:
     """One Ossie field -> `(columns[] entry, formulas[] entry or None)`, or
     `None` when the field cannot be surfaced at all.
@@ -1647,6 +1736,7 @@ def _build_field(
     else:
         expr = to_thoughtspot_expression(
             field.get("expression"), resolve_field, log, object_ref=object_ref,
+            resolve_reference=resolve_reference,
         )
         if expr is None:
             log.add(
@@ -1709,6 +1799,9 @@ def _build_metric(
     allocator: _DisplayNameAllocator,
     resolve_field: Callable[[str], tuple[str, str] | None],
     log: IssueLog,
+    *,
+    resolve_reference: _ReferenceResolver | None = None,
+    dataset_name: str | None = None,
 ) -> tuple[dict, dict] | None:
     """One Ossie metric -> `(formulas[] entry, columns[] entry)`, or `None`
     when it cannot be translated at all.
@@ -1728,13 +1821,14 @@ def _build_metric(
     payload = stash.read_stash(metric)
     live_name = metric.get("name") or "<unnamed>"
     display_name = _restore_tml_name(payload, live_name, log, object_ref=f"metric:{live_name}")
-    object_ref = f"metric:{display_name}"
+    object_ref = f"metric:{dataset_name}.{display_name}" if dataset_name else f"metric:{display_name}"
     name = allocator.allocate(display_name, log, object_ref=object_ref)
     # As in `_build_field`: the preserved source id wins over a re-derived one.
     formula_id = stash.read_stash(metric).get(FIELD_STASH_FORMULA_ID) or _formula_id_from(name)
 
     ts_expr = to_thoughtspot_expression(
         metric.get("expression"), resolve_field, log, object_ref=object_ref,
+        resolve_reference=resolve_reference,
     )
     if ts_expr is None:
         log.add(
@@ -2349,6 +2443,7 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         for holder in (
             [f for d in datasets for f in d.get("fields") or []]
             + list(semantic_model.get("metrics") or [])
+            + [m for d in datasets for m in d.get("metrics") or []]
         )
         for preserved_id in [stash.read_stash(holder).get(FIELD_STASH_FORMULA_ID)]
         if preserved_id
@@ -2445,12 +2540,18 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
     allocator = _DisplayNameAllocator()
     columns: list[dict] = []
     formulas: list[dict] = []
+    field_bindings: dict[tuple[str, str], str] = {}
 
     for dataset in datasets:
         dataset_prefix = dataset.get("name") or "<unnamed>"
         table_doc = table_doc_by_prefix.get(dataset_prefix)
         for field in dataset.get("fields") or []:
-            built = _build_field(field, dataset_prefix, table_doc, allocator, resolve_field, log)
+            built = _build_field(
+                field, dataset_prefix, table_doc, allocator, resolve_field, log,
+                resolve_reference=_scoped_reference_resolver(
+                    dataset, field_bindings, table_doc, field_expression=True,
+                ),
+            )
             if built is None:
                 continue
             columns_entry, formulas_entry = built
@@ -2462,32 +2563,22 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
                     and stash.read_stash(field).get(FIELD_STASH_FORMULA_ID) == formulas_entry["id"],
                 )
                 formulas.append(formulas_entry)
+                reference = f"[{formulas_entry['id']}]"
+            else:
+                reference = f"[{columns_entry['column_id']}]"
+            if field.get("name"):
+                field_bindings[(dataset_prefix, field["name"])] = reference
 
-    for dataset in datasets:
-        dataset_metrics = dataset.get("metrics") or []
-        if not dataset_metrics:
-            continue
-        # Only `SemanticModel.metrics` is read above. A dataset-scoped metric
-        # resolves its operands within its own dataset by single-part name
-        # (core-spec "Metric Scoping"), a namespace this converter's
-        # `resolve_field` does not implement -- see
-        # apache/ossie-converters#101. Until it does, the metric cannot be
-        # built, and a measure vanishing from a model is worth a WARNING.
-        names = ", ".join(repr(m.get("name") or "<unnamed>") for m in dataset_metrics)
-        log.add(
-            code="TS-DATASET-METRICS-DROPPED",
-            severity=Severity.WARNING,
-            message=(
-                f"dataset {dataset.get('name') or '<unnamed>'!r} declares the "
-                f"dataset-scoped metric(s) {names}, whose expressions resolve "
-                f"against its own fields by single-part name; this converter "
-                f"reads only model-scoped metrics, so they are not built"
-            ),
-            object_ref=f"dataset:{dataset.get('name') or '<unnamed>'}",
+    scoped_metrics = [(None, metric) for metric in semantic_model.get("metrics") or []]
+    scoped_metrics += [(dataset, metric) for dataset in datasets
+                       for metric in dataset.get("metrics") or []]
+    for dataset, metric in scoped_metrics:
+        table_doc = table_doc_by_prefix.get(dataset["name"]) if dataset else None
+        built = _build_metric(
+            metric, allocator, resolve_field, log,
+            resolve_reference=_scoped_reference_resolver(dataset, field_bindings, table_doc),
+            dataset_name=dataset["name"] if dataset else None,
         )
-
-    for metric in semantic_model.get("metrics") or []:
-        built = _build_metric(metric, allocator, resolve_field, log)
         if built is None:
             continue
         formulas_entry, columns_entry = built
