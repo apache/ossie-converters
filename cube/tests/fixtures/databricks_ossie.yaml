@@ -33,17 +33,17 @@ datasets:
 - name: orders
   source: samples.tpch.orders
   fields:
+  - name: o_custkey
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: o_custkey
   - name: o_orderkey
     expression:
       dialects:
       - dialect: DATABRICKS
         expression: o_orderkey
     description: Order identifier
-  - name: o_custkey
-    expression:
-      dialects:
-      - dialect: DATABRICKS
-        expression: o_custkey
   - name: o_orderdate
     expression:
       dialects:

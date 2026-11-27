@@ -59,8 +59,13 @@ class IssueType(Enum):
     # stash rather than half-converted.
     TEMPLATED_FILE_SKIPPED = "TEMPLATED_FILE_SKIPPED"
 
-    # An Ossie field or metric with no usable expression dialect (export).
+    # An Ossie field or metric with no usable expression dialect (export), or a
+    # whole key/relationship dropped because it depends on such a field.
     NO_USABLE_DIALECT = "NO_USABLE_DIALECT"
+
+    # A recorded constraint names fields no longer present in the native model.
+    # Drop the whole constraint rather than inventing a replacement source column.
+    DROPPED_INVALID_REFERENCE = "DROPPED_INVALID_REFERENCE"
 
     # A dataset `source` that is a valid Cube `sql_table` but not a three-part
     # `catalog.schema.table`. Nothing is lost and Cube is happy, but several other
