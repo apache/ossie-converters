@@ -73,3 +73,74 @@ def test_osi_sigma_osi_roundtrip_preserves_portable_fields(fixture_name):
         }
 
     assert portable(document_1) == portable(document_2)
+
+
+@pytest.mark.parametrize("expression_form", ["sql", "dialects"])
+@pytest.mark.parametrize(
+    ("formula", "expected_sql", "expected_back"),
+    [
+        ("Median([amount])",
+         'PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY "orders"."amount")',
+         "PercentileCont([amount], 0.5)"),
+        ("PercentileCont([amount], 0.9)",
+         'PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY "orders"."amount")',
+         "PercentileCont([amount], 0.9)"),
+        ("PercentileDisc([amount], 0.9)",
+         'PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY "orders"."amount")',
+         "PercentileDisc([amount], 0.9)"),
+    ],
+)
+def test_percentile_metrics_round_trip_without_native_sigma_metadata(
+    expression_form, formula, expected_sql, expected_back
+):
+    spec = {
+        "kind": "data-model",
+        "schemaVersion": 1,
+        "name": "percentiles",
+        "pages": [{
+            "id": "page",
+            "name": "Model",
+            "elements": [{
+                "id": "orders",
+                "kind": "table",
+                "name": "orders",
+                "source": {
+                    "kind": "warehouse-table",
+                    "connectionId": "fixture-connection",
+                    "path": ["db", "public", "orders"],
+                },
+                "columns": [{"id": "amount", "formula": "[amount]"}],
+                "metrics": [{"id": "stat", "name": "stat", "formula": formula}],
+            }],
+        }],
+    }
+    imported = SigmaToOssieConverter().convert(spec)
+    assert not imported.issues
+    assert {
+        d.dialect: d.expression for d in imported.output.metrics[0].expression.dialects
+    }["ANSI_SQL"] == expected_sql
+    data = yaml.safe_load(imported.output.to_ossie_yaml())
+
+    # Remove every native formula and stash: a same-vendor round trip would
+    # otherwise reuse the original formula and never exercise SQL translation.
+    nodes = [data, *data["datasets"], *data["datasets"][0]["fields"], *data["metrics"]]
+    for node in nodes:
+        node.pop("nonportable_extensions", None)
+        if "expression" in node:
+            sql = next(d["expression"] for d in node["expression"]["dialects"] if d["dialect"] == "ANSI_SQL")
+            node["expression"] = (
+                {"sql": sql} if expression_form == "sql"
+                else {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]}
+            )
+    document = OssieDocument.from_ossie_yaml(yaml.safe_dump(data))
+    exported = OssieToSigmaConverter().convert(document)
+    assert not exported.issues
+    element = exported.output["pages"][0]["elements"][0]
+    assert [metric["formula"] for metric in element["metrics"]] == [expected_back]
+
+    reimported = SigmaToOssieConverter().convert(exported.output)
+    assert not reimported.issues
+    portable_expressions = {
+        d.dialect: d.expression for d in reimported.output.metrics[0].expression.dialects
+    }
+    assert portable_expressions["ANSI_SQL"] == expected_sql
