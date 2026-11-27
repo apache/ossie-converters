@@ -85,6 +85,11 @@
         dialects:
         - dialect: ANSI_SQL
           expression: CASE WHEN order_id IS NOT NULL THEN 1 ELSE 0 END
+    - name: order_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: order_id
   metrics:
   - name: revenue
     expression:

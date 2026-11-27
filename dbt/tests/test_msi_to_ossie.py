@@ -734,6 +734,37 @@ class TestMetricConversion:
         result = MSIToOssieConverter().convert(_manifest(semantic_models=[sm], metrics=[metric])).output
 
         assert _ossie_metrics(result)[0].expression.dialects[0].expression == "AVG(orders.price)"
+        assert [field.name for field in _fields(result)] == ["price"]
+        assert _field_expr(result) == "price"
+
+    def test_metric_input_with_an_existing_alias_does_not_add_a_field(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders", dimensions=[_dimension("sale_amount", expr="amount")]
+        )
+        metric = _metric_with_agg("gross_sales", AggregationType.SUM, "amount", "orders")
+        output = MSIToOssieConverter().convert(_manifest([orders], [metric])).output
+
+        assert [field.name for field in _fields(output)] == ["sale_amount"]
+
+    def test_missing_metric_field_is_reused_without_overwriting_existing_fields(self) -> None:
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders",
+            dimensions=[_dimension("amount", expr="net_amount"), _dimension("amount_input", expr="tax")],
+        )
+        metrics = [
+            _metric_with_agg("gross_sales", AggregationType.SUM, "amount", "orders"),
+            _metric_with_agg("average_sale", AggregationType.AVERAGE, "amount", "orders"),
+        ]
+        output = MSIToOssieConverter().convert(_manifest([orders], metrics)).output
+
+        assert {field.name: field.expression.dialects[0].expression for field in _fields(output)} == {
+            "amount": "net_amount",
+            "amount_input": "tax",
+            "amount_input_2": "amount",
+        }
+        assert [m.expression.dialects[0].expression for m in _ossie_metrics(output)] == [
+            "SUM(orders.amount_input_2)", "AVG(orders.amount_input_2)"
+        ]
 
     @pytest.mark.parametrize("agg", [AggregationType.COUNT, AggregationType.SUM])
     def test_a_row_count_always_comes_back_as_portable_sum_1(self, agg: AggregationType) -> None:
