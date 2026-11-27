@@ -384,7 +384,7 @@ def pick_expression(ossie_expression, preferred=None, *, scope="expression"):
             if tree.find(exp.Anonymous, exp.Query, exp.Command, exp.DDL, exp.DML):
                 continue
             rendered = tree.sql(dialect=writer, unsupported_level=ErrorLevel.RAISE)
-            if not preferred and dialect in _WAREHOUSE_SQL_DIALECTS:
+            if writer is Dialect and dialect in _WAREHOUSE_SQL_DIALECTS:
                 warnings.warn(
                     f"[{scope}] translated {dialect} to generic SQL without a target "
                     "warehouse. Pass --dialect for the Omni connection before using "

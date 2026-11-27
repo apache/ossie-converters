@@ -33,6 +33,9 @@ converters:
     output: file
     fixtures:
       tpcds: interop/fixtures/atlan/records.json
+  celonis:
+    cwd: celonis
+    skip: First-pass Celonis JSON conversion preserves native PQL metrics but cannot translate the canonical SQL metrics to PQL required by the full pairwise matrix. Basic dataset and join conversion is tested in celonis/tests.
   bigquery:
     cwd: bigquery
     toolchain: uv

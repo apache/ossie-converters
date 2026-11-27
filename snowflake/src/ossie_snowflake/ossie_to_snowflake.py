@@ -164,7 +164,12 @@ def _convert_model(ossie):
         if converted_rels:
             result["relationships"] = converted_rels
 
-    converted_metrics = _convert_metrics(ossie)
+    table_metrics = {
+        (table["name"].lower(), metric["name"].lower())
+        for table in result.get("tables", [])
+        for metric in table.get("metrics", [])
+    }
+    converted_metrics = _convert_metrics(ossie, table_metrics)
     if converted_metrics:
         result["metrics"] = converted_metrics
 
@@ -217,6 +222,7 @@ def _convert_dataset(dataset):
 
     # Classify fields into dimensions, time_dimensions, facts
     fields = dataset.get("fields")
+    field_exprs = {}
     if fields:
         dimensions = []
         time_dimensions = []
@@ -227,6 +233,7 @@ def _convert_dataset(dataset):
             converted = _convert_named_expr(field, "field")
             if converted is None:
                 continue
+            field_exprs[converted["name"].lower()] = converted["expr"]
             snowflake_datatype = _convert_datatype(
                 field.get("datatype"), field.get("name", "<unnamed>")
             )
@@ -246,7 +253,7 @@ def _convert_dataset(dataset):
         if facts:
             result["facts"] = facts
 
-    table_metrics = _convert_dataset_metrics(dataset)
+    table_metrics = _convert_dataset_metrics(dataset, field_exprs)
     if table_metrics:
         result["metrics"] = table_metrics
 
@@ -260,16 +267,57 @@ def _convert_dataset(dataset):
     return result
 
 
-def _convert_metrics(ossie):
+def _convert_metrics(ossie, table_metrics):
     """Model-root Ossie metrics become view-level Snowflake metrics."""
     converted = []
     seen = {}
     for metric in ossie.get("metrics") or []:
-        _append_metric(converted, seen, metric)
+        item = _convert_named_expr(metric, "metric")
+        if item is None:
+            continue
+        expr = _model_metric_expr(item["expr"], item["name"], table_metrics)
+        if expr is None:
+            continue
+        item["expr"] = expr
+        _append_metric(converted, seen, item, already_converted=True)
     return converted
 
 
-def _convert_dataset_metrics(dataset):
+def _model_metric_expr(expr, metric_name, table_metrics):
+    """Write ``AGG(dataset.metric)`` as ``dataset.metric``.
+
+    In Ossie a model-scoped metric evaluates a dataset-scoped metric with
+    ``AGG(dataset.metric)``. That metric is the table-level metric of the same
+    name, which a Snowflake view-level metric references as ``table.metric``.
+    A reference to a table-level metric that was not exported skips the metric.
+    """
+    try:
+        tree = parse_one(expr, dialect="snowflake")
+    except (ParseError, TokenError, ValueError):
+        return expr
+    missing = []
+
+    def to_metric_reference(node):
+        if isinstance(node, exp.Agg) and isinstance(node.this, exp.Column) and node.this.table:
+            reference = node.this
+            if (reference.table.lower(), reference.name.lower()) not in table_metrics:
+                missing.append(f"{reference.table}.{reference.name}")
+            return reference.copy()
+        return node
+
+    translated = tree.transform(to_metric_reference)
+    if missing:
+        warnings.warn(
+            f"Skipping metric '{metric_name}': AGG({', '.join(missing)}) refers to "
+            "a dataset-scoped metric that was not exported"
+        )
+        return None
+    if translated == tree:
+        return expr
+    return translated.sql(dialect="snowflake")
+
+
+def _convert_dataset_metrics(dataset, field_exprs):
     """Dataset-scoped Ossie metrics become Snowflake ``tables[].metrics``.
 
     That list is scoped to the logical table, matching the Snowflake semantic
@@ -284,7 +332,7 @@ def _convert_dataset_metrics(dataset):
         item = _convert_named_expr(metric, "metric")
         if item is None:
             continue
-        expr = _table_metric_expr(item["expr"], dataset_name, source, item["name"])
+        expr = _table_metric_expr(item["expr"], dataset_name, source, item["name"], field_exprs)
         if expr is None:
             continue
         item["expr"] = expr
@@ -315,17 +363,40 @@ def _local_table_aliases(dataset_name, source):
     return {alias.lower() for alias in aliases}
 
 
-def _table_metric_expr(expr, dataset_name, source, metric_name):
-    """Unqualify columns of this table; skip if the expr names another table."""
+def _table_metric_expr(expr, dataset_name, source, metric_name, field_exprs):
+    """Unqualify columns of this table; skip if the expr names another table.
+
+    ``source.column`` is a column of the dataset's source and becomes ``column``,
+    unless a field of the same name means something else.
+    """
     aliases = _local_table_aliases(dataset_name, source)
     try:
         tree = parse_one(expr, dialect="snowflake")
     except (ParseError, TokenError, ValueError):
         return expr
+    skip = f"Skipping dataset-scoped metric '{dataset_name}.{metric_name}'"
+    if tree.find(exp.Agg):
+        warnings.warn(
+            f"{skip}: AGG(source.measure) needs a measure relation source, "
+            "which Snowflake does not have"
+        )
+        return None
     changed = False
     for column in tree.find_all(exp.Column):
         table = column.table
         if not table:
+            continue
+        if table == "source":
+            name = column.name
+            field_expr = field_exprs.get(name.lower())
+            if field_expr is not None and field_expr.strip().lower() != name.lower():
+                warnings.warn(
+                    f"{skip}: source.{name} would read as the field '{name}', "
+                    f"which is defined as {field_expr}"
+                )
+                return None
+            column.set("table", None)
+            changed = True
             continue
         if table.lower() in aliases:
             column.set("table", None)

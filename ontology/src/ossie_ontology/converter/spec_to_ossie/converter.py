@@ -106,6 +106,7 @@ class SpecToOssieConverter:
             ai_context=spec.ai_context,
             version=spec.version,
             prefixes=spec.prefixes,
+            annotations=spec.annotations,
         )
 
         self._populate_ontology(ontology, spec)
@@ -139,6 +140,7 @@ class SpecToOssieConverter:
                     description=concept_spec.description,
                     extends=extends,
                     iri=concept_spec.iri,
+                    annotations=concept_spec.annotations,
                 )
             )
 
@@ -222,6 +224,7 @@ class SpecToOssieConverter:
                 f"which is only valid for binary relationships (exactly one additional role), "
                 f"but it has {len(relates)}."
             )
+        role_annotations = [role_spec.annotations for role_spec in rel_spec.roles] if rel_spec.roles else None
         relationship = Relationship(
             name=rel_spec.name,
             container=container,
@@ -230,6 +233,8 @@ class SpecToOssieConverter:
             verbalizes=list(rel_spec.verbalizes) if rel_spec.verbalizes else None,
             multiplicity=multiplicity,
             iri=rel_spec.iri,
+            annotations=rel_spec.annotations,
+            role_annotations=role_annotations,
         )
         ontology.add_relationship(relationship)
 
