@@ -88,6 +88,10 @@ converter/orionbelt:
   - changed-files:
       - any-glob-to-any-file: 'orionbelt/**'
 
+converter/owl:
+  - changed-files:
+      - any-glob-to-any-file: 'owl/**'
+
 converter/palantir:
   - changed-files:
       - any-glob-to-any-file: 'palantir/**'

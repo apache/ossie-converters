@@ -55,6 +55,7 @@ updates:
       - "/omni"
       - "/ontology"
       - "/orionbelt"
+      - "/owl"
       - "/relationalai"
       - "/palantir"
       - "/sigma"

@@ -182,6 +182,9 @@ converters:
   palantir:
     cwd: palantir
     skip: Converts Palantir ontology exports into Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
+  owl:
+    cwd: owl
+    skip: Converts between OWL ontologies and Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
   relationalai:
     cwd: relationalai
     skip: Converts Ossie ontology documents rather than the core semantic-model schema; requires a separate ontology matrix.
