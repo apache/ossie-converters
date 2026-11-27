@@ -82,7 +82,8 @@ Timed-out process groups are killed on POSIX systems. Logs go directly to files.
 | ThoughtSpot | CLI export; adapter expands a directory into the complete sorted TML input set |
 | Salesforce | Java CLI in a temporary staging directory; collects exactly one generated output without modifying source fixtures. Import requires its separately obtained Salesforce JSON schema |
 | Wisdom Semantic View | API adapter for its native Snowflake semantic-view boundary and the intermediate core Ossie model |
-| BigQuery, Hex, Snowflake | Export only; native-to-Ossie import is not implemented |
+| BigQuery, Hex | Export only; native-to-Ossie import is not implemented |
+| Snowflake | Cortex Analyst YAML import and Ossie YAML export |
 | Holistics | Compiled dataset JSON import and AML source export; re-import of generated AML requires a Holistics compiler |
 | Ataccama, Polaris | Explicit skip: requires a provisioned live REST catalog, outside the file runner |
 | Ontology, Palantir, RelationalAI | Explicit skip: uses the ontology domain/schema, requiring a separate matrix |
