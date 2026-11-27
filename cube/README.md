@@ -186,8 +186,8 @@ dimension extras (`format`, `currency`, `granularities`, `case`, `order`,
 `aliases`, `meta`, ...), dimensions with no Ossie form parked whole at their
 positions (`switch`, `sub_query`), measure extras (flat, same protocol) plus any
 `sql`/`filters`/`type` spelling regeneration would not reproduce, joins with no
-Ossie form, Jinja-templated members, and files with no Ossie form (`.js`/`.ts`
-models, non-model YAML).
+Ossie form, Jinja-templated members, cubes whose source has no static form, and
+files with no Ossie form (`.js`/`.ts` models, non-model YAML).
 
 **Identifier case**: Ossie regular (unquoted) identifiers are case-insensitive — the
 core spec's *normalized* form upper-cases them and strips quotes from quoted ones — so
@@ -206,16 +206,30 @@ stays a raw quoted column.
 `sql` and `sql_table`, including recursive dependencies. A
 referenced `sql_table` is used directly; a referenced `sql` matching Cube's exact
 `SELECT * FROM table` optimization becomes that table, and other queries are
-wrapped as subqueries. Runtime-context templates and unknown dependencies are
-refused with a conversion error. Cycles name the dependency chain; expansion is
-bounded to 100 dependency levels and 1,000,000 characters per expanded source.
-Query whitespace is retained, including newlines that terminate SQL line comments.
-Escaped braces remain literal SQL. Ordinary import preserves the original source
-definition in the CUBE extension when expansion changes it. Export restores that
-definition only while its own source and all dependency sources and names still
-match; malformed snapshots fall back to the portable source. Projection resolves
-references against the full input model, then publishes
-the expanded source without retaining unpublished dependencies.
+wrapped as subqueries.
+
+A cube whose source has no static form is set aside with a `TEMPLATED_CUBE_SKIPPED`
+issue, and the rest of the model converts. That covers runtime templates such as
+`{FILTER_PARAMS...}`, `{COMPILE_CONTEXT...}` and `{CUBE}`, and a `{cube.sql()}`
+reference to such a cube or to a cube that only a skipped `.js` or Jinja file can
+define. The cube is preserved verbatim in the CUBE extension, and export restores it
+into its file. A join into a set-aside cube is refused, because the relationship
+would have no Ossie dataset, and so is a model in which every cube is set aside.
+View projection publishes portable sources only, so it refuses a published cube
+whose source has no static form. A reference to a cube defined nowhere is refused,
+naming any unparsed files that might define it.
+
+Cycles name the dependency chain; expansion is bounded to 100 dependency levels and
+1,000,000 characters per expanded source. Surrounding whitespace is trimmed from
+`sql` sources, except that a last line ending in a `--` or `#` comment keeps its
+newline: Cube wraps the source in parentheses, and the comment would otherwise
+swallow the closing one. Escaped braces remain literal SQL. Ordinary import
+preserves the original source definition in the CUBE extension when expansion
+changes it, with a SHA-256 signature of each source it was resolved against. Export
+restores that definition only while its own source and all dependency sources and
+names still match; malformed snapshots fall back to the portable source. Projection
+resolves references against the full input model, then publishes the expanded
+source without retaining unpublished dependencies.
 
 **Expression dialects**: Cube SQL is the SQL of the model's data source, and the
 Ossie dialect enum has no `CUBE` entry. Pass `--source-dialect ANSI_SQL|SNOWFLAKE|DATABRICKS|BIGQUERY`
@@ -606,6 +620,7 @@ detail string.
 | `CUBE_LEVEL_AI_CONTEXT_INERT` | Cube's agent ignores cube-level `meta.ai_context` |
 | `GEO_DIMENSION_SPLIT` | A `type: geo` dimension became two Ossie fields |
 | `TEMPLATED_FILE_SKIPPED` | Jinja templating anywhere in a file, or a `.js`/`.ts` model file. Detected per file, as Cube's own tooling does, so the file is preserved whole rather than half-converted |
+| `TEMPLATED_CUBE_SKIPPED` | A cube whose `sql`/`sql_table` has no static form: a runtime template (`{FILTER_PARAMS...}`, `{COMPILE_CONTEXT...}`, `{CUBE}`), or a `{cube.sql()}` reference to a cube that is not converted. The cube is preserved verbatim and restored into its file on export; the rest of the model converts |
 | `NO_USABLE_DIALECT` | Export: no `ANSI_SQL` or preferred-dialect expression |
 | `SOURCE_NOT_FULLY_QUALIFIED` | A `sql_table` shorter than `catalog.schema.table`. Valid Cube and nothing is lost, but the Databricks, Snowflake and NVIDIA Auto Ontology converters reject such a source, so the model cannot convert onward — see [Onward conversion](#onward-conversion) |
 | `STALE_PARKED_EXPRESSION` | A native Cube expression changed; import restored the saved Ossie expression and reported that the edit is not reflected |

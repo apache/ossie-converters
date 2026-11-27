@@ -59,6 +59,12 @@ class IssueType(Enum):
     # stash rather than half-converted.
     TEMPLATED_FILE_SKIPPED = "TEMPLATED_FILE_SKIPPED"
 
+    # A cube whose `sql`/`sql_table` has no static form: a runtime template such as
+    # `{FILTER_PARAMS...}` or `{COMPILE_CONTEXT...}`, or a `{cube.sql()}` reference
+    # to a cube that is not converted. The cube is preserved verbatim in the stash and
+    # restored on export, so the rest of the model still converts.
+    TEMPLATED_CUBE_SKIPPED = "TEMPLATED_CUBE_SKIPPED"
+
     # An Ossie field or metric with no usable expression dialect (export).
     NO_USABLE_DIALECT = "NO_USABLE_DIALECT"
 

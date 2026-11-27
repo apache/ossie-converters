@@ -18,11 +18,12 @@
 """Static Cube source templates and guarded native round trips."""
 
 import copy
+import json
 
 import pytest
 from _util import by_name, model_of, parse, stash_of
 
-from ossie_cube import (ConversionError, convert_cube_to_ossie,
+from ossie_cube import (ConversionError, IssueType, convert_cube_to_ossie,
                         convert_cube_view_to_ossie, convert_ossie_to_cube)
 from ossie_cube._common import dump_yaml
 
@@ -77,7 +78,7 @@ def test_referenced_queries_follow_cube_wrapping(base_sql, embedded):
                    _cube("active_users", "sql", "SELECT * FROM {users.sql()} u WHERE u.active"))
     ossie, _ = convert_cube_to_ossie(files)
     assert _sources(ossie)["active_users"] == f"SELECT * FROM {embedded} u WHERE u.active"
-    assert _exported_cubes(ossie)["users"]["sql"] == base_sql
+    assert _exported_cubes(ossie)["users"]["sql"] == base_sql.strip()
 
 
 def test_recursive_sql_dependencies_keep_the_original_definition():
@@ -98,9 +99,32 @@ def test_recursive_sql_dependencies_keep_the_original_definition():
     '"{CUBE}.orders"',
 ])
 @pytest.mark.parametrize("kind", ["sql", "sql_table"])
-def test_runtime_and_unsupported_source_references_are_refused(source, kind):
+def test_runtime_and_unsupported_sources_set_only_their_cube_aside(source, kind):
+    files = _files(_cube("users", "sql_table", "example_db.public.users"),
+                   _cube("active_users", kind, source))
+    ossie, issues = convert_cube_to_ossie(files)
+    assert _sources(ossie) == {"users": "example_db.public.users"}
+    [issue] = issues.of_type(IssueType.TEMPLATED_CUBE_SKIPPED)
+    assert issue.element_name == "cube 'active_users'"
+    assert "static" in issue.detail
+    exported, _ = convert_ossie_to_cube(ossie)
+    # Restored verbatim, into the file it came from.
+    restored = by_name(parse(exported["model.yml"])["cubes"])["active_users"]
+    assert restored == by_name(parse(files["model.yml"])["cubes"])["active_users"]
+
+
+def test_a_model_with_only_runtime_sources_is_refused():
+    with pytest.raises(ConversionError, match="no cube has a static source.*active_users"):
+        convert_cube_to_ossie(_files(_cube(
+            "active_users", "sql", "SELECT * FROM {FILTER_PARAMS.active_users.id.filter('id')}")))
+
+
+def test_projection_still_refuses_a_published_runtime_source():
+    files = _files(_cube("users", "sql_table", "example_db.public.users"),
+                   _cube("active_users", "sql",
+                         "SELECT * FROM {FILTER_PARAMS.active_users.id.filter('id')}"), view=True)
     with pytest.raises(ConversionError, match="active_users.*source.*static"):
-        convert_cube_to_ossie(_files(_cube("active_users", kind, source)))
+        convert_cube_view_to_ossie(files, "sales")
 
 
 def test_unknown_source_dependency_has_a_clean_error():
@@ -223,29 +247,51 @@ def test_referenced_queries_preserve_line_comment_terminators(newline, dialect, 
     files = _files(_cube("users", "sql", sql), _cube(
         "active_users", "sql", "SELECT * FROM {users.sql()} u WHERE u.id > 0"))
     ossie, _ = convert_cube_to_ossie(files, source_dialect=dialect)
-    assert _sources(ossie)["active_users"] == f"SELECT * FROM ({sql}) u WHERE u.id > 0"
+    trimmed = sql.rstrip() + "\n"
+    assert _sources(ossie)["users"] == trimmed
+    assert _sources(ossie)["active_users"] == f"SELECT * FROM ({trimmed}) u WHERE u.id > 0"
     parsed = sqlglot.parse_one(_sources(ossie)["active_users"], read="bigquery" if dialect else None)
     assert parsed.args.get("where") is not None
-    assert _exported_cubes(ossie)["users"]["sql"] == sql
+    assert _exported_cubes(ossie)["users"]["sql"] == trimmed
 
 
-def test_sql_source_whitespace_survives_portable_export():
-    sql = "  SELECT id FROM example_db.public.users -- source comment\n"
-    files = _files(_cube("active_users", "sql", sql))
-    ossie, _ = convert_cube_to_ossie(files)
+@pytest.mark.parametrize("sql,trimmed", [
+    # A block scalar's final newline is not part of the source.
+    ("SELECT id\nFROM example_db.public.users\n", "SELECT id\nFROM example_db.public.users"),
+    ("  SELECT id FROM example_db.public.users -- source comment\n",
+     "SELECT id FROM example_db.public.users -- source comment\n"),
+    # Cube wraps the source in parentheses, so a final comment needs its newline.
+    ("SELECT id FROM example_db.public.users # source comment",
+     "SELECT id FROM example_db.public.users # source comment\n"),
+])
+def test_sql_sources_are_trimmed_except_for_a_final_line_comment(sql, trimmed):
+    ossie, _ = convert_cube_to_ossie(_files(_cube("active_users", "sql", sql)))
     model = model_of(ossie)
-    assert model["datasets"][0]["source"] == sql
+    assert model["datasets"][0]["source"] == trimmed
     model.pop("nonportable_extensions", None)
     for ds in model["datasets"]:
         ds.pop("nonportable_extensions", None)
-    assert _exported_cubes(dump_yaml(model))["active_users"]["sql"] == sql
+    assert _exported_cubes(dump_yaml(model))["active_users"]["sql"] == trimmed
+
+
+def test_an_ossie_source_ending_in_a_line_comment_exports_terminated():
+    ossie, _ = convert_cube_to_ossie(_files(_cube("active_users", "sql_table", "example_db.public.users")))
+    model = model_of(ossie)
+    model["datasets"][0]["source"] = "SELECT id FROM example_db.public.users -- authored in Ossie"
+    model.pop("nonportable_extensions", None)
+    assert _exported_cubes(dump_yaml(model))["active_users"]["sql"] == (
+        "SELECT id FROM example_db.public.users -- authored in Ossie\n")
 
 
 @pytest.mark.parametrize("template", [
     "malformed", ["malformed"],
-    {"kind": "sql", "sources": {"active_users": "SELECT * FROM example_db.public.users WHERE active"}},
-    {"kind": "sql", "value": 42, "sources": {"active_users": "SELECT * FROM example_db.public.users WHERE active"}},
-    {"kind": "sql", "value": "{users.sql()}", "sources": ["active_users"]},
+    {"kind": "sql", "source_signatures": {"active_users": "0" * 64}},
+    {"kind": "sql", "value": 42, "source_signatures": {"active_users": "0" * 64}},
+    {"kind": "sql", "value": "{users.sql()}", "source_signatures": ["active_users"]},
+    # The earlier snapshot format, with the full source text: it no longer matches.
+    {"kind": "sql", "value": "SELECT * FROM {users.sql()} WHERE active",
+     "sources": {"active_users": "SELECT * FROM example_db.public.users WHERE active",
+                 "users": "example_db.public.users"}},
 ])
 def test_malformed_native_source_metadata_falls_back_to_the_portable_source(template):
     from ossie_cube._common import write_stash
@@ -257,3 +303,84 @@ def test_malformed_native_source_metadata_falls_back_to_the_portable_source(temp
     ds = by_name(model["datasets"])["active_users"]
     write_stash(ds, {"source_template": template})
     assert _exported_cubes(dump_yaml(model))["active_users"]["sql"] == ds["source"]
+
+
+def test_source_snapshots_store_signatures_not_source_text():
+    cubes = [_cube("c0", "sql_table", "example_db.public.users")]
+    for i in range(1, 6):
+        cubes.append(_cube(f"c{i}", "sql", f"SELECT id FROM {{c{i-1}.sql()}} WHERE id > {i}"))
+    ossie, _ = convert_cube_to_ossie(_files(*cubes))
+    snapshot = stash_of(by_name(model_of(ossie)["datasets"])["c5"])["source_template"]
+    assert sorted(snapshot["source_signatures"]) == [f"c{i}" for i in range(6)]
+    assert "example_db.public.users" not in json.dumps(snapshot)
+    restored = _exported_cubes(ossie)
+    assert restored["c5"]["sql"] == "SELECT id FROM {c4.sql()} WHERE id > 5"
+    # The restored source keeps its place right after the name.
+    assert list(restored["c5"])[:2] == ["name", "sql"]
+
+
+def _star(fact_source):
+    orders = _cube("orders", "sql", fact_source)
+    orders["joins"] = [{"name": "customers", "relationship": "many_to_one",
+                        "sql": "{CUBE}.customer_id = {customers.id}"}]
+    model = {"cubes": [orders,
+                       _cube("recent_orders", "sql", "SELECT * FROM {orders.sql()} WHERE recent"),
+                       _cube("customers", "sql_table", "example_db.public.customers")],
+             "views": [{"name": "sales", "cubes": [
+                 {"join_path": "orders", "includes": "*"},
+                 {"join_path": "orders.customers", "prefix": True, "includes": "*"}]}]}
+    return {"model.yml": dump_yaml(model)}
+
+
+def test_a_runtime_fact_cube_and_its_dependents_round_trip_beside_the_rest():
+    files = _star("SELECT * FROM example_db.public.orders WHERE {FILTER_PARAMS.orders.id.filter('id')}")
+    ossie, issues = convert_cube_to_ossie(files)
+    assert _sources(ossie) == {"customers": "example_db.public.customers"}
+    skipped = {i.element_name: i.detail for i in issues.of_type(IssueType.TEMPLATED_CUBE_SKIPPED)}
+    assert list(skipped) == ["cube 'orders'", "cube 'recent_orders'"]
+    assert "'orders.sql()'" in skipped["cube 'recent_orders'"]
+    exported = parse(convert_ossie_to_cube(ossie)[0]["model.yml"])
+    original = parse(files["model.yml"])
+    for name in ("orders", "recent_orders"):
+        assert by_name(exported["cubes"])[name] == by_name(original["cubes"])[name]
+    assert exported["views"] == original["views"]
+
+
+def test_a_join_into_a_set_aside_cube_names_the_reason():
+    customers = _cube("customers", "sql_table", "example_db.public.customers")
+    customers["joins"] = [{"name": "orders", "relationship": "one_to_many",
+                           "sql": "{CUBE}.id = {orders.customer_id}"}]
+    files = _files(customers, _cube("orders", "sql_table", "{COMPILE_CONTEXT.securityContext.tenant}.orders"))
+    with pytest.raises(ConversionError, match="'orders' is not converted.*COMPILE_CONTEXT"):
+        convert_cube_to_ossie(files)
+
+
+def test_a_source_dependency_in_an_unparsed_file_sets_the_cube_aside():
+    files = _files(_cube("users", "sql_table", "example_db.public.users"),
+                   _cube("active_users", "sql", "SELECT * FROM {accounts.sql()} WHERE active"))
+    files["accounts.js"] = "cube(`accounts`, { sql_table: `example_db.public.accounts` })"
+    ossie, issues = convert_cube_to_ossie(files)
+    assert _sources(ossie) == {"users": "example_db.public.users"}
+    [issue] = issues.of_type(IssueType.TEMPLATED_CUBE_SKIPPED)
+    assert "'accounts.js'" in issue.detail
+    exported, _ = convert_ossie_to_cube(ossie)
+    assert exported["accounts.js"] == files["accounts.js"]
+    assert by_name(parse(exported["model.yml"])["cubes"])["active_users"]["sql"] == (
+        "SELECT * FROM {accounts.sql()} WHERE active")
+
+
+def test_projection_names_unparsed_files_for_a_missing_source_dependency():
+    files = _files(_cube("active_users", "sql", "SELECT * FROM {accounts.sql()} WHERE active"), view=True)
+    files["accounts.js"] = "cube(`accounts`, { sql_table: `example_db.public.accounts` })"
+    with pytest.raises(ConversionError, match="'accounts'.*no cube was converted from 'accounts.js'"):
+        convert_cube_view_to_ossie(files, "sales")
+
+
+def test_a_set_aside_cube_cannot_collide_with_a_dataset():
+    ossie, _ = convert_cube_to_ossie(_files(
+        _cube("users", "sql_table", "example_db.public.users"),
+        _cube("active_users", "sql", "SELECT * FROM {FILTER_PARAMS.active_users.id.filter('id')}")))
+    model = model_of(ossie)
+    model["datasets"][0]["name"] = "Active_Users"
+    with pytest.raises(ConversionError, match="stashed cube 'active_users'.*dataset"):
+        convert_ossie_to_cube(dump_yaml(model))

@@ -200,6 +200,19 @@ def _convert_model(model, dialect, base_cube, issues):
 
     restore_source_templates(cubes_by_name, datasets, cube_names)
 
+    # Cubes a previous import set aside because their source has no static form (a
+    # runtime template) go back verbatim, into the file they came from.
+    for cname, cube in (model_stash.get("templated_cubes") or {}).items():
+        if cname.lower() in {emitted.lower() for emitted in cubes_by_name}:
+            # Cube refuses two cubes of one name, so the stashed one cannot ride along.
+            raise ConversionError(
+                f"stashed cube '{cname}' has the name of a dataset in this model; "
+                f"rename the dataset or remove the stashed cube")
+        stashed = stashed_paths.get(cname)
+        path = (safe_relative_path(stashed, f"cube '{cname}'") if stashed
+                else cube_file(cname))
+        files_content.setdefault(path, {}).setdefault("cubes", []).append(cube)
+
     for vpath, views in _build_views(model, model_stash, cube_names, relationships,
                                      datasets, base_cube, emitted_members,
                                      issues).items():
