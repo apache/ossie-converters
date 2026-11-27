@@ -88,9 +88,8 @@ PORTABLE_DIALECTS_ACCEPTED = (PORTABLE_DIALECT, "OSSIE_SQL_2026")
 PORTABLE_SQL_DIALECT = "OSSIE_SQL_2026"
 
 
-#: Ossie spec series this converter targets, matched on major.minor. Not an exact
-#: version: upstream's first release is proposed as 0.3.0, not 0.2.0.
-SPEC_SERIES = "0.2"
+#: Ossie spec series this converter targets, matched on major.minor.
+SPEC_SERIES = "0.3"
 
 #: The exact `version` this converter writes at the root of every document it
 #: emits (`{"version": DOCUMENT_VERSION, "name": ..., "datasets": [...]}`). Unlike

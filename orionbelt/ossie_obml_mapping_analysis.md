@@ -19,11 +19,11 @@
 
 # Ossie ↔ OBML Mapping Analysis
 
-> Bidirectional conversion between [Ossie](https://ossie.apache.org/) v0.2.0.dev0 and [OrionBelt ML (OBML)](https://github.com/ralfbecher/orionbelt-semantic-layer) v1.0 semantic model formats. Ossie v0.1.x inputs are still accepted on read via a legacy normalization shim; output targets v0.2.0.dev0.
+> Bidirectional conversion between [Ossie](https://ossie.apache.org/) v0.3.0.dev0 and [OrionBelt ML (OBML)](https://github.com/ralfbecher/orionbelt-semantic-layer) v1.0 semantic model formats. Ossie v0.1.x inputs are still accepted on read via a legacy normalization shim; output targets v0.3.0.dev0.
 
 ## 1. Structural Comparison
 
-| Aspect | Ossie v0.2.0.dev0 | OBML v1.0 |
+| Aspect | Ossie v0.3.0.dev0 | OBML v1.0 |
 |---|---|---|
 | **Top-level** | Single model at the root (`version`, `name`, `datasets`, ...) | Single model with `dataObjects`, `dimensions`, `measures`, `metrics` sections |
 | **Tables / Entities** | `datasets[]` (flat array) | `dataObjects{}` (named dictionary) |
