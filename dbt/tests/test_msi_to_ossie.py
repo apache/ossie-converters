@@ -405,8 +405,9 @@ class TestEntityKeyExtraction:
         "entity_type, name, expr, expected_pk, expected_uk",
         [
             (EntityType.PRIMARY, "order_id", None, ["order_id"], None),
-            (EntityType.PRIMARY, "order_id", "id", ["id"], None),
+            (EntityType.PRIMARY, "order_id", "id", ["order_id"], None),
             (EntityType.UNIQUE, "email", None, None, [["email"]]),
+            (EntityType.UNIQUE, "email", "LOWER(email_address)", None, [["email"]]),
             (EntityType.FOREIGN, "user_id", None, None, None),
         ],
     )
@@ -427,6 +428,7 @@ class TestEntityKeyExtraction:
         dataset = result.datasets[0]
         assert dataset.primary_key == expected_pk
         assert dataset.unique_keys == expected_uk
+        assert _fields(result)[0].expression.dialects[0].expression == (expr or name)
 
 
 class TestFieldOrdering:
