@@ -190,6 +190,24 @@ def _ossie_field(
     )
 
 
+# A time spine and a default aggregation time dimension, so a converted document is complete for MetricFlow
+# and tests of other behaviour see no time-binding warning (#302).
+_DBT_TIME_SPINE_EXTENSION = OssieNonportableExtension(
+    vendor_name="DBT",
+    data={
+        "time_spines": [
+            {
+                "node_relation": {"schema_name": "public", "alias": "calendar"},
+                "primary_column": {"name": "date_day", "time_granularity": "day"},
+            }
+        ]
+    },
+)
+_DBT_DEFAULT_TIME_EXTENSION = OssieNonportableExtension(
+    vendor_name="DBT", data={"defaults": {"agg_time_dimension": "ordered_on"}}
+)
+
+
 def _ossie_dataset(
     name: str,
     source: str = "schema.table",
@@ -206,7 +224,9 @@ def _ossie_dataset(
         primary_key=primary_key,
         unique_keys=unique_keys,
         description=description,
-        nonportable_extensions=nonportable_extensions,
+        nonportable_extensions=(
+            nonportable_extensions if nonportable_extensions is not None else [_DBT_DEFAULT_TIME_EXTENSION]
+        ),
     )
 
 
@@ -250,4 +270,5 @@ def _ossie_doc(
         datasets=datasets if datasets is not None else [_ossie_dataset("default")],
         metrics=metrics if metrics else None,
         relationships=relationships if relationships else None,
+        nonportable_extensions=[_DBT_TIME_SPINE_EXTENSION],
     )

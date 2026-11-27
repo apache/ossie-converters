@@ -70,6 +70,14 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
         "more than one DBT nonportable_extensions entry carried meta, so only the first "
         "was restored to config.meta"
     ),
+    ConverterIssueType.TIME_SPINE_LOSS: (
+        "the Ossie model carries no DBT time spine, so the manifest has none and MetricFlow cannot load it; "
+        "add a time spine to the project configuration"
+    ),
+    ConverterIssueType.AGG_TIME_DIMENSION_LOSS: (
+        "no single aggregation time dimension could be carried across, and the converter does not guess one, "
+        "so MetricFlow cannot tell which time dimension the metric aggregates on"
+    ),
 }
 
 _DROPPED_ISSUE_TYPES = {

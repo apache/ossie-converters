@@ -64,12 +64,14 @@ from metricflow_semantic_interfaces.implementations.metric import (
 from metricflow_semantic_interfaces.implementations.project_configuration import (
     PydanticProjectConfiguration,
 )
+from metricflow_semantic_interfaces.implementations.time_spine import PydanticTimeSpine
 from metricflow_semantic_interfaces.implementations.semantic_manifest import (
     PydanticSemanticManifest,
 )
 from metricflow_semantic_interfaces.implementations.semantic_model import (
     PydanticNodeRelation,
     PydanticSemanticModel,
+    PydanticSemanticModelDefaults,
 )
 from metricflow_semantic_interfaces.type_enums import (
     AggregationType,
@@ -157,14 +159,101 @@ class OssieToMSIConverter:
         metrics, metric_issues = self._convert_metrics(document)
         issues.extend(metric_issues)
 
+        time_spines, spine_issues = self._time_spines_from_extensions(document.nonportable_extensions, document.name)
+        issues.extend(spine_issues)
+        issues.extend(self._time_binding_issues(document, semantic_models, metrics, time_spines))
+
         return ConverterResult(
             output=PydanticSemanticManifest(
                 semantic_models=semantic_models,
                 metrics=metrics,
-                project_configuration=PydanticProjectConfiguration(),
+                project_configuration=PydanticProjectConfiguration(time_spines=time_spines),
             ),
             issues=issues,
         )
+
+    # ------------------------------------------------------------------
+    # Time spine and aggregation time dimension (#302)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _dbt_extension_values(
+        nonportable_extensions: Optional[List[OssieNonportableExtension]], key: str
+    ) -> List[Any]:
+        """The value under `key` of every `DBT` entry that has it, in document order."""
+        return [
+            ext.data[key]
+            for ext in nonportable_extensions or []
+            if ext.vendor_name == OssieVendor.DBT.value and isinstance(ext.data, dict) and key in ext.data
+        ]
+
+    @classmethod
+    def _time_spines_from_extensions(
+        cls, nonportable_extensions: Optional[List[OssieNonportableExtension]], element_name: str
+    ) -> Tuple[List[PydanticTimeSpine], List[ConverterIssue]]:
+        spines: List[PydanticTimeSpine] = []
+        issues: List[ConverterIssue] = []
+        for value in cls._dbt_extension_values(nonportable_extensions, "time_spines"):
+            try:
+                if not isinstance(value, list):
+                    raise ValueError("time_spines must be a list")
+                spines.extend(PydanticTimeSpine.parse_obj(item) for item in value)
+            except ValueError:  # a pydantic v1 ValidationError is a ValueError
+                issues.append(ConverterIssue(ConverterIssueType.INVALID_DBT_CUSTOM_EXTENSION, element_name))
+        return spines, issues
+
+    @classmethod
+    def _agg_time_dimension_from_extensions(
+        cls, nonportable_extensions: Optional[List[OssieNonportableExtension]]
+    ) -> Optional[str]:
+        """The stored aggregation time dimension; a malformed or repeated value is ignored."""
+        values = [
+            v
+            for v in cls._dbt_extension_values(nonportable_extensions, "agg_time_dimension")
+            if isinstance(v, str) and v
+        ]
+        return values[0] if len(values) == 1 else None
+
+    @classmethod
+    def _defaults_from_extensions(
+        cls, nonportable_extensions: Optional[List[OssieNonportableExtension]]
+    ) -> Optional[PydanticSemanticModelDefaults]:
+        for value in cls._dbt_extension_values(nonportable_extensions, "defaults"):
+            if isinstance(value, dict) and isinstance(value.get("agg_time_dimension"), str):
+                return PydanticSemanticModelDefaults(agg_time_dimension=value["agg_time_dimension"])
+        return None
+
+    @staticmethod
+    def _time_binding_issues(
+        document: OssieSemanticModel,
+        semantic_models: List[PydanticSemanticModel],
+        metrics: List[PydanticMetric],
+        time_spines: List[PydanticTimeSpine],
+    ) -> List[ConverterIssue]:
+        """Report what MetricFlow needs to load the manifest but the Ossie model did not carry.
+
+        Nothing is guessed: with several time dimensions to choose from, or none declared, the
+        converter leaves the binding out and says so.
+        """
+        issues: List[ConverterIssue] = []
+        simple = [m for m in metrics if m.type_params.metric_aggregation_params is not None]
+        if simple and not time_spines:
+            issues.append(ConverterIssue(ConverterIssueType.TIME_SPINE_LOSS, document.name))
+        defaults = {sm.name: sm.defaults.agg_time_dimension for sm in semantic_models if sm.defaults is not None}
+        # Report under the document metric name, so ratio sub-metrics are not named individually.
+        document_names = {m.name for m in document.metrics or []}
+        reported: Set[str] = set()
+        for metric in simple:
+            params = metric.type_params.metric_aggregation_params
+            if params.agg_time_dimension or defaults.get(params.semantic_model):
+                continue
+            owner = metric.name
+            if owner not in document_names:
+                owner = next((n for n in document_names if metric.name.startswith(f"{n}_")), owner)
+            if owner not in reported:
+                reported.add(owner)
+                issues.append(ConverterIssue(ConverterIssueType.AGG_TIME_DIMENSION_LOSS, owner))
+        return issues
 
     # ------------------------------------------------------------------
     # Dataset conversion
@@ -207,6 +296,7 @@ class OssieToMSIConverter:
                 dimensions=dimensions,
                 measures=[],
                 config=config,
+                defaults=self._defaults_from_extensions(dataset.nonportable_extensions),
             ),
             issues,
         )
@@ -400,6 +490,7 @@ class OssieToMSIConverter:
                     dialect,
                     taken_names=reserved_names,
                     config=config,
+                    agg_time_dimension=self._agg_time_dimension_from_extensions(metric.nonportable_extensions),
                 )
                 # Sign after restoring user metadata; never replace that metadata.
                 mark_ratio_helpers(converted)
@@ -428,6 +519,7 @@ class OssieToMSIConverter:
         *,
         taken_names: Optional[Set[str]] = None,
         config: Optional[PydanticSemanticLayerElementConfig] = None,
+        agg_time_dimension: Optional[str] = None,
     ) -> List[PydanticMetric]:
         """Return one or more PydanticMetric objects for the given Ossie expression.
 
@@ -470,7 +562,7 @@ class OssieToMSIConverter:
                             semantic_model=semantic_model_name,
                             agg=agg,
                             agg_params=agg_params,
-                            agg_time_dimension=None,
+                            agg_time_dimension=agg_time_dimension,
                             non_additive_dimension=None,
                         ),
                     ),
@@ -489,8 +581,14 @@ class OssieToMSIConverter:
             den_name = _unique_metric_name(f"{name}_denominator", taken_names)
             # Helpers are converter-generated. Copying the author's meta onto them
             # would duplicate it on the next dbt -> Ossie pass.
-            num_metrics = self._convert_metric(num_name, num_expr, None, datasets, dialect, taken_names=taken_names)
-            den_metrics = self._convert_metric(den_name, den_expr, None, datasets, dialect, taken_names=taken_names)
+            num_metrics = self._convert_metric(
+                num_name, num_expr, None, datasets, dialect,
+                taken_names=taken_names, agg_time_dimension=agg_time_dimension,
+            )
+            den_metrics = self._convert_metric(
+                den_name, den_expr, None, datasets, dialect,
+                taken_names=taken_names, agg_time_dimension=agg_time_dimension,
+            )
             ratio_metric = PydanticMetric(
                 name=name,
                 description=description,
