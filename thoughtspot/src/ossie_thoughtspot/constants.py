@@ -71,13 +71,14 @@ PORTABLE_DIALECT = "ANSI_SQL"
 #: list.
 #:
 #: Scope, and it is narrower than "this converter now reads OSSIE_SQL_2026":
-#: what is accepted reaches `_translate_ansi_sql`, which resolves a qualified
-#: `dataset.field` and nothing else. That is the model-scoped metric namespace
-#: (apache/ossie#486). The other two namespaces the specification defines --
-#: a dataset-scoped metric's unqualified field names, and a field expression's
-#: source columns -- are NOT resolved correctly here, for ANSI_SQL just as much
-#: as for OSSIE_SQL_2026. Widening the accepted list does not change that
-#: either way; see apache/ossie-converters#101.
+#: what is accepted reaches `_translate_ansi_sql`, which matches a reference of
+#: either arity and asks the resolver its caller scoped. Two of the three
+#: namespaces apache/ossie#486 defines resolve that way: a model-scoped
+#: metric's qualified `dataset.field`, and a dataset-scoped metric's
+#: unqualified field name. The third, a field expression's source columns, is
+#: still NOT resolved, for ANSI_SQL just as much as for OSSIE_SQL_2026.
+#: Widening the accepted list does not change that either way; see
+#: apache/ossie-converters#101.
 PORTABLE_DIALECTS_ACCEPTED = (PORTABLE_DIALECT, "OSSIE_SQL_2026")
 
 #: The dialect a top-level `expression.sql` is, by definition. apache/ossie#617

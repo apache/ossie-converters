@@ -842,6 +842,124 @@ def _build_sql_view_body(
     return body
 
 
+def _pre_aggregated_source_measure(metric: dict) -> str | None:
+    """The source measure a metric composes with `AGG(source.measure)`, or
+    `None` when it is any other expression.
+
+    Core-spec Metric Scoping rule 7: a dataset-scoped metric MAY evaluate a
+    measure of its `source` this way when the `source` is a measure
+    relation, and the argument MUST be a single `source.measure` reference.
+    Rule 9 adds that the document does not say which source columns are
+    measures, so the call itself is the author's assertion and the only
+    thing to check is its form.
+
+    A composite such as `AGG(source.total_revenue) / COUNT(DISTINCT id)` is
+    legal Ossie and is deliberately NOT matched here: ThoughtSpot carries a
+    pre-aggregated measure as a COLUMN, and a composite is not one.
+    """
+    for entry in portable_expression_entries(metric.get("expression")):
+        expr = (entry.get("expression") or "").strip()
+        call = formula.split_call(expr)
+        if call is None:
+            continue
+        name, args = call
+        if name.upper() != "AGG" or len(args) != 1:
+            continue
+        qualifier, _, column = args[0].strip().partition(".")
+        if qualifier.casefold() == _SOURCE_QUALIFIER and column:
+            return column
+    return None
+
+
+def _mint_pre_aggregated_measures(
+    dataset: dict, body: dict, kind: str, log: IssueLog, *, object_ref: str,
+) -> None:
+    """Add a table column for every measure this dataset's metrics compose
+    with `AGG(source.x)`.
+
+    A source measure is NOT a field. "A field is never a measure"
+    (core-spec, Datasets), so the measure a metric AGGs has no field
+    declaring it and no column was built for it. One is added here.
+
+    The datatype comes from the metric's own `datatype`, which is the only
+    place the document states it. A metric that declares none is left alone
+    and refused where it is built: nothing here invents a type, because a
+    column silently typed INT64 over a DECIMAL measure is the failure this
+    converter exists to prevent.
+
+    ThoughtSpot carries such a column with four properties, verified against
+    a live Semantic-View-backed Table. Without
+    `is_pre_aggregated_measure` a newer build plans the column as an
+    ATTRIBUTE and refuses `AGG()` on it outright -- which is what makes
+    ThoughtSpot a conforming consumer of Metric Scoping rule 9, rather than
+    one that quietly substitutes an ordinary aggregate.
+    """
+    columns = body.get(_column_key_for(kind))
+    if columns is None:
+        return
+    existing = {
+        (column.get("db_column_name")
+         or column.get("sql_output_column")
+         or column.get("name"))
+        for column in columns
+    }
+    for metric in dataset.get("metrics") or []:
+        source_measure = _pre_aggregated_source_measure(metric)
+        if source_measure is None or source_measure in existing:
+            # Already a column means a field declares it, which the spec
+            # forbids for a measure. Refused where the metric is built; not
+            # silently overwritten here.
+            continue
+        datatype = metric.get("datatype")
+        if datatype is None:
+            continue
+        column = {
+            "name": source_measure,
+            "properties": {
+                "column_type": "MEASURE",
+                "aggregation": "AGGREGATE",
+                "index_type": "DONT_INDEX",
+                "is_pre_aggregated_measure": True,
+            },
+            "db_column_properties": {"data_type": datatypes.to_tml(datatype)},
+        }
+        if kind == "sql_view":
+            column["sql_output_column"] = source_measure
+        else:
+            column["db_column_name"] = source_measure
+        columns.append(column)
+        existing.add(source_measure)
+
+
+def _pre_aggregated_measure_columns(
+    table_doc_by_prefix: dict[str, TmlDocument | None],
+) -> dict[str, str]:
+    """`"dataset.source_measure" -> display name`, for columns actually
+    carrying `is_pre_aggregated_measure`.
+
+    Narrower than `_build_source_column_index` on purpose. A model column
+    at `aggregation: AGGREGATE` must sit on a table column that is AGGREGATE
+    too, so the model side asks this rather than the general source index,
+    and refuses when the answer is no.
+    """
+    index: dict[str, str] = {}
+    for prefix, table_doc in table_doc_by_prefix.items():
+        if table_doc is None or not prefix:
+            continue
+        for column in _physical_columns_of(table_doc):
+            if not (column.get("properties") or {}).get("is_pre_aggregated_measure"):
+                continue
+            display_name = column.get("name")
+            source_name = (
+                column.get("db_column_name")
+                or column.get("sql_output_column")
+                or display_name
+            )
+            if display_name and source_name:
+                index[f"{prefix}.{source_name}"] = display_name
+    return index
+
+
 def build_table(dataset: dict, log: IssueLog, *, connection_name: str | None = None) -> TmlDocument:
     """One Ossie dataset -> one ThoughtSpot `table:`/`sql_view:` TML document.
 
@@ -881,9 +999,11 @@ def build_table(dataset: dict, log: IssueLog, *, connection_name: str | None = N
 
     if _decide_kind(dataset, payload, log, object_ref=object_ref) == "sql_view":
         body = _build_sql_view_body(dataset, payload, connection, log, object_ref=object_ref)
+        _mint_pre_aggregated_measures(dataset, body, "sql_view", log, object_ref=object_ref)
         return TmlDocument(kind="sql_view", body=body, guid=None)
 
     body = _build_table_body(dataset, payload, connection, log, object_ref=object_ref)
+    _mint_pre_aggregated_measures(dataset, body, "table", log, object_ref=object_ref)
     return TmlDocument(kind="table", body=body, guid=None)
 
 
@@ -1215,7 +1335,16 @@ def _rewrite_formula_references(
 #: read back here: a round-tripped Ossie document always carries a THOUGHTSPOT
 #: entry too, which `to_thoughtspot_expression` prefers unconditionally, so
 #: this pattern is only ever exercised for a document with no such entry.
-_ANSI_DATASET_FIELD_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*$")
+#: One reference, as a portable expression writes it: a single identifier, or
+#: two joined by a dot. Which of apache/ossie#486's three namespaces that text
+#: belongs to is NOT decided here -- the `resolve_field` the caller passes is
+#: already scoped, and a key it does not know resolves to nothing. Matching
+#: both arities is what lets one translator serve a model-scoped metric
+#: (`dataset.field`) and a dataset-scoped one (a bare field name) without
+#: either knowing about the other.
+_ANSI_REFERENCE_RE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$"
+)
 
 
 def _match_ansi_call(name: str, args: list[str]) -> tuple[str, list[str]] | None:
@@ -1263,17 +1392,17 @@ def _translate_ansi_sql(
     another: a construct the catalog does not structurally match is left
     alone, not approximated.
     """
-    match = _ANSI_DATASET_FIELD_RE.match(expr)
+    match = _ANSI_REFERENCE_RE.match(expr)
     if match is not None:
-        key = f"{match.group(1)}.{match.group(2)}"
+        key = match.group(1)
         resolved = resolve_field(key)
         if resolved is None:
             log.add(
                 code="TS-EXPR-ANSI-UNRESOLVED",
                 severity=Severity.WARNING,
                 message=(
-                    f"reference {key!r} does not resolve to a known field in this "
-                    f"model; no ThoughtSpot expression is produced for it"
+                    f"reference {key!r} does not resolve in this model; no "
+                    f"ThoughtSpot expression is produced for it"
                 ),
                 object_ref=object_ref,
             )
@@ -1888,6 +2017,129 @@ def _build_field_index(
     return index
 
 
+#: How a dataset-scoped metric qualifies a column of its own `source`, as
+#: opposed to one of its declared fields (core-spec Metric Scoping, rule 2).
+#: Case insensitive there, so `SOURCE.quantity` and `source.quantity` name the
+#: same column.
+_SOURCE_QUALIFIER = "source"
+
+
+def _build_source_column_index(
+    table_doc_by_prefix: dict[str, TmlDocument | None],
+) -> dict[str, tuple[str, str]]:
+    """`"dataset.source_column" -> (TABLE, display name)`, for every physical
+    column of every built Table or SQL View.
+
+    The third namespace of apache/ossie#486, and the one `_build_field_index`
+    cannot serve. A field expression's identifiers name columns of the
+    dataset's `source`, and a dataset-scoped metric may name one as
+    `source.column`. Neither is a field: a dataset may declare the field
+    `cust` over the source column `customer_name`, and then the two
+    namespaces disagree about every key.
+
+    Built from the already-built documents rather than re-derived from the
+    fields, for the reason `_field_physical_display_name` gives for not
+    calling `_physical_identity` a second time -- `build_table` has already
+    classified each of these fields against the real log, so a second pass
+    would either repeat its findings or need a throwaway log that swallows
+    them. The built column states the answer outright, as `db_column_name`
+    for a Table and `sql_output_column` for a SQL View.
+    """
+    index: dict[str, tuple[str, str]] = {}
+    for prefix, table_doc in table_doc_by_prefix.items():
+        if table_doc is None or not prefix:
+            continue
+        for column in _physical_columns_of(table_doc):
+            display_name = column.get("name")
+            if not display_name:
+                continue
+            source_column = (
+                column.get("db_column_name")
+                or column.get("sql_output_column")
+                or display_name
+            )
+            index[f"{prefix}.{source_column}"] = (prefix, display_name)
+    return index
+
+
+def _field_expression_resolver(
+    source_index: dict[str, tuple[str, str]],
+    field_index: dict[str, tuple[str, str]],
+    dataset_prefix: str,
+) -> Callable[[str], tuple[str, str] | None]:
+    """`resolve_field` for a field's own expression, inside `dataset_prefix`.
+
+    A field expression's identifiers refer to columns of the dataset's
+    `source`, not to other fields (core-spec, Name Resolution), so the source
+    namespace is tried first and is the only correct one.
+
+    A declared field of the same dataset is accepted after it, and a
+    model-scoped `dataset.field` after that. Neither is what the
+    specification says a field expression contains, and both are kept only
+    because this converter resolved the second of them for every field
+    expression before the source namespace existed here. Narrowing to the
+    correct namespace alone would reject documents that convert today, which
+    is a separate decision from closing the gap.
+    """
+    def resolve(key: str) -> tuple[str, str] | None:
+        if "." not in key:
+            scoped = f"{dataset_prefix}.{key}"
+            return source_index.get(scoped) or field_index.get(scoped)
+        return field_index.get(key)
+
+    return resolve
+
+
+def _dataset_scoped_resolver(
+    field_index: dict[str, tuple[str, str]],
+    dataset_prefix: str,
+    source_index: dict[str, tuple[str, str]] | None = None,
+    on_undeclared_source_column: Callable[[str], None] | None = None,
+) -> Callable[[str], tuple[str, str] | None]:
+    """`resolve_field` for an expression written inside `dataset_prefix`.
+
+    A dataset-scoped metric names its operands by single-part field name,
+    within its own dataset (core-spec Metric Scoping, rule 1). That is a
+    narrower namespace than the model-scoped `dataset.field` one, not a
+    different index: `_build_field_index` is already keyed `dataset.field`,
+    so scoping is a prefix.
+
+    A dotted key resolves to nothing here, deliberately, and the two reasons
+    are both ones the caller should hear about rather than have silently
+    rewritten:
+
+    * `other_dataset.field` is invalid in a dataset-scoped metric (rule 1); a
+      metric that must reach another dataset is model-scoped and belongs in
+      the model-root `metrics`.
+    `source.column` is the one dotted key that does resolve, through
+    `source_index`: rule 2 says a column of the dataset's own `source` is
+    qualified that way, case insensitively. Rule 3 makes that conditional --
+    a dataset that declares a field named `source` has no way left to name a
+    source column, and the qualifier is not read as one.
+    """
+    def resolve(key: str) -> tuple[str, str] | None:
+        if "." not in key:
+            return field_index.get(f"{dataset_prefix}.{key}")
+        qualifier, _, column = key.partition(".")
+        if qualifier.casefold() != _SOURCE_QUALIFIER or source_index is None:
+            return None
+        if f"{dataset_prefix}.{_SOURCE_QUALIFIER}" in field_index:
+            # Rule 3: `source` is not reserved. A dataset that declares a
+            # field called `source` has no way left to name a source column,
+            # and the qualifier must not be read as one here either.
+            return None
+        resolved = source_index.get(f"{dataset_prefix}.{column}")
+        if resolved is None and on_undeclared_source_column is not None:
+            # The caller can say what the generic "does not resolve" cannot:
+            # this names a source column the dataset never declared as a
+            # field, so no Table column was built for it and none can be,
+            # its datatype being unknowable from the document.
+            on_undeclared_source_column(column)
+        return resolved
+
+    return resolve
+
+
 #: The two spellings a source join `type` can arrive as for what
 #: ThoughtSpot calls `OUTER` (its own full outer join). Matched
 #: case/whitespace-insensitively: the stash carries whatever spelling the
@@ -2440,7 +2692,10 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         model_tables.append(table_entry)
         model_tables_by_prefix[dataset_prefix] = table_entry
 
-    resolve_field = _build_field_index(datasets).get
+    field_index = _build_field_index(datasets)
+    source_index = _build_source_column_index(table_doc_by_prefix)
+    pre_aggregated = _pre_aggregated_measure_columns(table_doc_by_prefix)
+    resolve_field = field_index.get
 
     allocator = _DisplayNameAllocator()
     columns: list[dict] = []
@@ -2450,7 +2705,11 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         dataset_prefix = dataset.get("name") or "<unnamed>"
         table_doc = table_doc_by_prefix.get(dataset_prefix)
         for field in dataset.get("fields") or []:
-            built = _build_field(field, dataset_prefix, table_doc, allocator, resolve_field, log)
+            built = _build_field(
+                field, dataset_prefix, table_doc, allocator,
+                _field_expression_resolver(source_index, field_index, dataset_prefix),
+                log,
+            )
             if built is None:
                 continue
             columns_entry, formulas_entry = built
@@ -2467,24 +2726,98 @@ def build_model(semantic_model: dict, tables: Sequence[TmlDocument], log: IssueL
         dataset_metrics = dataset.get("metrics") or []
         if not dataset_metrics:
             continue
-        # Only `SemanticModel.metrics` is read above. A dataset-scoped metric
-        # resolves its operands within its own dataset by single-part name
-        # (core-spec "Metric Scoping"), a namespace this converter's
-        # `resolve_field` does not implement -- see
-        # apache/ossie-converters#101. Until it does, the metric cannot be
-        # built, and a measure vanishing from a model is worth a WARNING.
-        names = ", ".join(repr(m.get("name") or "<unnamed>") for m in dataset_metrics)
-        log.add(
-            code="TS-DATASET-METRICS-DROPPED",
-            severity=Severity.WARNING,
-            message=(
-                f"dataset {dataset.get('name') or '<unnamed>'!r} declares the "
-                f"dataset-scoped metric(s) {names}, whose expressions resolve "
-                f"against its own fields by single-part name; this converter "
-                f"reads only model-scoped metrics, so they are not built"
-            ),
-            object_ref=f"dataset:{dataset.get('name') or '<unnamed>'}",
-        )
+        # A dataset-scoped metric is built exactly as a model-scoped one is,
+        # against a resolver scoped to its own dataset. Until
+        # apache/ossie-converters#101 these were dropped wholesale, before
+        # any expression was looked at, so a metric that resolves perfectly
+        # well went the same way as one that cannot be built at all. Each
+        # metric now reports its own outcome.
+        dataset_prefix = dataset.get("name") or "<unnamed>"
+        for metric in dataset_metrics:
+            metric_ref = f"metric:{metric.get('name') or '<unnamed>'}"
+
+            def _report_undeclared(column: str, _ref: str = metric_ref) -> None:
+                log.add(
+                    code="TS-METRIC-SOURCE-COLUMN-UNDECLARED",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"source column {column!r} is referenced but dataset "
+                        f"{dataset_prefix!r} does not declare it as a field, so no "
+                        f"table column was built for it. One cannot be built here "
+                        f"either: the document states no datatype for a column it "
+                        f"never declares, and this converter does not invent one. "
+                        f"Declare it as a field to include this metric"
+                    ),
+                    object_ref=_ref,
+                )
+
+            source_measure = _pre_aggregated_source_measure(metric)
+            if source_measure is not None:
+                # A pre-aggregated measure is a COLUMN in ThoughtSpot, never
+                # a formula: there is no formula syntax for "hand this to the
+                # platform's own measure function". `_build_metric`'s "always
+                # a formula" rule is the one shape that cannot express this
+                # one, so the column is built here instead.
+                column_display = pre_aggregated.get(
+                    f"{dataset_prefix}.{source_measure}")
+                if column_display is None:
+                    log.add(
+                        code="TS-METRIC-SOURCE-MEASURE-UNTYPED",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"metric composes source measure {source_measure!r} "
+                            f"with AGG(), which ThoughtSpot carries as a "
+                            f"pre-aggregated measure column. No such column could "
+                            f"be built: either the metric declares no datatype, "
+                            f"and the document states one nowhere else, or "
+                            f"dataset {dataset_prefix!r} declares "
+                            f"{source_measure!r} as a field, which a source "
+                            f"measure may not be. Give the metric a datatype"
+                        ),
+                        object_ref=f"metric:{metric.get('name') or '<unnamed>'}",
+                    )
+                    continue
+                table_name = dataset_prefix
+                payload = stash.read_stash(metric)
+                live_name = metric.get("name") or "<unnamed>"
+                display_name = _restore_tml_name(
+                    payload, live_name, log, object_ref=f"metric:{live_name}",
+                )
+                metric_object_ref = f"metric:{display_name}"
+                entry = {
+                    "name": allocator.allocate(
+                        display_name, log, object_ref=metric_object_ref,
+                    ),
+                    "column_id": f"{table_name}::{column_display}",
+                    "properties": {
+                        "column_type": "MEASURE",
+                        # A model column at AGGREGATE must sit on a table
+                        # column that is AGGREGATE too, which
+                        # `_mint_pre_aggregated_measures` has just made it.
+                        "aggregation": "AGGREGATE",
+                        "index_type": "DONT_INDEX",
+                    },
+                }
+                description = metric.get("description")
+                if description:
+                    entry["description"] = description
+                columns.append(entry)
+                continue
+
+            resolve_in_dataset = _dataset_scoped_resolver(
+                field_index, dataset_prefix, source_index, _report_undeclared,
+            )
+            built = _build_metric(metric, allocator, resolve_in_dataset, log)
+            if built is None:
+                continue
+            formulas_entry, columns_entry = built
+            _allocate_formula_id(
+                formulas_entry, columns_entry, taken_formula_ids, log,
+                preserved=stash.read_stash(metric).get(FIELD_STASH_FORMULA_ID)
+                == formulas_entry["id"],
+            )
+            formulas.append(formulas_entry)
+            columns.append(columns_entry)
 
     for metric in semantic_model.get("metrics") or []:
         built = _build_metric(metric, allocator, resolve_field, log)
