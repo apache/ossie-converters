@@ -405,7 +405,7 @@ class TestEntityKeyExtraction:
         "entity_type, name, expr, expected_pk, expected_uk",
         [
             (EntityType.PRIMARY, "order_id", None, ["order_id"], None),
-            (EntityType.PRIMARY, "order_id", "id", ["id"], None),
+            (EntityType.PRIMARY, "order_id", "id", ["order_id"], None),
             (EntityType.UNIQUE, "email", None, None, [["email"]]),
             (EntityType.FOREIGN, "user_id", None, None, None),
         ],
@@ -485,8 +485,8 @@ class TestRelationshipConversion:
         rel = rels[0]
         assert rel.from_dataset == "bookings"
         assert rel.to == "listings"
-        assert rel.from_columns == ["listing_id"]
-        assert rel.to_columns == ["listing_id"]
+        assert rel.from_columns == ["listing"]
+        assert rel.to_columns == ["listing"]
 
     def test_same_type_entities_produce_relationship(self) -> None:
         users_a = semantic_model_with_guaranteed_meta(
@@ -502,8 +502,8 @@ class TestRelationshipConversion:
         rels = result.relationships
         assert rels is not None
         assert len(rels) == 1
-        assert rels[0].from_columns == ["user_id"]
-        assert rels[0].to_columns == ["uid"]
+        assert rels[0].from_columns == ["user"]
+        assert rels[0].to_columns == ["user"]
 
     def test_single_dataset_with_entity_produces_no_relationship(self) -> None:
         bookings = semantic_model_with_guaranteed_meta(
@@ -548,7 +548,7 @@ class TestRelationshipConversion:
         assert pairs == {("users_a", "users_b"), ("orders", "users_a"), ("orders", "users_b")}
         assert result.to_ossie_yaml() == snapshot
 
-    def test_columns_use_expr_when_present(self) -> None:
+    def test_columns_use_field_names_when_expr_is_present(self) -> None:
         listings = semantic_model_with_guaranteed_meta(
             name="listings",
             entities=[_entity("listing", entity_type=EntityType.PRIMARY, expr="lid")],
@@ -562,8 +562,8 @@ class TestRelationshipConversion:
         rels = result.relationships
         assert rels is not None
         rel = rels[0]
-        assert rel.from_columns == ["fk_lid"]
-        assert rel.to_columns == ["lid"]
+        assert rel.from_columns == ["listing"]
+        assert rel.to_columns == ["listing"]
 
     def test_columns_fall_back_to_name_without_expr(self) -> None:
         listings = semantic_model_with_guaranteed_meta(

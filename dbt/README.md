@@ -72,6 +72,12 @@ model becomes an Ossie dataset; dbt manifests can still contain multiple
 `semantic_models`. Ossie input must use the flat root format without a
 `semantic_model` wrapper.
 
+Entity `name` values become dataset field names. Primary keys, unique keys, and
+relationship endpoints refer to those field names; an entity's `expr` remains
+the field's source SQL expression. For example, `name: customer` with
+`expr: customer_id` produces a field named `customer` over `customer_id`, and
+keys and relationships reference `customer`.
+
 Conversion issues (e.g. dropped CONVERSION or PRIVATE metrics) are printed as warnings to stderr. The output file is still written.
 
 ### Apache Ossie → dbt
