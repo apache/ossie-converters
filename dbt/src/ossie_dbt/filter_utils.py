@@ -15,23 +15,30 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import List, Optional, Sequence
+from functools import partial
+from typing import Mapping, Optional, Sequence, Tuple
 
 import jinja2
 from jinja2.sandbox import SandboxedEnvironment
 
+from metricflow_semantic_interfaces.protocols.semantic_model import SemanticModel
 from metricflow_semantic_interfaces.protocols.where_filter import WhereFilterIntersection
+from metricflow_semantic_interfaces.type_enums import DimensionType, EntityType
 
 
 class _DimensionStub:
     """Jinja sandbox stub for `{{ Dimension('entity__dim') }}`.
 
-    Renders to the qualified column name, e.g. `order__status`.
+    Renders to the qualified column name, e.g. `order__status`, when unresolved.
+    Local references render to declared Ossie fields, e.g. `orders.status`.
     Method chaining (`grain`, `date_part`) appends a `__<suffix>` part.
     """
 
-    def __init__(self, name: str, entity_path: Sequence[str] = ()) -> None:
+    def __init__(
+        self, name: str, entity_path: Sequence[str] = (), *, local_fields: Optional[Mapping[str, str]] = None
+    ) -> None:
         self._col = "__".join(list(entity_path) + [name])
+        self._field = local_fields.get(self._col, self._col) if local_fields else self._col
         self._suffix = ""
 
     def grain(self, time_granularity: str) -> "_DimensionStub":
@@ -46,13 +53,16 @@ class _DimensionStub:
         return self
 
     def __str__(self) -> str:
-        return f"{self._col}{self._suffix}"
+        if self._suffix:
+            return f"{self._col}{self._suffix}"
+        return self._field
 
 
 class _TimeDimensionStub:
     """Jinja sandbox stub for `{{ TimeDimension('entity__dim', 'grain') }}`.
 
     Renders to `entity__dim` or `entity__dim__grain` when a granularity is provided.
+    Local references without a granularity can render to declared Ossie fields.
     """
 
     def __init__(
@@ -60,9 +70,14 @@ class _TimeDimensionStub:
         name: str,
         time_granularity_name: Optional[str] = None,
         entity_path: Sequence[str] = (),
-        **_kwargs: object,
+        *,
+        local_fields: Optional[Mapping[str, str]] = None,
+        **kwargs: object,
     ) -> None:
         self._col = "__".join(list(entity_path) + [name])
+        self._field = self._col
+        if local_fields and not kwargs.get("date_part_name"):
+            self._field = local_fields.get(self._col, self._col)
         self._grain = time_granularity_name
 
     def grain(self, time_granularity: str) -> "_TimeDimensionStub":
@@ -79,20 +94,23 @@ class _TimeDimensionStub:
     def __str__(self) -> str:
         if self._grain:
             return f"{self._col}__{self._grain.lower()}"
-        return self._col
+        return self._field
 
 
 class _EntityStub:
     """Jinja sandbox stub for `{{ Entity('name') }}`."""
 
-    def __init__(self, name: str, entity_path: Sequence[str] = ()) -> None:
+    def __init__(
+        self, name: str, entity_path: Sequence[str] = (), *, local_fields: Optional[Mapping[str, str]] = None
+    ) -> None:
         self._col = "__".join(list(entity_path) + [name])
+        self._field = local_fields.get(self._col, self._col) if local_fields else self._col
 
     def descending(self, _is_descending: bool) -> "_EntityStub":
         return self
 
     def __str__(self) -> str:
-        return self._col
+        return self._field
 
 
 class _MetricStub:
@@ -108,7 +126,7 @@ class _MetricStub:
         return self._name
 
 
-def _render_filter_template(template: str) -> str:
+def _render_filter_template(template: str, model: Optional[SemanticModel] = None) -> str:
     """Render an MSI where-filter Jinja template to a plain SQL fragment.
 
     Jinja references such as `{{ Dimension('order__status') }}`,
@@ -116,41 +134,55 @@ def _render_filter_template(template: str) -> str:
     and `{{ Metric('revenue') }}` are resolved to their column-name
     equivalents using lightweight stubs. The output is a best-effort SQL
     string suitable for embedding in an Ossie expression.
-    
+
+    When the input metric's semantic model is known, local references such as
+    `order__status` resolve to declared Ossie fields such as `orders.status`.
+
     Sandboxing is necessary to prevent SSTI-to-RCE style exploits
     """
+    dimensions: Mapping[str, str] = {}
+    time_dimensions: Mapping[str, str] = {}
+    entities: Mapping[str, str] = {}
+
+    if model is not None:
+        local_entities = {e.name for e in model.entities if e.type in (EntityType.PRIMARY, EntityType.UNIQUE)}
+        if model.primary_entity:
+            local_entities.add(model.primary_entity)
+
+        def local_references(names: Sequence[str]) -> Mapping[str, str]:
+            # Ossie dataset fields use the declared MetricFlow names, even when backed by a different column.
+            references = {name: f"{model.name}.{name}" for name in names}
+            for entity in local_entities:
+                references.update({f"{entity}__{name}": f"{model.name}.{name}" for name in names})
+            return references
+
+        dimensions = local_references([d.name for d in model.dimensions])
+        time_dimensions = local_references([d.name for d in model.dimensions if d.type is DimensionType.TIME])
+        entities = local_references([e.name for e in model.entities])
+
     return (
         SandboxedEnvironment(undefined=jinja2.StrictUndefined)
         .from_string(template)
         .render(
-            Dimension=_DimensionStub,
-            TimeDimension=_TimeDimensionStub,
-            Entity=_EntityStub,
+            Dimension=partial(_DimensionStub, local_fields=dimensions),
+            TimeDimension=partial(_TimeDimensionStub, local_fields=time_dimensions),
+            Entity=partial(_EntityStub, local_fields=entities),
             Metric=_MetricStub,
         )
     )
 
 
-def _collect_filter_sql(*filters: Optional[WhereFilterIntersection]) -> Optional[str]:
-    """Render and merge MSI WhereFilterIntersection objects into a single SQL fragment.
+def _collect_filter_templates(filter_: Optional[WhereFilterIntersection]) -> Tuple[str, ...]:
+    """Collect an MSI where-filter intersection as templates for later rendering."""
+    if filter_ is None:
+        return ()
+    return tuple(part.where_sql_template for part in filter_.where_filters)
 
-    Jinja references (e.g. `{{ Dimension('order__status') }}`) are resolved
-    using lightweight stubs that produce MetricFlow-qualified column names such
-    as `order__status`. These are *not* fully resolved SQL column aliases —
-    resolving to actual table column names would require `WhereFilterSpecFactory`
-    and `ColumnAssociationResolver` from `metricflow_semantics`, which is out
-    of scope here. Ossie consumers are expected to perform their own column
-    resolution against the source data.
-    """
-    parts: List[str] = []
-    for f in filters:
-        if f is None:
-            continue
-        for wf in f.where_filters:
-            rendered = _render_filter_template(wf.where_sql_template).strip()
-            if rendered:
-                parts.append(rendered)
-    return _merge_filter_sqls(*parts)
+
+def _render_metric_filter(templates: Sequence[str], model: Optional[SemanticModel]) -> Optional[str]:
+    """Render and merge MSI where-filter templates into a single SQL fragment."""
+    rendered = (_render_filter_template(template, model).strip() for template in dict.fromkeys(templates))
+    return _merge_filter_sqls(*rendered)
 
 
 def _merge_filter_sqls(*parts: Optional[str]) -> Optional[str]:
