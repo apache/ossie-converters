@@ -53,6 +53,7 @@ on:
       - 'linkml/**'
       - 'palantir/**'
       - 'relationalai/**'
+      - 'sap-csn-ontology/**'
       - 'polaris/**'
       - 'salesforce/**'
   pull_request:
@@ -90,6 +91,7 @@ on:
       - 'linkml/**'
       - 'palantir/**'
       - 'relationalai/**'
+      - 'sap-csn-ontology/**'
       - 'polaris/**'
       - 'salesforce/**'
   workflow_dispatch:
