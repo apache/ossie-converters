@@ -599,3 +599,68 @@ def test_junction_relationship_has_concept_edge_without_invented_mapping(context
         for child in cm["link_mappings"][0]["children"]
     )
     assert export(b) == context_pig
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        None,
+        {},
+        {"name": "binding"},
+        {"namespace": None, "name": "binding", "entityType": "DATA_BINDING"},
+        {"namespace": "d", "name": " ", "entityType": "DATA_BINDING"},
+        {"namespace": "d", "name": 123, "entityType": "DATA_BINDING"},
+    ],
+)
+def test_incomplete_preserved_identifiers_bundle_and_cli_round_trip(
+    identifier, tmp_path
+):
+    pig = {
+        "objects": [
+            {
+                "entityIdentifier": {
+                    "namespace": "d",
+                    "name": "O",
+                    "entityType": "OBJECT",
+                },
+                "fields": [{"id": "ID", "dataType": "STRING"}],
+            }
+        ],
+        "dataBindings": [
+            {
+                "entityIdentifier": deepcopy(identifier),
+                "entityRef": {"namespace": "d", "name": "O", "entityType": "OBJECT"},
+                "sql": "SELECT * FROM o",
+            }
+        ],
+        "futureEntities": [{"entityIdentifier": deepcopy(identifier), "extra": True}],
+    }
+    with pytest.warns(UserWarning, match="no representable key"):
+        b = celonis_to_ossie_bundle(pig)
+    concepts(b)["d_O"]["description"] = "Updated description"
+    restored = export(b)
+    assert restored["objects"][0]["description"] == "Updated description"
+    assert restored["futureEntities"] == pig["futureEntities"]
+    assert restored["dataBindings"] == pig["dataBindings"]
+
+    source, core, out = (
+        tmp_path / name for name in ("pig.json", "model.yaml", "out.json")
+    )
+    source.write_text(json.dumps(pig))
+    with pytest.warns(UserWarning, match="no representable key"):
+        main(["celonis-to-ossie", "-i", str(source), "-o", str(core)])
+    main(["ossie-to-celonis", "-i", str(core), "-o", str(out)])
+    assert json.loads(out.read_text()) == pig
+
+
+def test_new_type_edge_rejects_blank_namespace(context_pig):
+    b = bundle(context_pig)
+    concepts(b)["demo_Order"]["relationships"].append(
+        {
+            "name": "handledBy",
+            "roles": [{"concept": "demo_ERP"}],
+            "verbalizes": ["{demo_Order} is handled by {demo_ERP}"],
+        }
+    )
+    with pytest.raises(ConversionError, match="namespace"):
+        export(b, namespace="   ")

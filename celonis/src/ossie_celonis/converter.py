@@ -151,19 +151,25 @@ def _import_agent_context(entity):
     return text if isinstance(text, str) else None
 
 
+def _complete_identity(entity):
+    identifier = entity.get("entityIdentifier")
+    # Some preserved entities and bindings have no complete identity.
+    # Import keeps these opaque, so collision and ontology checks must do so too.
+    if not isinstance(identifier, dict) or any(
+        not isinstance(identifier.get(key), str) or not identifier[key].strip()
+        for key in ("namespace", "name", "entityType")
+    ):
+        return None
+    return _identity(identifier)
+
+
 def _validate_entity_identities(pig):
     identities, dataset_names = set(), set()
     for bucket, entities in pig.items():
         for entity in entities:
-            identifier = entity.get("entityIdentifier")
-            # Some preserved entities and bindings have no complete identity.
-            # Import keeps these opaque, so collision checks must do so too.
-            if not isinstance(identifier, dict) or any(
-                not isinstance(identifier.get(key), str) or not identifier[key].strip()
-                for key in ("namespace", "name", "entityType")
-            ):
+            identity = _complete_identity(entity)
+            if identity is None:
                 continue
-            identity = _identity(identifier)
             if bucket in ("objects", "eventSources", "events"):
                 name = _name(identity).casefold()
                 if name in dataset_names:
@@ -617,11 +623,20 @@ def ossie_to_celonis(
                     ],
                 )
         extras = _extra_extensions(relationship, "relationship")
-        if extras or isinstance(relationship.get("ai_context"), dict):
+        has_rel_attr = (
+            isinstance(entity.get("attributes"), dict)
+            and "apache_ossie" in entity["attributes"]
+        )
+        if (
+            extras
+            or isinstance(relationship.get("ai_context"), dict)
+            or (has_rel_attr and (not native or _core(relationship) != native["projection"]))
+        ):
             entity["attributes"] = {
                 **(entity.get("attributes") or {}),
                 "apache_ossie": json.dumps(
-                    {**_core(relationship), "nonportable_extensions": extras}
+                    {**_core(relationship), "nonportable_extensions": extras},
+                    ensure_ascii=False,
                 ),
             }
         if package_key:
