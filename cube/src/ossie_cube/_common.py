@@ -113,8 +113,9 @@ _ESC_OPEN = "\x00ossie_lbrace\x00"
 _ESC_CLOSE = "\x00ossie_rbrace\x00"
 _SELF_MARK = "\x00ossie_self\x00"
 
-# Jinja templating in a data model has no static form at all.
-JINJA_RE = re.compile(r"{%|%}|{{|}}")
+# Only opening delimiters indicate Jinja. Closing braces also occur in static
+# YAML, e.g. a nested flow mapping: `meta: {owner: {team: example}}`.
+JINJA_RE = re.compile(r"{%|{{")
 
 
 class ConversionError(Exception):
