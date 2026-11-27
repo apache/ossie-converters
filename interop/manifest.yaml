@@ -213,12 +213,12 @@ converters:
     cwd: snowflake
     toolchain: uv
     prepare: [uv, sync, --locked, --no-dev]
-    import: null
-    export: [uv, run, --no-sync, ossie-snowflake, -i, '{input}', -o, '{output}']
+    import: [uv, run, --no-sync, ossie-snowflake, snowflake-to-ossie, -i, '{input}', -o, '{output}']
+    export: [uv, run, --no-sync, ossie-snowflake, ossie-to-snowflake, -i, '{input}', -o, '{output}']
     native_format: snowflake
     output: file
-    fixtures: {}
-    import_skip: No native-to-Ossie importer is implemented in this converter.
+    fixtures:
+      cortex: interop/fixtures/snowflake/cortex_sales.yaml
   solid:
     cwd: solid
     toolchain: uv

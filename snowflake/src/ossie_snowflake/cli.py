@@ -17,41 +17,82 @@
 
 """Command line entry point for the Snowflake converter.
 
-Usage:
-    ossie-snowflake -i input.yaml -o output.yaml
+Usage::
+
+    ossie-snowflake snowflake-to-ossie -i snowflake.yaml -o ossie.yaml
+    ossie-snowflake ossie-to-snowflake -i ossie.yaml -o snowflake.yaml
+
+The original bare ``-i``/``-o`` form remains an Ossie-to-Snowflake alias.
 """
 
 import argparse
 import sys
 
 from .ossie_to_snowflake import OssieConversionError, convert_ossie_to_snowflake
+from .snowflake_to_ossie import SnowflakeConversionError, convert_snowflake_to_ossie
+
+OSSIE_TO_SNOWFLAKE = "ossie-to-snowflake"
+SNOWFLAKE_TO_OSSIE = "snowflake-to-ossie"
+
+
+def _run(convert, error_type, input_path, output_path):
+    try:
+        with open(input_path, encoding="utf-8") as f:
+            source = f.read()
+        converted = convert(source)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(converted)
+    except (error_type, OSError, UnicodeDecodeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Converted {input_path} -> {output_path}")
+
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="ossie-snowflake",
+        description="Convert between Snowflake Cortex Analyst YAML and Ossie YAML.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    snowflake_to_ossie = subparsers.add_parser(
+        SNOWFLAKE_TO_OSSIE, help="Convert Snowflake Cortex Analyst YAML -> Ossie YAML"
+    )
+    snowflake_to_ossie.add_argument(
+        "-i", "--input", required=True, metavar="FILE",
+        help="Path to the Snowflake Cortex Analyst YAML input file",
+    )
+    snowflake_to_ossie.add_argument(
+        "-o", "--output", required=True, metavar="FILE",
+        help="Path to write the Ossie YAML output",
+    )
+    ossie_to_snowflake = subparsers.add_parser(
+        OSSIE_TO_SNOWFLAKE, help="Convert Ossie YAML -> Snowflake Cortex Analyst YAML"
+    )
+    ossie_to_snowflake.add_argument(
+        "-i", "--input", required=True, metavar="FILE",
+        help="Path to the Ossie YAML input file",
+    )
+    ossie_to_snowflake.add_argument(
+        "-o", "--output", required=True, metavar="FILE",
+        help="Path to write the Snowflake YAML output",
+    )
+    return parser
+
+
+def _normalize(argv):
+    """Keep the pre-subcommand invocation working as an export alias."""
+    if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
+        return [OSSIE_TO_SNOWFLAKE, *argv]
+    return argv
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Convert Ossie YAML semantic model to Snowflake Cortex Analyst YAML"
-    )
-    parser.add_argument(
-        "-i", "--input", required=True, help="Path to the Ossie YAML input file"
-    )
-    parser.add_argument(
-        "-o", "--output", required=True, help="Path to write the Snowflake YAML output"
-    )
-    args = parser.parse_args(argv)
-
-    with open(args.input, "r") as f:
-        ossie_yaml_str = f.read()
-
-    try:
-        snowflake_yaml_str = convert_ossie_to_snowflake(ossie_yaml_str)
-    except OssieConversionError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    with open(args.output, "w") as f:
-        f.write(snowflake_yaml_str)
-
-    print(f"Converted {args.input} -> {args.output}")
+    argv = sys.argv[1:] if argv is None else list(argv)
+    args = _build_parser().parse_args(_normalize(argv))
+    if args.command == SNOWFLAKE_TO_OSSIE:
+        _run(convert_snowflake_to_ossie, SnowflakeConversionError, args.input, args.output)
+    else:
+        _run(convert_ossie_to_snowflake, OssieConversionError, args.input, args.output)
 
 
 if __name__ == "__main__":

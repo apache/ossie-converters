@@ -291,6 +291,15 @@ def test_snowflake_counts_top_level_metrics(tmp_path):
     assert native_content(output, "snowflake", "file")["members"] == 1
 
 
+def test_snowflake_cortex_import_is_registered():
+    converter = load_manifest(ROOT / "interop/manifest.yaml", ROOT).converters[
+        "snowflake"
+    ]
+    assert converter.import_command is not None
+    assert "snowflake-to-ossie" in converter.import_command
+    assert converter.fixtures["cortex"].is_file()
+
+
 def test_sigma_counts_metrics_without_physical_columns(tmp_path):
     output = tmp_path / "native.json"
     output.write_text(
