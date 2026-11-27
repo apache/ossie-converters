@@ -53,6 +53,7 @@ repository = "https://github.com/apache/ossie-converters/"
 packages = ["src/ossie_honeydew"]
 
 [tool.pytest.ini_options]
+pythonpath = [".."]  # Repository-level test_support; no runtime dependency.
 testpaths = ["tests"]
 
 [tool.uv]

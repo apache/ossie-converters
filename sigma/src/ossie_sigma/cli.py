@@ -38,13 +38,13 @@ def _cmd_sigma_to_ossie(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    spec = json.loads(input_path.read_text())
+    spec = json.loads(input_path.read_text(encoding="utf-8-sig"))
     result = SigmaToOssieConverter().convert(spec)
 
     for issue in result.issues:
         print(f"[WARNING] {issue.issue_type.value}: {issue.element_name} — {issue.detail}", file=sys.stderr)
 
-    output_path.write_text(result.output.to_ossie_yaml())
+    output_path.write_text(result.output.to_ossie_yaml(), encoding="utf-8")
     print(f"Written to {output_path}", file=sys.stderr)
 
 
@@ -52,14 +52,14 @@ def _cmd_ossie_to_sigma(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    raw = yaml.safe_load(input_path.read_text())
+    raw = yaml.safe_load(input_path.read_text(encoding="utf-8-sig"))
     document = OssieSemanticModel.model_validate(raw)
     result = OssieToSigmaConverter().convert(document)
 
     for issue in result.issues:
         print(f"[WARNING] {issue.issue_type.value}: {issue.element_name} — {issue.detail}", file=sys.stderr)
 
-    output_path.write_text(json.dumps(result.output, indent=2))
+    output_path.write_text(json.dumps(result.output, indent=2), encoding="utf-8")
     print(f"Written to {output_path}", file=sys.stderr)
 
 

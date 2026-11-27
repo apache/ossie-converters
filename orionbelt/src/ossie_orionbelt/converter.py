@@ -160,7 +160,7 @@ def main():
         parser.error("Input file is required for conversion")
 
     input_path = Path(args.input)
-    with open(input_path) as f:
+    with open(input_path, encoding="utf-8-sig") as f:
         data = yaml.safe_load(f)
 
     if args.direction == "ossie2obml":
@@ -178,7 +178,7 @@ def main():
     )
 
     if args.output:
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write(output_yaml)
         print(f"✅ Converted to {args.output}")
     else:

@@ -24,12 +24,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'snowflake/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-snowflake-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'snowflake/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-snowflake-ci.yml'
 

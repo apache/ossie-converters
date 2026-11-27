@@ -24,12 +24,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'bigquery/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-bigquery-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'bigquery/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-bigquery-ci.yml'
 

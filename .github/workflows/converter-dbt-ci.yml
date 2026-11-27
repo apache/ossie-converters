@@ -24,12 +24,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'dbt/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-dbt-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'dbt/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-dbt-ci.yml'
 

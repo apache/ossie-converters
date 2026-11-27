@@ -24,12 +24,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'orionbelt/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-orionbelt-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'orionbelt/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-orionbelt-ci.yml'
 

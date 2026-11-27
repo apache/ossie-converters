@@ -24,12 +24,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'honeydew/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-honeydew-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'honeydew/**'
+      - 'test_support/**'
       - 'ossie'
       - '.github/workflows/converter-honeydew-ci.yml'
 

@@ -49,7 +49,7 @@ from ossie_orionbelt.converter import (
 
 
 def _load(input_path: str) -> dict[str, Any]:
-    data = yaml.safe_load(Path(input_path).read_text())
+    data = yaml.safe_load(Path(input_path).read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict):
         print(f"Error: {input_path} is not a YAML mapping", file=sys.stderr)
         raise SystemExit(2)
@@ -60,7 +60,7 @@ def _emit(result: dict[str, Any], output: str) -> None:
     output_yaml = yaml.dump(
         result, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120
     )
-    Path(output).write_text(output_yaml)
+    Path(output).write_text(output_yaml, encoding="utf-8")
     print(f"Written to {output}", file=sys.stderr)
 
 

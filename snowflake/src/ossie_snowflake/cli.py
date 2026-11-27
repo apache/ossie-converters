@@ -39,7 +39,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    with open(args.input, "r") as f:
+    with open(args.input, "r", encoding="utf-8-sig") as f:
         ossie_yaml_str = f.read()
 
     try:
@@ -48,7 +48,7 @@ def main(argv=None):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    with open(args.output, "w") as f:
+    with open(args.output, "w", encoding="utf-8") as f:
         f.write(snowflake_yaml_str)
 
     print(f"Converted {args.input} -> {args.output}")

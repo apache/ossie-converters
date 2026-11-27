@@ -40,10 +40,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
-        with open(args.input, "r") as f:
+        with open(args.input, "r", encoding="utf-8-sig") as f:
             ossie_yaml_str = f.read()
         lookml_str = convert_ossie_to_lookml(ossie_yaml_str)
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write(lookml_str)
     except (OssieConversionError, OSError) as e:
         print(f"Error: {e}", file=sys.stderr)
