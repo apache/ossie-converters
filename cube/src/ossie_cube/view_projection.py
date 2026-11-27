@@ -182,7 +182,7 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
 
     # The collection's own issues are about the lossless import -- a file preserved in
     # nonportable_extensions only -- which a projection does not do.
-    cubes, _, views, _, _ = _collect(files, IssueLog())
+    cubes, _, views, _, skipped = _collect(files, IssueLog())
     if view not in views:
         raise ConversionError(
             f"requested view '{view}' not found; views present: "
@@ -229,7 +229,7 @@ def convert_cube_view_to_ossie(files, view, source=None, strict_fanout=True,
     model = _build_model(reduced, {}, {view: reduced_view}, {}, {}, None, view, imported,
                          source_dialect, restore_dataset_metrics=False,
                          default_catalog=default_catalog, default_schema=default_schema,
-                         source_cubes=cubes)
+                         source_cubes=cubes, skipped_files=sorted(skipped))
     _refuse_unjoined(view, model, imported)
     for issue in imported:
         if issue.issue_type is not IssueType.FANOUT_UNSAFE_METRIC:

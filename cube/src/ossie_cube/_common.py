@@ -1208,16 +1208,36 @@ def parse_source(source, dataset_name):
     """
     if not source or not str(source).strip():
         raise ConversionError(f"Dataset '{dataset_name}': missing/empty 'source'")
-    raw = str(source)
-    s = raw.strip()
+    s = str(source).strip()
     # Leading comments and parentheses are not part of the query's first keyword:
     # `/* note */ SELECT ...` and `(SELECT ...)` are subqueries too, and would break
-    # Cube's compile if emitted as a table reference. The source itself is kept as is.
+    # Cube's compile if emitted as a table reference. The query itself is only trimmed.
     if _SOURCE_QUERY_HEAD_RE.match(_LEADING_NOISE_RE.sub("", s)):
-        # A final newline can terminate a SQL line comment. Cube appends its
-        # subquery closing parenthesis directly after this text.
-        return ("sql", raw)
+        return ("sql", trim_sql_source(s))
     return ("sql_table", s)
+
+
+def trim_sql_source(sql):
+    """A `sql` source without surrounding whitespace, except a final comment's newline.
+
+    Cube embeds a `sql` source as `(<sql>)`, so a last line ending in a `--` or `#`
+    comment needs its line break, or the comment swallows the closing parenthesis.
+    The check is textual: a `--` or `#` in a literal on the last line also keeps a
+    newline, which is harmless.
+    """
+    text = str(sql).strip()
+    if re.search(r"--|#", text.rsplit("\n", 1)[-1]):
+        text += "\n"
+    return text
+
+
+def skipped_files_hint(cube_name, skipped_files):
+    """Explain a missing cube that may be defined in a file the import does not parse."""
+    if not skipped_files:
+        return ""
+    return (f"; note that no cube was converted from "
+            f"{', '.join(repr(f) for f in skipped_files)} -- if "
+            f"'{cube_name}' is defined there, that is why")
 
 
 def join_source(cube, cube_name, *, default_catalog=None, default_schema=None,
@@ -1250,9 +1270,7 @@ def join_source(cube, cube_name, *, default_catalog=None, default_schema=None,
                     return f"{default_catalog}.{default_schema}.{source}"
         return source
     if sql is not None:
-        # Do not strip the terminator of a trailing line comment: references
-        # to this source append a closing parenthesis and then more SQL.
-        return str(sql)
+        return trim_sql_source(sql)
     raise ConversionError(
         f"Cube '{cube_name}': has neither 'sql' nor 'sql_table' (an `extends`-only "
         f"cube?); Ossie datasets require a source")

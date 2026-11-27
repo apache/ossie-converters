@@ -60,6 +60,7 @@ from ._common import (
     lookup_map,
     match_keys,
     sanitize_name,
+    skipped_files_hint,
     uncollided_view_name,
     normalize_identifier,
     native_expression_signature,
@@ -93,7 +94,7 @@ from .expressions import (
     UnattributableSQL,
 )
 from .import_dialect import validate_imported_expressions, validate_source_dialect
-from .source_sql import SourceResolver
+from .source_sql import SourceResolver, unresolvable_sources
 
 # Cube keys the converter maps natively at the cube level; everything else is
 # stashed verbatim in the dataset's `cube_extras` and restored on export.
@@ -162,10 +163,11 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
     cubes, cube_paths, views, view_paths, extra_files = _collect(files, issues)
     if not cubes:
         raise ConversionError(_no_cubes_message(views))
+    set_aside = _set_aside_unresolvable_sources(cubes, sorted(extra_files), issues)
     model = _build_model(cubes, cube_paths, views, view_paths, extra_files,
                          model_name, view, issues, source_dialect,
                          default_catalog=default_catalog, default_schema=default_schema,
-                         scope_native_metrics=scope_native_metrics)
+                         scope_native_metrics=scope_native_metrics, set_aside=set_aside)
     if source_dialect is not None:
         validate_imported_expressions(model)
     return dump_yaml({"version": OSSIE_VERSION, **model}), issues
@@ -174,13 +176,20 @@ def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False
 def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
                  view, issues, source_dialect=None, *, restore_dataset_metrics=True,
                  default_catalog=None, default_schema=None, scope_native_metrics=True,
-                 source_cubes=None):
+                 source_cubes=None, skipped_files=None, set_aside=None):
     """The Ossie model (a dict, without `version`) for the collected Cube model.
 
     Split from `convert_cube_to_ossie` so view projection can run the same import over
     the reduced cube set it builds, rather than serializing that set to YAML only to
     parse it straight back.
+
+    `skipped_files` names the files no cube was converted from (default: the
+    `extra_files` names), for errors about a cube one of them may define.
+    `set_aside` maps each cube `_set_aside_unresolvable_sources` removed from `cubes`
+    to `(definition, reason)`.
     """
+    skipped_files = sorted(extra_files) if skipped_files is None else skipped_files
+    set_aside = set_aside or {}
     default_catalog, default_schema = validate_source_defaults(
         default_catalog, default_schema, source_dialect)
     # The mapped view supplies the Ossie model's identity. Cube users are
@@ -217,7 +226,9 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
     # built: joins with no Ossie form, and measures with no static Ossie
     # expression. Primary keys are read straight off the dimensions so this
     # ordering does not depend on the datasets existing yet.
-    relationships, extra_joins = _convert_joins(cubes, sorted(extra_files), issues)
+    relationships, extra_joins = _convert_joins(
+        cubes, skipped_files, issues,
+        set_aside={name: reason for name, (_, reason) in set_aside.items()})
     if relationships:
         model["relationships"] = relationships
     fanned_out = _fanned_out_datasets(relationships, extra_joins)
@@ -234,6 +245,7 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
         scope_native_metrics=scope_native_metrics)
 
     sources = SourceResolver(cubes if source_cubes is None else source_cubes,
+                             skipped_files=skipped_files,
                              default_catalog=default_catalog, default_schema=default_schema,
                              source_dialect=source_dialect)
     model["datasets"] = [
@@ -291,6 +303,8 @@ def _build_model(cubes, cube_paths, views, view_paths, extra_files, model_name,
         stash["cube_files"] = off_layout_cubes
     if extra_files:
         stash["extra_files"] = extra_files
+    if set_aside:
+        stash["templated_cubes"] = {name: cube for name, (cube, _) in set_aside.items()}
     write_stash(model, stash)
 
     # Foreign-vendor extensions a previous export parked on the mapped view are
@@ -353,6 +367,26 @@ def _collect(files, issues):
             views[name] = entry
             view_paths[name] = fname
     return cubes, cube_paths, views, view_paths, extra_files
+
+
+def _set_aside_unresolvable_sources(cubes, skipped_files, issues):
+    """Remove the cubes whose source has no static form; return {name: (cube, reason)}.
+
+    A runtime template such as `{FILTER_PARAMS...}` is a Cube feature, not an error,
+    so one such cube should not cost the rest of the model its conversion. Like a file
+    with no static form, the cube is preserved verbatim, and export restores it into
+    its file. Only an import does this: a projection publishes the portable surface,
+    so it still refuses a published cube whose source has no static form.
+    """
+    reasons = unresolvable_sources(cubes, skipped_files)
+    if reasons and len(reasons) == len(cubes):
+        raise ConversionError(
+            "no cube has a static source, so there is nothing to convert: "
+            + "; ".join(f"cube '{name}': {reason}" for name, reason in reasons.items()))
+    for name, reason in reasons.items():
+        issues.add(IssueType.TEMPLATED_CUBE_SKIPPED, f"cube '{name}'",
+                   f"{reason}; preserved in nonportable_extensions only")
+    return {name: (cubes.pop(name), reason) for name, reason in reasons.items()}
 
 
 def _reject_duplicate_members(cname, cube):
@@ -1164,19 +1198,21 @@ def _convert_geo_dimension(cname, dname, dim, issues, source_dialect=None):
 
 # --- joins ----------------------------------------------------------------------
 
-def _convert_joins(cubes, skipped_files, issues):
+def _convert_joins(cubes, skipped_files, issues, set_aside=None):
     """Turn every cube's `joins` into Ossie relationships.
 
     Ossie's `from` is always the many side. A `many_to_one` join declared on cube
     A points A(many) -> B(one) directly; a `one_to_many` join is flipped, and the
     declared side and type are stashed so export restores the original.
 
-    `skipped_files` names the input files that held no convertible cube, so a join
-    pointing into one of them explains itself rather than just reporting a missing
-    cube.
+    `skipped_files` names the input files that held no convertible cube, and
+    `set_aside` maps each cube whose source has no static form to the reason, so a
+    join pointing at one of them explains itself rather than just reporting a
+    missing cube.
 
     Returns (relationships, {cube name: [unconvertible join, ...]}).
     """
+    set_aside = set_aside or {}
     relationships = []
     extra_joins = {}
     taken = set()
@@ -1185,14 +1221,14 @@ def _convert_joins(cubes, skipped_files, issues):
                 _as_named_list(cube.get("joins"), f"cube '{cname}' joins")):
             target = require_str(join, "name", f"cube '{cname}': join")
             what = f"join '{cname}' -> '{target}'"
-            if target not in cubes:
-                hint = ""
-                if skipped_files:
-                    hint = (f"; note that no cube was converted from "
-                            f"{', '.join(repr(f) for f in skipped_files)} -- if "
-                            f"'{target}' is defined there, that is why")
+            if target in set_aside:
                 raise ConversionError(
-                    f"{what}: '{target}' is not a cube in this model{hint}")
+                    f"{what}: cube '{target}' is not converted ({set_aside[target]}), "
+                    f"so the join has no Ossie dataset to point at")
+            if target not in cubes:
+                raise ConversionError(
+                    f"{what}: '{target}' is not a cube in this model"
+                    + skipped_files_hint(target, skipped_files))
             raw_rel = snake(require_str(join, "relationship", what))
             rel_type = _RELATIONSHIP_ALIASES.get(raw_rel)
             if rel_type is None:
