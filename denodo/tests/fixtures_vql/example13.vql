@@ -1,0 +1,46 @@
+CONNECT DATABASE vdb_tpch;
+CREATE OR REPLACE ASSOCIATION psql_tpch_nation_psql_tpch_customer REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_customer psql_tpch_nation PRINCIPAL (1)
+    ENDPOINT psql_tpch_nation psql_tpch_customer (0,*)
+    ADD MAPPING n_nationkey=c_nationkey;
+CLOSE;
+
+CONNECT DATABASE vdb_tpch;
+CREATE OR REPLACE ASSOCIATION psql_tpch_region_psql_tpch_nation REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_nation psql_tpch_region PRINCIPAL (1)
+    ENDPOINT psql_tpch_region psql_tpch_nation (0,*)
+    ADD MAPPING r_regionkey=n_regionkey;
+CLOSE;
+
+CONNECT DATABASE vdb_tpch;
+CREATE OR REPLACE ASSOCIATION psql_tpch_customer_psql_tpch_orders REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_orders psql_tpch_customer PRINCIPAL (1)
+    ENDPOINT psql_tpch_customer psql_tpch_orders (0,*)
+    ADD MAPPING c_custkey=o_custkey;
+CLOSE;
+
+CREATE OR REPLACE METRIC VIEW sales_view_diff_database
+    DESCRIPTION = 'Example of metric view'
+    SOURCES (
+        nation AS vdb_tpch.psql_tpch_nation,
+        orders AS vdb_tpch.psql_tpch_orders,
+        region AS vdb_tpch.psql_tpch_region,
+        customer AS vdb_tpch.psql_tpch_customer
+    )
+    ASSOCIATIONS (
+        customer nation vdb_tpch.psql_tpch_nation_psql_tpch_customer RIGHT,
+        nation region vdb_tpch.psql_tpch_region_psql_tpch_nation,
+        orders customer vdb_tpch.psql_tpch_customer_psql_tpch_orders LEFT
+    )
+    DIMENSIONS (
+        nation_name AS nation.n_name,
+        order_date AS orders.o_orderdate,
+        customer_address_full AS concat(customer.c_address, '-', nation.n_name),
+        customer_name AS customer.c_name,
+        customer_address AS customer.c_address,
+        customer_comment AS customer.c_comment
+    )
+    METRICS (
+        count_order_keys AS count(orders.o_orderkey),
+        order_average_value AS avg(orders.o_totalprice)
+    );

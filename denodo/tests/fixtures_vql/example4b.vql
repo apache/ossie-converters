@@ -1,0 +1,36 @@
+CREATE OR REPLACE ASSOCIATION psql_tpch_nation_psql_tpch_customer REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_customer psql_tpch_nation PRINCIPAL (1)
+    ENDPOINT psql_tpch_nation psql_tpch_customer (0,*)
+    ADD MAPPING c_nationkey=n_nationkey;
+
+CREATE OR REPLACE ASSOCIATION psql_tpch_customer_psql_tpch_orders REFERENTIAL CONSTRAINT
+    ENDPOINT psql_tpch_orders psql_tpch_customer PRINCIPAL (1)
+    ENDPOINT psql_tpch_customer psql_tpch_orders (0,*)
+    ADD MAPPING o_custkey=c_custkey;
+
+CREATE OR REPLACE METRIC VIEW sales_view_quoted
+    FOLDER = '/3. views'
+    DESCRIPTION = 'Example of metric view'
+    TAGS (sales_data, sensitive)
+    SOURCES (
+        "nat****ion" AS psql_tpch_nation,
+        "#orders" AS psql_tpch_orders,
+        customer AS psql_tpch_customer
+    )
+    ASSOCIATIONS (
+        customer "nat****ion" psql_tpch_nation_psql_tpch_customer,
+        "#orders" customer psql_tpch_customer_psql_tpch_orders
+    )
+    DIMENSIONS (
+        nation_name AS "nat****ion".n_name,
+        order_date AS "#orders".o_orderdate,
+        customer_address_full AS concat(customer.c_address, '-', "nat****ion".n_name),
+        customer_name AS customer.c_name,
+        "#customer_address" AS customer.c_address,
+        "dim:special@field" AS customer.c_comment
+    )
+    METRICS (
+        "#count_order_keys" AS count("#orders".o_orderkey),
+        "metric/average+value" AS avg("#orders".o_totalprice)
+    )
+CONTEXT ('I18N' = 'us_pst');
