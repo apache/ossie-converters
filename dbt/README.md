@@ -127,7 +127,7 @@ denominator is 0, and the Ossie expression does the same rather than leave divis
 | `PRIVATE_METRIC_DROPPED` | Ossie has no visibility modifiers. Every dropped private metric is reported, even when its expression is also inlined into a ratio. |
 | `NATURAL_ENTITY_DROPPED` | Ossie has no natural-key entity type |
 | `CUMULATIVE_SEMANTICS_LOSS` | Window/grain semantics cannot be expressed in an Ossie expression string; the base aggregation is preserved |
-| `NON_PORTABLE_METRIC_SEMANTICS` | A metric uses window, grain, offset, time-spine, or conversion semantics that Ossie cannot represent; the metric is dropped |
+| `NON_PORTABLE_METRIC_SEMANTICS` | A metric uses window, grain, offset, time-spine, non-additive dimension, or conversion semantics that Ossie cannot represent; the metric is dropped |
 | `AMBIGUOUS_REFERENCE_METRIC_DROPPED` | An input metric is listed more than once under one reference with differing filters, so the expression reference is ambiguous; give each occurrence a distinct alias |
 | `CONSTANT_METRIC_SEMANTIC_MODEL_LOSS` | A metric over a constant, such as a row count (`SUM(1)`), has no column to carry its semantic model; recorded when the manifest has more than one, since converting it back will refuse it |
 

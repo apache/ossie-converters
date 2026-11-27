@@ -29,6 +29,10 @@ from ossie import OssieDataType, OssieDialect, OssieSemanticModel
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
 from metricflow_semantic_interfaces.implementations.element_config import PydanticSemanticLayerElementConfig
+from metricflow_semantic_interfaces.implementations.elements.measure import (
+    PydanticMeasure,
+    PydanticNonAdditiveDimensionParameters,
+)
 from metricflow_semantic_interfaces.implementations.metric import (
     PydanticConversionTypeParams,
     PydanticCumulativeTypeParams,
@@ -1615,6 +1619,50 @@ class TestConverterIssues:
         ]
         assert [i.element_name for i in derived_issues] == ["month_over_month_growth"]
         assert {m.name for m in _ossie_metrics(result.output)} == {"revenue"}
+
+    def test_non_additive_metric_is_dropped(self) -> None:
+        # Stock on hand: the last count per store, summed. A plain SUM over all rows would be wrong.
+        non_additive = PydanticNonAdditiveDimensionParameters(
+            name="counted_on", window_choice=AggregationType.MAX, window_groupings=["store"]
+        )
+        on_measure = semantic_model_with_guaranteed_meta(
+            name="inventory",
+            measures=[
+                PydanticMeasure(
+                    name="stock", agg=AggregationType.SUM, expr="stock", non_additive_dimension=non_additive
+                )
+            ],
+        )
+        on_metric = _metric_with_agg("stock_on_hand", AggregationType.SUM, "stock", "inventory")
+        assert on_metric.type_params.metric_aggregation_params is not None
+        on_metric.type_params.metric_aggregation_params.non_additive_dimension = non_additive
+        derived = PydanticMetric(
+            name="double_stock",
+            description=None,
+            type=MetricType.DERIVED,
+            type_params=PydanticMetricTypeParams(
+                expr="stock_on_hand * 2",
+                metrics=[PydanticMetricInput(name="stock_on_hand")],
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        for manifest in (
+            _manifest(semantic_models=[on_measure], metrics=[_simple_metric("stock_on_hand", "stock"), derived]),
+            _manifest(
+                semantic_models=[semantic_model_with_guaranteed_meta(name="inventory")],
+                metrics=[on_metric, derived],
+            ),
+        ):
+            result = MSIToOssieConverter().convert(manifest)
+
+            assert result.output.metrics is None
+            assert result.issues == [
+                ConverterIssue(ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS, "stock_on_hand"),
+                ConverterIssue(ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS, "double_stock"),
+            ]
 
     def test_derived_metric_with_offset_to_grain_input_is_dropped(self) -> None:
         sm = semantic_model_with_guaranteed_meta(

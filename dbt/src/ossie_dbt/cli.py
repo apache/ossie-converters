@@ -42,7 +42,7 @@ _ISSUE_REASON: dict[ConverterIssueType, str] = {
     ConverterIssueType.NATURAL_ENTITY_DROPPED: "Ossie has no natural-key entity type",
     ConverterIssueType.CUMULATIVE_SEMANTICS_LOSS: "Ossie expressions cannot represent window or grain semantics; the base aggregation was preserved",
     ConverterIssueType.NON_PORTABLE_METRIC_SEMANTICS: (
-        "the metric uses window, grain, offset, time-spine, or conversion semantics "
+        "the metric uses window, grain, offset, time-spine, non-additive dimension, or conversion semantics "
         "that Ossie cannot represent in an expression string"
     ),
     ConverterIssueType.CONSTANT_METRIC_SEMANTIC_MODEL_LOSS: (
