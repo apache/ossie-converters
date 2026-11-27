@@ -108,6 +108,10 @@ converter/sigma:
   - changed-files:
       - any-glob-to-any-file: 'sigma/**'
 
+converter/slayer:
+  - changed-files:
+      - any-glob-to-any-file: 'slayer/**'
+
 converter/snowflake:
   - changed-files:
       - any-glob-to-any-file: 'snowflake/**'
