@@ -1208,6 +1208,10 @@ class TestSourceDialects:
                 'DATEDIFF(day, "ORDER_DATE", "SHIP_DATE")',
                 "DATE_DIFF(${TABLE}.`SHIP_DATE`, ${TABLE}.`ORDER_DATE`, DAY)",
             ),
+            (
+                "CASE WHEN status = 'SHIPPED' THEN DATEDIFF(day, order_date, shipped) END",
+                "CASE WHEN ${TABLE}.status = 'SHIPPED' THEN DATE_DIFF(${TABLE}.shipped, ${TABLE}.order_date, DAY) END",
+            ),
         ],
     )
     def test_ossie_date_arithmetic_is_transpiled(self, dialect, expr, sql):

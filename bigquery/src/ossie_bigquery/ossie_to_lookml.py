@@ -809,7 +809,9 @@ def _rewrite_ossie_date_function(node, original, dialect, context):
             return node
         part = _date_part_name(node.this)
         if part and not _date_part_name(node.args.get("unit")):
-            end = _end_from_unit(node.args.get("unit"), original)
+            end = _end_from_unit(
+                node.args.get("unit"), _datediff_end_source(node, original)
+            )
             return exp.DateDiff(
                 this=end,
                 expression=node.expression,
@@ -897,8 +899,73 @@ def _end_from_unit(unit, original):
     return exp.column(match.group(0) if match else name)
 
 
+def _datediff_end_source(node, original: str) -> str:
+    """The end-date argument of this DATEDIFF as written, or the call if unknown.
+
+    sqlglot stores that argument as an upper-case Var, so a quote search over
+    the whole expression would treat ``'SHIPPED'`` as the end date of
+    ``DATEDIFF(..., shipped)``.
+    """
+    call = _call_source(node, original)
+    end = _nth_arg_source(call, 2)
+    return end if end is not None else call
+
+
+def _call_source(node, original: str) -> str:
+    """The original text of this call, from the function name through ``)``."""
+    start = node.meta.get("start") if node.meta else None
+    if isinstance(start, int) and original:
+        open_paren = original.find("(", start)
+        if open_paren >= 0:
+            depth = 0
+            for index, char in enumerate(original[open_paren:], open_paren):
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0:
+                        return original[start : index + 1]
+    return node.sql()
+
+
+def _nth_arg_source(call: str, n: int) -> str | None:
+    """The n-th top-level argument of ``NAME(...)``, 0-based."""
+    open_paren = call.find("(")
+    if open_paren < 0 or not call.endswith(")"):
+        return None
+    inner = call[open_paren + 1 : -1]
+    args: list[str] = []
+    start = 0
+    depth = 0
+    in_single = in_double = False
+    for index, char in enumerate(inner):
+        if in_single:
+            if char == "'":
+                in_single = False
+            continue
+        if in_double:
+            if char == '"':
+                in_double = False
+            continue
+        if char == "'":
+            in_single = True
+        elif char == '"':
+            in_double = True
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            args.append(inner[start:index].strip())
+            start = index + 1
+    args.append(inner[start:].strip())
+    if 0 <= n < len(args):
+        return args[n]
+    return None
+
+
 def _is_date_literal(name, original):
-    """True when *name* was a single-quoted string in *original*.
+    """True when *name* was a single-quoted string in the end-date argument.
 
     Double quotes delimit an identifier in ANSI_SQL and OSSIE_SQL_2026.
     """
