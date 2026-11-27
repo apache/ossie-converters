@@ -640,7 +640,13 @@ the DAX. A measure that cannot be translated exactly stays DAX only, with a warn
 names the reason.
 
 Translated: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNTA` and `DISTINCTCOUNTNOBLANK` over one
-`Table[Column]`; `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
+`Table[Column]`; `COUNT` over a typed, non-boolean column; `DISTINCTCOUNT` (BLANK counts as
+one more distinct value, so 1 is added when the column holds a NULL); `MEDIAN`,
+`PERCENTILE.INC` with a literal k, `STDEV.S` / `STDEV.P` and `VAR.S` / `VAR.P` over a
+numeric column; the X-iterators `SUMX`, `AVERAGEX`, `MINX`, `MAXX`, `COUNTX`, `MEDIANX`,
+`PERCENTILEX.INC`, `STDEVX.*` and `VARX.*` over a table named directly, whose row
+expression reads only that table's columns (`SUMX('Sales', 'Sales'[Qty] * 'Sales'[Price])`
+-> `SUM(Sales.Qty * Sales.Price)`); `DIVIDE(a, b)`; `+`, `-` and `*` between them (with DAX's BLANK rules:
 `BLANK + 5` is 5, `BLANK + BLANK` is BLANK); `/` by a non-zero literal; references to
 other measures; `VAR` / `RETURN`; and logic: `IF`, `SWITCH(TRUE, ...)`, `COALESCE`,
 `BLANK()`, `ISBLANK`, `TRUE` / `FALSE`, `AND` / `OR` / `NOT`, and comparisons (DAX
@@ -677,9 +683,20 @@ or `decimal` always stays DAX, because DAX converts its value to a whole number 
 fixed decimal and the translator does not type numbers that finely yet; `double`,
 `string` and `boolean` columns are translated, and `automatic` or `unknown` declare
 nothing. An aggregate (which in a calculated
-column ranges over the whole table), a measure, a column of another table (`RELATED`), a
-date column, and `TRIM`, `SUBSTITUTE`, `EXACT`, `VALUE`, `FIND`, `SEARCH` and
-`CONTAINSSTRING` are refused with a reason:
+column ranges over the whole table), a measure, a column of another table (`RELATED`),
+and `TRIM`, `SUBSTITUTE`, `EXACT`, `VALUE`, `FIND`, `SEARCH` and `CONTAINSSTRING` are
+refused with a reason.
+
+Date functions, in measures and calculated columns, again only for a date that can never
+be BLANK (DAX reads BLANK as 30 December 1899, SQL gives NULL): `YEAR`, `QUARTER`,
+`MONTH` and `DAY` of a date or datetime, `HOUR`, `MINUTE` and `SECOND` of a datetime
+(a `dateTime` column with a date-only format string is a date, as on import),
+`DATE(y, m, d)` with literals for a valid date from 1900 on (-> `DATE 'YYYY-MM-DD'`),
+`EDATE(date, n)` -> `DATEADD(month, n, date)` for a date, and `EOMONTH(date, n)` -> the
+day before the first of the month `n + 1` months on. `DATEDIFF` is refused: DAX counts
+the interval boundaries crossed, and the spec does not say whether its `DATEDIFF` does (apache/ossie#743).
+In a calculated column the date parts are translated when the column is declared `double`;
+declared `int64` it stays DAX for now, like every `int64` calculated column.
 
 ```
 LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
@@ -688,6 +705,8 @@ LEFT([Code], 2)             ->  LEFT(code, 2)          (Code: isNullable false)
                                 declared as text and its expression is a number value
 [Amount] / 3                ->  refused in a column declared as int64: DAX stores a
                                 whole number there, amount / 3 is not one
+YEAR([Booked])              ->  YEAR(booked_on)        (Booked: a date, isNullable false)
+YEAR(MAX('Sales'[Date]))    ->  refused: a date that may be BLANK
 ```
 
 `_dax_to_sql.py` documents each rule and each refusal.

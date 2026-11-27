@@ -657,14 +657,20 @@ _CALCULATED_ROW_KINDS = {
 }
 
 
-def _row_kind(data_type, calculated):
-    """Return the ``RowColumn.kind`` of a column with this TMSL ``dataType``."""
-    if not calculated:
-        return _ROW_KINDS.get(data_type)
-    if not data_type or data_type in TMSL_UNTYPED:
+def _row_kind(column):
+    """Return the ``RowColumn.kind`` of a column, for translating calculated columns."""
+    data_type = column.get("dataType")
+    calculated = column.get("type") == "calculated"
+    if calculated and (not data_type or data_type in TMSL_UNTYPED):
         # Nothing is declared (``automatic`` and ``unknown`` mean the engine has not
         # resolved a type), so the column's type is its expression's.
         return None
+    if data_type == "dateTime":
+        # A ``dateTime`` with a date-only format string is a date, as on import
+        # (``_map_datatype``).
+        return "date" if is_date_only_format(column.get("formatString")) else "datetime"
+    if not calculated:
+        return _ROW_KINDS.get(data_type)
     # Any other declared type keeps its own name, so no expression is taken for it.
     return _CALCULATED_ROW_KINDS.get(data_type, data_type)
 
@@ -681,7 +687,7 @@ def _row_columns(table):
         columns[column["name"]] = RowColumn(
             source=None if calculated else (column.get("sourceColumn") or column["name"]),
             dax=text(column.get("expression", "")) if calculated else None,
-            kind=_row_kind(column.get("dataType"), calculated),
+            kind=_row_kind(column),
             # TOM's default is nullable; only an explicit false rules BLANK out.
             nullable=column.get("isNullable") is not False,
         )
